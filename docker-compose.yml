@@ -1,0 +1,24 @@
+version: "3.8"
+services:
+  planning-atelier:
+    build: .
+    container_name: planning-atelier
+    ports:
+      - "3000:3000"
+    volumes:
+      - planning-data:/data
+      - ./Cfg_backup.yml:/app/Cfg_backup.yml
+      - ./Cfg_admin.yml:/app/Cfg_admin.yml
+    environment:
+      # Secret utilisé pour signer les cookies de session — OBLIGATOIRE pour un accès exposé
+      # sur internet. Générez une valeur aléatoire une fois (ex: openssl rand -hex 32) et
+      # gardez-la ensuite fixe : si elle change, tout le monde est déconnecté.
+      SESSION_SECRET: ""
+      # Passez à "true" une fois l'accès servi en HTTPS (obligatoire avant toute exposition
+      # sur internet — voir le README, section Sécurité). Laissez "false" tant que vous
+      # n'accédez qu'en HTTP sur le réseau local, sinon la connexion ne fonctionnera pas.
+      COOKIE_SECURE: "false"
+    restart: unless-stopped
+
+volumes:
+  planning-data:

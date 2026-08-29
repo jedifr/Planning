@@ -1,0 +1,31 @@
+# Configuration du compte d'envoi (SMTP) utilisé pour la sauvegarde automatique par e-mail.
+# Ce fichier est lu par le serveur à chaque tentative d'envoi — une modification prend
+# effet dans la minute qui suit, sans avoir besoin de redémarrer le conteneur.
+#
+# Copiez ce fichier en Cfg_backup.yml (non versionné, car il contient des identifiants
+# réels) et remplissez vos propres valeurs.
+#
+# Trois combinaisons possibles selon ce qu'exige votre serveur SMTP :
+#   1) TLS chiffré dès la connexion (souvent le port 465, ou un port imposé par votre
+#      hébergeur) :         secure: true   / requireTLS: false
+#   2) STARTTLS obligatoire (le serveur exige une mise à niveau vers le chiffré après
+#      une connexion en clair — c'est souvent ce que veulent dire les hébergeurs qui
+#      disent "il faut forcer le SSL/TLS") :
+#                            secure: false  / requireTLS: true
+#   3) STARTTLS classique, optionnel (cas standard du port 587) :
+#                            secure: false  / requireTLS: false
+#
+# En cas d'erreur "wrong version number", c'est presque toujours le cas 1) essayé alors
+# qu'il fallait le cas 2), ou l'inverse — essayez l'autre combinaison.
+#
+# Exemple avec un compte Gmail (nécessite un "mot de passe d'application", pas votre
+# mot de passe habituel) : https://myaccount.google.com/apppasswords
+
+smtp:
+  host: "smtp.gmail.com"
+  port: 587
+  secure: false
+  requireTLS: false
+  user: "votre.adresse@gmail.com"
+  pass: "xxxxxxxxxxxxxxxx"
+  from: "votre.adresse@gmail.com"

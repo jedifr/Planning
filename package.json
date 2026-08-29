@@ -1,0 +1,19 @@
+{
+  "name": "planning-atelier-serveur",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Serveur du planning de production (fraisage / tournage) avec base de données partagée.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.3.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0",
+    "js-yaml": "^4.1.0",
+    "nodemailer": "^6.9.14"
+  }
+}
