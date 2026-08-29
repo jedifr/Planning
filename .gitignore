@@ -1,0 +1,3 @@
+# Config sensible : identifiants SMTP réels — ne pas versionner.
+# Copier Cfg_backup.yml.example vers Cfg_backup.yml et le remplir.
+Cfg_backup.yml

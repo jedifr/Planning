@@ -1,0 +1,16 @@
+# Compte créé automatiquement au TOUT PREMIER démarrage (uniquement si aucun compte
+# n'existe encore dans la base). Modifiez ces valeurs AVANT le premier lancement pour
+# choisir vous-même l'identifiant et le mot de passe, plutôt que d'aller chercher un
+# mot de passe généré aléatoirement dans les logs du conteneur.
+#
+# Ce fichier n'est lu qu'une seule fois, à la création du tout premier compte — il est
+# ensuite ignoré, même s'il reste présent (le modifier après coup n'a aucun effet ;
+# passez par Paramètres > Utilisateurs dans l'application pour changer un mot de passe).
+#
+# Si le mot de passe est vide, trop court (moins de 8 caractères), ou laissé à
+# "changez-moi", un mot de passe aléatoire sera généré automatiquement à la place,
+# par sécurité (pour ne pas qu'un mot de passe par défaut connu circule).
+
+admin:
+  username: "admin"
+  password: "changez-moi"
