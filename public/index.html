@@ -916,6 +916,7 @@ function migrateState(st){
       if(o.matiere === undefined) o.matiere = '';
       if(o.epaisseur === undefined) o.epaisseur = '';
       if(o.fusionGroupId === undefined) o.fusionGroupId = null;
+      if(o.dureeReelleH === undefined) o.dureeReelleH = null; // temps réellement passé (secours quand aucune session n'existe) — voir applySingleStatusChange
     });
   });
   if(!st.importProfiles) st.importProfiles = []; // profils de correspondance de colonnes pour l'import personnalisé (autres logiciels)
@@ -2714,7 +2715,7 @@ function submitNewCommande(){
         manualStart: null, dureeOverrideH: null, debutReel: null, finReel: null, sessions: [], autoPaused: false,
         dependances: [], phase: (Number(o.phase)||1) + existingMaxPhase, // s'ajoute strictement après les phases déjà en place
         operatorUserId: o.operatorUserId || null, tempsUnitaireTheorique: Number(o.tempsUnitaire),
-        dateDebutPossible: o.dateDebutPossible || null
+        dateDebutPossible: o.dateDebutPossible || null, dureeReelleH: null
       });
     });
     if(toAdd.length === 0){
@@ -2753,7 +2754,8 @@ function submitNewCommande(){
       tempsUnitaire: Number(o.tempsUnitaire), quantite: Number(o.quantite), statut: 'a_faire',
       manualStart: null, dureeOverrideH: null, debutReel: null, finReel: null, sessions: [], autoPaused: false,
       dependances: [], phase: Number(o.phase) || 1, operatorUserId: o.operatorUserId || null,
-      tempsUnitaireTheorique: Number(o.tempsUnitaire), dateDebutPossible: o.dateDebutPossible || null
+      tempsUnitaireTheorique: Number(o.tempsUnitaire), dateDebutPossible: o.dateDebutPossible || null,
+      dureeReelleH: null
     }))
   };
   // Rejouable telle quelle sur une version fraîche en cas de conflit. Si, entre-temps, quelqu'un
@@ -2818,7 +2820,7 @@ function updateCommandeField(cid, field, value){
 function addOpToCommande(cid){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
   const prev = c.pieces[c.pieces.length-1];
-  c.pieces.push({ id: uid('op'), piece:'', etape:'', machineId: state.machines[0]?state.machines[0].id:'', tempsUnitaire:0, quantite:1, statut:'a_faire', manualStart:null, dureeOverrideH:null, debutReel:null, finReel:null, sessions:[], autoPaused:false, dependances:[], phase: prev ? (Number(prev.phase)||1)+1 : 1, tempsUnitaireTheorique:0 });
+  c.pieces.push({ id: uid('op'), piece:'', etape:'', machineId: state.machines[0]?state.machines[0].id:'', tempsUnitaire:0, quantite:1, statut:'a_faire', manualStart:null, dureeOverrideH:null, debutReel:null, finReel:null, sessions:[], autoPaused:false, dependances:[], phase: prev ? (Number(prev.phase)||1)+1 : 1, tempsUnitaireTheorique:0, dureeReelleH:null });
   commit();
 }
 function removeOpFromCommande(cid, oid){
@@ -2900,6 +2902,15 @@ function opElapsedHours(o, st){
   });
   return total;
 }
+// Temps réellement passé (heures, pour la quantité totale) : dérivé des sessions quand elles existent
+// (toujours à jour, y compris tant que la tâche est en cours) ; sinon, valeur secours saisie manuellement
+// à la clôture (o.dureeReelleH — cas d'une tâche jamais passée par Démarrer/Reprendre, ex. import déjà
+// terminé). Renvoie null si le temps passé n'a jamais été mesuré ni saisi.
+function dureePasseeH(o, st){
+  const elapsedH = opElapsedHours(o, st);
+  if(elapsedH > 1e-6) return elapsedH;
+  return (o.dureeReelleH!=null && o.dureeReelleH>0) ? o.dureeReelleH : null;
+}
 function isInPauseWindow(op, now, st){
   const cfg = configForPiece(op, st);
   const pause = pauseWindowFor(now, cfg);
@@ -2963,19 +2974,18 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore){
     const open = o.sessions.find(s => !s.fin);
     if(open) open.fin = nowStr;
 
-    const elapsedH = opElapsedHours(o, state);
-    if(elapsedH > 1e-6){
-      o.tempsUnitaire = (elapsedH*60) / (o.quantite||1); // durée réelle calculée automatiquement depuis les sessions
-      o.dureeOverrideH = null;
-    } else {
-      // jamais démarrée via Démarrer/Reprendre : on retombe sur la saisie manuelle
+    // Le temps prévu (tempsUnitaire) n'est plus jamais modifié ici — seul le temps réellement passé
+    // est enregistré à part (voir dureePasseeH), pour que "prévu" et "passé" restent deux valeurs
+    // distinctes même une fois la tâche terminée.
+    if(opElapsedHours(o, state) <= 1e-6){
+      // jamais démarrée via Démarrer/Reprendre (ex. import déjà terminé, sans session) : on demande
+      // la saisie manuelle du temps réellement passé, faute de pouvoir le déduire des sessions.
       const plannedTotal = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH*60 : (o.tempsUnitaire*o.quantite);
       const input = prompt(`Temps réellement passé pour "${[o.piece,o.etape].filter(Boolean).join(' / ')}" (en minutes, pour la quantité totale) :`, Math.round(plannedTotal));
       if(input !== null){
         const val = Number(String(input).replace(',','.'));
-        if(!isNaN(val) && val > 0 && o.quantite > 0){
-          o.tempsUnitaire = val / o.quantite;
-          o.dureeOverrideH = null;
+        if(!isNaN(val) && val > 0){
+          o.dureeReelleH = val / 60;
         }
       }
     }
@@ -3288,7 +3298,7 @@ function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU,
       id: uid('op'), piece, etape, machineId: machine ? machine.id : null,
       tempsUnitaire: tu, quantite: qte, statut:'a_faire', manualStart:null, dureeOverrideH:null,
       debutReel:null, finReel:null, sessions:[], autoPaused:false, dependances:[], phase,
-      operatorUserId: operateur ? String(operateur.id) : null, tempsUnitaireTheorique: tu,
+      operatorUserId: operateur ? String(operateur.id) : null, tempsUnitaireTheorique: tu, dureeReelleH: null,
       matiere, epaisseur, dateDebutPossible: null, sousTraitance: isSousTraitance, fusionGroupId: null,
       _importGroupTag: groupTag || null // étiquette temporaire, jamais conservée après l'import (voir confirmCustomImport)
     });
@@ -5346,8 +5356,8 @@ function renderKanbanView(schedule){
       const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (Number(o.tempsUnitaire)*Number(o.quantite))/60;
       const plannedLineK = `<div class="kanban-card-planned">Prévu : ${durationLabel(dureeH)}</div>`;
       const elapsedLineK = (col.key==='en_cours'||col.key==='en_pause'||col.key==='termine') ? (() => {
-        const elapsedH = opElapsedHours(o, state);
-        if(elapsedH <= 0) return '';
+        const elapsedH = dureePasseeH(o, state);
+        if(!elapsedH || elapsedH <= 0) return '';
         const label2 = col.key==='termine' ? 'Passé' : 'Passé jusqu\'ici';
         return `<div class="kanban-card-elapsed">${label2} : ${durationLabel(elapsedH)}</div>`;
       })() : '';
@@ -5531,7 +5541,9 @@ function renderOpsRow(o, c){
   const running = o.statut==='en_cours' || o.statut==='en_pause';
   const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (o.tempsUnitaire*o.quantite)/60;
   const overridden = o.manualStart || o.dureeOverrideH;
-  const elapsedNote = running ? `<div class="elapsed-note">${durationLabel(opElapsedHours(o, state))} écoulé${o.statut==='en_pause'?(o.autoPaused?' (pause déjeuner)':' (en pause)'):''}</div>` : '';
+  const elapsedNote = running
+    ? `<div class="elapsed-note">${durationLabel(opElapsedHours(o, state))} écoulé${o.statut==='en_pause'?(o.autoPaused?' (pause déjeuner)':' (en pause)'):''}</div>`
+    : (done && dureePasseeH(o, state) ? `<div class="elapsed-note">${durationLabel(dureePasseeH(o, state))} réellement passé</div>` : '');
   const datesCell = o.sousTraitance
     ? (done
         ? (o.finReel ? `<span class="dates-val">🏭 <span class="lbl">Revenue le</span> ${formatDT(new Date(o.finReel))}</span>` : `<span class="dates-val" style="color:var(--text-faint)">🏭 Sous-traitée — revenue</span>`)
