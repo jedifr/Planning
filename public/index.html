@@ -774,7 +774,8 @@ let congesTab = 'mes-demandes'; // 'mes-demandes' | 'equipe' | 'calendrier' | 'a
 let equipeStatutFilter = 'approuve'; // filtre de l'onglet "Congés de l'équipe"
 let leaveImpactPreviewId = null; // id de la demande dont on affiche l'aperçu d'impact, dans "À valider"
 let changeProcessingInFlight = false; // vrai pendant le court battement entre un 'change' et son traitement différé — la synchro en tâche de fond doit patienter
-let pendingLeaveRequestDraft = null; // { userId, typeId, debut, fin, motif, mode: 'salarie'|'admin' } — en attente de confirmation avant envoi réel
+let pendingLeaveRequestDraft = null; // { userId, typeId, debut, fin, motif, mode: 'salarie'|'admin'|'edit' } — en attente de confirmation avant envoi réel
+let editingLeaveRequestDraft = null; // { id, userId, typeId, debut, fin, motif } — formulaire de correction d'un congé existant, avant l'aperçu de conséquences
 let equipePersonneFilter = ''; // '' = toutes les personnes
 let calendrierYear = new Date().getFullYear();
 let calendrierPersonneFilter = ''; // '' = toutes les personnes
@@ -2304,9 +2305,9 @@ function currentUserRole(){ return currentUser && currentUser.role; }
 function isAdmin(){ return currentUserRole() === 'admin'; }
 // Solde = allocation annuelle - jours déjà comptabilisés (approuvés) - jours actuellement en attente
 // (pour ne pas laisser quelqu'un demander plus que ce qu'il lui reste, même avant validation).
-function computeLeaveBalance(userId, typeId, year){
+function computeLeaveBalance(userId, typeId, year, excludeId){
   const allocated = (state.userLeaveAllocations[userId] && state.userLeaveAllocations[userId][typeId]) || 0;
-  const requests = state.leaveRequests.filter(r => r.userId===userId && r.typeId===typeId && r.debut && r.debut.startsWith(String(year)));
+  const requests = state.leaveRequests.filter(r => r.userId===userId && r.typeId===typeId && r.id!==excludeId && r.debut && r.debut.startsWith(String(year)));
   const used = requests.filter(r=>r.statut==='approuve').reduce((s,r)=>s+countWorkingDaysInRange(r.debut,r.fin),0);
   const pending = requests.filter(r=>r.statut==='en_attente').reduce((s,r)=>s+countWorkingDaysInRange(r.debut,r.fin),0);
   return { allocated, used, pending, remaining: allocated - used - pending };
@@ -2366,15 +2367,28 @@ function startLeaveRequestSubmission(userId, typeId, debut, fin, motif){
 }
 function confirmLeaveRequestSubmission(){
   if(!pendingLeaveRequestDraft) return;
-  const { userId, typeId, debut, fin, motif, mode } = pendingLeaveRequestDraft;
+  const { id, userId, typeId, debut, fin, motif, mode } = pendingLeaveRequestDraft;
   const year = new Date(debut+'T00:00:00').getFullYear();
-  const bal = computeLeaveBalance(userId, typeId, year);
+  const bal = computeLeaveBalance(userId, typeId, year, id); // exclut le congé lui-même en mode édition, sinon il se compterait deux fois
   const demanded = countWorkingDaysInRange(debut, fin);
   if(demanded > bal.remaining){
-    const msg = mode==='admin'
+    const msg = mode==='edit'
+      ? `Attention : il ne reste que ${bal.remaining} jour(s) disponible(s) pour ce type de congé sur ${year} (cette période en compte ${demanded}). Enregistrer quand même ?`
+      : mode==='admin'
       ? `Attention : il ne reste que ${bal.remaining} jour(s) disponible(s) pour ce type de congé sur ${year} (cette période en compte ${demanded}). Attribuer quand même ?`
       : `Attention : il ne reste que ${bal.remaining} jour(s) disponible(s) pour ce type de congé sur ${year} (cette demande en compte ${demanded}). Soumettre quand même ?`;
     if(!confirm(msg)) return;
+  }
+  if(mode === 'edit'){
+    const req_ = state.leaveRequests.find(r=>r.id===id);
+    if(!req_){ pendingLeaveRequestDraft = null; render(); return; }
+    const oldReq = { ...req_ };
+    req_.typeId = typeId; req_.debut = debut; req_.fin = fin; req_.motif = motif;
+    pendingLeaveRequestDraft = null;
+    commit();
+    notifyUserOfModification(oldReq, req_);
+    showToast('Congé modifié.');
+    return;
   }
   if(mode === 'admin'){
     const imposed = !!pendingLeaveRequestDraft.imposer;
@@ -2464,20 +2478,22 @@ function renderLeaveRequestPreviewModal(){
   if(!pendingLeaveRequestDraft) return '';
   const d = pendingLeaveRequestDraft;
   const isAdminMode = d.mode === 'admin';
+  const isEditMode = d.mode === 'edit';
+  const isAdminLike = isAdminMode || isEditMode; // affichage "Pour X" et tolérance aux chevauchements : mêmes règles pour une attribution ou une correction admin
   const t = leaveTypeById(d.typeId);
   const nbJours = countWorkingDaysInRange(d.debut, d.fin);
   const affected = simulateLeaveImpactForRequest(d);
-  const personne = isAdminMode ? usersList.find(u=>String(u.id)===d.userId) : null;
+  const personne = isAdminLike ? usersList.find(u=>String(u.id)===d.userId) : null;
   return `
   <div class="modal-overlay">
     <div class="modal-box modal-box-wide" role="dialog" aria-modal="true">
       <div class="modal-head">
-        <h2>Conséquences de cette ${isAdminMode?'attribution':'demande'}</h2>
+        <h2>Conséquences de cette ${isEditMode ? 'modification' : (isAdminMode?'attribution':'demande')}</h2>
         <button class="ghost icon-btn" data-action="cancel-leave-preview" title="Fermer">✕</button>
       </div>
       <div class="modal-body">
         <div class="leave-confirm-banner">
-          ${isAdminMode ? `Pour <strong>${personne?escapeHtml(personne.username):'cette personne'}</strong> — ` : ''}<strong>${t?escapeHtml(t.nom):'Congé'}</strong> du <strong>${formatDateFr(d.debut)}</strong> au <strong>${formatDateFr(d.fin)}</strong> (${nbJours} jour(s) ouvré(s))${d.motif?` — ${escapeHtml(d.motif)}`:''}
+          ${isAdminLike ? `Pour <strong>${personne?escapeHtml(personne.username):'cette personne'}</strong> — ` : ''}<strong>${t?escapeHtml(t.nom):'Congé'}</strong> du <strong>${formatDateFr(d.debut)}</strong> au <strong>${formatDateFr(d.fin)}</strong> (${nbJours} jour(s) ouvré(s))${d.motif?` — ${escapeHtml(d.motif)}`:''}
           ${isAdminMode && d.imposer ? `<br><strong style="color:var(--amber);">⚠ Congé imposé — sera enregistré directement comme approuvé, sans confirmation de la personne.</strong>` : ''}
         </div>
         ${renderImpactSummaryHtml(affected)}
@@ -2507,10 +2523,13 @@ function renderLeaveRequestPreviewModal(){
             const conflicts = findLeaveConflicts(d.userId || (currentUser?String(currentUser.id):''), d.debut, d.fin, d.id);
             // Le salarié doit corriger ses dates ; l'administrateur, lui, voit le conflit mais garde
             // la main (il peut avoir une raison légitime de superposer, ex. régularisation).
-            if(conflicts.length > 0 && !isAdminMode){
+            if(conflicts.length > 0 && !isAdminLike){
               return `<span class="footer-note" style="color:var(--red);">Corrigez les dates : cette période chevauche un congé déjà posé.</span>`;
             }
-            return `<button class="primary" data-action="confirm-leave-preview">✓ ${isAdminMode ? (conflicts.length ? 'Attribuer malgré le chevauchement' : (d.imposer ? 'Confirmer et imposer ce congé' : 'Confirmer et envoyer la proposition')) : 'Confirmer et envoyer la demande'}</button>`;
+            const label = isEditMode ? 'Enregistrer les modifications'
+              : isAdminMode ? (conflicts.length ? 'Attribuer malgré le chevauchement' : (d.imposer ? 'Confirmer et imposer ce congé' : 'Confirmer et envoyer la proposition'))
+              : 'Confirmer et envoyer la demande';
+            return `<button class="primary" data-action="confirm-leave-preview">✓ ${label}</button>`;
           })()}
         </div>
       </div>
@@ -2627,6 +2646,72 @@ function revokeLeaveRequest(reqId){
   state.leaveRequests = state.leaveRequests.filter(r=>r.id!==reqId);
   commit();
   showToast('Congé révoqué.');
+}
+async function notifyUserOfModification(oldReq, newReq){
+  const oldType = leaveTypeById(oldReq.typeId), newType = leaveTypeById(newReq.typeId);
+  const subject = `Votre congé a été modifié`;
+  const text = `Un administrateur a corrigé votre congé de "${oldType?oldType.nom:'congé'}" du ${formatDateFr(oldReq.debut)} au ${formatDateFr(oldReq.fin)}.\n\nIl est désormais enregistré comme "${newType?newType.nom:'congé'}" du ${formatDateFr(newReq.debut)} au ${formatDateFr(newReq.fin)}${newReq.motif?` (motif : ${newReq.motif})`:''}.`;
+  try{ await fetch('/api/notify-user/'+newReq.userId, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subject, text }) }); }catch(e){ /* non bloquant */ }
+}
+// Ouvre un petit formulaire de correction pour un congé déjà existant — permet à un administrateur
+// de corriger une erreur de saisie ou de transférer des jours d'un type de congé à un autre (ex.
+// congés payés → sans solde), sans passer par une révocation suivie d'une nouvelle attribution.
+// Une fois validé, débouche sur la même pop-up "Conséquences" que la création d'un congé (voir
+// confirmLeaveRequestSubmission, mode 'edit'), pour prévenir d'un éventuel impact sur le planning.
+function startEditLeaveRequest(reqId){
+  const req_ = state.leaveRequests.find(r=>r.id===reqId);
+  if(!req_) return;
+  editingLeaveRequestDraft = { id: req_.id, userId: req_.userId, typeId: req_.typeId, debut: req_.debut, fin: req_.fin, motif: req_.motif||'' };
+  render();
+}
+function updateEditLeaveField(field, value){
+  if(!editingLeaveRequestDraft) return;
+  editingLeaveRequestDraft[field] = value;
+  render();
+}
+function cancelEditLeaveRequest(){
+  editingLeaveRequestDraft = null;
+  render();
+}
+function previewEditLeaveRequest(){
+  const d = editingLeaveRequestDraft; if(!d) return;
+  if(!d.typeId){ alert('Merci de choisir un type de congé.'); return; }
+  if(!d.debut || !d.fin){ alert('Merci de renseigner une date de début et une date de fin.'); return; }
+  if(d.fin < d.debut){ alert('La date de fin doit être postérieure ou égale à la date de début.'); return; }
+  pendingLeaveRequestDraft = { id: d.id, userId: d.userId, typeId: d.typeId, debut: d.debut, fin: d.fin, motif: (d.motif||'').trim(), mode: 'edit' };
+  editingLeaveRequestDraft = null;
+  render();
+}
+function renderEditLeaveRequestModal(){
+  const d = editingLeaveRequestDraft;
+  if(!d) return '';
+  const requester = usersList.find(u=>String(u.id)===d.userId);
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>Modifier ce congé — ${requester?escapeHtml(requester.username):'(compte supprimé)'}</h2>
+        <button class="ghost icon-btn" data-action="cancel-edit-leave-request" title="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="commande-top-fields" style="grid-template-columns:1.2fr 1fr 1fr;">
+          <div><label class="field">Type</label>
+            <select data-action="edit-leave-field" data-field="typeId">
+              ${state.leaveTypes.map(t=>`<option value="${t.id}" ${d.typeId===t.id?'selected':''}>${escapeHtml(t.nom)}</option>`).join('')}
+            </select>
+          </div>
+          <div><label class="field">Début</label><input type="date" value="${d.debut}" data-action="edit-leave-field" data-field="debut"></div>
+          <div><label class="field">Fin</label><input type="date" value="${d.fin}" data-action="edit-leave-field" data-field="fin"></div>
+        </div>
+        <div style="margin-top:10px;"><label class="field">Motif (optionnel)</label><input value="${escapeHtml(d.motif||'')}" data-action="edit-leave-field" data-field="motif"></div>
+        <div class="footer-note" style="text-align:left; padding-top:10px;">Le statut actuel n'est pas modifié ici — utilisez Approuver / Refuser / Révoquer pour ça. La personne concernée est prévenue par e-mail du changement.</div>
+        <div class="form-actions" style="margin-top:16px;">
+          <button class="ghost" data-action="cancel-edit-leave-request">Annuler</button>
+          <button class="primary" data-action="preview-edit-leave-request">Voir les conséquences →</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
 }
 // Un administrateur peut attribuer directement un congé à quelqu'un (déjà approuvé, sans passer
 // par une demande) — utile pour enregistrer un accord donné oralement, ou poser un congé pour une
@@ -3945,6 +4030,7 @@ function renderEquipeTab(){
     const year = new Date(r.debut+'T00:00:00').getFullYear();
     const bal = computeLeaveBalance(r.userId, r.typeId, year);
     const revokeBtn = (admin && r.statut==='approuve') ? `<button class="statut-pill statut-pill-revoke" data-action="revoke-leave-request" data-id="${r.id}">Révoquer</button>` : '';
+    const editBtn = admin ? `<button class="ghost small" data-action="edit-leave-request" data-id="${r.id}" title="Corriger le type, les dates ou le motif — ex. transférer des jours de congés payés en sans solde">✎ Modifier</button>` : '';
     return `<tr class="${past?'leave-row-past':''}">
       <td>${requester?escapeHtml(requester.username):'(compte supprimé)'}</td>
       <td><span class="machine-swatch" style="background:${t?t.couleur:'#888'}"></span>${t?escapeHtml(t.nom):'—'}</td>
@@ -3952,7 +4038,7 @@ function renderEquipeTab(){
       <td>${nbJours} j</td>
       <td>${bal.remaining} / ${bal.allocated} j <span class="footer-note" style="margin:0;">(${year})</span></td>
       <td>${statutBadgeHtml(r.statut)}</td>
-      ${admin ? `<td>${revokeBtn}</td>` : ''}
+      ${admin ? `<td style="white-space:nowrap;">${editBtn} ${revokeBtn}</td>` : ''}
     </tr>`;
   }).join('');
   return `<section class="panel"><div class="panel-body">
@@ -4141,7 +4227,7 @@ function renderSoldesTab(){
           const bal = computeLeaveBalance(uid_, t.id, year);
           return `<td>
             <input type="number" min="0" step="0.5" value="${bal.allocated}" data-action="user-leave-allocation" data-user-id="${uid_}" data-type-id="${t.id}" style="width:70px;">
-            <span class="footer-note" style="margin:0;">${bal.used} pris${bal.pending?` · ${bal.pending} att.`:''}</span>
+            <span class="footer-note" style="margin:0;">${bal.used} pris${bal.pending?` · ${bal.pending} att.`:''} · <strong style="color:${bal.remaining<0?'var(--red)':'var(--text-dim)'};">${bal.remaining} restant${Math.abs(bal.remaining)>=2?'s':''}</strong></span>
           </td>`;
         }).join('')}</tr>`;
       }).join('')}</tbody>
@@ -5744,6 +5830,7 @@ function render(){
       renderHeader(),
       renderCongesPage(),
       renderSettingsModal(),
+      renderEditLeaveRequestModal(),
       renderLeaveRequestPreviewModal(),
       renderToast()
     ].join('');
@@ -5878,6 +5965,9 @@ function dispatchClickAction(action, el){
     case 'toggle-leave-impact': leaveImpactPreviewId = (leaveImpactPreviewId===el.dataset.id) ? null : el.dataset.id; render(); break;
     case 'approve-leave-request': decideLeaveRequest(el.dataset.id, 'approuve'); break;
     case 'revoke-leave-request': revokeLeaveRequest(el.dataset.id); break;
+    case 'edit-leave-request': startEditLeaveRequest(el.dataset.id); break;
+    case 'cancel-edit-leave-request': cancelEditLeaveRequest(); break;
+    case 'preview-edit-leave-request': previewEditLeaveRequest(); break;
     case 'reject-leave-request': decideLeaveRequest(el.dataset.id, 'refuse'); break;
     case 'add-leave-type': addLeaveType(); break;
     case 'admin-assign-leave': adminAssignLeave(); break;
@@ -5974,6 +6064,7 @@ document.addEventListener('change', (e) => {
     case 'user-role': changeUserRole(el.dataset.userId, el.value); break;
     case 'user-email': changeUserEmail(el.dataset.userId, el.value); break;
     case 'leave-type-field': updateLeaveTypeField(el.dataset.typeId, el.dataset.field, el.value); break;
+    case 'edit-leave-field': updateEditLeaveField(el.dataset.field, el.value); break;
     case 'user-leave-allocation': updateUserLeaveAllocation(el.dataset.userId, el.dataset.typeId, el.value); break;
     case 'equipe-statut-filter': equipeStatutFilter = el.value; render(); break;
     case 'equipe-personne-filter': equipePersonneFilter = el.value; render(); break;
