@@ -2204,6 +2204,17 @@ function updateDraftOpDuree(idx, value){
   }
   render();
 }
+function updateDraftOpDureeMin(idx, value){
+  // Même chose que updateDraftOpDuree, mais value est déjà exprimée en minutes (double affichage h/min).
+  const o = draft.pieces[idx]; if(!o) return;
+  const val = Number(String(value).replace(',','.'));
+  const qte = Number(o.quantite);
+  if(!isNaN(val) && val > 0 && qte > 0){
+    o.tempsUnitaire = val / qte;
+    o.dureeOverrideH = null;
+  }
+  render();
+}
 
 function pieceDupKey(piece, etape){ return (piece||'').trim().toLowerCase() + '|' + (etape||'').trim().toLowerCase(); }
 function isTempsModified(o){
@@ -2215,6 +2226,22 @@ function resetTempsUnitaire(cid, oid){
   const o = c.pieces.find(o=>o.id===oid); if(!o) return;
   if(o.tempsUnitaireTheorique==null) return;
   o.tempsUnitaire = o.tempsUnitaireTheorique;
+  o.dureeOverrideH = null;
+  commit();
+}
+// Corrige directement la référence théorique (erreur de saisie initiale) plutôt que de revenir
+// dessus : demande une nouvelle valeur et l'adopte comme temps unitaire ET comme nouveau théorique,
+// pour que le badge "modifié" ne réapparaisse pas à tort ensuite.
+function corrigerTempsTheorique(cid, oid){
+  const c = state.commandes.find(c=>c.id===cid); if(!c) return;
+  const o = c.pieces.find(o=>o.id===oid); if(!o) return;
+  const actuel = o.tempsUnitaireTheorique!=null ? o.tempsUnitaireTheorique : o.tempsUnitaire;
+  const input = prompt(`Corriger le temps théorique (en minutes, par pièce) pour "${[o.piece,o.etape].filter(Boolean).join(' / ')}" :`, Math.round(actuel*100)/100);
+  if(input==null) return;
+  const val = Number(String(input).replace(',','.'));
+  if(isNaN(val) || val <= 0){ showToast('Valeur invalide.'); return; }
+  o.tempsUnitaireTheorique = val;
+  o.tempsUnitaire = val;
   o.dureeOverrideH = null;
   commit();
 }
@@ -5459,7 +5486,14 @@ function renderNewForm(){
       <div><label class="field">Opérateur</label><select data-action="draft-op" data-idx="${idx}" data-field="operatorUserId" title="Sa pause déjeuner (si réglée) remplace celle du poste">${operatorOptions(o.operatorUserId)}</select></div>
       <div><label class="field">T. unit. (min)</label><input type="number" min="0" step="0.5" value="${o.tempsUnitaire}" data-action="draft-op" data-idx="${idx}" data-field="tempsUnitaire"></div>
       <div><label class="field">Qté *</label><input type="number" min="1" step="1" required value="${o.quantite}" data-action="draft-op" data-idx="${idx}" data-field="quantite"></div>
-      <div><label class="field">Durée (h)</label><input type="number" min="0.25" step="0.25" value="${dureeH>0?Math.round(dureeH*100)/100:''}" data-action="draft-op-duree" data-idx="${idx}" title="Durée totale prévue pour la quantité — recalcule le temps unitaire"></div>
+      <div><label class="field">Durée</label>
+        <div style="display:flex; gap:3px; align-items:center;">
+          <input type="number" min="0.25" step="0.25" value="${dureeH>0?Math.round(dureeH*100)/100:''}" data-action="draft-op-duree" data-idx="${idx}" title="Durée totale prévue pour la quantité, en heures — recalcule le temps unitaire" style="min-width:0;">
+          <span style="font-size:10px;color:var(--text-faint);">h</span>
+          <input type="number" min="1" step="1" value="${dureeH>0?Math.round(dureeH*60):''}" data-action="draft-op-duree-min" data-idx="${idx}" title="Durée totale prévue pour la quantité, en minutes — recalcule le temps unitaire" style="min-width:0;">
+          <span style="font-size:10px;color:var(--text-faint);">min</span>
+        </div>
+      </div>
       <div><label class="field">Phase</label><input type="number" min="1" step="1" class="phase-input" value="${o.phase||1}" data-action="draft-op" data-idx="${idx}" data-field="phase" title="Démarre une fois terminées toutes les pièces de phase inférieure"></div>
       <div><label class="field">Départ possible</label><input type="date" value="${o.dateDebutPossible||''}" data-action="draft-op" data-idx="${idx}" data-field="dateDebutPossible" title="Optionnel — ex : en attente d'une matière qui arrive à cette date. La tâche ne pourra jamais démarrer avant."></div>
       <div><button class="danger-ghost icon-btn" data-action="remove-draft-op" data-idx="${idx}" ${draft.pieces.length<=1?'disabled':''}>✕</button></div>
@@ -5528,7 +5562,8 @@ function renderOpsRow(o, c){
       <label class="statut-chip" style="font-size:10px; margin-top:4px; display:flex; align-items:center; gap:4px;" title="Cette pièce n'est jamais planifiée sur un poste — elle garde son statut normalement, et peut toujours bloquer une phase suivante tant qu'elle n'est pas marquée Terminée.">
         <input type="checkbox" ${o.sousTraitance?'checked':''} data-action="toggle-op-sous-traitance" data-cid="${c.id}" data-oid="${o.id}"> 🏭 Sous-traité
       </label></td>
-    <td class="col-tu"><input type="number" min="0" step="0.5" value="${o.tempsUnitaire}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="tempsUnitaire"></td>
+    <td class="col-tu"><input type="number" min="0" step="0.5" value="${o.tempsUnitaire}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="tempsUnitaire">
+      <button class="ghost small" data-action="corriger-temps-theorique" data-cid="${c.id}" data-oid="${o.id}" title="Corriger une erreur de saisie initiale : remplace directement le temps théorique de référence (et le temps unitaire) par la valeur donnée" style="display:block; width:100%; margin-top:2px; font-size:9px; padding:2px 4px;">✎ Corriger le théorique</button></td>
     <td class="col-qte"><input type="number" min="1" step="1" value="${o.quantite}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="quantite"></td>
     <td class="col-duree"><input type="number" min="0.25" step="0.25" value="${Math.round(dureeH*100)/100}" data-action="op-duree-field" data-cid="${c.id}" data-oid="${o.id}" title="Durée totale prévue, en heures"><span style="font-size:9.5px;color:var(--text-faint);">${durationLabel(dureeH)}</span>${isTempsModified(o) ? `<button class="ghost small temps-modifie-badge" data-action="reset-temps-unitaire" data-cid="${c.id}" data-oid="${o.id}" title="Temps théorique d'origine : ${durationLabel((o.tempsUnitaireTheorique*o.quantite)/60)} — cliquer pour revenir à cette valeur">⏱ Modifié — ↺ revenir au théorique</button>` : ''}</td>
     <td class="col-deps">${phaseCell}</td>
@@ -5876,6 +5911,7 @@ function dispatchClickAction(action, el){
     case 'remove-op': removeOpFromCommande(el.dataset.cid, el.dataset.oid); break;
     case 'reset-op-override': resetOpOverride(el.dataset.cid, el.dataset.oid); break;
     case 'reset-temps-unitaire': contextMenu = null; resetTempsUnitaire(el.dataset.cid, el.dataset.oid); break;
+    case 'corriger-temps-theorique': corrigerTempsTheorique(el.dataset.cid, el.dataset.oid); break;
     case 'open-date-picker': {
       const input = document.getElementById(el.dataset.target);
       if(input){ if(input.showPicker) input.showPicker(); else input.focus(); }
@@ -5937,6 +5973,7 @@ document.addEventListener('change', (e) => {
     case 'draft-field': updateDraftField(el.dataset.field, el.value); break;
     case 'draft-op': updateDraftOpField(Number(el.dataset.idx), el.dataset.field, el.value); break;
     case 'draft-op-duree': updateDraftOpDuree(Number(el.dataset.idx), el.value); break;
+    case 'draft-op-duree-min': updateDraftOpDureeMin(Number(el.dataset.idx), el.value); break;
     case 'commande-field': updateCommandeField(el.dataset.cid, el.dataset.field, el.value); break;
     case 'op-field': updateOpField(el.dataset.cid, el.dataset.oid, el.dataset.field, el.value); break;
     case 'op-statut-select': setOpStatut(el.dataset.cid, el.dataset.oid, el.value); break;
