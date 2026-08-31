@@ -155,6 +155,9 @@
   .machine-indispo-add{display:flex; flex-direction:column; gap:6px;}
   .machine-indispo-add .indispo-dates-row{display:flex; gap:6px;}
   .machine-indispo-add .indispo-dates-row input{flex:1; min-width:0;}
+  .user-pauses-list{display:flex; flex-direction:column; gap:4px;}
+  .user-pause-row{display:flex; align-items:center; gap:6px;}
+  .user-pause-row input{flex:1; min-width:0;}
   .machine-indispo-add button{width:100%;}
   .machine-indispo-add input{padding:5px 6px; font-size:11.5px;}
   .machine-card .row1{display:flex; gap:8px; align-items:center; margin-bottom:8px;}
@@ -310,6 +313,7 @@
   .kanban-card-time{font-size:10px; color:var(--text-faint); font-family:'IBM Plex Mono',monospace;}
   .kanban-card-planned{font-size:10px; color:var(--text-dim); margin-top:2px;}
   .kanban-card-due{font-size:10px; color:var(--red); font-weight:600; margin-top:2px;}
+  .kanban-card-fusion-list{font-size:10px; color:var(--text-faint); margin-top:2px;}
   .kanban-card-elapsed{font-size:10px; color:var(--accent); font-weight:600; margin-top:2px;}
   .kanban-empty{padding:14px 6px; text-align:center; font-size:11px; color:var(--text-faint);}
 
@@ -742,6 +746,17 @@ function loadDoneFilterPref(){
   try{ const v = localStorage.getItem(DONE_FILTER_STORAGE_KEY); if(v) doneFilterRange = v; }
   catch(e){ /* préférence absente ou indisponible */ }
 }
+const KANBAN_GROUPED_VIEW_KEY = 'planning-atelier-kanban-grouped-view';
+let kanbanGroupedView = false; // true = les pièces fusionnées n'affichent qu'une seule carte groupée
+function loadKanbanGroupedViewPref(){
+  try{ kanbanGroupedView = localStorage.getItem(KANBAN_GROUPED_VIEW_KEY) === '1'; }
+  catch(e){ /* préférence absente ou indisponible */ }
+}
+function toggleKanbanGroupedView(checked){
+  kanbanGroupedView = !!checked;
+  try{ localStorage.setItem(KANBAN_GROUPED_VIEW_KEY, kanbanGroupedView ? '1' : '0'); }catch(e){ /* stockage indisponible : le choix reste valable pour la session */ }
+  render();
+}
 function monthsAgo(n){
   const d = new Date();
   d.setMonth(d.getMonth() - n);
@@ -830,7 +845,17 @@ function migrateState(st){
   });
   if(!st.config.margeEcheanceJours && st.config.margeEcheanceJours !== 0) st.config.margeEcheanceJours = 0;
   if(!st.userMachines) st.userMachines = {}; // { [userId]: [machineId, ...] } — lien plusieurs-à-plusieurs
-  if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauseDebut, pauseFin} } — pause déjeuner propre à la personne, affecte réellement le calcul
+  if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}]} } — pause(s) propre(s) à la personne, affecte(nt) réellement le calcul
+  Object.keys(st.userLunch).forEach(uid_ => {
+    const lunch = st.userLunch[uid_];
+    if(!Array.isArray(lunch.pauses)){
+      // Ancien format à une seule pause (pauseDebut/pauseFin) : reprise comme première (et pour
+      // l'instant unique) pause de la personne, une seule fois.
+      lunch.pauses = (lunch.pauseDebut && lunch.pauseFin) ? [{ id: uid('pause'), debut: lunch.pauseDebut, fin: lunch.pauseFin }] : [];
+      delete lunch.pauseDebut;
+      delete lunch.pauseFin;
+    }
+  });
   if(!st.config.modules) st.config.modules = { conges: true }; // interrupteur du module Congés
   if(st.config.matiereFusionActive === undefined) st.config.matiereFusionActive = false; // détection par matière/épaisseur désactivée par défaut
   if(st.config.copyright === undefined) st.config.copyright = ''; // mention de l'écran de connexion
@@ -1107,35 +1132,58 @@ function dayHoursFor(dow, cfg){ return dow===5 ? cfg.friHours : cfg.monThuHours;
 function dayStartFor(d, cfg){ return new Date(d.getFullYear(), d.getMonth(), d.getDate(), cfg.startHour, cfg.startMinute, 0, 0); }
 function startOfWeek(d){ const dow=d.getDay(); const diff = dow===0 ? -6 : 1-dow; return new Date(d.getFullYear(), d.getMonth(), d.getDate()+diff); }
 
-function pauseWindowFor(date, cfg){
-  if(!cfg.pauseActive || !cfg.pauseDebut || !cfg.pauseFin) return null;
-  const [ph,pm] = cfg.pauseDebut.split(':').map(Number);
-  const [qh,qm] = cfg.pauseFin.split(':').map(Number);
-  if(isNaN(ph) || isNaN(qh)) return null;
-  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), ph, pm||0, 0, 0);
-  const end = new Date(date.getFullYear(), date.getMonth(), date.getDate(), qh, qm||0, 0, 0);
-  if(end <= start) return null;
-  return { start, end };
+// Toutes les pauses effectives pour ce cfg à cette date, triées et fusionnées si elles se chevauchent
+// (protège contre une saisie d'horaires qui se recouvrent par erreur). cfg.pauses (tableau
+// {debut,fin}) prime s'il est présent et non vide — c'est le cas d'une personne ayant plusieurs
+// pauses (déjeuner + pause l'après-midi, par ex.) ; sinon on retombe sur l'ancien format à une
+// seule pause (pauseActive/pauseDebut/pauseFin), utilisé par la config globale et les horaires de poste.
+function pauseWindowsFor(date, cfg){
+  const defs = (cfg.pauses && cfg.pauses.length) ? cfg.pauses
+    : (cfg.pauseActive && cfg.pauseDebut && cfg.pauseFin ? [{ debut: cfg.pauseDebut, fin: cfg.pauseFin }] : []);
+  const raw = [];
+  defs.forEach(p => {
+    if(!p.debut || !p.fin) return;
+    const [ph,pm] = p.debut.split(':').map(Number);
+    const [qh,qm] = p.fin.split(':').map(Number);
+    if(isNaN(ph) || isNaN(qh)) return;
+    const start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), ph, pm||0, 0, 0);
+    const end = new Date(date.getFullYear(), date.getMonth(), date.getDate(), qh, qm||0, 0, 0);
+    if(end > start) raw.push({ start, end });
+  });
+  raw.sort((a,b) => a.start - b.start);
+  const merged = [];
+  raw.forEach(w => {
+    const last = merged[merged.length-1];
+    if(last && w.start <= last.end){ if(w.end > last.end) last.end = w.end; }
+    else merged.push({ start: w.start, end: w.end });
+  });
+  return merged;
 }
-// Segments de travail d'une journée (1 segment, ou 2 si la pause déjeuner la traverse).
-// La journée est automatiquement prolongée de la durée de la pause pour que le total
+// Pause active à cet instant précis, s'il y en a une (pour l'auto-pause des tâches en cours).
+function pauseWindowFor(date, cfg){
+  return pauseWindowsFor(date, cfg).find(w => date >= w.start && date < w.end) || null;
+}
+// Segments de travail d'une journée (1 segment, ou plus si une ou plusieurs pauses la traversent).
+// La journée est automatiquement prolongée de la durée totale des pauses pour que le total
 // d'heures travaillées reste bien égal à monThuHours / friHours.
 function dayIntervals(date, cfg){
   const dow = date.getDay();
   const dh = dayHoursFor(dow, cfg);
   const dStart = dayStartFor(date, cfg);
   const nominalEnd = new Date(dStart.getTime() + dh*3600000);
-  const pause = pauseWindowFor(date, cfg);
-  if(!pause || pause.end <= dStart || pause.start >= nominalEnd){
-    return [[dStart, nominalEnd]];
-  }
-  const pStart = pause.start < dStart ? dStart : pause.start;
-  const pauseMs = pause.end.getTime() - pause.start.getTime();
-  const pEnd = new Date(pStart.getTime() + pauseMs);
-  const dEnd = new Date(nominalEnd.getTime() + pauseMs);
+  const pauses = pauseWindowsFor(date, cfg).filter(p => p.end > dStart && p.start < nominalEnd);
+  if(!pauses.length) return [[dStart, nominalEnd]];
+  let dEnd = new Date(nominalEnd.getTime() + pauses.reduce((s,p) => s + (p.end.getTime()-p.start.getTime()), 0));
+  let cursor = dStart;
   const segs = [];
-  if(pStart > dStart) segs.push([dStart, pStart]);
-  if(pEnd < dEnd) segs.push([pEnd, dEnd]);
+  pauses.forEach(pause => {
+    const pStart = pause.start < cursor ? cursor : pause.start;
+    const pauseMs = pause.end.getTime() - pause.start.getTime();
+    const pEnd = new Date(pStart.getTime() + pauseMs);
+    if(pStart > cursor) segs.push([new Date(cursor.getTime()), pStart]);
+    cursor = pEnd;
+  });
+  if(cursor < dEnd) segs.push([cursor, dEnd]);
   return segs.length ? segs : [[dStart, dEnd]];
 }
 function dayWindow(date, cfg){
@@ -1478,8 +1526,12 @@ function configForMachineId(machineId, st){
 function configForPiece(op, st){
   const cfg = configForMachineId(op.machineId, st);
   const userLunch = op.operatorUserId && st.userLunch ? st.userLunch[op.operatorUserId] : null;
-  if(userLunch && userLunch.pauseActive !== undefined){
-    return { ...cfg, pauseActive: !!userLunch.pauseActive, pauseDebut: userLunch.pauseDebut || cfg.pauseDebut, pauseFin: userLunch.pauseFin || cfg.pauseFin };
+  if(userLunch && userLunch.pauseActive){
+    // Une ou plusieurs pauses propres à cette personne remplacent entièrement celle(s) du poste
+    // (jamais un mélange des deux) — pauses:[] avec pauseActive coché revient à travailler sans
+    // aucune pause plutôt qu'à hériter de celle du poste, ce qui est le comportement attendu si
+    // l'admin a explicitement coché "pause propre à cette personne" puis tout supprimé.
+    return { ...cfg, pauseActive: true, pauses: userLunch.pauses || [], pauseDebut: undefined, pauseFin: undefined };
   }
   return cfg;
 }
@@ -2127,13 +2179,30 @@ function clearUserMachines(userId){
   commit();
 }
 function toggleUserLunchActive(userId, active){
-  if(!state.userLunch[userId]) state.userLunch[userId] = { pauseActive:false, pauseDebut:'12:00', pauseFin:'13:00' };
-  state.userLunch[userId].pauseActive = !!active;
+  if(!state.userLunch[userId]) state.userLunch[userId] = { pauseActive:false, pauses:[] };
+  const lunch = state.userLunch[userId];
+  lunch.pauseActive = !!active;
+  // À l'activation, si la personne n'a encore aucune pause définie, on en propose une par défaut
+  // (déjeuner classique) plutôt que de la laisser sans aucune pause sans que ce soit visible.
+  if(active && lunch.pauses.length === 0) lunch.pauses.push({ id: uid('pause'), debut:'12:00', fin:'13:00' });
   commit();
 }
-function updateUserLunchField(userId, field, value){
-  if(!state.userLunch[userId]) state.userLunch[userId] = { pauseActive:false, pauseDebut:'12:00', pauseFin:'13:00' };
-  state.userLunch[userId][field] = value;
+function addUserPause(userId){
+  if(!state.userLunch[userId]) state.userLunch[userId] = { pauseActive:true, pauses:[] };
+  const lunch = state.userLunch[userId];
+  lunch.pauseActive = true;
+  lunch.pauses.push({ id: uid('pause'), debut:'15:00', fin:'15:15' });
+  commit();
+}
+function removeUserPause(userId, pauseId){
+  const lunch = state.userLunch[userId]; if(!lunch) return;
+  lunch.pauses = (lunch.pauses||[]).filter(p=>p.id!==pauseId);
+  commit();
+}
+function updateUserPauseField(userId, pauseId, field, value){
+  const lunch = state.userLunch[userId]; if(!lunch) return;
+  const p = (lunch.pauses||[]).find(pp=>pp.id===pauseId); if(!p) return;
+  p[field] = value;
   commit();
 }
 async function testBackupNow(){
@@ -4646,7 +4715,7 @@ function renderSettingsModal(){
         ${usersList.map(u => {
           const uid_ = String(u.id);
           const linkedMachineIds = state.userMachines[uid_] || [];
-          const lunch = state.userLunch[uid_] || { pauseActive:false, pauseDebut:'12:00', pauseFin:'13:00' };
+          const lunch = state.userLunch[uid_] || { pauseActive:false, pauses:[] };
           const isLastAdmin = u.role==='admin' && usersList.filter(x=>x.role==='admin').length<=1;
           return `
           <div class="machine-card">
@@ -4671,16 +4740,21 @@ function renderSettingsModal(){
             </select>
             ${linkedMachineIds.length ? `<button class="ghost small deps-clear-btn" data-action="clear-user-machines" data-user-id="${uid_}">✕ Aucun poste lié</button>` : ''}
 
-            <div class="modal-section-title" style="font-size:10px; margin-top:12px;">Pause déjeuner de cette personne</div>
+            <div class="modal-section-title" style="font-size:10px; margin-top:12px;">Pause(s) de cette personne</div>
             <label class="statut-chip" style="margin-bottom:8px;">
               <input type="checkbox" ${lunch.pauseActive?'checked':''} data-action="toggle-user-lunch" data-user-id="${uid_}">
-              Pause propre à cette personne (remplace celle du poste quand elle est assignée comme opérateur)
+              Pause(s) propre(s) à cette personne (remplace(nt) celle(s) du poste quand elle est assignée comme opérateur)
             </label>
             ${lunch.pauseActive ? `
-            <div class="indispo-dates-row">
-              <input type="time" value="${lunch.pauseDebut}" data-action="user-lunch-field" data-user-id="${uid_}" data-field="pauseDebut" title="Début de pause">
-              <input type="time" value="${lunch.pauseFin}" data-action="user-lunch-field" data-user-id="${uid_}" data-field="pauseFin" title="Fin de pause">
-            </div>` : ''}
+            <div class="user-pauses-list">
+              ${(lunch.pauses||[]).map(p => `
+                <div class="user-pause-row">
+                  <input type="time" value="${p.debut}" data-action="user-pause-field" data-user-id="${uid_}" data-pause-id="${p.id}" data-field="debut" title="Début de pause">
+                  <input type="time" value="${p.fin}" data-action="user-pause-field" data-user-id="${uid_}" data-pause-id="${p.id}" data-field="fin" title="Fin de pause">
+                  <button class="danger-ghost icon-btn" data-action="remove-user-pause" data-user-id="${uid_}" data-pause-id="${p.id}" title="Supprimer cette pause">✕</button>
+                </div>`).join('') || `<div class="footer-note" style="margin:0;">Aucune pause définie — cette personne travaille sans interruption.</div>`}
+            </div>
+            <button class="small" style="margin-top:6px;" data-action="add-user-pause" data-user-id="${uid_}">+ Ajouter une pause</button>` : ''}
           </div>`;
         }).join('')}
       </div>
@@ -5399,6 +5473,7 @@ function renderKanbanView(schedule){
   const doneCutoff = doneFilterCutoff(doneFilterRange);
   const colsHtml = cols.map(col => {
     let ops = allOps.filter(o => o.statut===col.key);
+    if(kanbanGroupedView) ops = mergeFusedOpsForDisplay(ops); // une seule carte par groupe fusionné, comptée comme telle dans les limites/compteurs ci-dessous
     let totalAvantLimite = ops.length;
     if(col.key==='termine'){
       if(doneCutoff) ops = ops.filter(o => !o.finReel || new Date(o.finReel) >= doneCutoff);
@@ -5434,7 +5509,15 @@ function renderKanbanView(schedule){
         : col.key==='termine'
         ? (o.finReel ? `Terminée le ${formatDT(new Date(o.finReel))}` : 'Réalisée')
         : (o.start ? `${formatDT(o.start)} → ${formatDT(o.end)}` : 'Non planifiée');
-      const label = [o.commandeNom, o.piece, o.etape].filter(Boolean).join(' · ');
+      const label = o._fusionMembers
+        ? (() => {
+            const distinctCmd = Array.from(new Set(o._fusionMembers.map(mb=>mb.commandeNom)));
+            const refLabel = distinctCmd.length===1 ? distinctCmd[0] : `${distinctCmd.length} commandes`;
+            return `🔗 ${o._fusionMembers.length} pièces — ${refLabel}`;
+          })()
+        : [o.commandeNom, o.piece, o.etape].filter(Boolean).join(' · ');
+      const fusionListLineK = o._fusionMembers
+        ? `<div class="kanban-card-fusion-list">${o._fusionMembers.map(mb=>escapeHtml([mb.piece,mb.etape].filter(Boolean).join(' / ')||'—')).join(', ')}</div>` : '';
       const hlOnK = highlightActive();
       const hlK = isHighlighted(o.cid, o.commandeNom, o.piece);
       const hlClsK = hlOnK ? (hlK ? 'spotlight' : 'dimmed') : '';
@@ -5452,6 +5535,7 @@ function renderKanbanView(schedule){
         <div class="kanban-card-main">
           <div class="kanban-card-title">${escapeHtml(label)}</div>
           <div class="kanban-card-meta"><span class="machine-swatch" style="background:${color}"></span>${m?escapeHtml(m.nom):'—'}${operateurK ? ` · 👤 ${escapeHtml(operateurK.username)}` : ''}</div>
+          ${fusionListLineK}
           ${dueLineK}
         </div>
         <div class="kanban-card-times">
@@ -5488,6 +5572,10 @@ function renderKanbanView(schedule){
         ${[5,10,15,20,50].map(n=>`<option value="${n}" ${kanbanDoneLimit===n?'selected':''}>${n}</option>`).join('')}
         <option value="all" ${kanbanDoneLimit===Infinity?'selected':''}>Tout</option>
       </select>
+      <label class="statut-chip" style="margin-left:14px;">
+        <input type="checkbox" ${kanbanGroupedView?'checked':''} data-action="toggle-kanban-grouped-view">
+        🔗 Vue groupée des pièces fusionnées
+      </label>
     </div>
     <div class="kanban-board">${colsHtml}</div>
     <div class="footer-note" style="text-align:left; padding-top:10px;">Cliquez sur une carte pour isoler sa commande ; clic droit pour ouvrir le menu (Démarrer / Mettre en pause / Terminer). "À faire" garde en priorité les tâches les plus proches dans le temps ; "Terminée" garde les plus récentes et respecte aussi le filtre de période choisi dans le tableau des tâches terminées. "En cours" et "En pause" ne sont jamais limitées (bornées naturellement par votre nombre de postes).</div>
@@ -5923,6 +6011,8 @@ function dispatchClickAction(action, el){
     case 'add-machine': addMachine(); break;
     case 'remove-machine': removeMachine(el.dataset.id); break;
     case 'add-machine-indispo': addMachineIndispo(el.dataset.id); break;
+    case 'add-user-pause': addUserPause(el.dataset.userId); break;
+    case 'remove-user-pause': removeUserPause(el.dataset.userId, el.dataset.pauseId); break;
     case 'remove-machine-indispo': removeMachineIndispo(el.dataset.id, el.dataset.indispoId); break;
     case 'reset-all': resetAll(); break;
     case 'export-data': exportData(); break;
@@ -6071,7 +6161,7 @@ document.addEventListener('change', (e) => {
     case 'equipe-personne-filter': equipePersonneFilter = el.value; render(); break;
     case 'calyear-personne-filter': calendrierPersonneFilter = el.value; render(); break;
     case 'calyear-statut-filter': calendrierStatutFilter = el.value; render(); break;
-    case 'user-lunch-field': updateUserLunchField(el.dataset.userId, el.dataset.field, el.value); break;
+    case 'user-pause-field': updateUserPauseField(el.dataset.userId, el.dataset.pauseId, el.dataset.field, el.value); break;
     case 'machine-horaire': updateMachineHoraire(el.dataset.id, el.dataset.field, el.type==='checkbox' ? el.checked : el.value); break;
     case 'machine-transfert': updateMachineTransfert(el.dataset.id, el.dataset.field, el.value); break;
     case 'draft-field': updateDraftField(el.dataset.field, el.value); break;
@@ -6092,6 +6182,7 @@ document.addEventListener('change', (e) => {
     }
     case 'set-kanban-machine-filter': kanbanMachineFilter = el.value; render(); break;
     case 'toggle-kanban-machine': toggleKanbanMachineFilter(el.dataset.id, el.checked); break;
+    case 'toggle-kanban-grouped-view': toggleKanbanGroupedView(el.checked); break;
     case 'set-manual-start': setManualStartValue(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'op-phase': updateOpPhase(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'op-date-debut-possible': updateOpDateDebutPossible(el.dataset.cid, el.dataset.oid, el.value); break;
@@ -6697,6 +6788,7 @@ async function startApp(){
   loadDoneFilterPref();
   loadKanbanDoneLimitPref();
   loadKanbanMachineFilters();
+  loadKanbanGroupedViewPref();
   loadPanelCollapsePref();
   loadColumnsRatioPref();
   state = await loadState();
