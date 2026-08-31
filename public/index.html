@@ -5438,6 +5438,7 @@ function renderKanbanView(schedule){
       const hlOnK = highlightActive();
       const hlK = isHighlighted(o.cid, o.commandeNom, o.piece);
       const hlClsK = hlOnK ? (hlK ? 'spotlight' : 'dimmed') : '';
+      const operateurK = o.operatorUserId ? usersList.find(u=>String(u.id)===String(o.operatorUserId)) : null;
       const dueLineK = o.dateBesoin ? `<div class="kanban-card-due">Échéance : ${escapeHtml(new Date(o.dateBesoin+'T00:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'}))}</div>` : '';
       const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (Number(o.tempsUnitaire)*Number(o.quantite))/60;
       const plannedLineK = `<div class="kanban-card-planned">Prévu : ${durationLabel(dureeH)}</div>`;
@@ -5450,7 +5451,7 @@ function renderKanbanView(schedule){
       return `<div class="kanban-card ${hlClsK}" data-action="card-isolate" data-cid="${o.cid}" data-oid="${o.id}" style="border-left:3px solid ${urgBorder};" title="Clic : isoler la commande — clic droit : menu de statut">
         <div class="kanban-card-main">
           <div class="kanban-card-title">${escapeHtml(label)}</div>
-          <div class="kanban-card-meta"><span class="machine-swatch" style="background:${color}"></span>${m?escapeHtml(m.nom):'—'}</div>
+          <div class="kanban-card-meta"><span class="machine-swatch" style="background:${color}"></span>${m?escapeHtml(m.nom):'—'}${operateurK ? ` · 👤 ${escapeHtml(operateurK.username)}` : ''}</div>
           ${dueLineK}
         </div>
         <div class="kanban-card-times">
