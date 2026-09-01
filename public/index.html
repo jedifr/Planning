@@ -3245,6 +3245,29 @@ function dureePasseeH(o, st){
   if(elapsedH > 1e-6) return elapsedH;
   return (o.dureeReelleH!=null && o.dureeReelleH>0) ? o.dureeReelleH : null;
 }
+// Rattrapage pour les pièces déjà terminées AVANT que la clôture ne fige elle-même dureeReelleH et
+// vide sessions[] (voir applySingleStatusChange) — sans ça, ces vieilles pièces garderaient pour
+// toujours le détail complet de leurs sessions, qui ne sert plus à rien une fois terminées et
+// n'aide en rien dureePasseeH (déjà couvert par dureeReelleH une fois figé). Balaie aussi les
+// commandes déjà archivées : leur volume compte encore dans la taille de l'état sauvegardé.
+function purgeOldSessions(st){
+  let changed = false;
+  const sweep = (commandes) => {
+    (commandes||[]).forEach(c => c.pieces.forEach(o => {
+      if(o.statut === 'termine' && o.sessions && o.sessions.length > 0){
+        if(o.dureeReelleH == null){
+          const elapsedH = opElapsedHours(o, st);
+          if(elapsedH > 1e-6) o.dureeReelleH = elapsedH;
+        }
+        o.sessions = [];
+        changed = true;
+      }
+    }));
+  };
+  sweep(st.commandes);
+  sweep(st.commandesArchivees);
+  return changed;
+}
 function isInPauseWindow(op, now, st){
   const cfg = configForPiece(op, st);
   const pause = pauseWindowFor(now, cfg);
@@ -3311,7 +3334,8 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore){
     // Le temps prévu (tempsUnitaire) n'est plus jamais modifié ici — seul le temps réellement passé
     // est enregistré à part (voir dureePasseeH), pour que "prévu" et "passé" restent deux valeurs
     // distinctes même une fois la tâche terminée.
-    if(opElapsedHours(o, state) <= 1e-6){
+    const elapsedH = opElapsedHours(o, state);
+    if(elapsedH <= 1e-6){
       // jamais démarrée via Démarrer/Reprendre (ex. import déjà terminé, sans session) : on demande
       // la saisie manuelle du temps réellement passé, faute de pouvoir le déduire des sessions.
       const plannedTotal = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH*60 : (o.tempsUnitaire*o.quantite);
@@ -3322,6 +3346,12 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore){
           o.dureeReelleH = val / 60;
         }
       }
+    } else {
+      // Le temps réellement passé est désormais figé (dureePasseeH le relira depuis dureeReelleH) :
+      // le détail des sessions (chaque démarrage/pause/reprise) ne sert plus à rien une fois la
+      // pièce terminée, et ne fait qu'accumuler indéfiniment sur une pièce reprise plusieurs fois.
+      o.dureeReelleH = elapsedH;
+      o.sessions = [];
     }
     const m = state.machines.find(m=>m.id===o.machineId);
     if(!o.debutReel){ o.debutReel = m ? m.dispo : null; }
@@ -3342,6 +3372,7 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore){
     o.debutReel = null;
     o.finReel = null;
     o.sessions = [];
+    o.dureeReelleH = null; // le temps réellement passé sera reconstitué à la prochaine clôture
     o.autoPaused = false;
   }
   return null;
@@ -7148,6 +7179,7 @@ async function startApp(){
   draft = newDraft();
   loadUsersList(); // nécessaire pour le sélecteur d'opérateur, pas seulement pour la pop-up Paramètres
   if(applyAutoPauseResume(state)) queueSilentSave(); // rattrape le cas où la page est ouverte en pleine pause déjeuner
+  if(purgeOldSessions(state)) queueSilentSave(); // fige le temps réellement passé et vide le détail des sessions devenu inutile sur les pièces déjà terminées
   if(archiveOldCommandes(state)) queueSilentSave(); // écarte les commandes terminées depuis longtemps du moteur de planification
   if(justRanImplicitDepsMigration) queueSilentSave(); // fige la migration des dépendances implicites côté serveur, pour tous les postes
   render();
