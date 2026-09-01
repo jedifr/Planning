@@ -6629,8 +6629,9 @@ async function loadLoginBranding(){
     const res = await fetch('/api/branding');
     if(!res.ok) return;
     loginBranding = await res.json();
-    // Si l'écran de connexion est déjà affiché, on le redessine avec le logo une fois reçu.
-    if(document.querySelector('.login-screen')) renderLoginScreen(document.querySelector('.login-error')?.textContent || '');
+    // Si l'écran de connexion (précisément — pas l'écran de reset de mot de passe, qui partage la
+    // même classe .login-screen) est déjà affiché, on le redessine avec le logo une fois reçu.
+    if(document.getElementById('login-form')) renderLoginScreen(document.querySelector('.login-error')?.textContent || '');
   }catch(e){ /* sans logo, l'écran reste parfaitement utilisable */ }
 }
 function renderLoginScreen(errorMsg){
@@ -6916,6 +6917,7 @@ async function startApp(){
   const resetToken = urlParams.get('reset');
   if(resetToken){
     renderResetPasswordScreen(resetToken);
+    loadLoginBranding(); // prépare le logo pour l'écran de connexion qui suivra une fois le mot de passe changé
     return; // pas besoin de vérifier la session : ce lien fonctionne même sans être connecté
   }
   const leaveConfirmToken = urlParams.get('leave-confirm');
@@ -6932,9 +6934,11 @@ async function startApp(){
       startApp();
     } else {
       renderLoginScreen();
+      loadLoginBranding(); // sans ça, le logo ne s'affiche jamais sur une toute première visite (aucune session préalable)
     }
   }catch(e){
     renderLoginScreen("Impossible de contacter le serveur.");
+    loadLoginBranding();
   }
 })();
 </script>
