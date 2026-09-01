@@ -2467,7 +2467,10 @@ function updateDraftOpDureeMin(idx, value){
   render();
 }
 
-function pieceDupKey(piece, etape){ return (piece||'').trim().toLowerCase() + '|' + (etape||'').trim().toLowerCase(); }
+// Le poste fait partie de la clé : une même pièce/étape sur deux postes différents est une vraie
+// ligne distincte (ex. la même référence à découper ET à plier), pas un doublon accidentel — sans
+// ça, il fallait inventer une étape différente juste pour pouvoir saisir la seconde ligne.
+function pieceDupKey(piece, etape, machineId){ return (piece||'').trim().toLowerCase() + '|' + (etape||'').trim().toLowerCase() + '|' + (machineId||''); }
 function isTempsModified(o){
   if(o.tempsUnitaireTheorique==null) return false;
   return Math.abs(Number(o.tempsUnitaire) - Number(o.tempsUnitaireTheorique)) > 0.01;
@@ -3025,7 +3028,7 @@ function submitNewCommande(){
   const dedupedOps = [];
   let skippedInDraft = 0;
   validOps.forEach(o => {
-    const key = pieceDupKey(o.piece, o.etape);
+    const key = pieceDupKey(o.piece, o.etape, o.machineId);
     if(seenInDraft.has(key)){ skippedInDraft++; return; }
     seenInDraft.add(key);
     dedupedOps.push(o);
@@ -3035,12 +3038,12 @@ function submitNewCommande(){
   const existing = state.commandes.find(c => c.nom.trim().toLowerCase() === nomTrim.toLowerCase());
 
   if(existing){
-    const seenExisting = new Set(existing.pieces.map(p => pieceDupKey(p.piece, p.etape)));
+    const seenExisting = new Set(existing.pieces.map(p => pieceDupKey(p.piece, p.etape, p.machineId)));
     const existingMaxPhase = existing.pieces.reduce((mx,p) => Math.max(mx, Number(p.phase)||1), 1);
     const toAdd = [];
     const skippedNames = [];
     dedupedOps.forEach(o => {
-      const key = pieceDupKey(o.piece, o.etape);
+      const key = pieceDupKey(o.piece, o.etape, o.machineId);
       if(seenExisting.has(key)){ skippedNames.push([o.piece.trim(), o.etape.trim()].filter(Boolean).join(' / ')); return; }
       seenExisting.add(key);
       toAdd.push({
@@ -3098,10 +3101,10 @@ function submitNewCommande(){
   const applyFn = (targetState) => {
     const already = targetState.commandes.find(c => c.id===newCmd.id || c.nom.trim().toLowerCase()===nomTrim.toLowerCase());
     if(already && already.id !== newCmd.id){
-      const seenNow = new Set(already.pieces.map(p=>pieceDupKey(p.piece,p.etape)));
+      const seenNow = new Set(already.pieces.map(p=>pieceDupKey(p.piece,p.etape,p.machineId)));
       const maxPhaseNow = already.pieces.reduce((mx,p)=>Math.max(mx,Number(p.phase)||1),1);
       newCmd.pieces.forEach(p => {
-        const key = pieceDupKey(p.piece, p.etape);
+        const key = pieceDupKey(p.piece, p.etape, p.machineId);
         if(seenNow.has(key)) return;
         seenNow.add(key);
         already.pieces.push({ ...p, phase: (Number(p.phase)||1) + maxPhaseNow });
@@ -3179,9 +3182,9 @@ function updateOpField(cid, oid, field, value){
     // ce n'est pas encore une "modification".
     o.tempsUnitaireTheorique = Number(value);
   }
-  if(field==='piece' || field==='etape'){
-    const key = pieceDupKey(o.piece, o.etape);
-    const dup = c.pieces.some(other => other.id!==o.id && pieceDupKey(other.piece, other.etape)===key);
+  if(field==='piece' || field==='etape' || field==='machineId'){
+    const key = pieceDupKey(o.piece, o.etape, o.machineId);
+    const dup = c.pieces.some(other => other.id!==o.id && pieceDupKey(other.piece, other.etape, other.machineId)===key);
     if(dup) showToast(`⚠ "${o.piece}"${o.etape?' / '+o.etape:''} existe déjà sur cette commande — vérifiez qu'il ne s'agit pas d'un doublon.`);
   }
   commit();
