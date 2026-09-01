@@ -6214,8 +6214,8 @@ function render(){
     renderFusionPanel(),
     renderActiveFusionGroupsPanel(),
     renderNewForm(),
-    renderCommandes(schedule),
-    renderArchivesPanel(),
+    `<div id="commandes-section">${renderCommandes(schedule)}</div>`,
+    `<div id="archives-section">${renderArchivesPanel()}</div>`,
     `<div class="footer-note">Les dates sont recalculées automatiquement à chaque modification — décalez un poste ou une échéance pour voir l'effet en cascade.</div>`,
     renderSettingsModal(),
     renderExcelImportModal(),
@@ -6254,6 +6254,39 @@ function restoreModalScroll(scrollTop){
   if(scrollTop === null) return;
   const modal = document.querySelector('.modal-box');
   if(modal) modal.scrollTop = scrollTop;
+}
+
+/* ---------------- redessin ciblé (recherche) ----------------
+   La recherche de commandes redessine à chaque frappe : passer par render() intégral y reconstruit
+   aussi le Gantt/Kanban/Liste (potentiellement des centaines de barres) rien que pour filtrer une
+   liste en dessous — sensible dès qu'il y a beaucoup de commandes. Ces fonctions ne touchent que le
+   conteneur réellement concerné ; le reste de l'application continue de passer par render() intégral,
+   qui reste le chemin par défaut partout ailleurs. */
+function renderCommandesSectionOnly(){
+  const container = document.getElementById('commandes-section');
+  if(!container){ render(); return; } // filet de sécurité si la page n'est pas dans l'état attendu
+  container.innerHTML = renderCommandes(getSchedule());
+}
+function renderArchivesSectionOnly(){
+  const container = document.getElementById('archives-section');
+  if(!container){ render(); return; }
+  container.innerHTML = renderArchivesPanel();
+}
+// Ne modifie que les classes spotlight/dimmed des éléments déjà à l'écran (barres Gantt, puces
+// Mois, cartes Kanban, lignes Liste), sans reconstruire ces vues — le pendant "surlignage" du
+// redessin ciblé ci-dessus, pour que la recherche continue d'estomper les tâches non concernées
+// même sans reconstruire tout le planning à chaque frappe.
+function updateHighlightClasses(){
+  const schedule = getSchedule();
+  const opInfo = new Map();
+  schedule.forEach(c => c.pieces.forEach(o => { opInfo.set(String(o.id), { cid: c.id, commandeNom: c.nom, piece: o.piece }); }));
+  const hlOn = highlightActive();
+  document.querySelectorAll('.gantt-bar[data-oid], .month-chip[data-oid], .kanban-card[data-oid], .liste-row[data-oid]').forEach(el => {
+    const info = opInfo.get(el.dataset.oid);
+    const hl = info ? isHighlighted(info.cid, info.commandeNom, info.piece) : false;
+    el.classList.toggle('spotlight', hlOn && hl);
+    el.classList.toggle('dimmed', hlOn && !hl);
+  });
 }
 
 /* ---------------- délégation d'événements : clics & changements ---------------- */
@@ -6871,14 +6904,25 @@ document.addEventListener('input', (e) => {
   if(e.target.id === 'commande-search-input'){
     searchQuery = e.target.value;
     if(searchQuery) selectedCommandeId = null; // évite de cumuler recherche et sélection manuelle
+    const anchorBefore = viewAnchor.getTime();
     if(searchQuery) maybeJumpToHighlight();
-    render();
+    if(viewAnchor.getTime() !== anchorBefore){
+      // La recherche a fait sauter la vue Jour/Semaine/Mois/Année vers une autre période : le
+      // planning affiché change réellement, pas seulement le surlignage — redessin intégral requis.
+      render();
+    } else {
+      // Cas courant (l'écrasante majorité des frappes) : seule la liste "Commandes actives/Terminées"
+      // et le surlignage des tâches déjà affichées changent — on évite de reconstruire tout le
+      // Gantt/Kanban/Liste à chaque caractère tapé.
+      renderCommandesSectionOnly();
+      updateHighlightClasses();
+    }
     const el = document.getElementById('commande-search-input');
     if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
   }
   if(e.target.id === 'archive-search-input'){
     archiveSearchQuery = e.target.value;
-    render();
+    renderArchivesSectionOnly();
     const el = document.getElementById('archive-search-input');
     if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
   }
