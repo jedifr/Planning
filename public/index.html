@@ -783,6 +783,39 @@ function commandeCompletionDate(c){
   });
   return latest;
 }
+// Une commande n'est archivable que si TOUTES ses pièces sont terminées et que la plus récente
+// date de fin réelle dépasse le seuil configuré — jamais sur une simple absence de date (prudence).
+function isCommandeArchivable(c, cutoffDate){
+  if(!c.pieces || c.pieces.length === 0) return false;
+  if(!c.pieces.every(o => o.statut === 'termine')) return false;
+  const completion = commandeCompletionDate(c);
+  if(!completion) return false;
+  return completion < cutoffDate;
+}
+// Écarte du moteur de planification (computeSchedule tourne sur state.commandes à chaque redessin)
+// les commandes entièrement terminées depuis longtemps — c'est la principale cause de
+// ralentissement progressif de l'appli à mesure que l'historique s'accumule. Rien n'est perdu : les
+// commandes archivées restent consultables dans le panneau "Commandes archivées" et incluses dans
+// l'export .json complet ; "Désarchiver" les ramène instantanément dans les commandes actives.
+function archiveOldCommandes(st){
+  const jours = Number(st.config.archiveApresJours);
+  if(!jours || jours <= 0) return false;
+  const cutoff = new Date(Date.now() - jours*86400000);
+  const toArchive = st.commandes.filter(c => isCommandeArchivable(c, cutoff));
+  if(toArchive.length === 0) return false;
+  if(!Array.isArray(st.commandesArchivees)) st.commandesArchivees = [];
+  const toArchiveIds = new Set(toArchive.map(c=>c.id));
+  st.commandes = st.commandes.filter(c => !toArchiveIds.has(c.id));
+  st.commandesArchivees.push(...toArchive);
+  return true;
+}
+function unarchiveCommande(cid){
+  const idx = (state.commandesArchivees||[]).findIndex(c=>c.id===cid);
+  if(idx<0) return;
+  const [c] = state.commandesArchivees.splice(idx,1);
+  state.commandes.push(c);
+  commit();
+}
 let currentView = 'semaine'; // 'semaine' | 'mois' | 'annee'
 let currentPage = 'planning'; // 'planning' | 'conges'
 let congesTab = 'mes-demandes'; // 'mes-demandes' | 'equipe' | 'calendrier' | 'a-valider' | 'soldes'
@@ -851,6 +884,8 @@ function migrateState(st){
     delete m.transfertFixeH; delete m.transfertParPieceH;
   });
   if(!st.config.margeEcheanceJours && st.config.margeEcheanceJours !== 0) st.config.margeEcheanceJours = 0;
+  if(st.config.archiveApresJours === undefined) st.config.archiveApresJours = 365; // 0 = archivage automatique désactivé
+  if(!Array.isArray(st.commandesArchivees)) st.commandesArchivees = []; // commandes entièrement terminées depuis longtemps, écartées du moteur de planification pour garder l'appli réactive — toujours incluses dans l'export complet
   if(!st.userMachines) st.userMachines = {}; // { [userId]: [machineId, ...] } — lien plusieurs-à-plusieurs
   if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
   Object.keys(st.userLunch).forEach(uid_ => {
@@ -4753,8 +4788,9 @@ function renderSettingsModal(){
         <div><label class="field">Durée travaillée lun. – jeu. (heures)</label><input type="number" min="0" step="0.25" value="${cfg.monThuHours}" data-action="update-config" data-field="monThuHours"></div>
         <div><label class="field">Durée travaillée vendredi (heures)</label><input type="number" min="0" step="0.25" value="${cfg.friHours}" data-action="update-config" data-field="friHours"></div>
         <div><label class="field">Marge avant échéance (jours)</label><input type="number" min="0" step="1" value="${cfg.margeEcheanceJours||0}" data-action="update-config" data-field="margeEcheanceJours" title="Les tâches devront être terminées ce nombre de jours avant la date de besoin réelle"></div>
+        <div><label class="field">Archiver les commandes terminées après (jours)</label><input type="number" min="0" step="1" value="${cfg.archiveApresJours||0}" data-action="update-config" data-field="archiveApresJours" title="0 = jamais. Une commande n'est archivée que lorsque TOUTES ses pièces sont terminées."></div>
       </div>
-      <div class="footer-note" style="text-align:left; padding-top:10px;">La marge décale l'échéance utilisée pour les indicateurs "en retard" — une commande sera signalée en retard si sa fin estimée dépasse (date de besoin − marge), pas seulement la date de besoin elle-même. 0 = pas de marge.</div>` },
+      <div class="footer-note" style="text-align:left; padding-top:10px;">La marge décale l'échéance utilisée pour les indicateurs "en retard" — une commande sera signalée en retard si sa fin estimée dépasse (date de besoin − marge), pas seulement la date de besoin elle-même. 0 = pas de marge.<br>Les commandes archivées sont écartées du calcul du planning pour garder l'appli réactive — elles restent consultables et désarchivables dans le panneau "Commandes archivées", et toujours incluses dans l'export .json complet. 0 = archivage automatique désactivé.</div>` },
     pause: { title: 'Pause déjeuner', body: `
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${cfg.pauseActive?'checked':''} data-action="update-config" data-field="pauseActive">
@@ -5280,7 +5316,8 @@ function renderYearView(schedule){
 }
 
 const PANEL_COLLAPSE_STORAGE_KEY = 'planning-atelier-panel-collapse';
-let panelCollapsed = { planning:false, active:false, done:false };
+let panelCollapsed = { planning:false, active:false, done:false, archives:true };
+let archiveSearchQuery = '';
 function loadPanelCollapsePref(){
   try{
     const raw = localStorage.getItem(PANEL_COLLAPSE_STORAGE_KEY);
@@ -6008,6 +6045,46 @@ function renderCommandes(schedule){
   return searchBar + `<div class="commandes-columns" id="commandes-columns" style="grid-template-columns:minmax(0,${columnsRatio}fr) 9px minmax(0,${100-columnsRatio}fr);">${activeSection}<div class="columns-resize-handle" id="columns-resize-handle" title="Glisser pour ajuster la largeur — double-clic pour réinitialiser à 50/50"><div class="columns-resize-grip"></div></div>${doneSection}</div>`;
 }
 
+// Commandes entièrement terminées depuis longtemps, écartées du moteur de planification (voir
+// archiveOldCommandes) pour garder l'appli réactive — jamais perdues : consultables ici, incluses
+// dans l'export .json complet, et désarchivables en un clic si besoin d'y revenir.
+function renderArchivesPanel(){
+  const archives = state.commandesArchivees || [];
+  if(archives.length === 0) return '';
+  const collapsed = panelCollapsed.archives;
+  const filtered = archiveSearchQuery ? archives.filter(c => matchesSearch(c, archiveSearchQuery)) : archives;
+  const sorted = filtered.slice().sort((a,b) => {
+    const da = commandeCompletionDate(a), db = commandeCompletionDate(b);
+    return (db?db.getTime():0) - (da?da.getTime():0); // les plus récemment archivées d'abord
+  });
+  const rows = sorted.map(c => {
+    const completion = commandeCompletionDate(c);
+    return `<tr>
+      <td>${escapeHtml(c.nom)}</td>
+      <td>${c.pieces.length} pièce(s)</td>
+      <td>${completion ? formatDateFr(toDateInputValue(completion)) : '—'}</td>
+      <td><button class="ghost small" data-action="unarchive-commande" data-cid="${c.id}" title="Remettre cette commande parmi les commandes actives">↺ Désarchiver</button></td>
+    </tr>`;
+  }).join('');
+  return `<section class="panel" style="margin-top:14px;">
+    <div class="panel-head panel-head-clickable" data-action="toggle-panel-collapse" data-key="archives">
+      <h2><span class="n">${archives.length}</span>Commandes archivées</h2>
+      <button class="ghost icon-btn collapse-chevron ${collapsed?'collapsed':''}" data-action="toggle-panel-collapse" data-key="archives" title="${collapsed?'Déplier':'Replier'}">▾</button>
+    </div>
+    ${collapsed ? '' : `<div class="panel-body" style="padding:12px;">
+      <div class="search-bar">
+        <input type="text" id="archive-search-input" placeholder="Rechercher une commande ou une pièce archivée…" value="${escapeHtml(archiveSearchQuery)}">
+        ${archiveSearchQuery ? `<button class="ghost small" data-action="clear-archive-search">✕ Effacer</button>` : ''}
+      </div>
+      <table class="ops-table" style="margin-top:8px;">
+        <thead><tr><th>Référence</th><th>Pièces</th><th>Terminée le</th><th></th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="4" style="text-align:center; color:var(--text-faint);">Aucun résultat</td></tr>`}</tbody>
+      </table>
+      <div class="footer-note" style="text-align:left; padding-top:8px;">${state.config.archiveApresJours>0 ? `Archivées automatiquement ${state.config.archiveApresJours} jours après leur achèvement (réglable dans ⚙ Paramétrer → Horaires de travail).` : `Archivage automatique désactivé — ces commandes ont été archivées avant sa désactivation.`} Toujours incluses dans l'export .json complet.</div>
+    </div>`}
+  </section>`;
+}
+
 function renderToast(){
   if(!toastMessage) return '';
   return `<div class="toast">
@@ -6056,6 +6133,7 @@ function render(){
     renderActiveFusionGroupsPanel(),
     renderNewForm(),
     renderCommandes(schedule),
+    renderArchivesPanel(),
     `<div class="footer-note">Les dates sont recalculées automatiquement à chaque modification — décalez un poste ou une échéance pour voir l'effet en cascade.</div>`,
     renderSettingsModal(),
     renderExcelImportModal(),
@@ -6233,6 +6311,8 @@ function dispatchClickAction(action, el){
     }
     case 'sort-by-priority': sortByPriority(); break;
     case 'clear-search': searchQuery = ''; render(); break;
+    case 'clear-archive-search': archiveSearchQuery = ''; render(); break;
+    case 'unarchive-commande': unarchiveCommande(el.dataset.cid); break;
     case 'clear-isolate': selectedCommandeId = null; render(); break;
     case 'toggle-select-commande': toggleIsolateCommande(el.dataset.id); if(selectedCommandeId) maybeJumpToHighlight(); render(); break;
     case 'toggle-panel-collapse': togglePanelCollapse(el.dataset.key); break;
@@ -6713,6 +6793,12 @@ document.addEventListener('input', (e) => {
     const el = document.getElementById('commande-search-input');
     if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
   }
+  if(e.target.id === 'archive-search-input'){
+    archiveSearchQuery = e.target.value;
+    render();
+    const el = document.getElementById('archive-search-input');
+    if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
+  }
 });
 document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && showSettingsModal){ closeSettingsModal(); }
@@ -7011,6 +7097,7 @@ async function startApp(){
   draft = newDraft();
   loadUsersList(); // nécessaire pour le sélecteur d'opérateur, pas seulement pour la pop-up Paramètres
   if(applyAutoPauseResume(state)) queueSilentSave(); // rattrape le cas où la page est ouverte en pleine pause déjeuner
+  if(archiveOldCommandes(state)) queueSilentSave(); // écarte les commandes terminées depuis longtemps du moteur de planification
   if(justRanImplicitDepsMigration) queueSilentSave(); // fige la migration des dépendances implicites côté serveur, pour tous les postes
   render();
   setInterval(() => {
