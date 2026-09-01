@@ -810,7 +810,14 @@ let toastTimer = null;
 function showToast(msg){
   toastMessage = msg;
   if(toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { toastMessage = null; render(); }, 6000);
+  toastTimer = setTimeout(() => {
+    toastMessage = null;
+    // Ne pas couper une saisie en cours juste pour faire disparaître le toast — le prochain
+    // redessin naturel (ex. en sortant du champ) le fera disparaître de toute façon, puisque
+    // toastMessage est déjà à null ci-dessus.
+    if(isTypingInField() || dragCtx || showSettingsModal || changeProcessingInFlight) return;
+    render();
+  }, 6000);
   render();
 }
 let syncStatus = 'ok'; // 'ok' | 'saving' | 'error' | 'conflict'
@@ -1064,7 +1071,10 @@ async function silentSave(){
       state = migrateState(json.data);
       stateVersion = json.version;
       lastSyncAt = new Date();
-      render();
+      // Même précaution que pollRemoteState : silentSave() est déclenché en tâche de fond (auto-pause
+      // déjeuner, migration...), potentiellement pendant qu'un champ est en cours de saisie ailleurs
+      // dans l'appli — ne jamais le couper pour ça, le prochain redessin naturel suffira.
+      if(!(isTypingInField() || dragCtx || showSettingsModal || changeProcessingInFlight)) render();
       return;
     }
     if(!res.ok) throw new Error('HTTP '+res.status);
@@ -6798,7 +6808,10 @@ async function startApp(){
   if(justRanImplicitDepsMigration) silentSave(); // fige la migration des dépendances implicites côté serveur, pour tous les postes
   render();
   setInterval(() => {
-    if(showSettingsModal) return; // ne pas écraser une saisie en cours dans la pop-up Paramètres
+    // Mêmes précautions que pollRemoteState : un redessin ici ne doit jamais couper une saisie en
+    // cours (ce timer tourne toutes les 60s, y compris pendant qu'on tape dans n'importe quel champ
+    // de l'appli, pas seulement dans la pop-up Paramètres).
+    if(showSettingsModal || isTypingInField() || dragCtx || changeProcessingInFlight) return;
     const changed = applyAutoPauseResume(state);
     render(); // rafraîchit aussi l'horloge / l'indicateur de poste
     if(changed) silentSave();
