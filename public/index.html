@@ -959,7 +959,16 @@ async function loadState(){
   try{
     const res = await fetch('/api/state', { credentials: 'include' });
     if(res.status === 401){ renderLoginScreen('Votre session a expiré — reconnectez-vous.'); throw new Error('401'); }
+    if(res.status === 403){
+      const errJson = await res.json().catch(()=>({}));
+      if(errJson.licenseInvalid){
+        licenseBlocked = true;
+        licenseStatus = errJson.licenseStatus || null;
+        return migrateState(defaultState()); // jamais réellement affiché : render() montre l'écran de licence à la place
+      }
+    }
     if(!res.ok) throw new Error('HTTP '+res.status);
+    licenseBlocked = false;
     const json = await res.json();
     stateVersion = json.version;
     lastSyncAt = new Date();
@@ -1099,13 +1108,28 @@ async function pollRemoteState(){
   try{
     const res = await fetch('/api/state', { credentials: 'include' });
     if(res.status === 401) return; // session expirée : la prochaine action de l'utilisateur le détectera
+    if(res.status === 403){
+      const errJson = await res.json().catch(()=>({}));
+      if(errJson.licenseInvalid){
+        // Mêmes précautions que pour un rechargement normal : ne pas couper une saisie en cours.
+        if(isTypingInField() || dragCtx || showSettingsModal || changeProcessingInFlight) return;
+        licenseBlocked = true;
+        licenseStatus = errJson.licenseStatus || null;
+        render();
+        return;
+      }
+    }
     if(!res.ok) throw new Error('HTTP '+res.status);
     const json = await res.json();
     // Re-vérification APRÈS l'attente réseau : l'utilisateur a pu cliquer dans un champ et commencer
     // à taper pendant l'aller-retour. Redessiner à ce moment-là recrée le champ et efface ce qui
     // vient d'être saisi — c'est la cause du champ "Référence" qui se vidait aléatoirement.
     if(isTypingInField() || dragCtx || showSettingsModal || changeProcessingInFlight) return;
-    if(json.version !== stateVersion){
+    // Une clé de licence valide vient peut-être d'être installée depuis un autre poste : on sort
+    // de l'écran de blocage dès qu'une réponse normale revient.
+    const wasBlocked = licenseBlocked;
+    licenseBlocked = false;
+    if(json.version !== stateVersion || wasBlocked){
       state = migrateState(json.data);
       stateVersion = json.version;
       syncStatus = 'ok';
@@ -5924,6 +5948,12 @@ function render(){
   // de changement dès la première partie saisie (heures) sur certains navigateurs — sans cette
   // restauration, le redessin qui s'ensuit fait perdre le focus au milieu de la saisie.
   const focusRef = captureFocusRef();
+  if(licenseBlocked){
+    appEl.innerHTML = renderLicenseBlockScreen();
+    restoreModalScroll(modalScrollTop);
+    restoreFocusRef(focusRef);
+    return;
+  }
   if(currentPage === 'conges'){
     appEl.innerHTML = [
       renderHeader(),
@@ -6076,6 +6106,7 @@ function dispatchClickAction(action, el){
     case 'calyear-today': calendrierYear = new Date().getFullYear(); render(); break;
     case 'remove-leave-type': removeLeaveType(el.dataset.typeId); break;
     case 'logout': logout(); break;
+    case 'activate-license': activateLicenseKey(); break;
     case 'add-user-submit': addUserSubmit(); break;
     case 'delete-user': deleteUserConfirm(el.dataset.id, el.dataset.username); break;
     case 'change-user-password': changeUserPassword(el.dataset.id, el.dataset.username); break;
@@ -6587,6 +6618,8 @@ function scheduleNextPoll(){
 }
 let currentUsername = null;
 let currentUser = null; // { id, username, role }
+let licenseBlocked = false; // vrai si le serveur a refusé une requête faute de licence valide
+let licenseStatus = null; // dernier { installed, valid, client, expiresAt, error } connu du serveur
 
 // Identité visuelle récupérée avant connexion (route publique) — mémorisée pour que l'écran de
 // connexion puisse l'afficher sans attendre, y compris après une déconnexion.
@@ -6647,6 +6680,65 @@ function renderLoginScreen(errorMsg){
   });
   const forgotBtn = document.querySelector('[data-action="show-forgot-password"]');
   if(forgotBtn) forgotBtn.addEventListener('click', () => renderForgotPasswordScreen());
+}
+
+// Affiché à la place de l'appli normale dès que le serveur refuse une requête faute de licence
+// valide (licenseBlocked). Un administrateur peut coller une nouvelle clé directement ici, sans
+// avoir besoin d'un accès SSH/File Station au NAS — c'est la seule route encore ouverte, avec la
+// connexion elle-même (voir requireLicense côté serveur).
+function renderLicenseBlockScreen(){
+  const cfg = (state && state.config) ? state.config : {};
+  const title = cfg.appTitle || loginBranding.appTitle || 'Planning Atelier';
+  const logo = cfg.logoDataUrl || loginBranding.logoDataUrl || '';
+  const isAdminUser = currentUser && currentUser.role === 'admin';
+  const st = licenseStatus || {};
+  const reasonMsg = st.error || 'Licence invalide ou expirée.';
+  const expiryLine = st.expiresAt
+    ? `<div class="footer-note" style="margin-top:6px;">Licence${st.client?` de "${escapeHtml(st.client)}"`:''} expirée le ${formatDateFr(toDateInputValue(new Date(st.expiresAt)))}.</div>`
+    : '';
+  return `
+  <div class="login-screen">
+    <div class="login-box">
+      ${logo ? `<img src="${escapeHtml(logo)}" alt="" class="login-logo">` : ''}
+      <h1 class="login-title">${escapeHtml(title)}</h1>
+      <div class="login-sub">🔒 Accès bloqué</div>
+      <div class="login-error">${escapeHtml(reasonMsg)}</div>
+      ${expiryLine}
+      ${isAdminUser ? `
+        <div class="modal-section-title" style="margin-top:16px; text-align:left;">Installer une nouvelle clé de licence</div>
+        <textarea id="license-key-input" rows="3" placeholder="Collez la clé de licence ici" style="width:100%; box-sizing:border-box; font-family:'IBM Plex Mono',monospace; font-size:11px;"></textarea>
+        <div id="license-activate-error" class="login-error" style="display:none;"></div>
+        <button class="primary" style="width:100%; margin-top:10px; padding:10px;" data-action="activate-license">Activer</button>
+      ` : `<div class="footer-note" style="margin-top:14px;">Contactez votre administrateur pour renouveler la licence.</div>`}
+      <button class="ghost small" style="width:100%; margin-top:14px;" data-action="logout">Se déconnecter</button>
+    </div>
+  </div>`;
+}
+async function activateLicenseKey(){
+  const input = document.getElementById('license-key-input');
+  const errEl = document.getElementById('license-activate-error');
+  if(!input) return;
+  const key = input.value.trim();
+  const showError = (msg) => { if(errEl){ errEl.textContent = msg; errEl.style.display = 'block'; } };
+  if(errEl){ errEl.style.display = 'none'; errEl.textContent = ''; }
+  if(!key){ showError('Collez une clé de licence.'); return; }
+  try{
+    const res = await fetch('/api/license', {
+      method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key })
+    });
+    const json = await res.json().catch(()=>({}));
+    if(!res.ok){ showError(json.error || 'Clé invalide.'); return; }
+    licenseBlocked = false;
+    licenseStatus = json.status || null;
+    state = await loadState();
+    draft = newDraft();
+    loadUsersList();
+    render();
+    showToast('Licence activée.');
+  }catch(e){
+    showError('Impossible de contacter le serveur.');
+  }
 }
 
 function renderForgotPasswordScreen(infoMsg){

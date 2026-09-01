@@ -1,3 +1,9 @@
 # Config sensible : identifiants SMTP réels — ne pas versionner.
 # Copier Cfg_backup.yml.example vers Cfg_backup.yml et le remplir.
 Cfg_backup.yml
+
+# Clé privée de signature des licences — jamais versionnée (voir tools/generate-license.js).
+# Sans elle, impossible de générer une nouvelle licence valide : à sauvegarder ailleurs, en lieu sûr.
+tools/license-private-key.pem
+
+node_modules/
