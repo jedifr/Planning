@@ -1052,6 +1052,7 @@ async function saveState(){
       syncStatus = 'conflict';
       alert("Quelqu'un d'autre vient de modifier le planning entre-temps. Votre dernière action n'a pas été enregistrée — la version la plus récente va être rechargée.");
       state = migrateState(json.data);
+      invalidateSchedule();
       stateVersion = json.version;
       lastSyncAt = new Date();
       render();
@@ -1093,6 +1094,7 @@ async function saveStateWithReapply(applyFn, maxRetries){
           syncStatus = 'conflict';
           alert("Quelqu'un d'autre modifie le planning en même temps que vous, et votre action n'a malgré tout pas pu être réappliquée automatiquement après plusieurs tentatives. Merci de vérifier ci-dessous si elle est bien présente, et de la resaisir sinon.");
           state = migrateState(json.data);
+          invalidateSchedule();
           stateVersion = json.version;
           lastSyncAt = new Date();
           render();
@@ -1102,6 +1104,7 @@ async function saveStateWithReapply(applyFn, maxRetries){
         const freshState = migrateState(json.data);
         applyFn(freshState);
         state = freshState;
+        invalidateSchedule();
         stateVersion = json.version;
         continue;
       }
@@ -1133,6 +1136,7 @@ async function silentSave(){
     if(res.status === 409){
       const json = await res.json();
       state = migrateState(json.data);
+      invalidateSchedule();
       stateVersion = json.version;
       lastSyncAt = new Date();
       // Même précaution que pollRemoteState : silentSave() est déclenché en tâche de fond (auto-pause
@@ -1186,6 +1190,7 @@ async function pollRemoteState(){
     licenseBlocked = false;
     if(json.version !== stateVersion || wasBlocked){
       state = migrateState(json.data);
+      invalidateSchedule();
       stateVersion = json.version;
       syncStatus = 'ok';
       lastSyncAt = new Date();
@@ -1542,7 +1547,7 @@ function dateInCurrentView(d){
 function maybeJumpToHighlight(){
   if(!highlightActive()) return;
   if(currentView!=='jour' && currentView!=='semaine' && currentView!=='mois' && currentView!=='annee') return;
-  const schedule = computeSchedule(state);
+  const schedule = getSchedule();
   let matches = [];
   schedule.forEach(c => c.pieces.forEach(o => {
     if(!o.start) return;
@@ -1777,6 +1782,21 @@ function transferHoursAfter(op, st){
   const qte = Number(op.quantite) || 0;
   const totalMin = fixeMin + parPieceMin * qte;
   return totalMin > 0 ? totalMin / 60 : 0;
+}
+// computeSchedule(state) est le calcul le plus coûteux de l'appli (il retraite toutes les commandes
+// actives) et render() l'appelait à chaque redessin — y compris pour des actions qui ne changent
+// jamais rien à la planification (changer un e-mail, un rôle, une couleur d'interface...). On met
+// donc son résultat en cache, invalidé explicitement dès qu'une donnée dont il dépend a pu changer :
+// voir invalidateSchedule() (appelé par défaut dans commit(), et partout où `state` est remplacé en
+// bloc — poll, conflit de version, rechargement). Un appel non annoté reste TOUJOURS invalidé par
+// défaut : ne jamais sauter cette invalidation sans avoir vérifié que les champs touchés ne sont lus
+// nulle part dans computeSchedule/effectiveConfig/configForPiece (voir leur usage de state.config,
+// state.userLunch, state.userMachines, machine.horaires/indisponibilites).
+let scheduleCache = null;
+function invalidateSchedule(){ scheduleCache = null; }
+function getSchedule(){
+  if(!scheduleCache) scheduleCache = computeSchedule(state);
+  return scheduleCache;
 }
 function computeSchedule(st){
   const machineFree = {};
@@ -2023,7 +2043,8 @@ function findNextFreeSlot(floor, dureeH, intervals, cfg){
 // déjà TOUTES les modifications synchrones faites entre-temps, rien n'est perdu.
 let saveInFlight = false;
 let queuedSaveFn = null;
-function commit(){
+function commit(scheduleUnaffected){
+  if(!scheduleUnaffected) invalidateSchedule();
   render();
   queueSave(saveState);
 }
@@ -2114,20 +2135,25 @@ function updateMachineHoraire(id, field, value){
   }
   commit();
 }
+// Seuls ces champs de config sont réellement lus par le moteur de planification (voir
+// dayHoursFor/dayStartFor/pauseWindowsFor) — tous les autres peuvent sauter le recalcul du planning
+// (voir invalidateSchedule/commit). Ne JAMAIS retirer un champ d'ici sans vérifier qu'il n'est lu
+// nulle part dans computeSchedule/effectiveConfig/configForPiece.
+const CONFIG_FIELDS_AFFECTING_SCHEDULE = new Set(['startTime','monThuHours','friHours','pauseActive','pauseDebut','pauseFin']);
 function updateConfig(field, value){
   if(field.startsWith('backup.')){
     if(!state.config.backup) state.config.backup = { destinataire:'', motDePasse:'', heure:'02:00', actif:false, dernierEnvoi:null };
     const sub = field.split('.')[1];
     if(sub==='actif') state.config.backup.actif = !!value;
     else state.config.backup[sub] = value;
-    commit();
+    commit(true);
     return;
   }
   if(field.startsWith('urgencyColors.')){
     if(!state.config.urgencyColors) state.config.urgencyColors = { importante:'#a06d1a', urgente:'#b23a30' };
     const sub = field.split('.')[1];
     state.config.urgencyColors[sub] = value;
-    commit();
+    commit(true);
     return;
   }
   if(field==='startTime'){
@@ -2150,10 +2176,10 @@ function updateConfig(field, value){
     const val = Number(value);
     if(!isNaN(val) && val >= 0) state.config[field] = val;
   }
-  commit();
+  commit(!CONFIG_FIELDS_AFFECTING_SCHEDULE.has(field));
 }
 function triggerLogoUpload(){ document.getElementById('logo-upload-input').click(); }
-function removeLogo(){ state.config.logoDataUrl = null; commit(); }
+function removeLogo(){ state.config.logoDataUrl = null; commit(true); }
 function handleLogoUpload(e){
   const file = e.target.files[0];
   if(!file) return;
@@ -2170,7 +2196,7 @@ function handleLogoUpload(e){
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       state.config.logoDataUrl = canvas.toDataURL('image/png');
-      commit();
+      commit(true);
     };
     img.onerror = () => alert("Impossible de lire cette image.");
     img.src = ev.target.result;
@@ -2195,7 +2221,7 @@ function handleFaviconUpload(e){
       canvas.width = size; canvas.height = size;
       canvas.getContext('2d').drawImage(img, sx, sy, side, side, 0, 0, size, size);
       state.config.faviconDataUrl = canvas.toDataURL('image/png');
-      commit();
+      commit(true);
     };
     img.onerror = () => alert("Impossible de lire cette image.");
     img.src = ev.target.result;
@@ -2774,7 +2800,7 @@ function withdrawLeaveRequest(reqId){
 // une nouvelle demande). `reqLike` : { id?, userId, typeId, debut, fin }.
 function simulateLeaveImpactForRequest(reqLike){
   const TOLERANCE_MS = 60000; // 1 minute — ignore le bruit d'arrondi des calculs de durée, pas un vrai décalage
-  const scheduleBefore = computeSchedule(state);
+  const scheduleBefore = getSchedule();
   const hypothetical = JSON.parse(JSON.stringify(state));
   if(!hypothetical.leaveRequests) hypothetical.leaveRequests = [];
   const existingIdx = reqLike.id ? hypothetical.leaveRequests.findIndex(r=>r.id===reqLike.id) : -1;
@@ -2971,12 +2997,12 @@ function removeLeaveType(typeId){
 function updateLeaveTypeField(typeId, field, value){
   const t = leaveTypeById(typeId); if(!t) return;
   t[field] = value;
-  commit();
+  commit(true); // nom/couleur d'un type de congé : jamais lu par le moteur de planification
 }
 function updateUserLeaveAllocation(userId, typeId, value){
   if(!state.userLeaveAllocations[userId]) state.userLeaveAllocations[userId] = {};
   state.userLeaveAllocations[userId][typeId] = Math.max(0, Number(value)||0);
-  commit();
+  commit(true); // n'affecte que le calcul d'affichage du solde, pas le planning lui-même
 }
 function toggleModuleConges(active){
   state.config.modules.conges = !!active;
@@ -3354,7 +3380,7 @@ function setOpStatut(cid, oid, newStatut){
 
   const plannedEndsBefore = {};
   if(newStatut === 'termine'){
-    const scheduleBefore = computeSchedule(state);
+    const scheduleBefore = getSchedule();
     group.forEach(({cc, oo}) => {
       if(oo.statut === 'en_cours' || oo.statut === 'en_pause'){
         const cBefore = scheduleBefore.find(x=>x.id===cc.id);
@@ -3413,7 +3439,7 @@ function resetOpOverride(cid, oid){
 }
 // Fige une tâche volante pile à son horaire actuellement calculé (celui affiché dans le planning).
 function pinOpAtCurrentTime(cid, oid){
-  const schedule = computeSchedule(state);
+  const schedule = getSchedule();
   const cSched = schedule.find(cc=>cc.id===cid);
   const oSched = cSched && cSched.pieces.find(pp=>pp.id===oid);
   if(!oSched || !oSched.start) return;
@@ -5385,7 +5411,7 @@ function performFusion(items, skipCommit){
   if(items.length < 2) return;
   const groupId = uid('fusion');
   const totalDuree = items.reduce((s,it)=>s+it.dureeH, 0);
-  const schedule = computeSchedule(state);
+  const schedule = getSchedule();
   let commonStart = null;
   items.forEach(it => {
     const c = schedule.find(cc=>cc.id===it.cid);
@@ -6146,7 +6172,7 @@ function render(){
     restoreFocusRef(focusRef);
     return;
   }
-  const schedule = computeSchedule(state);
+  const schedule = getSchedule();
   const html = [
     renderHeader(),
     renderStats(schedule),
@@ -6955,6 +6981,7 @@ async function activateLicenseKey(){
     licenseBlocked = false;
     licenseStatus = json.status || null;
     state = await loadState();
+    invalidateSchedule();
     draft = newDraft();
     loadUsersList();
     render();
@@ -7117,6 +7144,7 @@ async function startApp(){
   loadPanelCollapsePref();
   loadColumnsRatioPref();
   state = await loadState();
+  invalidateSchedule();
   draft = newDraft();
   loadUsersList(); // nécessaire pour le sélecteur d'opérateur, pas seulement pour la pop-up Paramètres
   if(applyAutoPauseResume(state)) queueSilentSave(); // rattrape le cas où la page est ouverte en pleine pause déjeuner
