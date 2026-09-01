@@ -816,6 +816,23 @@ function unarchiveCommande(cid){
   state.commandes.push(c);
   commit();
 }
+// Déclenchement manuel depuis Paramètres — applique le seuil configuré immédiatement, pour
+// rattraper l'historique déjà accumulé sans attendre le prochain démarrage de l'application
+// (l'archivage automatique ne tourne qu'une fois au chargement, voir startApp).
+function manualArchiveNow(){
+  if(!(Number(state.config.archiveApresJours) > 0)){
+    showToast('Réglez d\'abord un nombre de jours supérieur à 0 ci-dessus.');
+    return;
+  }
+  const before = (state.commandesArchivees||[]).length;
+  if(!archiveOldCommandes(state)){
+    showToast('Aucune commande à archiver pour le moment.');
+    return;
+  }
+  const nb = state.commandesArchivees.length - before;
+  commit();
+  showToast(`${nb} commande${nb>1?'s':''} archivée${nb>1?'s':''}.`);
+}
 let currentView = 'semaine'; // 'semaine' | 'mois' | 'annee'
 let currentPage = 'planning'; // 'planning' | 'conges'
 let congesTab = 'mes-demandes'; // 'mes-demandes' | 'equipe' | 'calendrier' | 'a-valider' | 'soldes'
@@ -4788,9 +4805,14 @@ function renderSettingsModal(){
         <div><label class="field">Durée travaillée lun. – jeu. (heures)</label><input type="number" min="0" step="0.25" value="${cfg.monThuHours}" data-action="update-config" data-field="monThuHours"></div>
         <div><label class="field">Durée travaillée vendredi (heures)</label><input type="number" min="0" step="0.25" value="${cfg.friHours}" data-action="update-config" data-field="friHours"></div>
         <div><label class="field">Marge avant échéance (jours)</label><input type="number" min="0" step="1" value="${cfg.margeEcheanceJours||0}" data-action="update-config" data-field="margeEcheanceJours" title="Les tâches devront être terminées ce nombre de jours avant la date de besoin réelle"></div>
-        <div><label class="field">Archiver les commandes terminées après (jours)</label><input type="number" min="0" step="1" value="${cfg.archiveApresJours||0}" data-action="update-config" data-field="archiveApresJours" title="0 = jamais. Une commande n'est archivée que lorsque TOUTES ses pièces sont terminées."></div>
+        <div><label class="field">Archiver les commandes terminées après (jours)</label>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <input type="number" min="0" step="1" value="${cfg.archiveApresJours||0}" data-action="update-config" data-field="archiveApresJours" title="0 = jamais. Une commande n'est archivée que lorsque TOUTES ses pièces sont terminées." style="flex:1;">
+            <button class="ghost small" data-action="archive-now" title="Applique ce seuil immédiatement, sans attendre le prochain démarrage de l'application">Archiver maintenant</button>
+          </div>
+        </div>
       </div>
-      <div class="footer-note" style="text-align:left; padding-top:10px;">La marge décale l'échéance utilisée pour les indicateurs "en retard" — une commande sera signalée en retard si sa fin estimée dépasse (date de besoin − marge), pas seulement la date de besoin elle-même. 0 = pas de marge.<br>Les commandes archivées sont écartées du calcul du planning pour garder l'appli réactive — elles restent consultables et désarchivables dans le panneau "Commandes archivées", et toujours incluses dans l'export .json complet. 0 = archivage automatique désactivé.</div>` },
+      <div class="footer-note" style="text-align:left; padding-top:10px;">La marge décale l'échéance utilisée pour les indicateurs "en retard" — une commande sera signalée en retard si sa fin estimée dépasse (date de besoin − marge), pas seulement la date de besoin elle-même. 0 = pas de marge.<br>Les commandes archivées sont écartées du calcul du planning pour garder l'appli réactive — elles restent consultables et désarchivables dans le panneau "Commandes archivées", et toujours incluses dans l'export .json complet. 0 = archivage automatique désactivé (l'archivage tourne aussi automatiquement à chaque démarrage de l'application).</div>` },
     pause: { title: 'Pause déjeuner', body: `
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${cfg.pauseActive?'checked':''} data-action="update-config" data-field="pauseActive">
@@ -6313,6 +6335,7 @@ function dispatchClickAction(action, el){
     case 'clear-search': searchQuery = ''; render(); break;
     case 'clear-archive-search': archiveSearchQuery = ''; render(); break;
     case 'unarchive-commande': unarchiveCommande(el.dataset.cid); break;
+    case 'archive-now': manualArchiveNow(); break;
     case 'clear-isolate': selectedCommandeId = null; render(); break;
     case 'toggle-select-commande': toggleIsolateCommande(el.dataset.id); if(selectedCommandeId) maybeJumpToHighlight(); render(); break;
     case 'toggle-panel-collapse': togglePanelCollapse(el.dataset.key); break;
