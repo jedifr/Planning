@@ -1942,7 +1942,40 @@ function findNextFreeSlot(floor, dureeH, intervals, cfg){
 }
 
 /* ---------------- actions d'état ---------------- */
-function commit(){ saveState(); render(); }
+// Enchaîner deux sauvegardes (saveState ou silentSave, qui frappent la même route) sans attendre la
+// réponse de la première envoie la seconde avec un expectedVersion déjà périmé (celui d'avant la
+// première) : le serveur la refuse comme un "vrai" conflit (409), alors qu'il s'agit du même onglet
+// qui se court-circuite lui-même — cas typique : plusieurs champs (ex. une ligne de pauses) validés
+// coup sur coup, chacun avec son propre commit(). On sérialise donc TOUTES les sauvegardes derrière
+// une file d'un seul cran : une sauvegarde demandée pendant qu'une autre est déjà en vol se contente
+// de noter laquelle rejouer juste après, avec la version alors à jour — `state` porte de toute façon
+// déjà TOUTES les modifications synchrones faites entre-temps, rien n'est perdu.
+let saveInFlight = false;
+let queuedSaveFn = null;
+function commit(){
+  render();
+  queueSave(saveState);
+}
+function queueSilentSave(){
+  queueSave(silentSave);
+}
+function queueSave(fn){
+  if(saveInFlight){ queuedSaveFn = fn; return; }
+  runQueuedSave(fn);
+}
+async function runQueuedSave(fn){
+  saveInFlight = true;
+  try{
+    await fn();
+  } finally {
+    saveInFlight = false;
+    if(queuedSaveFn){
+      const next = queuedSaveFn;
+      queuedSaveFn = null;
+      runQueuedSave(next);
+    }
+  }
+}
 
 function addMachine(){
   const defaultColor = MACHINE_COLORS[state.machines.length % MACHINE_COLORS.length];
@@ -6897,8 +6930,8 @@ async function startApp(){
   state = await loadState();
   draft = newDraft();
   loadUsersList(); // nécessaire pour le sélecteur d'opérateur, pas seulement pour la pop-up Paramètres
-  if(applyAutoPauseResume(state)) silentSave(); // rattrape le cas où la page est ouverte en pleine pause déjeuner
-  if(justRanImplicitDepsMigration) silentSave(); // fige la migration des dépendances implicites côté serveur, pour tous les postes
+  if(applyAutoPauseResume(state)) queueSilentSave(); // rattrape le cas où la page est ouverte en pleine pause déjeuner
+  if(justRanImplicitDepsMigration) queueSilentSave(); // fige la migration des dépendances implicites côté serveur, pour tous les postes
   render();
   setInterval(() => {
     // Mêmes précautions que pollRemoteState : un redessin ici ne doit jamais couper une saisie en
@@ -6907,7 +6940,7 @@ async function startApp(){
     if(showSettingsModal || isTypingInField() || dragCtx || changeProcessingInFlight) return;
     const changed = applyAutoPauseResume(state);
     render(); // rafraîchit aussi l'horloge / l'indicateur de poste
-    if(changed) silentSave();
+    if(changed) queueSilentSave();
   }, 60000);
   scheduleNextPoll(); // récupère les modifications des autres utilisateurs
 }
