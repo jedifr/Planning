@@ -852,7 +852,7 @@ function migrateState(st){
   });
   if(!st.config.margeEcheanceJours && st.config.margeEcheanceJours !== 0) st.config.margeEcheanceJours = 0;
   if(!st.userMachines) st.userMachines = {}; // { [userId]: [machineId, ...] } — lien plusieurs-à-plusieurs
-  if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}]} } — pause(s) propre(s) à la personne, affecte(nt) réellement le calcul
+  if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
   Object.keys(st.userLunch).forEach(uid_ => {
     const lunch = st.userLunch[uid_];
     if(!Array.isArray(lunch.pauses)){
@@ -862,6 +862,9 @@ function migrateState(st){
       delete lunch.pauseDebut;
       delete lunch.pauseFin;
     }
+    if(lunch.horaireActif === undefined) lunch.horaireActif = false;
+    if(!lunch.heureDebut) lunch.heureDebut = `${pad(DEFAULT_CONFIG.startHour)}:${pad(DEFAULT_CONFIG.startMinute)}`;
+    if(!lunch.heureFin) lunch.heureFin = '16:45';
   });
   if(!st.config.modules) st.config.modules = { conges: true }; // interrupteur du module Congés
   if(st.config.matiereFusionActive === undefined) st.config.matiereFusionActive = false; // détection par matière/épaisseur désactivée par défaut
@@ -1554,20 +1557,36 @@ function configForMachineId(machineId, st){
   const m = st.machines.find(mm=>mm.id===machineId);
   return effectiveConfig(m, st);
 }
-// Comme configForMachineId, mais si la pièce a un opérateur assigné avec une pause déjeuner qui
-// lui est propre, cette pause remplace celle du poste — le reste (horaires, indisponibilités...)
+// Comme configForMachineId, mais si la pièce a un opérateur assigné avec une pause déjeuner et/ou
+// des horaires de poste qui lui sont propres, ils remplacent ceux du poste — le reste (indisponibilités...)
 // continue de venir du poste.
 function configForPiece(op, st){
   const cfg = configForMachineId(op.machineId, st);
   const userLunch = op.operatorUserId && st.userLunch ? st.userLunch[op.operatorUserId] : null;
-  if(userLunch && userLunch.pauseActive){
+  if(!userLunch) return cfg;
+  let result = cfg;
+  if(userLunch.pauseActive){
     // Une ou plusieurs pauses propres à cette personne remplacent entièrement celle(s) du poste
     // (jamais un mélange des deux) — pauses:[] avec pauseActive coché revient à travailler sans
     // aucune pause plutôt qu'à hériter de celle du poste, ce qui est le comportement attendu si
     // l'admin a explicitement coché "pause propre à cette personne" puis tout supprimé.
-    return { ...cfg, pauseActive: true, pauses: userLunch.pauses || [], pauseDebut: undefined, pauseFin: undefined };
+    result = { ...result, pauseActive: true, pauses: userLunch.pauses || [], pauseDebut: undefined, pauseFin: undefined };
   }
-  return cfg;
+  if(userLunch.horaireActif && userLunch.heureDebut && userLunch.heureFin){
+    const [sh, sm] = userLunch.heureDebut.split(':').map(Number);
+    const [eh, em] = userLunch.heureFin.split(':').map(Number);
+    if(!isNaN(sh) && !isNaN(eh)){
+      // La personne travaille de heureDebut à heureFin, pause(s) comprise(s) dans cet intervalle —
+      // on retire donc la durée des pauses (les siennes si actives, sinon celles du poste) pour
+      // obtenir le nombre d'heures réellement travaillées : dayIntervals() rallongera la journée
+      // d'autant à l'affichage, ce qui la fait retomber exactement sur l'heure de fin demandée.
+      const totalMin = (eh*60 + (em||0)) - (sh*60 + (sm||0));
+      const pauseMin = pauseWindowsFor(new Date(2000,0,3), result).reduce((s,w) => s + (w.end.getTime()-w.start.getTime())/60000, 0);
+      const workingHours = Math.max(0, (totalMin - pauseMin) / 60);
+      result = { ...result, startHour: sh, startMinute: sm||0, monThuHours: workingHours, friHours: workingHours };
+    }
+  }
+  return result;
 }
 
 function findOverlap(start, end, intervals, ignoreFusionGroupId){
@@ -2245,9 +2264,15 @@ function clearUserMachines(userId){
   state.userMachines[userId] = [];
   commit();
 }
+// Garantit l'existence d'une entrée userLunch pour cette personne, avec un gabarit complet — pour
+// que les horaires de poste et les pauses puissent chacun être activés indépendamment sans jamais
+// écraser les réglages déjà faits sur l'autre.
+function ensureUserLunch(userId){
+  if(!state.userLunch[userId]) state.userLunch[userId] = { pauseActive:false, pauses:[], horaireActif:false, heureDebut:`${pad(DEFAULT_CONFIG.startHour)}:${pad(DEFAULT_CONFIG.startMinute)}`, heureFin:'16:45' };
+  return state.userLunch[userId];
+}
 function toggleUserLunchActive(userId, active){
-  if(!state.userLunch[userId]) state.userLunch[userId] = { pauseActive:false, pauses:[] };
-  const lunch = state.userLunch[userId];
+  const lunch = ensureUserLunch(userId);
   lunch.pauseActive = !!active;
   // À l'activation, si la personne n'a encore aucune pause définie, on en propose une par défaut
   // (déjeuner classique) plutôt que de la laisser sans aucune pause sans que ce soit visible.
@@ -2255,10 +2280,20 @@ function toggleUserLunchActive(userId, active){
   commit();
 }
 function addUserPause(userId){
-  if(!state.userLunch[userId]) state.userLunch[userId] = { pauseActive:true, pauses:[] };
-  const lunch = state.userLunch[userId];
+  const lunch = ensureUserLunch(userId);
   lunch.pauseActive = true;
   lunch.pauses.push({ id: uid('pause'), debut:'15:00', fin:'15:15' });
+  commit();
+}
+function toggleUserHoraireActive(userId, active){
+  const lunch = ensureUserLunch(userId);
+  lunch.horaireActif = !!active;
+  commit();
+}
+function updateUserHoraireField(userId, field, value){
+  const lunch = state.userLunch[userId]; if(!lunch) return;
+  if(!value) return;
+  lunch[field] = value;
   commit();
 }
 function removeUserPause(userId, pauseId){
@@ -4782,7 +4817,7 @@ function renderSettingsModal(){
         ${usersList.map(u => {
           const uid_ = String(u.id);
           const linkedMachineIds = state.userMachines[uid_] || [];
-          const lunch = state.userLunch[uid_] || { pauseActive:false, pauses:[] };
+          const lunch = state.userLunch[uid_] || { pauseActive:false, pauses:[], horaireActif:false, heureDebut:'08:00', heureFin:'16:45' };
           const isLastAdmin = u.role==='admin' && usersList.filter(x=>x.role==='admin').length<=1;
           return `
           <div class="machine-card">
@@ -4822,6 +4857,18 @@ function renderSettingsModal(){
                 </div>`).join('') || `<div class="footer-note" style="margin:0;">Aucune pause définie — cette personne travaille sans interruption.</div>`}
             </div>
             <button class="small" style="margin-top:6px;" data-action="add-user-pause" data-user-id="${uid_}">+ Ajouter une pause</button>` : ''}
+
+            <div class="modal-section-title" style="font-size:10px; margin-top:12px;">Horaires de poste de cette personne</div>
+            <label class="statut-chip" style="margin-bottom:8px;">
+              <input type="checkbox" ${lunch.horaireActif?'checked':''} data-action="toggle-user-horaire" data-user-id="${uid_}">
+              Début/fin de poste propres à cette personne (remplacent ceux du poste quand elle est assignée comme opérateur)
+            </label>
+            ${lunch.horaireActif ? `
+            <div class="user-pause-row">
+              <input type="time" value="${lunch.heureDebut}" data-action="user-horaire-field" data-user-id="${uid_}" data-field="heureDebut" title="Début de poste">
+              <input type="time" value="${lunch.heureFin}" data-action="user-horaire-field" data-user-id="${uid_}" data-field="heureFin" title="Fin de poste">
+            </div>
+            <div class="footer-note" style="text-align:left; margin-top:4px;">Pause(s) comprise(s) dans cet intervalle — la durée réellement travaillée en est déduite automatiquement.</div>` : ''}
           </div>`;
         }).join('')}
       </div>
@@ -6218,6 +6265,7 @@ function dispatchChangeAction(el, action){
     case 'toggle-fusion-item': toggleFusionItem(el.dataset.key, el.dataset.oid, el.checked); break;
     case 'toggle-module-conges': toggleModuleConges(el.checked); break;
     case 'toggle-user-lunch': toggleUserLunchActive(el.dataset.userId, el.checked); break;
+    case 'toggle-user-horaire': toggleUserHoraireActive(el.dataset.userId, el.checked); break;
     case 'user-role': changeUserRole(el.dataset.userId, el.value); break;
     case 'user-email': changeUserEmail(el.dataset.userId, el.value); break;
     case 'leave-type-field': updateLeaveTypeField(el.dataset.typeId, el.dataset.field, el.value); break;
@@ -6228,6 +6276,7 @@ function dispatchChangeAction(el, action){
     case 'calyear-personne-filter': calendrierPersonneFilter = el.value; render(); break;
     case 'calyear-statut-filter': calendrierStatutFilter = el.value; render(); break;
     case 'user-pause-field': updateUserPauseField(el.dataset.userId, el.dataset.pauseId, el.dataset.field, el.value); break;
+    case 'user-horaire-field': updateUserHoraireField(el.dataset.userId, el.dataset.field, el.value); break;
     case 'machine-horaire': updateMachineHoraire(el.dataset.id, el.dataset.field, el.type==='checkbox' ? el.checked : el.value); break;
     case 'machine-transfert': updateMachineTransfert(el.dataset.id, el.dataset.field, el.value); break;
     case 'draft-field': updateDraftField(el.dataset.field, el.value); break;
