@@ -6025,7 +6025,7 @@ function captureFocusRef(){
   const el = document.activeElement;
   if(!el || el===document.body) return null;
   if(!['INPUT','SELECT','TEXTAREA'].includes(el.tagName)) return null;
-  const attrs = ['data-action','data-field','data-id','data-cid','data-oid','data-user-id','data-type-id','data-machine-id','data-conge-id','id'];
+  const attrs = ['data-action','data-field','data-id','data-cid','data-oid','data-user-id','data-type-id','data-machine-id','data-conge-id','data-pause-id','id'];
   let selector = el.tagName.toLowerCase();
   attrs.forEach(a => { const v = el.getAttribute(a); if(v!=null) selector += `[${a}="${v.replace(/"/g,'\\"')}"]`; });
   if(selector === el.tagName.toLowerCase()) return null; // aucun attribut identifiant : impossible de le retrouver après coup
@@ -6204,18 +6204,10 @@ function dispatchClickAction(action, el){
   }
 }
 
-document.addEventListener('change', (e) => {
-  const el = e.target.closest('[data-action]');
-  if(!el) return;
-  const action = el.dataset.action;
-  // Différé d'un instant (0 ms) : laisse d'abord la touche Tab déplacer normalement le focus vers
-  // le champ suivant avant de redessiner la page. Sans ce délai, un redessin déclenché pendant que
-  // le focus est encore "en transit" reconstruit tout le DOM au mauvais moment — le navigateur perd
-  // alors la référence du champ suivant et Tab se met à sauter n'importe où.
-  // Pendant ce court battement, la synchronisation en tâche de fond (pollRemoteState) ne doit surtout
-  // pas redessiner la page avec une valeur pas encore mise à jour — d'où ce signal partagé.
-  changeProcessingInFlight = true;
-  setTimeout(() => {
+// Exécute réellement l'action associée à un champ modifié (extrait de l'ancien handler 'change'
+// pour pouvoir être rejoué en différé — voir le handler 'focusout' plus bas, pour les champs
+// type="time").
+function dispatchChangeAction(el, action){
   switch(action){
     case 'update-machine-name': updateMachine(el.dataset.id, 'nom', el.value); break;
     case 'update-machine-dispo': updateMachine(el.dataset.id, 'dispo', el.value); break;
@@ -6287,7 +6279,46 @@ document.addEventListener('change', (e) => {
     case 'update-import-preview-poste': updateImportPreviewPoste(el.dataset.oid, el.value); break;
     case 'update-import-preview-operateur': updateImportPreviewOperateur(el.dataset.oid, el.value); break;
   }
-  changeProcessingInFlight = false;
+}
+function isDeferredTimeField(el){
+  return !!(el && el.tagName === 'INPUT' && el.type === 'time');
+}
+document.addEventListener('change', (e) => {
+  const el = e.target.closest('[data-action]');
+  if(!el) return;
+  if(isDeferredTimeField(el)){
+    // Un champ type="time" peut déclencher "change" avant même que l'utilisateur ait fini de le
+    // renseigner (bascule automatique de l'heure vers les minutes) : redessiner à cet instant lui
+    // ferait perdre le segment en cours d'édition (setSelectionRange, utilisé ailleurs pour
+    // restaurer la position du curseur après un redessin, n'est pas pris en charge sur ce type de
+    // champ — impossible à restaurer). On mémorise seulement qu'une vraie modification a eu lieu
+    // (le navigateur ne déclenche "change" que si la valeur a réellement changé) ; le traitement
+    // réel — et le redessin qui va avec — n'a lieu qu'à la sortie du champ (voir 'focusout').
+    el.dataset.pendingChange = '1';
+    return;
+  }
+  const action = el.dataset.action;
+  // Différé d'un instant (0 ms) : laisse d'abord la touche Tab déplacer normalement le focus vers
+  // le champ suivant avant de redessiner la page. Sans ce délai, un redessin déclenché pendant que
+  // le focus est encore "en transit" reconstruit tout le DOM au mauvais moment — le navigateur perd
+  // alors la référence du champ suivant et Tab se met à sauter n'importe où.
+  // Pendant ce court battement, la synchronisation en tâche de fond (pollRemoteState) ne doit surtout
+  // pas redessiner la page avec une valeur pas encore mise à jour — d'où ce signal partagé.
+  changeProcessingInFlight = true;
+  setTimeout(() => {
+    dispatchChangeAction(el, action);
+    changeProcessingInFlight = false;
+  }, 0);
+});
+document.addEventListener('focusout', (e) => {
+  const el = e.target.closest ? e.target.closest('[data-action]') : null;
+  if(!el || !isDeferredTimeField(el) || el.dataset.pendingChange !== '1') return;
+  delete el.dataset.pendingChange;
+  const action = el.dataset.action;
+  changeProcessingInFlight = true;
+  setTimeout(() => {
+    dispatchChangeAction(el, action);
+    changeProcessingInFlight = false;
   }, 0);
 });
 
