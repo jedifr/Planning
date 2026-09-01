@@ -1076,8 +1076,17 @@ async function saveState(){
 // modification (mêmes identifiants, mêmes valeurs) sur l'état qu'on lui donne, pour que rejouer sur
 // une version différente produise un résultat cohérent plutôt que des identifiants différents à
 // chaque tentative.
+// Compteur (pas un simple booléen : deux appels peuvent se chevaucher, ex. deux créations de
+// commande rapprochées) de sauvegardes "intelligentes" actuellement en vol. pollRemoteState()
+// s'appuie dessus pour ne jamais écraser un ajout optimiste pas encore confirmé par le serveur :
+// sans ça, une réponse de polling arrivée en retard (partie AVANT que cette sauvegarde n'ait fait
+// avancer stateVersion, mais livrée APRÈS) fait disparaître la commande tout juste créée de l'écran,
+// alors qu'elle est bien enregistrée côté serveur.
+let saveReapplyInFlight = 0;
 async function saveStateWithReapply(applyFn, maxRetries){
   let attempt = 0;
+  saveReapplyInFlight++;
+  try{
   while(true){
     syncStatus = 'saving';
     try{
@@ -1122,6 +1131,9 @@ async function saveStateWithReapply(applyFn, maxRetries){
       return;
     }
   }
+  } finally {
+    saveReapplyInFlight--;
+  }
 }
 // Variante silencieuse pour les changements déclenchés automatiquement (pas par un clic de l'utilisateur) :
 // en cas de conflit, on recharge simplement la version la plus récente sans interrompre l'utilisateur avec une alerte.
@@ -1164,6 +1176,13 @@ async function pollRemoteState(){
   if(showSettingsModal) return; // ne pas écraser une saisie en cours dans la pop-up Paramètres
   if(changeProcessingInFlight) return; // un champ vient d'être validé, son traitement différé n'a pas encore eu lieu
   if(isTypingInField()) return; // ne pas couper une saisie en cours
+  // Une sauvegarde locale (champ modifié, commande créée, import...) est en vol : sa réponse va de
+  // toute façon faire avancer stateVersion sous peu. Si CE poll a été envoyé avant elle et que sa
+  // réponse (encore sur l'ancienne version) arrive après coup, l'appliquer ferait régresser l'état
+  // local — ex. une commande tout juste créée disparaîtrait de l'écran alors qu'elle est bien
+  // enregistrée côté serveur. On laisse simplement la sauvegarde en cours (et son propre
+  // rechargement en cas de conflit) faire foi.
+  if(saveInFlight || saveReapplyInFlight > 0) return;
   try{
     const res = await fetch('/api/state', { credentials: 'include' });
     if(res.status === 401) return; // session expirée : la prochaine action de l'utilisateur le détectera
@@ -1171,7 +1190,7 @@ async function pollRemoteState(){
       const errJson = await res.json().catch(()=>({}));
       if(errJson.licenseInvalid){
         // Mêmes précautions que pour un rechargement normal : ne pas couper une saisie en cours.
-        if(isTypingInField() || dragCtx || showSettingsModal || changeProcessingInFlight) return;
+        if(isTypingInField() || dragCtx || showSettingsModal || changeProcessingInFlight || saveInFlight || saveReapplyInFlight > 0) return;
         licenseBlocked = true;
         licenseStatus = errJson.licenseStatus || null;
         render();
@@ -1181,14 +1200,21 @@ async function pollRemoteState(){
     if(!res.ok) throw new Error('HTTP '+res.status);
     const json = await res.json();
     // Re-vérification APRÈS l'attente réseau : l'utilisateur a pu cliquer dans un champ et commencer
-    // à taper pendant l'aller-retour. Redessiner à ce moment-là recrée le champ et efface ce qui
-    // vient d'être saisi — c'est la cause du champ "Référence" qui se vidait aléatoirement.
-    if(isTypingInField() || dragCtx || showSettingsModal || changeProcessingInFlight) return;
+    // à taper pendant l'aller-retour (ou une sauvegarde a pu démarrer entre-temps). Appliquer cette
+    // réponse à ce moment-là recrée le champ en cours de saisie et efface ce qui vient d'être tapé —
+    // c'est la cause du champ "Référence" qui se vidait aléatoirement — ou fait régresser l'état
+    // local derrière une sauvegarde qui vient de réussir.
+    if(isTypingInField() || dragCtx || showSettingsModal || changeProcessingInFlight || saveInFlight || saveReapplyInFlight > 0) return;
     // Une clé de licence valide vient peut-être d'être installée depuis un autre poste : on sort
     // de l'écran de blocage dès qu'une réponse normale revient.
     const wasBlocked = licenseBlocked;
     licenseBlocked = false;
-    if(json.version !== stateVersion || wasBlocked){
+    // > et non !== : une réponse dont la version est plus ANCIENNE que celle déjà connue localement
+    // n'est pas une divergence à corriger, c'est une réponse dépassée par une sauvegarde locale qui a
+    // entre-temps fait avancer stateVersion pendant que cette requête de polling était en vol — même
+    // avec la garde saveInFlight/saveReapplyInFlight ci-dessus (qui ne protège que tant que la
+    // sauvegarde n'est pas déjà terminée), l'appliquer ferait régresser l'état local.
+    if(json.version > stateVersion || wasBlocked){
       state = migrateState(json.data);
       invalidateSchedule();
       stateVersion = json.version;
@@ -3076,6 +3102,7 @@ function submitNewCommande(){
       }
     };
     applyFn(state);
+    invalidateSchedule();
     const fusionGroupsToApply = draft._fusionGroups || [];
     applyDraftFusionGroups(fusionGroupsToApply);
     draft = newDraft(); showNewForm = false;
@@ -3114,6 +3141,7 @@ function submitNewCommande(){
     }
   };
   applyFn(state);
+  invalidateSchedule();
   const fusionGroupsToApply = draft._fusionGroups || [];
   applyDraftFusionGroups(fusionGroupsToApply);
   draft = newDraft(); showNewForm = false;
@@ -4091,6 +4119,7 @@ function confirmCustomImport(){
     return result;
   };
   const { createdNoms, updatedNoms, sansEcheance } = applyFn(state);
+  invalidateSchedule();
   excelImportResult = {
     imported: createdNoms.length, updated: updatedNoms.length,
     pieces: createdNoms.reduce((s,c)=>s+c.nbPieces,0) + updatedNoms.reduce((s,c)=>s+c.nbAjoutees,0),
