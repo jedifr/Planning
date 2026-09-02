@@ -3352,14 +3352,27 @@ function pausedSinceEarlierTasks(){
   const todayKey = toDateInputValue(new Date());
   const admin = isAdmin();
   const myId = currentUser ? String(currentUser.id) : null;
+  const seenGroups = new Set();
   const results = [];
   state.commandes.forEach(c => c.pieces.forEach(o => {
     if(o.statut !== 'en_pause' || o.autoPaused) return;
     if(!admin && String(o.operatorUserId||'') !== myId) return;
+    if(o.fusionGroupId){
+      // Un groupe fusionné se met en pause et reprendra en bloc (setOpStatut le fait déjà) : une
+      // seule alerte pour tout le groupe, pas une par pièce membre.
+      if(seenGroups.has(o.fusionGroupId)) return;
+      seenGroups.add(o.fusionGroupId);
+    }
     const sessions = o.sessions || [];
     const last = sessions[sessions.length-1];
     if(!last || !last.fin) return; // ne devrait pas arriver pour une pause manuelle, mais rien à afficher sans date
-    if(toDateInputValue(new Date(last.fin)) < todayKey) results.push({ c, o, pausedAt: last.fin });
+    if(toDateInputValue(new Date(last.fin)) >= todayKey) return;
+    let groupMembers = null;
+    if(o.fusionGroupId){
+      groupMembers = [];
+      state.commandes.forEach(cc => cc.pieces.forEach(oo => { if(oo.fusionGroupId === o.fusionGroupId) groupMembers.push({ cc, oo }); }));
+    }
+    results.push({ c, o, pausedAt: last.fin, groupMembers });
   }));
   return results;
 }
@@ -3377,11 +3390,21 @@ function renderPausedTasksBanner(){
   if(pausedBannerDismissedDate === toDateInputValue(new Date())) return '';
   const tasks = pausedSinceEarlierTasks();
   if(tasks.length === 0) return '';
-  const rows = tasks.map(({c, o, pausedAt}) => {
+  const rows = tasks.map(({c, o, pausedAt, groupMembers}) => {
     const m = state.machines.find(mm=>mm.id===o.machineId);
-    const label = [o.piece, o.etape].filter(Boolean).join(' / ') || '(sans nom)';
+    let label;
+    if(groupMembers && groupMembers.length > 1){
+      // Même convention que partout ailleurs pour une pièce fusionnée (fusedBarLabelAndTooltip) :
+      // le numéro de commande si toutes les pièces en partagent une seule, sinon leur nombre.
+      const distinctCmd = Array.from(new Set(groupMembers.map(({cc}) => cc.nom)));
+      const refLabel = distinctCmd.length === 1 ? escapeHtml(distinctCmd[0]) : `${distinctCmd.length} commandes`;
+      label = `🔗 ${groupMembers.length} pièces fusionnées <span class="footer-note" style="display:inline; margin:0;">(${refLabel})</span>`;
+    } else {
+      const pieceLabel = [o.piece, o.etape].filter(Boolean).join(' / ') || '(sans nom)';
+      label = `${escapeHtml(pieceLabel)} <span class="footer-note" style="display:inline; margin:0;">(${escapeHtml(c.nom)})</span>`;
+    }
     return `<div class="paused-banner-row">
-      <span>${escapeHtml(label)} <span class="footer-note" style="display:inline; margin:0;">(${escapeHtml(c.nom)})</span> — ${m?escapeHtml(m.nom):'poste supprimé'}, en pause depuis ${formatDT(new Date(pausedAt))}</span>
+      <span>${label} — ${m?escapeHtml(m.nom):'poste supprimé'}, en pause depuis ${formatDT(new Date(pausedAt))}</span>
       <button class="small" data-action="resume-paused-task" data-cid="${c.id}" data-oid="${o.id}">▶ Continuer ce travail</button>
     </div>`;
   }).join('');
