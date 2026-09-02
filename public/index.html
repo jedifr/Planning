@@ -5201,7 +5201,10 @@ function fusedBarLabelAndTooltip(o, baseLabel, meta){
   const distinctCmd = Array.from(new Set(o._fusionMembers.map(m=>m.commandeNom)));
   const refLabel = distinctCmd.length === 1 ? distinctCmd[0] : `${distinctCmd.length} commandes`;
   const matEp = (o.matiere || o.epaisseur) ? ` — ${o.matiere||'?'}/${o.epaisseur||'?'}` : '';
-  const label = `${refLabel} · 🔗 ${o._fusionMembers.length} pièces fusionnées${matEp}`;
+  // meta.prefix porte le repère de statut (✓ terminée, ▶ en cours, ⏸ en pause, 📌 figée) — le
+  // reconstruire ici plutôt que de repartir de baseLabel l'avait fait disparaître sur les barres
+  // fusionnées alors qu'il reste affiché sur une tâche non groupée de même statut.
+  const label = `${meta.prefix}${refLabel} · 🔗 ${o._fusionMembers.length} pièces fusionnées${matEp}`;
   // Pas de liste des pièces dans l'infobulle : elle devenait illisible sur un gros groupe, et le
   // détail complet est déjà accessible d'un clic sur la barre (pop-up de regroupement).
   // Le libellé est échappé à l'affichage : pas de balises HTML ici, elles s'afficheraient telles quelles.
