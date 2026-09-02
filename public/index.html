@@ -23,6 +23,7 @@
     --green: #357557;
     --red: #b23a30;
     --amber: #a06d1a;
+    --amber-dim: #f2e4cf;
     --radius: 3px;
   }
   *{box-sizing:border-box;}
@@ -414,6 +415,17 @@
   .isolate-banner{
     display:flex; align-items:center; gap:10px; margin-bottom:10px; padding:7px 12px;
     background:var(--accent-dim); border:1px solid var(--accent); border-radius:2px; font-size:12px; color:var(--text);
+  }
+  .paused-banner{
+    margin-bottom:14px; padding:10px 14px; background:var(--amber-dim);
+    border:1px solid var(--amber); border-radius:2px;
+  }
+  .paused-banner-head{
+    display:flex; align-items:center; justify-content:space-between; font-size:13px; color:var(--text);
+  }
+  .paused-banner-row{
+    display:flex; align-items:center; justify-content:space-between; gap:14px;
+    padding:7px 0 0; margin-top:7px; border-top:1px solid rgba(160,109,26,0.25); font-size:12px; color:var(--text-dim);
   }
   .commandes-columns{display:grid; grid-template-columns:1fr 9px 1fr; gap:10px; align-items:start;}
   .columns-resize-handle{
@@ -3331,6 +3343,55 @@ function applyAutoPauseResume(st){
     });
   });
   return changed;
+}
+// Garde-fou : repère les pièces mises en pause MANUELLEMENT (jamais les pauses déjeuner
+// automatiques, qui se résorbent déjà seules) et toujours en pause un jour calendaire plus tard —
+// un travail interrompu la veille (ou avant) qu'on a pu oublier de reprendre. Recalculé à chaque
+// connexion/rechargement ; filtré à l'opérateur assigné pour un non-admin, vue complète pour un admin.
+function pausedSinceEarlierTasks(){
+  const todayKey = toDateInputValue(new Date());
+  const admin = isAdmin();
+  const myId = currentUser ? String(currentUser.id) : null;
+  const results = [];
+  state.commandes.forEach(c => c.pieces.forEach(o => {
+    if(o.statut !== 'en_pause' || o.autoPaused) return;
+    if(!admin && String(o.operatorUserId||'') !== myId) return;
+    const sessions = o.sessions || [];
+    const last = sessions[sessions.length-1];
+    if(!last || !last.fin) return; // ne devrait pas arriver pour une pause manuelle, mais rien à afficher sans date
+    if(toDateInputValue(new Date(last.fin)) < todayKey) results.push({ c, o, pausedAt: last.fin });
+  }));
+  return results;
+}
+const PAUSED_BANNER_DISMISS_KEY = 'planning-atelier-paused-banner-dismissed';
+let pausedBannerDismissedDate = null; // AAAA-MM-JJ à laquelle la bannière a été fermée, ou null
+function loadPausedBannerDismissDate(){
+  try{ pausedBannerDismissedDate = localStorage.getItem(PAUSED_BANNER_DISMISS_KEY); }catch(e){ /* stockage indisponible : la bannière réapparaîtra à chaque rechargement, tant pis */ }
+}
+function dismissPausedBanner(){
+  pausedBannerDismissedDate = toDateInputValue(new Date());
+  try{ localStorage.setItem(PAUSED_BANNER_DISMISS_KEY, pausedBannerDismissedDate); }catch(e){}
+  render();
+}
+function renderPausedTasksBanner(){
+  if(pausedBannerDismissedDate === toDateInputValue(new Date())) return '';
+  const tasks = pausedSinceEarlierTasks();
+  if(tasks.length === 0) return '';
+  const rows = tasks.map(({c, o, pausedAt}) => {
+    const m = state.machines.find(mm=>mm.id===o.machineId);
+    const label = [o.piece, o.etape].filter(Boolean).join(' / ') || '(sans nom)';
+    return `<div class="paused-banner-row">
+      <span>${escapeHtml(label)} <span class="footer-note" style="display:inline; margin:0;">(${escapeHtml(c.nom)})</span> — ${m?escapeHtml(m.nom):'poste supprimé'}, en pause depuis ${formatDT(new Date(pausedAt))}</span>
+      <button class="small" data-action="resume-paused-task" data-cid="${c.id}" data-oid="${o.id}">▶ Continuer ce travail</button>
+    </div>`;
+  }).join('');
+  return `<div class="paused-banner">
+    <div class="paused-banner-head">
+      <strong>⏸ ${tasks.length} tâche${tasks.length>1?'s':''} en pause depuis la veille ou avant</strong>
+      <button class="ghost small" data-action="dismiss-paused-banner">✕ Fermer</button>
+    </div>
+    ${rows}
+  </div>`;
 }
 // Applique un changement de statut à UNE pièce précise (logique inchangée, extraite pour pouvoir
 // être rejouée sur chaque pièce d'un groupe fusionné). `plannedEndBefore` sert uniquement à détecter
@@ -6267,6 +6328,7 @@ function render(){
   const schedule = getSchedule();
   const html = [
     renderHeader(),
+    renderPausedTasksBanner(),
     renderStats(schedule),
     renderPlanningSection(schedule),
     renderFusionPanel(),
@@ -6502,6 +6564,8 @@ function dispatchClickAction(action, el){
     case 'ctx-resume': contextMenu = null; setOpStatut(el.dataset.cid, el.dataset.oid, 'en_cours'); break;
     case 'ctx-finish': contextMenu = null; setOpStatut(el.dataset.cid, el.dataset.oid, 'termine'); break;
     case 'ctx-reopen': contextMenu = null; setOpStatut(el.dataset.cid, el.dataset.oid, 'a_faire'); break;
+    case 'resume-paused-task': setOpStatut(el.dataset.cid, el.dataset.oid, 'en_cours'); break;
+    case 'dismiss-paused-banner': dismissPausedBanner(); break;
   }
 }
 
@@ -7279,6 +7343,7 @@ async function startApp(){
   loadKanbanGroupedViewPref();
   loadPanelCollapsePref();
   loadColumnsRatioPref();
+  loadPausedBannerDismissDate();
   state = await loadState();
   invalidateSchedule();
   draft = newDraft();
