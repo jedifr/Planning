@@ -3440,6 +3440,25 @@ function setOpStatut(cid, oid, newStatut){
     }
   }
 
+  if(newStatut === 'en_cours'){
+    // Avertit si une AUTRE pièce (hors de ce même groupe fusionné, qui démarre en bloc) est déjà en
+    // cours sur le même poste — un poste ne peut physiquement traiter qu'un travail à la fois. Non
+    // bloquant : un poste avec plusieurs emplacements réels, ou une vraie exception, reste possible.
+    const groupIds = new Set(group.map(({oo}) => oo.id));
+    const conflicts = [];
+    state.commandes.forEach(cc => cc.pieces.forEach(oo => {
+      if(groupIds.has(oo.id)) return;
+      if(oo.machineId === o.machineId && oo.statut === 'en_cours'){
+        conflicts.push(`"${[oo.piece,oo.etape].filter(Boolean).join(' / ')}" (${cc.nom})`);
+      }
+    }));
+    if(conflicts.length > 0){
+      const m = state.machines.find(mm=>mm.id===o.machineId);
+      const dejaEnCours = conflicts.length > 1 ? 'sont déjà en cours' : 'est déjà en cours';
+      if(!confirm(`Attention : ${conflicts.join(', ')} ${dejaEnCours} sur ${m?m.nom:'ce poste'}.\n\nDémarrer quand même ?`)) return;
+    }
+  }
+
   const plannedEndsBefore = {};
   if(newStatut === 'termine'){
     const scheduleBefore = getSchedule();
