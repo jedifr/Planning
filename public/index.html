@@ -6173,9 +6173,16 @@ function renderArchivesPanel(){
   });
   const rows = sorted.map(c => {
     const completion = commandeCompletionDate(c);
+    // Sommées sur toutes les pièces de la commande — même logique que partout ailleurs dans
+    // l'appli (renderOpsRow, cartes Kanban) : dureeOverrideH prime sur tempsUnitaire×quantité,
+    // et le temps réellement passé vient de dureeReelleH (figé à la clôture de chaque pièce).
+    const totalPrevuH = c.pieces.reduce((s,o) => s + ((o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (Number(o.tempsUnitaire)*Number(o.quantite))/60), 0);
+    const totalPasseH = c.pieces.reduce((s,o) => s + (dureePasseeH(o, state) || 0), 0);
     return `<tr>
       <td>${escapeHtml(c.nom)}</td>
       <td>${c.pieces.length} pièce(s)</td>
+      <td>${totalPrevuH > 0 ? durationLabel(totalPrevuH) : '—'}</td>
+      <td>${totalPasseH > 0 ? durationLabel(totalPasseH) : '—'}</td>
       <td>${completion ? formatDateFr(toDateInputValue(completion)) : '—'}</td>
       <td><button class="ghost small" data-action="unarchive-commande" data-cid="${c.id}" title="Remettre cette commande parmi les commandes actives">↺ Désarchiver</button></td>
     </tr>`;
@@ -6191,8 +6198,8 @@ function renderArchivesPanel(){
         ${archiveSearchQuery ? `<button class="ghost small" data-action="clear-archive-search">✕ Effacer</button>` : ''}
       </div>
       <table class="ops-table" style="margin-top:8px;">
-        <thead><tr><th>Référence</th><th>Pièces</th><th>Terminée le</th><th></th></tr></thead>
-        <tbody>${rows || `<tr><td colspan="4" style="text-align:center; color:var(--text-faint);">Aucun résultat</td></tr>`}</tbody>
+        <thead><tr><th>Référence</th><th>Pièces</th><th>Temps prévu</th><th>Temps passé</th><th>Terminée le</th><th></th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="6" style="text-align:center; color:var(--text-faint);">Aucun résultat</td></tr>`}</tbody>
       </table>
       <div class="footer-note" style="text-align:left; padding-top:8px;">${state.config.archiveApresJours>0 ? `Archivées automatiquement ${state.config.archiveApresJours} jours après leur achèvement (réglable dans ⚙ Paramétrer → Horaires de travail).` : `Archivage automatique désactivé — ces commandes ont été archivées avant sa désactivation.`} Toujours incluses dans l'export .json complet.</div>
     </div>`}
