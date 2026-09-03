@@ -3608,6 +3608,10 @@ function resetOpOverride(cid, oid){
         members.push({ cid: cc.id, oid: oo.id, dureeH: (oo.tempsUnitaire*oo.quantite)/60 });
       }
     }));
+    // Sans ça, performFusion() relit le planning en cache — encore celui d'AVANT cette libération,
+    // où les pièces sont toujours figées à l'ancienne position — et recalcule donc le même
+    // commonStart : le groupe se refige exactement là où il était, "Libérer" semblant n'avoir aucun effet.
+    invalidateSchedule();
     if(members.length >= 2){
       performFusion(members); // enregistre déjà lui-même : pas de second commit ici, sinon la
                               // seconde sauvegarde part avec une version périmée et déclenche à
