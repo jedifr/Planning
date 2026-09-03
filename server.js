@@ -55,6 +55,7 @@ if(!existing){
 auth.initUsersTable(db);
 auth.bootstrapFirstUser(db, path.dirname(DB_PATH));
 license.initLicenseTable(db);
+license.bootstrapInitialLicense(db);
 
 const app = express();
 app.set('trust proxy', 1); // nécessaire pour que les cookies "secure" fonctionnent derrière un reverse proxy (Synology, etc.)
