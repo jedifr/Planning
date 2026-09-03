@@ -1559,12 +1559,24 @@ function saveColumnsRatioPref(){
   try{ localStorage.setItem(COLUMNS_RATIO_KEY, String(Math.round(columnsRatio))); }catch(e){}
 }
 function highlightActive(){ return !!(selectedCommandeId || searchQuery); }
+let _pieceSearchMatchCache = { query: undefined, schedule: undefined, value: false };
+function searchMatchesAnyPieceItself(query){
+  const schedule = getSchedule();
+  if(_pieceSearchMatchCache.query === query && _pieceSearchMatchCache.schedule === schedule){
+    return _pieceSearchMatchCache.value;
+  }
+  const q = query.toLowerCase();
+  const value = schedule.some(c => c.pieces.some(o => o.piece && o.piece.toLowerCase().includes(q)));
+  _pieceSearchMatchCache = { query, schedule, value };
+  return value;
+}
 function isHighlighted(cid, commandeNom, piece){
   if(selectedCommandeId) return cid === selectedCommandeId;
   if(searchQuery){
     const q = searchQuery.toLowerCase();
-    if(commandeNom && commandeNom.toLowerCase().includes(q)) return true;
     if(piece && piece.toLowerCase().includes(q)) return true;
+    if(searchMatchesAnyPieceItself(searchQuery)) return false;
+    if(commandeNom && commandeNom.toLowerCase().includes(q)) return true;
     return false;
   }
   return false;
