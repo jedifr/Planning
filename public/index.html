@@ -895,6 +895,7 @@ function migrateState(st){
   if(!st.config.urgencyColors) st.config.urgencyColors = { importante:'#a06d1a', urgente:'#b23a30' };
   if(st.config.logoDataUrl === undefined) st.config.logoDataUrl = null;
   if(!st.config.appTitle) st.config.appTitle = 'Planning Atelier';
+  if(st.config.appSubtitle === undefined) st.config.appSubtitle = 'Fraisage · Tournage — ordonnancement & suivi des délais';
   if(!st.config.accentColor) st.config.accentColor = '#d9531e';
   if(!st.config.density) st.config.density = 'confortable';
   if(st.config.faviconDataUrl === undefined) st.config.faviconDataUrl = null;
@@ -2206,6 +2207,8 @@ function updateConfig(field, value){
     if(value) state.config[field] = value;
   } else if(field==='appTitle'){
     state.config.appTitle = (value && value.trim()) ? value.trim() : 'Planning Atelier';
+  } else if(field==='appSubtitle'){
+    state.config.appSubtitle = (value||'').trim(); // texte libre, vide = ligne masquée
   } else if(field==='copyright'){
     state.config.copyright = (value||'').trim(); // texte libre, vide = mention masquée
   } else if(field==='accentColor' || field==='density'){
@@ -4325,7 +4328,7 @@ function renderHeader(){
     <div class="title-block">
       ${logoHtml}
       <h1>${escapeHtml(state.config.appTitle || 'Planning Atelier')}</h1>
-      <div class="sub">Fraisage · Tournage — ordonnancement &amp; suivi des délais</div>
+      ${state.config.appSubtitle ? `<div class="sub">${escapeHtml(state.config.appSubtitle)}</div>` : ''}
       ${pageSwitcher}
     </div>
     <div class="toolbar-mini">
@@ -5023,6 +5026,7 @@ function renderSettingsModal(){
     affichage: { title: 'Affichage', body: `
       <div class="machines-grid">
         <div><label class="field">Nom affiché dans l'en-tête</label><input type="text" value="${escapeHtml(cfg.appTitle||'Planning Atelier')}" data-action="update-config" data-field="appTitle" placeholder="Planning Atelier"></div>
+        <div><label class="field">Texte sous le nom, dans l'en-tête</label><input type="text" value="${escapeHtml(cfg.appSubtitle||'')}" data-action="update-config" data-field="appSubtitle" placeholder="Fraisage · Tournage — ordonnancement &amp; suivi des délais"></div>
         <div><label class="field">Mention affichée sur l'écran de connexion</label><input type="text" value="${escapeHtml(cfg.copyright||'')}" data-action="update-config" data-field="copyright" placeholder="© ${new Date().getFullYear()} Votre société"></div>
       </div>
       <div class="modal-section-title" style="margin-top:18px;">Logo</div>
