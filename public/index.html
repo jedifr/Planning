@@ -7404,6 +7404,10 @@ async function startApp(){
     // de l'appli, pas seulement dans la pop-up Paramètres).
     if(showSettingsModal || isTypingInField() || dragCtx || changeProcessingInFlight) return;
     const changed = applyAutoPauseResume(state);
+    // Reprendre une tâche en pause déjeuner change ses horaires : sans invalidation, render() aurait
+    // réutilisé le planning mis en cache d'avant la reprise, et les tâches suivantes ne se seraient
+    // décalées qu'au prochain rechargement complet de la page.
+    if(changed) invalidateSchedule();
     render(); // rafraîchit aussi l'horloge / l'indicateur de poste
     if(changed) queueSilentSave();
   }, 60000);
