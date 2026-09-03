@@ -1018,6 +1018,16 @@ function migrateState(st){
       if(o.matiere === undefined) o.matiere = '';
       if(o.epaisseur === undefined) o.epaisseur = '';
       if(o.fusionGroupId === undefined) o.fusionGroupId = null;
+      if(o.fusionPinned === undefined){
+        // Migration unique : jusqu'ici, un groupe fusionné était TOUJOURS figé (manualStart) une
+        // fois pour toutes à sa position de fusion — jamais réévalué par priorité face aux autres
+        // commandes. À partir de maintenant, un groupe non figé explicitement (fusionPinned=false)
+        // concourt par priorité comme une tâche volante (voir computeSchedule, phase 3). On
+        // rebascule donc tous les groupes déjà fusionnés en automatique, sauf ceux réellement
+        // démarrés (en_cours/en_pause/terminée) dont l'horodatage réel ne doit jamais être touché.
+        o.fusionPinned = false;
+        if(o.fusionGroupId && o.statut === 'a_faire') o.manualStart = null;
+      }
       if(o.dureeReelleH === undefined) o.dureeReelleH = null; // temps réellement passé (secours quand aucune session n'existe) — voir applySingleStatusChange
     });
   });
@@ -1972,6 +1982,32 @@ function computeSchedule(st){
     });
   });
 
+  // Regroupe les pièces volantes d'un même groupe fusionné non figé (fusionPinned=false, voir
+  // "Libérer") en UN SEUL candidat pour la phase 3 : le lot doit concourir comme une seule
+  // opération physique (même poste, même durée totale déjà portée par dureeOverrideH), pas comme
+  // des pièces indépendantes qui se recaseraient chacune de leur côté. La priorité retenue pour
+  // tout le bloc est celle de son membre le plus prioritaire (urgence puis échéance) — un lot
+  // contenant une seule pièce urgente ne doit pas traîner à cause du reste du lot. Les dépendances
+  // internes au groupe (un membre qui, à cause de phases mélangées dans un même lot, dépend d'un
+  // autre membre du même groupe) sont retirées : elles sont déjà capturées par l'union des
+  // dépendances EXTERNES de tous les membres, qui fixe le plancher réel du bloc entier.
+  const groupBuckets = {};
+  const finalVolante = [];
+  pendingVolante.forEach(item => {
+    if(item.op.fusionGroupId){
+      (groupBuckets[item.op.fusionGroupId] = groupBuckets[item.op.fusionGroupId] || []).push(item);
+    } else {
+      finalVolante.push(item);
+    }
+  });
+  Object.values(groupBuckets).forEach(members => {
+    if(members.length === 1){ finalVolante.push(members[0]); return; }
+    const memberIds = new Set(members.map(mm=>mm.op.id));
+    const combinedDeps = [...new Set(members.flatMap(mm=>mm.deps).filter(id => !memberIds.has(id)))];
+    const best = members.reduce((b,mm) => comparePriorityItems(b, mm) > 0 ? mm : b);
+    finalVolante.push({ op: best.op, cmd: best.cmd, cfg: best.cfg, dureeH: best.dureeH, deps: combinedDeps, groupMembers: members });
+  });
+
 // Recherche, en avançant, le premier créneau réellement libre dans le calendrier du poste (à
 // partir d'un plancher donné) — contrairement à un simple curseur "libre à partir de...", ceci
 // détecte correctement un trou même si une tâche figée occupe un poste plus tard, loin devant.
@@ -1997,7 +2033,7 @@ function findNextFreeSlot(floor, dureeH, intervals, cfg){
   // entre-temps. La disponibilité du poste est toujours recherchée dans son calendrier réel
   // (findNextFreeSlot), jamais supposée à partir d'un simple curseur — sinon une tâche figée placée
   // loin dans le futur masquerait à tort tout le temps resté libre avant elle.
-  let remaining = pendingVolante;
+  let remaining = finalVolante;
   let guardRounds = 0;
   while(remaining.length > 0 && guardRounds++ < 200){
     let scheduledSomething = false;
@@ -2035,10 +2071,14 @@ function findNextFreeSlot(floor, dureeH, intervals, cfg){
           let floor = depsFloor && depsFloor > nowFloor ? depsFloor : nowFloor;
           const dispoFloor = machineDispoFloor[m.id];
           if(dispoFloor && dispoFloor > floor) floor = dispoFloor;
-          if(item.op.dateDebutPossible){
-            const materialFloor = nextWorkingInstant(new Date(item.op.dateDebutPossible+'T00:00:00'), item.cfg);
-            if(materialFloor > floor) floor = materialFloor;
-          }
+          // Un lot fusionné attend la pièce la plus tardive à recevoir sa matière, pas seulement
+          // celle du membre "représentant" retenu pour la priorité.
+          (item.groupMembers || [item]).forEach(mm => {
+            if(mm.op.dateDebutPossible){
+              const materialFloor = nextWorkingInstant(new Date(mm.op.dateDebutPossible+'T00:00:00'), item.cfg);
+              if(materialFloor > floor) floor = materialFloor;
+            }
+          });
           const alignedFloor = nextWorkingInstant(floor, item.cfg); // le plancher, simplement calé sur le calendrier (week-end/pause), sans tenir compte des autres tâches
           const earliestStart = findNextFreeSlot(floor, item.dureeH, machineIntervals[m.id], item.cfg);
           candidates.push({ idx, item, floor, alignedFloor, earliestStart });
@@ -2062,14 +2102,19 @@ function findNextFreeSlot(floor, dureeH, intervals, cfg){
         }
         const bestIdx = chosen.idx;
         const item = remaining[bestIdx];
-        const { op, cfg, dureeH } = item;
+        const { cfg, dureeH } = item;
         const start = chosen.earliestStart;
         const end = addWorkingDuration(start, dureeH, cfg);
-        machineIntervals[m.id].push({ start, end });
+        // Un candidat groupé (fusion non figée) écrit le même horaire sur TOUS ses membres — c'est
+        // le seul cas où plusieurs pièces se voient attribuer le même horaire de la phase 3, exactement
+        // comme le ferait un figeage manuel du lot entier.
+        (item.groupMembers || [item]).forEach(mm => {
+          machineIntervals[mm.op.machineId].push({ start, end, fusionGroupId: mm.op.fusionGroupId || null });
+          computedEnd[mm.op.id] = end;
+          opsById[mm.op.id] = { ...mm.op, start, end, dureeH: mm.dureeH };
+        });
         const cur = machineFree[m.id];
         machineFree[m.id] = (cur && cur > end) ? cur : end;
-        computedEnd[op.id] = end;
-        opsById[op.id] = { ...op, start, end, dureeH };
         remaining.splice(bestIdx, 1);
         scheduledSomething = true;
         more = true; // ce poste enchaîne peut-être tout de suite avec une autre tâche prête
@@ -2079,7 +2124,9 @@ function findNextFreeSlot(floor, dureeH, intervals, cfg){
   }
   // Sécurité : une pièce qui n'aurait pas pu être planifiée (dépendance cassée) reste visible sans
   // horaire plutôt que de disparaître silencieusement.
-  remaining.forEach(item => { opsById[item.op.id] = { ...item.op, start: null, end: null, dureeH: item.dureeH }; });
+  remaining.forEach(item => {
+    (item.groupMembers || [item]).forEach(mm => { opsById[mm.op.id] = { ...mm.op, start: null, end: null, dureeH: mm.dureeH }; });
+  });
 
   const results = [];
   st.commandes.forEach(cmd => {
@@ -3297,6 +3344,13 @@ function propagateFusionGroupFields(o, fields){
     if(oo.id !== o.id && oo.fusionGroupId === o.fusionGroupId) Object.assign(oo, fields);
   }));
 }
+// Un groupe fusionné porte toujours dureeOverrideH (la durée totale du lot) même en mode
+// automatique — sa présence seule ne veut donc plus dire "figé" comme pour une pièce isolée.
+// Pour une pièce fusionnée, seul fusionPinned fait foi ; pour une pièce isolée, comportement inchangé.
+function isPositionPinned(o){
+  if(o.fusionGroupId) return !!o.fusionPinned;
+  return !!(o.manualStart || o.dureeOverrideH);
+}
 function opElapsedHours(o, st){
   if(!o.sessions || o.sessions.length===0) return 0;
   const cfg = configForPiece(o, st);
@@ -3601,36 +3655,22 @@ function setManualStartValue(cid, oid, value){
   const o = c.pieces.find(o=>o.id===oid); if(!o) return;
   if(!value) return;
   o.manualStart = value; // déjà au format attendu (YYYY-MM-DDTHH:mm)
-  propagateFusionGroupFields(o, { manualStart: value });
+  if(o.fusionGroupId) o.fusionPinned = true; // saisie explicite d'une date = figeage volontaire
+  propagateFusionGroupFields(o, { manualStart: value, fusionPinned: true });
   commit();
 }
 function resetOpOverride(cid, oid){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
   const o = c.pieces.find(o=>o.id===oid); if(!o) return;
   if(o.fusionGroupId){
-    // Pièce fusionnée : "libérer" = revenir au calcul automatique, PAS défaire le regroupement
-    // (les pièces sont physiquement découpées ensemble). On libère donc tout le groupe, puis on le
-    // refige aussitôt à sa nouvelle position naturelle, pour qu'il reste solidaire.
+    // Pièce fusionnée : "libérer" = repasser le groupe en positionnement automatique (il concourt
+    // alors par priorité — urgence puis échéance — avec les autres tâches volantes, voir phase 3 de
+    // computeSchedule), sans défaire le regroupement physique. Le groupe garde sa durée totale.
     const groupId = o.fusionGroupId;
-    const members = [];
     state.commandes.forEach(cc => cc.pieces.forEach(oo => {
-      if(oo.fusionGroupId === groupId){
-        oo.manualStart = null; oo.dureeOverrideH = null; oo.fusionGroupId = null;
-        // durée individuelle retrouvée après libération (le temps unitaire reprend la main)
-        members.push({ cid: cc.id, oid: oo.id, dureeH: (oo.tempsUnitaire*oo.quantite)/60 });
-      }
+      if(oo.fusionGroupId === groupId){ oo.manualStart = null; oo.fusionPinned = false; }
     }));
-    // Sans ça, performFusion() relit le planning en cache — encore celui d'AVANT cette libération,
-    // où les pièces sont toujours figées à l'ancienne position — et recalcule donc le même
-    // commonStart : le groupe se refige exactement là où il était, "Libérer" semblant n'avoir aucun effet.
-    invalidateSchedule();
-    if(members.length >= 2){
-      performFusion(members); // enregistre déjà lui-même : pas de second commit ici, sinon la
-                              // seconde sauvegarde part avec une version périmée et déclenche à
-                              // tort le message "quelqu'un d'autre a modifié le planning".
-    } else {
-      commit();
-    }
+    commit();
     return;
   }
   o.manualStart = null; o.dureeOverrideH = null;
@@ -3645,6 +3685,8 @@ function pinOpAtCurrentTime(cid, oid){
   const c = state.commandes.find(cc=>cc.id===cid); if(!c) return;
   const o = c.pieces.find(pp=>pp.id===oid); if(!o) return;
   o.manualStart = toInputValue(oSched.start);
+  if(o.fusionGroupId) o.fusionPinned = true;
+  propagateFusionGroupFields(o, { manualStart: o.manualStart, fusionPinned: true });
   commit();
 }
 const URGENCY_RANK = { urgente: 0, importante: 1, normale: 2 };
@@ -4163,39 +4205,14 @@ function performFusionOnState(targetState, items){
   if(resolved.length < 2) return;
   const groupId = uid('fusion');
   const totalDuree = resolved.reduce((s,o) => s + ((o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (o.tempsUnitaire*o.quantite)/60), 0);
-  const schedule = computeSchedule(targetState);
-  let commonStart = null;
-  resolved.forEach(o => {
-    schedule.forEach(c => {
-      const p = c.pieces.find(pp=>pp.id===o.id);
-      if(p && p.start && (!commonStart || p.start > commonStart)) commonStart = p.start;
-    });
-  });
-  if(!commonStart){
-    // Aucune des pièces du groupe n'a d'horaire calculé (elles sont encore bloquées par une phase
-    // antérieure, par exemple). Retomber sur "maintenant" les figerait dans le passé, AVANT les
-    // tâches dont elles dépendent — le bug qui faisait démarrer la chaudronnerie avant le laser.
-    // On calcule donc un plancher sûr : la fin la plus tardive des pièces de phase inférieure de
-    // leurs commandes, et la disponibilité de leur poste.
-    const floors = [];
-    resolved.forEach(o => {
-      const m = targetState.machines.find(mm=>mm.id===o.machineId);
-      if(m && m.dispo) floors.push(new Date(m.dispo));
-      const cmdSched = schedule.find(c => c.pieces.some(pp=>pp.id===o.id));
-      if(cmdSched){
-        cmdSched.pieces.forEach(pp => {
-          if((pp.phase||1) < (o.phase||1) && pp.end) floors.push(pp.end);
-        });
-      }
-    });
-    floors.push(new Date());
-    // Arrondi à la minute SUPÉRIEURE : le figeage ne conserve pas les secondes, donc tronquer
-    // ferait repasser le groupe quelques secondes avant son plancher.
-    commonStart = new Date(Math.ceil(Math.max(...floors.map(d=>d.getTime())) / 60000) * 60000);
-  }
+  // Positionnement automatique par défaut (pas de manualStart) : le groupe concourt par priorité
+  // avec les autres tâches volantes, voir la phase 3 de computeSchedule — il n'y a donc plus besoin
+  // de calculer un horaire à figer ici. Un figeage explicite reste possible ensuite (glisser, saisir
+  // une date), voir fusionPinned.
   resolved.forEach(o => {
     o.fusionGroupId = groupId;
-    o.manualStart = toInputValue(commonStart);
+    o.manualStart = null;
+    o.fusionPinned = false;
     o.dureeOverrideH = totalDuree;
   });
 }
@@ -4936,7 +4953,7 @@ function renderContextMenu(){
   const items = [];
   if(o.statut==='a_faire'){
     items.push({action:'ctx-start', label:'▶ Démarrer'});
-    const overridden = !!(o.manualStart || o.dureeOverrideH);
+    const overridden = isPositionPinned(o);
     items.push(overridden
       ? {action:'ctx-unpin', label:'↺ Libérer (rendre volante)'}
       : {action:'ctx-pin', label:'📌 Figer à cet horaire'});
@@ -5396,7 +5413,7 @@ function renderDayView(schedule){
       let leftPct = pos(o.start)*100;
       let rightPct = pos(o.end)*100;
       const widthPct = Math.max(rightPct-leftPct, 0.4);
-      const overridden = !!(o.manualStart || o.dureeOverrideH);
+      const overridden = isPositionPinned(o);
       const meta = barStatusMeta(o, machineColor(m, mi), overridden);
       const baseLabel = meta.prefix + [o.commandeNom, o.piece, o.etape].filter(Boolean).join(' · ');
       const { label, tooltipExtra } = fusedBarLabelAndTooltip(o, baseLabel, meta);
@@ -5468,7 +5485,7 @@ function renderWeekView(schedule){
       let leftPct = pos(o.start)*100;
       let rightPct = pos(o.end)*100;
       const widthPct = Math.max(rightPct-leftPct, 0.3);
-      const overridden = !!(o.manualStart || o.dureeOverrideH);
+      const overridden = isPositionPinned(o);
       const meta = barStatusMeta(o, machineColor(m, mi), overridden);
       const baseLabel = meta.prefix + [o.commandeNom, o.piece, o.etape].filter(Boolean).join(' · ');
       const { label, tooltipExtra } = fusedBarLabelAndTooltip(o, baseLabel, meta);
@@ -5526,7 +5543,7 @@ function renderMonthView(schedule){
     const shown = ops.slice(0,4);
     const chips = shown.map(o=>{
       const midx = state.machines.findIndex(m=>m.id===o.machineId);
-      const overridden = !!(o.manualStart || o.dureeOverrideH);
+      const overridden = isPositionPinned(o);
       const meta = barStatusMeta(o, machineColor(state.machines[midx<0?0:midx], midx<0?0:midx), overridden);
       const tempsModPrefixM = isTempsModified(o) ? '⏱ ' : '';
       const label = tempsModPrefixM + meta.prefix + [o.commandeNom, o.piece].filter(Boolean).join(' · ');
@@ -5625,41 +5642,16 @@ function performFusion(items, skipCommit){
   if(items.length < 2) return;
   const groupId = uid('fusion');
   const totalDuree = items.reduce((s,it)=>s+it.dureeH, 0);
-  const schedule = getSchedule();
-  let commonStart = null;
-  items.forEach(it => {
-    const c = schedule.find(cc=>cc.id===it.cid);
-    const p = c && c.pieces.find(pp=>pp.id===it.oid);
-    if(p && p.start && (!commonStart || p.start > commonStart)) commonStart = p.start;
-  });
-  if(!commonStart){
-    // Même sécurité que performFusionOnState : sans horaire calculé, on ne fige jamais "maintenant"
-    // (ce qui placerait le groupe avant les tâches dont il dépend), mais sur un plancher sûr.
-    const floors = [];
-    items.forEach(it => {
-      const c = state.commandes.find(cc=>cc.id===it.cid);
-      const o = c && c.pieces.find(pp=>pp.id===it.oid);
-      if(!o) return;
-      const m = state.machines.find(mm=>mm.id===o.machineId);
-      if(m && m.dispo) floors.push(new Date(m.dispo));
-      const cmdSched = schedule.find(cc=>cc.id===it.cid);
-      if(cmdSched){
-        cmdSched.pieces.forEach(pp => {
-          if((pp.phase||1) < (o.phase||1) && pp.end) floors.push(pp.end);
-        });
-      }
-    });
-    floors.push(new Date());
-    // Arrondi à la minute SUPÉRIEURE : le figeage ne conserve pas les secondes, donc tronquer
-    // ferait repasser le groupe quelques secondes avant son plancher.
-    commonStart = new Date(Math.ceil(Math.max(...floors.map(d=>d.getTime())) / 60000) * 60000);
-  }
+  // Positionnement automatique par défaut : voir performFusionOnState pour le détail — le groupe
+  // concourt désormais par priorité avec les autres tâches volantes plutôt que d'être figé une
+  // fois pour toutes à la position libre trouvée au moment de la fusion.
   items.forEach(it => {
     const c = state.commandes.find(cc=>cc.id===it.cid);
     const o = c && c.pieces.find(pp=>pp.id===it.oid);
     if(!o) return;
     o.fusionGroupId = groupId;
-    o.manualStart = toInputValue(commonStart);
+    o.manualStart = null;
+    o.fusionPinned = false;
     o.dureeOverrideH = totalDuree;
   });
   if(!skipCommit){
@@ -5710,6 +5702,7 @@ function dissociateFusionGroup(groupId){
       oo.fusionGroupId = null;
       oo.manualStart = null;
       oo.dureeOverrideH = null;
+      oo.fusionPinned = false;
     }
   }));
   fusionDetailModalGroupId = null;
@@ -5753,7 +5746,7 @@ function getActiveFusionGroups(includeDone){
       groups[o.fusionGroupId].items.push({
         cid: c.id, cnom: c.nom, oid: o.id, piece: o.piece, etape: o.etape, statut: o.statut,
         matiere: o.matiere, epaisseur: o.epaisseur, machineId: o.machineId,
-        manualStart: o.manualStart, dureeOverrideH: o.dureeOverrideH
+        manualStart: o.manualStart, dureeOverrideH: o.dureeOverrideH, fusionPinned: !!o.fusionPinned
       });
     });
   });
@@ -5767,7 +5760,13 @@ function getActiveFusionGroups(includeDone){
 }
 function updateFusionGroupStart(groupId, value){
   if(!value) return;
-  state.commandes.forEach(cc => cc.pieces.forEach(oo => { if(oo.fusionGroupId===groupId) oo.manualStart = value; }));
+  state.commandes.forEach(cc => cc.pieces.forEach(oo => { if(oo.fusionGroupId===groupId){ oo.manualStart = value; oo.fusionPinned = true; } }));
+  commit();
+}
+// Repasse un groupe fusionné en positionnement automatique (voir resetOpOverride) depuis le
+// panneau de synthèse, sans avoir à rouvrir chaque pièce individuellement.
+function unpinFusionGroup(groupId){
+  state.commandes.forEach(cc => cc.pieces.forEach(oo => { if(oo.fusionGroupId===groupId){ oo.manualStart = null; oo.fusionPinned = false; } }));
   commit();
 }
 function updateFusionGroupDuree(groupId, value){
@@ -5788,15 +5787,30 @@ function renderActiveFusionGroupsPanel(){
   const groups = getActiveFusionGroups();
   if(groups.length === 0) return '';
   const collapsed = fusionPanelsCollapsed.active;
+  const schedule = collapsed ? null : getSchedule();
   const body = collapsed ? '' : groups.map(g => {
     const first = g.items[0];
     const m = state.machines.find(mm=>mm.id===first.machineId);
     const dureeH = first.dureeOverrideH || 0;
+    const pinned = !!first.fusionPinned;
+    // En mode automatique, le champ affiche l'horaire actuellement calculé (recalculé à chaque
+    // ouverture) plutôt qu'un manualStart vide — sans ça le champ semblerait vide alors que le
+    // groupe est bien planifié quelque part.
+    let computedStart = first.manualStart || '';
+    if(!pinned && schedule){
+      const cSched = schedule.find(cc=>cc.id===first.cid);
+      const oSched = cSched && cSched.pieces.find(pp=>pp.id===first.oid);
+      if(oSched && oSched.start) computedStart = toInputValue(oSched.start);
+    }
+    const statusBadge = pinned
+      ? `<span class="pin-badge pinned">📌 Figé</span>`
+      : `<span class="pin-badge floating">〰️ Automatique — concourt par priorité avec les autres tâches</span>`;
+    const unpinBtn = pinned ? `<button class="ghost small" data-action="unpin-fusion-group" data-group="${g.id}" style="margin-left:8px;">↺ Repasser en automatique</button>` : '';
     const rows = g.items.map(it => `<tr><td>${escapeHtml(it.cnom)}</td><td>${escapeHtml([it.piece,it.etape].filter(Boolean).join(' / ')||'—')}</td><td>${opStatutPillHtml(it.statut)}</td></tr>`).join('');
     return `<div class="fusion-group">
-      <div class="fusion-group-head"><strong>${escapeHtml(m?m.nom:'')}</strong> — ${escapeHtml(first.matiere||'—')} / ${escapeHtml(first.epaisseur||'—')} — ${g.items.length} pièce(s)</div>
+      <div class="fusion-group-head"><strong>${escapeHtml(m?m.nom:'')}</strong> — ${escapeHtml(first.matiere||'—')} / ${escapeHtml(first.epaisseur||'—')} — ${g.items.length} pièce(s) — ${statusBadge}${unpinBtn}</div>
       <div class="commande-top-fields" style="grid-template-columns:1fr 1fr; margin-bottom:8px;">
-        <div><label class="field">Départ (partagé)</label><input type="datetime-local" value="${first.manualStart||''}" data-action="update-fusion-group-start" data-group="${g.id}"></div>
+        <div><label class="field">Départ (partagé) — saisir une date le fige</label><input type="datetime-local" value="${computedStart}" data-action="update-fusion-group-start" data-group="${g.id}"></div>
         <div><label class="field">Durée totale (h, partagée)</label><input type="number" min="0.25" step="0.25" value="${dureeH}" data-action="update-fusion-group-duree" data-group="${g.id}"></div>
       </div>
       <table class="ops-table">
@@ -5807,7 +5821,7 @@ function renderActiveFusionGroupsPanel(){
   }).join('');
   return `<section class="panel"><div class="panel-head" style="cursor:pointer;" data-action="toggle-fusion-panel" data-which="active"><h2>${collapsed?'▸':'▾'} 🔗 Groupes déjà fusionnés (${groups.length})</h2></div>
     ${collapsed ? '' : `<div class="panel-body">${body}
-      <div class="footer-note" style="text-align:left; padding-top:8px;">Modifier le départ ou la durée ici s'applique à toutes les pièces du groupe en une fois. Chaque champ reste aussi modifiable individuellement dans le tableau de sa commande.</div>
+      <div class="footer-note" style="text-align:left; padding-top:8px;">Un groupe automatique se replace au mieux à chaque recalcul, en concurrence de priorité avec les autres tâches. Saisir une date de départ ici (ou glisser la barre dans le planning) le fige définitivement à cet horaire ; modifier la durée ne fige pas le départ.</div>
     </div>`}
   </section>`;
 }
@@ -6016,7 +6030,7 @@ function renderListeView(schedule){
     const mi = state.machines.findIndex(m=>m.id===o.machineId);
     const m = mi>=0 ? state.machines[mi] : null;
     const color = machineColor(m, mi<0?0:mi);
-    const meta = barStatusMeta(o, color, !!(o.manualStart || o.dureeOverrideH));
+    const meta = barStatusMeta(o, color, isPositionPinned(o));
     const statutLabel = { a_faire:'À faire', en_cours:'En cours', en_pause:'En pause' }[o.statut] || o.statut;
     const hlOnL = highlightActive();
     const hlL = isHighlighted(o.cid, o.commandeNom, o.piece);
@@ -6128,7 +6142,7 @@ function renderOpsRow(o, c){
   const done = o.statut==='termine';
   const running = o.statut==='en_cours' || o.statut==='en_pause';
   const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (o.tempsUnitaire*o.quantite)/60;
-  const overridden = o.manualStart || o.dureeOverrideH;
+  const overridden = isPositionPinned(o);
   const elapsedNote = running
     ? `<div class="elapsed-note">${durationLabel(opElapsedHours(o, state))} écoulé${o.statut==='en_pause'?(o.autoPaused?' (pause déjeuner)':' (en pause)'):''}</div>`
     : (done && dureePasseeH(o, state) ? `<div class="elapsed-note">${durationLabel(dureePasseeH(o, state))} réellement passé</div>` : '');
@@ -6609,6 +6623,7 @@ function dispatchClickAction(action, el){
     case 'kanban-machines-none': setAllKanbanMachineFilters(false); break;
     case 'close-fusion-detail': closeFusionGroupDetail(); break;
     case 'dissociate-fusion-group': dissociateFusionGroup(el.dataset.group); break;
+    case 'unpin-fusion-group': unpinFusionGroup(el.dataset.group); break;
     case 'open-commande-from-fusion-detail': fusionDetailModalGroupId = null; toggleIsolateCommande(el.dataset.cid); break;
     case 'group-draft-rows-by-poste': groupDraftRowsByPoste(); break;
     case 'remove-draft-op': removeDraftOp(Number(el.dataset.idx)); break;
@@ -6980,7 +6995,8 @@ document.addEventListener('pointerup', (e) => {
         const newStart = nextWorkingInstant(rawStart, targetCfg); // calé sur le calendrier du poste ciblé (jamais pendant sa pause)
         op.manualStart = toInputValue(newStart);
         op.machineId = newMachineId;
-        propagateFusionGroupFields(op, { manualStart: op.manualStart, machineId: op.machineId });
+        if(op.fusionGroupId) op.fusionPinned = true; // glisser une pièce fusionnée fige tout le groupe
+        propagateFusionGroupFields(op, { manualStart: op.manualStart, machineId: op.machineId, fusionPinned: true });
         commit();
       }
     }
@@ -7017,7 +7033,8 @@ document.addEventListener('pointerup', (e) => {
       const newStart = nextWorkingInstant(rawStart, targetCfg); // calé sur le calendrier du poste ciblé (jamais pendant sa pause)
       op.manualStart = toInputValue(newStart);
       op.machineId = newMachineId;
-      propagateFusionGroupFields(op, { manualStart: op.manualStart, machineId: op.machineId });
+      if(op.fusionGroupId) op.fusionPinned = true; // glisser une pièce fusionnée fige tout le groupe
+      propagateFusionGroupFields(op, { manualStart: op.manualStart, machineId: op.machineId, fusionPinned: true });
     } else {
       const fracEndX = (dragCtx.origLeft+dragCtx.currentWidthPx) / dragCtx.trackWidthPx;
       const newEnd = dateFromX(fracEndX, weekRenderCtx.days);
@@ -7087,7 +7104,8 @@ document.addEventListener('drop', (e) => {
   const [hh,mm] = (data.time||'08:00').split(':').map(Number);
   const newStart = new Date(cell.dataset.date+'T'+pad(hh)+':'+pad(mm));
   op.manualStart = toInputValue(nextWorkingInstant(newStart, cfg));
-  propagateFusionGroupFields(op, { manualStart: op.manualStart });
+  if(op.fusionGroupId) op.fusionPinned = true; // glisser une pièce fusionnée fige tout le groupe
+  propagateFusionGroupFields(op, { manualStart: op.manualStart, fusionPinned: true });
   commit();
 });
 

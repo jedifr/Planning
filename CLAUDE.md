@@ -45,7 +45,7 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
 - `pieces[]` (dans une commande) — `piece`, `etape`, `machineId`, `tempsUnitaire`
   (minutes), `quantite`, `statut`, `phase`, `manualStart`, `dureeOverrideH`,
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
-  `fusionGroupId`, `sousTraitance`, `dateDebutPossible`
+  `fusionGroupId`, `fusionPinned`, `sousTraitance`, `dateDebutPossible`
 - `leaveTypes[]`, `leaveRequests[]`, `userLeaveAllocations`, `userMachines`, `userLunch`
 - `importProfiles[]` — profils de correspondance de l'import personnalisé
 
@@ -66,6 +66,11 @@ Le cœur du produit. Trois phases :
 3. **Tâches volantes**, par priorité : urgence, puis échéance, puis phase.
    `findNextFreeSlot()` cherche un vrai créneau libre (remplissage des trous).
    `machineDispoFloor` est un plancher fixe, jamais modifié en phase 3.
+   Un groupe fusionné **non figé** (`fusionPinned=false`) n'est pas éclaté en pièces
+   indépendantes : ses membres sont regroupés en **un seul candidat** (même poste, durée
+   totale, priorité = celle de son membre le plus prioritaire) qui concourt comme
+   n'importe quelle tâche volante — voir le regroupement juste avant la boucle de phase 3
+   dans `computeSchedule`.
 
 ### Dépendances de phase
 
@@ -92,14 +97,30 @@ Trois mécanismes **indépendants** produisent un `fusionGroupId` :
    uniquement si `config.matiereFusionActive` est activé (Paramètres → Postes).
 3. **Bouton manuel** « Regrouper les lignes du même poste » en création de commande.
 
-Les membres d'un groupe partagent `manualStart` et `dureeOverrideH` (somme des durées).
-Toute modification (glisser, redimensionner, changer de statut, libérer) doit se
-propager à tout le groupe — voir `propagateFusionGroupFields()`.
+Les membres d'un groupe partagent `dureeOverrideH` (somme des durées) et, s'il est figé,
+`manualStart`. Toute modification (glisser, redimensionner, changer de statut, figer,
+libérer) doit se propager à tout le groupe — voir `propagateFusionGroupFields()`.
+
+**Deux modes, portés par `fusionPinned`** :
+- **Automatique (`fusionPinned=false`, par défaut à la création)** — pas de `manualStart` :
+  le groupe est traité en phase 3 comme un candidat unique qui concourt par priorité
+  avec les autres tâches volantes (voir plus haut). C'est la position qui s'affiche et se
+  recalcule à chaque changement de planning — jamais figée dans le temps.
+- **Figé (`fusionPinned=true`)** — `manualStart` posé sur tous les membres, activé par un
+  glisser-déposer, une saisie de date (`setManualStartValue`, `updateFusionGroupStart`,
+  `pinOpAtCurrentTime`) ou le contexte-menu « Figer à cet horaire ». Comportement inchangé
+  depuis toujours : jamais concerné par le remplissage des trous, position toujours
+  respectée.
 
 **Sémantique à respecter** :
-- Double-clic / « Libérer » = revenir au calcul automatique **en gardant le groupe**
-  (il est libéré puis refusionné à sa nouvelle position).
-- « Dissocier » (pop-up de regroupement) = seul moyen de casser réellement un groupe.
+- « Libérer » (double-clic, bouton ↺, ou panneau des groupes) = repasser tout le groupe en
+  mode automatique (`fusionPinned=false`, `manualStart=null`) — plus jamais besoin de
+  recalculer une position ici, la phase 3 s'en charge à chaque appel de `computeSchedule`.
+- « Dissocier » (pop-up de regroupement) = seul moyen de casser réellement un groupe
+  (`fusionGroupId=null`, redevient indépendant).
+- `isPositionPinned(o)` est le point unique qui décide si une pièce affiche le badge
+  « 📌 Figée » — pour une pièce fusionnée, il regarde `fusionPinned`, jamais la simple
+  présence de `dureeOverrideH` (toujours posé sur un groupe, figé ou non).
 
 ## Tests
 
@@ -138,10 +159,22 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
 - **Casse et espaces des valeurs d'import.** « Laser 2D » et « laser 2d » créaient deux
   entrées distinctes. Tout est normalisé via `normPosteKey()`. Les clés de
   `posteMapping`, `groupByValue`, `sousTraitanceByValue` sont **toujours normalisées**.
-- **Repli sur « maintenant » dans la fusion.** Quand aucune pièce du groupe n'a d'horaire
-  calculé, `performFusion` retombait sur `new Date()` et figeait le groupe dans le passé,
-  avant ses prédécesseurs. Il calcule désormais un plancher sûr (fin des phases
-  antérieures + disponibilité du poste), arrondi à la minute supérieure.
+- **Mutation du planning sans invalider le cache avant de le relire.** `scheduleCache`
+  n'est recalculé que par `invalidateSchedule()` (par défaut dans `commit()`). Deux bugs
+  distincts en ont découlé : la reprise automatique de pause déjeuner (`setInterval` dans
+  `startApp`) mutait `state` puis appelait `render()` sans invalider — l'affichage
+  réutilisait l'ancien planning, les tâches suivantes ne se décalaient qu'au F5 suivant.
+  Et `resetOpOverride()` (« Libérer » un groupe fusionné) détachait les membres puis
+  appelait `performFusion()`, qui relisait aussitôt `getSchedule()` — encore le planning
+  d'AVANT la libération — et retrouvait donc quasiment la même position : « Libérer »
+  semblait n'avoir aucun effet. Réflexe : après toute mutation directe de `state` hors de
+  `commit()`, invalider explicitement avant de relire `getSchedule()`/`computeSchedule()`.
+- **Dépendance de phase à travers un groupe fusionné non lié.** `resolveEffectiveDeps()`
+  faisait dépendre une étape d'une pièce (ex. son Laser, phase basse) d'un groupe fusionné
+  auquel cette même pièce participe via une AUTRE étape plus tardive (ex. sa Chaudronnerie,
+  fusionnée avec d'autres pièces à phase basse) — sans vérifier que MA propre participation
+  à ce groupe se situe bien avant l'étape évaluée. Corrigé en comparant la phase de ma
+  propre ligne dans ce groupe à la phase courante, pas seulement la phase des autres membres.
 - **Doubles enregistrements concurrents.** Enchaîner deux `commit()` déclenche un conflit
   de version (« Quelqu'un d'autre vient de modifier le planning ») et **perd la
   modification**. `performFusion(items, skipCommit)` existe pour ça. Vérifier qu'une
