@@ -4331,6 +4331,7 @@ function renderHeader(){
     <div class="toolbar-mini">
       <div class="shift-badge ${on?'on':'off'}"><span class="shift-dot"></span>${on?'Poste en cours':'Hors horaires'} · ${new Date().toLocaleString('fr-FR',{weekday:'short',hour:'2-digit',minute:'2-digit'})}</div>
       ${renderSyncBadge()}
+      ${(() => { const n = pausedSinceEarlierTasks().length; return n>0 ? `<button class="small" data-action="show-paused-banner" title="Revoir les tâches en pause depuis la veille ou avant">⏸ ${n} en pause</button>` : ''; })()}
       ${currentPage!=='conges' ? `
       <button class="small" data-action="export-data" title="Télécharger un fichier .json — à déposer dans un dossier synchronisé avec votre NAS">Exporter (.json)</button>
       <button class="small" data-action="trigger-import" title="Recharger un fichier .json exporté précédemment">Importer</button>
@@ -6594,6 +6595,7 @@ function dispatchClickAction(action, el){
     case 'ctx-reopen': contextMenu = null; setOpStatut(el.dataset.cid, el.dataset.oid, 'a_faire'); break;
     case 'resume-paused-task': setOpStatut(el.dataset.cid, el.dataset.oid, 'en_cours'); break;
     case 'dismiss-paused-banner': dismissPausedBanner(); break;
+    case 'show-paused-banner': pausedBannerDismissedDate = null; render(); break;
   }
 }
 
