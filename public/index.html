@@ -385,7 +385,7 @@
     padding:9px 0; border-bottom:1px dashed var(--line-soft);
   }
   .draft-op-row:last-child{border-bottom:none;}
-  .commande-top-fields{display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; margin-bottom:14px;}
+  .commande-top-fields{display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr; gap:12px; margin-bottom:14px;}
   .form-actions{display:flex; justify-content:space-between; align-items:center; margin-top:14px;}
 
   .commande-card{background:var(--bg); border:1px solid var(--line-soft); border-left:4px solid var(--line); border-radius:2px; margin-bottom:12px;}
@@ -409,6 +409,9 @@
   .commande-card.commande-selected{ box-shadow:0 0 0 2px var(--accent); }
   input.commande-name{font-family:'Oswald',sans-serif; font-size:15px; font-weight:600; background:transparent; border:none; flex:1; min-width:160px; padding:3px 0;}
   input.commande-name:focus{border-bottom:1px solid var(--blue);}
+  input.commande-ref-client{font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--text-faint); background:transparent; border:none; border-bottom:1px solid transparent; width:150px; padding:3px 2px;}
+  input.commande-ref-client:hover{border-bottom-color:var(--line);}
+  input.commande-ref-client:focus{color:var(--text); border-bottom-color:var(--blue);}
   .due-field{display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--text-faint);}
   .due-field input{width:140px;}
   .search-bar{display:flex; align-items:center; gap:10px; margin-bottom:10px;}
@@ -1002,6 +1005,7 @@ function migrateState(st){
   st.commandes.forEach(c => {
     if(!c.pieces) c.pieces = [];
     if(!c.urgence) c.urgence = 'normale';
+    if(c.refClient === undefined) c.refClient = '';
     c.pieces.forEach(o => {
       if(o.manualStart === undefined) o.manualStart = null;
       if(o.dureeOverrideH === undefined) o.dureeOverrideH = null;
@@ -2514,7 +2518,7 @@ async function testBackupNow(){
 }
 
 function newDraft(){
-  return { nom: '', dateBesoin: '', urgence: 'normale', _fusionGroups: [],
+  return { nom: '', refClient: '', dateBesoin: '', urgence: 'normale', _fusionGroups: [],
     pieces: [ { id: uid('op'), piece: '', etape: '', machineId: state.machines[0] ? state.machines[0].id : '', tempsUnitaire: '', quantite: '1', phase: 1, dureeOverrideH: null, dateDebutPossible: null } ] };
 }
 // Regroupe, dans le formulaire de nouvelle commande, toutes les lignes déjà saisies qui visent le
@@ -3187,7 +3191,7 @@ function submitNewCommande(){
         const already = new Set(target.pieces.map(p=>p.id));
         toAdd.forEach(p => { if(!already.has(p.id)) target.pieces.push(p); });
       } else {
-        targetState.commandes.push({ id: uid('c'), nom: nomTrim, dateBesoin: draft.dateBesoin, urgence: draft.urgence || 'normale', pieces: toAdd.slice() });
+        targetState.commandes.push({ id: uid('c'), nom: nomTrim, refClient: (draft.refClient||'').trim(), dateBesoin: draft.dateBesoin, urgence: draft.urgence || 'normale', pieces: toAdd.slice() });
       }
     };
     applyFn(state);
@@ -3201,7 +3205,7 @@ function submitNewCommande(){
   }
 
   const newCmd = {
-    id: uid('c'), nom: nomTrim, dateBesoin: draft.dateBesoin, urgence: draft.urgence || 'normale',
+    id: uid('c'), nom: nomTrim, refClient: (draft.refClient||'').trim(), dateBesoin: draft.dateBesoin, urgence: draft.urgence || 'normale',
     pieces: dedupedOps.map(o => ({
       id: o.id, piece: o.piece.trim(), etape: o.etape.trim(), machineId: o.machineId,
       tempsUnitaire: Number(o.tempsUnitaire), quantite: Number(o.quantite), statut: 'a_faire',
@@ -6118,6 +6122,7 @@ function renderNewForm(){
     <div class="panel-body">
       <div class="commande-top-fields">
         <div><label class="field">Référence / client</label><input placeholder="ex : CDE-0472 — Client Dupont" value="${escapeHtml(draft.nom)}" data-action="draft-field" data-field="nom"></div>
+        <div><label class="field">Réf. commande client</label><input placeholder="ex : PO-2026-0451" value="${escapeHtml(draft.refClient||'')}" data-action="draft-field" data-field="refClient"></div>
         <div><label class="field">Date de besoin *</label><input type="date" required value="${draft.dateBesoin}" data-action="draft-field" data-field="dateBesoin"></div>
         <div><label class="field">Urgence</label><select data-action="draft-field" data-field="urgence">
           <option value="normale" ${draft.urgence==='normale'?'selected':''}>Normale</option>
@@ -6206,8 +6211,14 @@ function renderCommandeCard(c, idx, total){
   const allDone = c.pieces.length>0 && c.pieces.every(o=>o.statut==='termine');
   if(allDone) badge = `<span class="badge done">Terminée</span>`;
 
-  const activePieces = c.pieces.filter(o=>o.statut!=='termine');
-  const donePieces = c.pieces.filter(o=>o.statut==='termine');
+  // Une recherche par référence de PIÈCE ne doit faire ressortir que les lignes concernées, pas
+  // toutes celles de la commande — sauf si c'est la commande elle-même qui correspond (matchesSearch
+  // fait ressortir la commande entière dans ce cas, et il est alors logique de tout montrer).
+  const searchQ = searchQuery ? searchQuery.toLowerCase() : '';
+  const cmdNameMatchesSearch = searchQ && c.nom.toLowerCase().includes(searchQ);
+  const pieceMatchesSearch = o => !searchQ || cmdNameMatchesSearch || (o.piece && o.piece.toLowerCase().includes(searchQ));
+  const activePieces = c.pieces.filter(o=>o.statut!=='termine').filter(pieceMatchesSearch);
+  const donePieces = c.pieces.filter(o=>o.statut==='termine').filter(pieceMatchesSearch);
 
   const activeBlock = `
     <div class="ops-subhead">Tâches en cours <span class="ops-subcount">(${activePieces.length})</span></div>
@@ -6230,6 +6241,7 @@ function renderCommandeCard(c, idx, total){
       </div>
       <button class="commande-rank mono ${selectedCommandeId===c.id?'selected':''}" data-action="toggle-select-commande" data-id="${c.id}" title="Mettre en évidence cette commande dans le planning visuel">#${idx+1}</button>
       <input class="commande-name" value="${escapeHtml(c.nom)}" data-action="commande-field" data-cid="${c.id}" data-field="nom">
+      <input class="commande-ref-client" placeholder="Réf. commande client" title="Référence de la commande chez le client" value="${escapeHtml(c.refClient||'')}" data-action="commande-field" data-cid="${c.id}" data-field="refClient">
       <select class="urgency-select" style="${selectStyle}" data-action="commande-field" data-cid="${c.id}" data-field="urgence" title="Niveau d'urgence">
         <option value="normale" ${c.urgence==='normale'?'selected':''}>Normale</option>
         <option value="importante" ${c.urgence==='importante'?'selected':''}>Importante</option>
