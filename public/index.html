@@ -23,6 +23,7 @@
     --green: #357557;
     --red: #b23a30;
     --amber: #a06d1a;
+    --amber-dim: #f2e4cf;
     --radius: 3px;
   }
   *{box-sizing:border-box;}
@@ -155,6 +156,9 @@
   .machine-indispo-add{display:flex; flex-direction:column; gap:6px;}
   .machine-indispo-add .indispo-dates-row{display:flex; gap:6px;}
   .machine-indispo-add .indispo-dates-row input{flex:1; min-width:0;}
+  .user-pauses-list{display:flex; flex-direction:column; gap:4px;}
+  .user-pause-row{display:flex; align-items:center; gap:6px;}
+  .user-pause-row input{flex:1; min-width:0;}
   .machine-indispo-add button{width:100%;}
   .machine-indispo-add input{padding:5px 6px; font-size:11.5px;}
   .machine-card .row1{display:flex; gap:8px; align-items:center; margin-bottom:8px;}
@@ -310,6 +314,7 @@
   .kanban-card-time{font-size:10px; color:var(--text-faint); font-family:'IBM Plex Mono',monospace;}
   .kanban-card-planned{font-size:10px; color:var(--text-dim); margin-top:2px;}
   .kanban-card-due{font-size:10px; color:var(--red); font-weight:600; margin-top:2px;}
+  .kanban-card-fusion-list{font-size:10px; color:var(--text-faint); margin-top:2px;}
   .kanban-card-elapsed{font-size:10px; color:var(--accent); font-weight:600; margin-top:2px;}
   .kanban-empty{padding:14px 6px; text-align:center; font-size:11px; color:var(--text-faint);}
 
@@ -410,6 +415,17 @@
   .isolate-banner{
     display:flex; align-items:center; gap:10px; margin-bottom:10px; padding:7px 12px;
     background:var(--accent-dim); border:1px solid var(--accent); border-radius:2px; font-size:12px; color:var(--text);
+  }
+  .paused-banner{
+    margin-bottom:14px; padding:10px 14px; background:var(--amber-dim);
+    border:1px solid var(--amber); border-radius:2px;
+  }
+  .paused-banner-head{
+    display:flex; align-items:center; justify-content:space-between; font-size:13px; color:var(--text);
+  }
+  .paused-banner-row{
+    display:flex; align-items:center; justify-content:space-between; gap:14px;
+    padding:7px 0 0; margin-top:7px; border-top:1px solid rgba(160,109,26,0.25); font-size:12px; color:var(--text-dim);
   }
   .commandes-columns{display:grid; grid-template-columns:1fr 9px 1fr; gap:10px; align-items:start;}
   .columns-resize-handle{
@@ -742,6 +758,17 @@ function loadDoneFilterPref(){
   try{ const v = localStorage.getItem(DONE_FILTER_STORAGE_KEY); if(v) doneFilterRange = v; }
   catch(e){ /* préférence absente ou indisponible */ }
 }
+const KANBAN_GROUPED_VIEW_KEY = 'planning-atelier-kanban-grouped-view';
+let kanbanGroupedView = false; // true = les pièces fusionnées n'affichent qu'une seule carte groupée
+function loadKanbanGroupedViewPref(){
+  try{ kanbanGroupedView = localStorage.getItem(KANBAN_GROUPED_VIEW_KEY) === '1'; }
+  catch(e){ /* préférence absente ou indisponible */ }
+}
+function toggleKanbanGroupedView(checked){
+  kanbanGroupedView = !!checked;
+  try{ localStorage.setItem(KANBAN_GROUPED_VIEW_KEY, kanbanGroupedView ? '1' : '0'); }catch(e){ /* stockage indisponible : le choix reste valable pour la session */ }
+  render();
+}
 function monthsAgo(n){
   const d = new Date();
   d.setMonth(d.getMonth() - n);
@@ -768,13 +795,64 @@ function commandeCompletionDate(c){
   });
   return latest;
 }
+// Une commande n'est archivable que si TOUTES ses pièces sont terminées et que la plus récente
+// date de fin réelle dépasse le seuil configuré — jamais sur une simple absence de date (prudence).
+function isCommandeArchivable(c, cutoffDate){
+  if(!c.pieces || c.pieces.length === 0) return false;
+  if(!c.pieces.every(o => o.statut === 'termine')) return false;
+  const completion = commandeCompletionDate(c);
+  if(!completion) return false;
+  return completion < cutoffDate;
+}
+// Écarte du moteur de planification (computeSchedule tourne sur state.commandes à chaque redessin)
+// les commandes entièrement terminées depuis longtemps — c'est la principale cause de
+// ralentissement progressif de l'appli à mesure que l'historique s'accumule. Rien n'est perdu : les
+// commandes archivées restent consultables dans le panneau "Commandes archivées" et incluses dans
+// l'export .json complet ; "Désarchiver" les ramène instantanément dans les commandes actives.
+function archiveOldCommandes(st){
+  const jours = Number(st.config.archiveApresJours);
+  if(!jours || jours <= 0) return false;
+  const cutoff = new Date(Date.now() - jours*86400000);
+  const toArchive = st.commandes.filter(c => isCommandeArchivable(c, cutoff));
+  if(toArchive.length === 0) return false;
+  if(!Array.isArray(st.commandesArchivees)) st.commandesArchivees = [];
+  const toArchiveIds = new Set(toArchive.map(c=>c.id));
+  st.commandes = st.commandes.filter(c => !toArchiveIds.has(c.id));
+  st.commandesArchivees.push(...toArchive);
+  return true;
+}
+function unarchiveCommande(cid){
+  const idx = (state.commandesArchivees||[]).findIndex(c=>c.id===cid);
+  if(idx<0) return;
+  const [c] = state.commandesArchivees.splice(idx,1);
+  state.commandes.push(c);
+  commit();
+}
+// Déclenchement manuel depuis Paramètres — applique le seuil configuré immédiatement, pour
+// rattraper l'historique déjà accumulé sans attendre le prochain démarrage de l'application
+// (l'archivage automatique ne tourne qu'une fois au chargement, voir startApp).
+function manualArchiveNow(){
+  if(!(Number(state.config.archiveApresJours) > 0)){
+    showToast('Réglez d\'abord un nombre de jours supérieur à 0 ci-dessus.');
+    return;
+  }
+  const before = (state.commandesArchivees||[]).length;
+  if(!archiveOldCommandes(state)){
+    showToast('Aucune commande à archiver pour le moment.');
+    return;
+  }
+  const nb = state.commandesArchivees.length - before;
+  commit();
+  showToast(`${nb} commande${nb>1?'s':''} archivée${nb>1?'s':''}.`);
+}
 let currentView = 'semaine'; // 'semaine' | 'mois' | 'annee'
 let currentPage = 'planning'; // 'planning' | 'conges'
 let congesTab = 'mes-demandes'; // 'mes-demandes' | 'equipe' | 'calendrier' | 'a-valider' | 'soldes'
 let equipeStatutFilter = 'approuve'; // filtre de l'onglet "Congés de l'équipe"
 let leaveImpactPreviewId = null; // id de la demande dont on affiche l'aperçu d'impact, dans "À valider"
 let changeProcessingInFlight = false; // vrai pendant le court battement entre un 'change' et son traitement différé — la synchro en tâche de fond doit patienter
-let pendingLeaveRequestDraft = null; // { userId, typeId, debut, fin, motif, mode: 'salarie'|'admin' } — en attente de confirmation avant envoi réel
+let pendingLeaveRequestDraft = null; // { userId, typeId, debut, fin, motif, mode: 'salarie'|'admin'|'edit' } — en attente de confirmation avant envoi réel
+let editingLeaveRequestDraft = null; // { id, userId, typeId, debut, fin, motif } — formulaire de correction d'un congé existant, avant l'aperçu de conséquences
 let equipePersonneFilter = ''; // '' = toutes les personnes
 let calendrierYear = new Date().getFullYear();
 let calendrierPersonneFilter = ''; // '' = toutes les personnes
@@ -794,7 +872,14 @@ let toastTimer = null;
 function showToast(msg){
   toastMessage = msg;
   if(toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { toastMessage = null; render(); }, 6000);
+  toastTimer = setTimeout(() => {
+    toastMessage = null;
+    // Ne pas couper une saisie en cours juste pour faire disparaître le toast — le prochain
+    // redessin naturel (ex. en sortant du champ) le fera disparaître de toute façon, puisque
+    // toastMessage est déjà à null ci-dessus.
+    if(isTypingInField() || dragCtx || showSettingsModal || changeProcessingInFlight) return;
+    render();
+  }, 6000);
   render();
 }
 let syncStatus = 'ok'; // 'ok' | 'saving' | 'error' | 'conflict'
@@ -828,8 +913,23 @@ function migrateState(st){
     delete m.transfertFixeH; delete m.transfertParPieceH;
   });
   if(!st.config.margeEcheanceJours && st.config.margeEcheanceJours !== 0) st.config.margeEcheanceJours = 0;
+  if(st.config.archiveApresJours === undefined) st.config.archiveApresJours = 365; // 0 = archivage automatique désactivé
+  if(!Array.isArray(st.commandesArchivees)) st.commandesArchivees = []; // commandes entièrement terminées depuis longtemps, écartées du moteur de planification pour garder l'appli réactive — toujours incluses dans l'export complet
   if(!st.userMachines) st.userMachines = {}; // { [userId]: [machineId, ...] } — lien plusieurs-à-plusieurs
-  if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauseDebut, pauseFin} } — pause déjeuner propre à la personne, affecte réellement le calcul
+  if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
+  Object.keys(st.userLunch).forEach(uid_ => {
+    const lunch = st.userLunch[uid_];
+    if(!Array.isArray(lunch.pauses)){
+      // Ancien format à une seule pause (pauseDebut/pauseFin) : reprise comme première (et pour
+      // l'instant unique) pause de la personne, une seule fois.
+      lunch.pauses = (lunch.pauseDebut && lunch.pauseFin) ? [{ id: uid('pause'), debut: lunch.pauseDebut, fin: lunch.pauseFin }] : [];
+      delete lunch.pauseDebut;
+      delete lunch.pauseFin;
+    }
+    if(lunch.horaireActif === undefined) lunch.horaireActif = false;
+    if(!lunch.heureDebut) lunch.heureDebut = `${pad(DEFAULT_CONFIG.startHour)}:${pad(DEFAULT_CONFIG.startMinute)}`;
+    if(!lunch.heureFin) lunch.heureFin = '16:45';
+  });
   if(!st.config.modules) st.config.modules = { conges: true }; // interrupteur du module Congés
   if(st.config.matiereFusionActive === undefined) st.config.matiereFusionActive = false; // détection par matière/épaisseur désactivée par défaut
   if(st.config.copyright === undefined) st.config.copyright = ''; // mention de l'écran de connexion
@@ -916,6 +1016,7 @@ function migrateState(st){
       if(o.matiere === undefined) o.matiere = '';
       if(o.epaisseur === undefined) o.epaisseur = '';
       if(o.fusionGroupId === undefined) o.fusionGroupId = null;
+      if(o.dureeReelleH === undefined) o.dureeReelleH = null; // temps réellement passé (secours quand aucune session n'existe) — voir applySingleStatusChange
     });
   });
   if(!st.importProfiles) st.importProfiles = []; // profils de correspondance de colonnes pour l'import personnalisé (autres logiciels)
@@ -925,7 +1026,16 @@ async function loadState(){
   try{
     const res = await fetch('/api/state', { credentials: 'include' });
     if(res.status === 401){ renderLoginScreen('Votre session a expiré — reconnectez-vous.'); throw new Error('401'); }
+    if(res.status === 403){
+      const errJson = await res.json().catch(()=>({}));
+      if(errJson.licenseInvalid){
+        licenseBlocked = true;
+        licenseStatus = errJson.licenseStatus || null;
+        return migrateState(defaultState()); // jamais réellement affiché : render() montre l'écran de licence à la place
+      }
+    }
     if(!res.ok) throw new Error('HTTP '+res.status);
+    licenseBlocked = false;
     const json = await res.json();
     stateVersion = json.version;
     lastSyncAt = new Date();
@@ -954,6 +1064,7 @@ async function saveState(){
       syncStatus = 'conflict';
       alert("Quelqu'un d'autre vient de modifier le planning entre-temps. Votre dernière action n'a pas été enregistrée — la version la plus récente va être rechargée.");
       state = migrateState(json.data);
+      invalidateSchedule();
       stateVersion = json.version;
       lastSyncAt = new Date();
       render();
@@ -977,8 +1088,17 @@ async function saveState(){
 // modification (mêmes identifiants, mêmes valeurs) sur l'état qu'on lui donne, pour que rejouer sur
 // une version différente produise un résultat cohérent plutôt que des identifiants différents à
 // chaque tentative.
+// Compteur (pas un simple booléen : deux appels peuvent se chevaucher, ex. deux créations de
+// commande rapprochées) de sauvegardes "intelligentes" actuellement en vol. pollRemoteState()
+// s'appuie dessus pour ne jamais écraser un ajout optimiste pas encore confirmé par le serveur :
+// sans ça, une réponse de polling arrivée en retard (partie AVANT que cette sauvegarde n'ait fait
+// avancer stateVersion, mais livrée APRÈS) fait disparaître la commande tout juste créée de l'écran,
+// alors qu'elle est bien enregistrée côté serveur.
+let saveReapplyInFlight = 0;
 async function saveStateWithReapply(applyFn, maxRetries){
   let attempt = 0;
+  saveReapplyInFlight++;
+  try{
   while(true){
     syncStatus = 'saving';
     try{
@@ -995,6 +1115,7 @@ async function saveStateWithReapply(applyFn, maxRetries){
           syncStatus = 'conflict';
           alert("Quelqu'un d'autre modifie le planning en même temps que vous, et votre action n'a malgré tout pas pu être réappliquée automatiquement après plusieurs tentatives. Merci de vérifier ci-dessous si elle est bien présente, et de la resaisir sinon.");
           state = migrateState(json.data);
+          invalidateSchedule();
           stateVersion = json.version;
           lastSyncAt = new Date();
           render();
@@ -1004,6 +1125,7 @@ async function saveStateWithReapply(applyFn, maxRetries){
         const freshState = migrateState(json.data);
         applyFn(freshState);
         state = freshState;
+        invalidateSchedule();
         stateVersion = json.version;
         continue;
       }
@@ -1021,6 +1143,9 @@ async function saveStateWithReapply(applyFn, maxRetries){
       return;
     }
   }
+  } finally {
+    saveReapplyInFlight--;
+  }
 }
 // Variante silencieuse pour les changements déclenchés automatiquement (pas par un clic de l'utilisateur) :
 // en cas de conflit, on recharge simplement la version la plus récente sans interrompre l'utilisateur avec une alerte.
@@ -1035,9 +1160,13 @@ async function silentSave(){
     if(res.status === 409){
       const json = await res.json();
       state = migrateState(json.data);
+      invalidateSchedule();
       stateVersion = json.version;
       lastSyncAt = new Date();
-      render();
+      // Même précaution que pollRemoteState : silentSave() est déclenché en tâche de fond (auto-pause
+      // déjeuner, migration...), potentiellement pendant qu'un champ est en cours de saisie ailleurs
+      // dans l'appli — ne jamais le couper pour ça, le prochain redessin naturel suffira.
+      if(!(isTypingInField() || dragCtx || showSettingsModal || changeProcessingInFlight)) render();
       return;
     }
     if(!res.ok) throw new Error('HTTP '+res.status);
@@ -1059,17 +1188,47 @@ async function pollRemoteState(){
   if(showSettingsModal) return; // ne pas écraser une saisie en cours dans la pop-up Paramètres
   if(changeProcessingInFlight) return; // un champ vient d'être validé, son traitement différé n'a pas encore eu lieu
   if(isTypingInField()) return; // ne pas couper une saisie en cours
+  // Une sauvegarde locale (champ modifié, commande créée, import...) est en vol : sa réponse va de
+  // toute façon faire avancer stateVersion sous peu. Si CE poll a été envoyé avant elle et que sa
+  // réponse (encore sur l'ancienne version) arrive après coup, l'appliquer ferait régresser l'état
+  // local — ex. une commande tout juste créée disparaîtrait de l'écran alors qu'elle est bien
+  // enregistrée côté serveur. On laisse simplement la sauvegarde en cours (et son propre
+  // rechargement en cas de conflit) faire foi.
+  if(saveInFlight || saveReapplyInFlight > 0) return;
   try{
     const res = await fetch('/api/state', { credentials: 'include' });
     if(res.status === 401) return; // session expirée : la prochaine action de l'utilisateur le détectera
+    if(res.status === 403){
+      const errJson = await res.json().catch(()=>({}));
+      if(errJson.licenseInvalid){
+        // Mêmes précautions que pour un rechargement normal : ne pas couper une saisie en cours.
+        if(isTypingInField() || dragCtx || showSettingsModal || changeProcessingInFlight || saveInFlight || saveReapplyInFlight > 0) return;
+        licenseBlocked = true;
+        licenseStatus = errJson.licenseStatus || null;
+        render();
+        return;
+      }
+    }
     if(!res.ok) throw new Error('HTTP '+res.status);
     const json = await res.json();
     // Re-vérification APRÈS l'attente réseau : l'utilisateur a pu cliquer dans un champ et commencer
-    // à taper pendant l'aller-retour. Redessiner à ce moment-là recrée le champ et efface ce qui
-    // vient d'être saisi — c'est la cause du champ "Référence" qui se vidait aléatoirement.
-    if(isTypingInField() || dragCtx || showSettingsModal || changeProcessingInFlight) return;
-    if(json.version !== stateVersion){
+    // à taper pendant l'aller-retour (ou une sauvegarde a pu démarrer entre-temps). Appliquer cette
+    // réponse à ce moment-là recrée le champ en cours de saisie et efface ce qui vient d'être tapé —
+    // c'est la cause du champ "Référence" qui se vidait aléatoirement — ou fait régresser l'état
+    // local derrière une sauvegarde qui vient de réussir.
+    if(isTypingInField() || dragCtx || showSettingsModal || changeProcessingInFlight || saveInFlight || saveReapplyInFlight > 0) return;
+    // Une clé de licence valide vient peut-être d'être installée depuis un autre poste : on sort
+    // de l'écran de blocage dès qu'une réponse normale revient.
+    const wasBlocked = licenseBlocked;
+    licenseBlocked = false;
+    // > et non !== : une réponse dont la version est plus ANCIENNE que celle déjà connue localement
+    // n'est pas une divergence à corriger, c'est une réponse dépassée par une sauvegarde locale qui a
+    // entre-temps fait avancer stateVersion pendant que cette requête de polling était en vol — même
+    // avec la garde saveInFlight/saveReapplyInFlight ci-dessus (qui ne protège que tant que la
+    // sauvegarde n'est pas déjà terminée), l'appliquer ferait régresser l'état local.
+    if(json.version > stateVersion || wasBlocked){
       state = migrateState(json.data);
+      invalidateSchedule();
       stateVersion = json.version;
       syncStatus = 'ok';
       lastSyncAt = new Date();
@@ -1105,35 +1264,58 @@ function dayHoursFor(dow, cfg){ return dow===5 ? cfg.friHours : cfg.monThuHours;
 function dayStartFor(d, cfg){ return new Date(d.getFullYear(), d.getMonth(), d.getDate(), cfg.startHour, cfg.startMinute, 0, 0); }
 function startOfWeek(d){ const dow=d.getDay(); const diff = dow===0 ? -6 : 1-dow; return new Date(d.getFullYear(), d.getMonth(), d.getDate()+diff); }
 
-function pauseWindowFor(date, cfg){
-  if(!cfg.pauseActive || !cfg.pauseDebut || !cfg.pauseFin) return null;
-  const [ph,pm] = cfg.pauseDebut.split(':').map(Number);
-  const [qh,qm] = cfg.pauseFin.split(':').map(Number);
-  if(isNaN(ph) || isNaN(qh)) return null;
-  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), ph, pm||0, 0, 0);
-  const end = new Date(date.getFullYear(), date.getMonth(), date.getDate(), qh, qm||0, 0, 0);
-  if(end <= start) return null;
-  return { start, end };
+// Toutes les pauses effectives pour ce cfg à cette date, triées et fusionnées si elles se chevauchent
+// (protège contre une saisie d'horaires qui se recouvrent par erreur). cfg.pauses (tableau
+// {debut,fin}) prime s'il est présent et non vide — c'est le cas d'une personne ayant plusieurs
+// pauses (déjeuner + pause l'après-midi, par ex.) ; sinon on retombe sur l'ancien format à une
+// seule pause (pauseActive/pauseDebut/pauseFin), utilisé par la config globale et les horaires de poste.
+function pauseWindowsFor(date, cfg){
+  const defs = (cfg.pauses && cfg.pauses.length) ? cfg.pauses
+    : (cfg.pauseActive && cfg.pauseDebut && cfg.pauseFin ? [{ debut: cfg.pauseDebut, fin: cfg.pauseFin }] : []);
+  const raw = [];
+  defs.forEach(p => {
+    if(!p.debut || !p.fin) return;
+    const [ph,pm] = p.debut.split(':').map(Number);
+    const [qh,qm] = p.fin.split(':').map(Number);
+    if(isNaN(ph) || isNaN(qh)) return;
+    const start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), ph, pm||0, 0, 0);
+    const end = new Date(date.getFullYear(), date.getMonth(), date.getDate(), qh, qm||0, 0, 0);
+    if(end > start) raw.push({ start, end });
+  });
+  raw.sort((a,b) => a.start - b.start);
+  const merged = [];
+  raw.forEach(w => {
+    const last = merged[merged.length-1];
+    if(last && w.start <= last.end){ if(w.end > last.end) last.end = w.end; }
+    else merged.push({ start: w.start, end: w.end });
+  });
+  return merged;
 }
-// Segments de travail d'une journée (1 segment, ou 2 si la pause déjeuner la traverse).
-// La journée est automatiquement prolongée de la durée de la pause pour que le total
+// Pause active à cet instant précis, s'il y en a une (pour l'auto-pause des tâches en cours).
+function pauseWindowFor(date, cfg){
+  return pauseWindowsFor(date, cfg).find(w => date >= w.start && date < w.end) || null;
+}
+// Segments de travail d'une journée (1 segment, ou plus si une ou plusieurs pauses la traversent).
+// La journée est automatiquement prolongée de la durée totale des pauses pour que le total
 // d'heures travaillées reste bien égal à monThuHours / friHours.
 function dayIntervals(date, cfg){
   const dow = date.getDay();
   const dh = dayHoursFor(dow, cfg);
   const dStart = dayStartFor(date, cfg);
   const nominalEnd = new Date(dStart.getTime() + dh*3600000);
-  const pause = pauseWindowFor(date, cfg);
-  if(!pause || pause.end <= dStart || pause.start >= nominalEnd){
-    return [[dStart, nominalEnd]];
-  }
-  const pStart = pause.start < dStart ? dStart : pause.start;
-  const pauseMs = pause.end.getTime() - pause.start.getTime();
-  const pEnd = new Date(pStart.getTime() + pauseMs);
-  const dEnd = new Date(nominalEnd.getTime() + pauseMs);
+  const pauses = pauseWindowsFor(date, cfg).filter(p => p.end > dStart && p.start < nominalEnd);
+  if(!pauses.length) return [[dStart, nominalEnd]];
+  let dEnd = new Date(nominalEnd.getTime() + pauses.reduce((s,p) => s + (p.end.getTime()-p.start.getTime()), 0));
+  let cursor = dStart;
   const segs = [];
-  if(pStart > dStart) segs.push([dStart, pStart]);
-  if(pEnd < dEnd) segs.push([pEnd, dEnd]);
+  pauses.forEach(pause => {
+    const pStart = pause.start < cursor ? cursor : pause.start;
+    const pauseMs = pause.end.getTime() - pause.start.getTime();
+    const pEnd = new Date(pStart.getTime() + pauseMs);
+    if(pStart > cursor) segs.push([new Date(cursor.getTime()), pStart]);
+    cursor = pEnd;
+  });
+  if(cursor < dEnd) segs.push([cursor, dEnd]);
   return segs.length ? segs : [[dStart, dEnd]];
 }
 function dayWindow(date, cfg){
@@ -1403,7 +1585,7 @@ function dateInCurrentView(d){
 function maybeJumpToHighlight(){
   if(!highlightActive()) return;
   if(currentView!=='jour' && currentView!=='semaine' && currentView!=='mois' && currentView!=='annee') return;
-  const schedule = computeSchedule(state);
+  const schedule = getSchedule();
   let matches = [];
   schedule.forEach(c => c.pieces.forEach(o => {
     if(!o.start) return;
@@ -1470,16 +1652,36 @@ function configForMachineId(machineId, st){
   const m = st.machines.find(mm=>mm.id===machineId);
   return effectiveConfig(m, st);
 }
-// Comme configForMachineId, mais si la pièce a un opérateur assigné avec une pause déjeuner qui
-// lui est propre, cette pause remplace celle du poste — le reste (horaires, indisponibilités...)
+// Comme configForMachineId, mais si la pièce a un opérateur assigné avec une pause déjeuner et/ou
+// des horaires de poste qui lui sont propres, ils remplacent ceux du poste — le reste (indisponibilités...)
 // continue de venir du poste.
 function configForPiece(op, st){
   const cfg = configForMachineId(op.machineId, st);
   const userLunch = op.operatorUserId && st.userLunch ? st.userLunch[op.operatorUserId] : null;
-  if(userLunch && userLunch.pauseActive !== undefined){
-    return { ...cfg, pauseActive: !!userLunch.pauseActive, pauseDebut: userLunch.pauseDebut || cfg.pauseDebut, pauseFin: userLunch.pauseFin || cfg.pauseFin };
+  if(!userLunch) return cfg;
+  let result = cfg;
+  if(userLunch.pauseActive){
+    // Une ou plusieurs pauses propres à cette personne remplacent entièrement celle(s) du poste
+    // (jamais un mélange des deux) — pauses:[] avec pauseActive coché revient à travailler sans
+    // aucune pause plutôt qu'à hériter de celle du poste, ce qui est le comportement attendu si
+    // l'admin a explicitement coché "pause propre à cette personne" puis tout supprimé.
+    result = { ...result, pauseActive: true, pauses: userLunch.pauses || [], pauseDebut: undefined, pauseFin: undefined };
   }
-  return cfg;
+  if(userLunch.horaireActif && userLunch.heureDebut && userLunch.heureFin){
+    const [sh, sm] = userLunch.heureDebut.split(':').map(Number);
+    const [eh, em] = userLunch.heureFin.split(':').map(Number);
+    if(!isNaN(sh) && !isNaN(eh)){
+      // La personne travaille de heureDebut à heureFin, pause(s) comprise(s) dans cet intervalle —
+      // on retire donc la durée des pauses (les siennes si actives, sinon celles du poste) pour
+      // obtenir le nombre d'heures réellement travaillées : dayIntervals() rallongera la journée
+      // d'autant à l'affichage, ce qui la fait retomber exactement sur l'heure de fin demandée.
+      const totalMin = (eh*60 + (em||0)) - (sh*60 + (sm||0));
+      const pauseMin = pauseWindowsFor(new Date(2000,0,3), result).reduce((s,w) => s + (w.end.getTime()-w.start.getTime())/60000, 0);
+      const workingHours = Math.max(0, (totalMin - pauseMin) / 60);
+      result = { ...result, startHour: sh, startMinute: sm||0, monThuHours: workingHours, friHours: workingHours };
+    }
+  }
+  return result;
 }
 
 function findOverlap(start, end, intervals, ignoreFusionGroupId){
@@ -1618,6 +1820,21 @@ function transferHoursAfter(op, st){
   const qte = Number(op.quantite) || 0;
   const totalMin = fixeMin + parPieceMin * qte;
   return totalMin > 0 ? totalMin / 60 : 0;
+}
+// computeSchedule(state) est le calcul le plus coûteux de l'appli (il retraite toutes les commandes
+// actives) et render() l'appelait à chaque redessin — y compris pour des actions qui ne changent
+// jamais rien à la planification (changer un e-mail, un rôle, une couleur d'interface...). On met
+// donc son résultat en cache, invalidé explicitement dès qu'une donnée dont il dépend a pu changer :
+// voir invalidateSchedule() (appelé par défaut dans commit(), et partout où `state` est remplacé en
+// bloc — poll, conflit de version, rechargement). Un appel non annoté reste TOUJOURS invalidé par
+// défaut : ne jamais sauter cette invalidation sans avoir vérifié que les champs touchés ne sont lus
+// nulle part dans computeSchedule/effectiveConfig/configForPiece (voir leur usage de state.config,
+// state.userLunch, state.userMachines, machine.horaires/indisponibilites).
+let scheduleCache = null;
+function invalidateSchedule(){ scheduleCache = null; }
+function getSchedule(){
+  if(!scheduleCache) scheduleCache = computeSchedule(state);
+  return scheduleCache;
 }
 function computeSchedule(st){
   const machineFree = {};
@@ -1854,7 +2071,41 @@ function findNextFreeSlot(floor, dureeH, intervals, cfg){
 }
 
 /* ---------------- actions d'état ---------------- */
-function commit(){ saveState(); render(); }
+// Enchaîner deux sauvegardes (saveState ou silentSave, qui frappent la même route) sans attendre la
+// réponse de la première envoie la seconde avec un expectedVersion déjà périmé (celui d'avant la
+// première) : le serveur la refuse comme un "vrai" conflit (409), alors qu'il s'agit du même onglet
+// qui se court-circuite lui-même — cas typique : plusieurs champs (ex. une ligne de pauses) validés
+// coup sur coup, chacun avec son propre commit(). On sérialise donc TOUTES les sauvegardes derrière
+// une file d'un seul cran : une sauvegarde demandée pendant qu'une autre est déjà en vol se contente
+// de noter laquelle rejouer juste après, avec la version alors à jour — `state` porte de toute façon
+// déjà TOUTES les modifications synchrones faites entre-temps, rien n'est perdu.
+let saveInFlight = false;
+let queuedSaveFn = null;
+function commit(scheduleUnaffected){
+  if(!scheduleUnaffected) invalidateSchedule();
+  render();
+  queueSave(saveState);
+}
+function queueSilentSave(){
+  queueSave(silentSave);
+}
+function queueSave(fn){
+  if(saveInFlight){ queuedSaveFn = fn; return; }
+  runQueuedSave(fn);
+}
+async function runQueuedSave(fn){
+  saveInFlight = true;
+  try{
+    await fn();
+  } finally {
+    saveInFlight = false;
+    if(queuedSaveFn){
+      const next = queuedSaveFn;
+      queuedSaveFn = null;
+      runQueuedSave(next);
+    }
+  }
+}
 
 function addMachine(){
   const defaultColor = MACHINE_COLORS[state.machines.length % MACHINE_COLORS.length];
@@ -1922,20 +2173,25 @@ function updateMachineHoraire(id, field, value){
   }
   commit();
 }
+// Seuls ces champs de config sont réellement lus par le moteur de planification (voir
+// dayHoursFor/dayStartFor/pauseWindowsFor) — tous les autres peuvent sauter le recalcul du planning
+// (voir invalidateSchedule/commit). Ne JAMAIS retirer un champ d'ici sans vérifier qu'il n'est lu
+// nulle part dans computeSchedule/effectiveConfig/configForPiece.
+const CONFIG_FIELDS_AFFECTING_SCHEDULE = new Set(['startTime','monThuHours','friHours','pauseActive','pauseDebut','pauseFin']);
 function updateConfig(field, value){
   if(field.startsWith('backup.')){
     if(!state.config.backup) state.config.backup = { destinataire:'', motDePasse:'', heure:'02:00', actif:false, dernierEnvoi:null };
     const sub = field.split('.')[1];
     if(sub==='actif') state.config.backup.actif = !!value;
     else state.config.backup[sub] = value;
-    commit();
+    commit(true);
     return;
   }
   if(field.startsWith('urgencyColors.')){
     if(!state.config.urgencyColors) state.config.urgencyColors = { importante:'#a06d1a', urgente:'#b23a30' };
     const sub = field.split('.')[1];
     state.config.urgencyColors[sub] = value;
-    commit();
+    commit(true);
     return;
   }
   if(field==='startTime'){
@@ -1958,10 +2214,10 @@ function updateConfig(field, value){
     const val = Number(value);
     if(!isNaN(val) && val >= 0) state.config[field] = val;
   }
-  commit();
+  commit(!CONFIG_FIELDS_AFFECTING_SCHEDULE.has(field));
 }
 function triggerLogoUpload(){ document.getElementById('logo-upload-input').click(); }
-function removeLogo(){ state.config.logoDataUrl = null; commit(); }
+function removeLogo(){ state.config.logoDataUrl = null; commit(true); }
 function handleLogoUpload(e){
   const file = e.target.files[0];
   if(!file) return;
@@ -1978,7 +2234,7 @@ function handleLogoUpload(e){
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       state.config.logoDataUrl = canvas.toDataURL('image/png');
-      commit();
+      commit(true);
     };
     img.onerror = () => alert("Impossible de lire cette image.");
     img.src = ev.target.result;
@@ -2003,7 +2259,7 @@ function handleFaviconUpload(e){
       canvas.width = size; canvas.height = size;
       canvas.getContext('2d').drawImage(img, sx, sy, side, side, 0, 0, size, size);
       state.config.faviconDataUrl = canvas.toDataURL('image/png');
-      commit();
+      commit(true);
     };
     img.onerror = () => alert("Impossible de lire cette image.");
     img.src = ev.target.result;
@@ -2124,14 +2380,47 @@ function clearUserMachines(userId){
   state.userMachines[userId] = [];
   commit();
 }
+// Garantit l'existence d'une entrée userLunch pour cette personne, avec un gabarit complet — pour
+// que les horaires de poste et les pauses puissent chacun être activés indépendamment sans jamais
+// écraser les réglages déjà faits sur l'autre.
+function ensureUserLunch(userId){
+  if(!state.userLunch[userId]) state.userLunch[userId] = { pauseActive:false, pauses:[], horaireActif:false, heureDebut:`${pad(DEFAULT_CONFIG.startHour)}:${pad(DEFAULT_CONFIG.startMinute)}`, heureFin:'16:45' };
+  return state.userLunch[userId];
+}
 function toggleUserLunchActive(userId, active){
-  if(!state.userLunch[userId]) state.userLunch[userId] = { pauseActive:false, pauseDebut:'12:00', pauseFin:'13:00' };
-  state.userLunch[userId].pauseActive = !!active;
+  const lunch = ensureUserLunch(userId);
+  lunch.pauseActive = !!active;
+  // À l'activation, si la personne n'a encore aucune pause définie, on en propose une par défaut
+  // (déjeuner classique) plutôt que de la laisser sans aucune pause sans que ce soit visible.
+  if(active && lunch.pauses.length === 0) lunch.pauses.push({ id: uid('pause'), debut:'12:00', fin:'13:00' });
   commit();
 }
-function updateUserLunchField(userId, field, value){
-  if(!state.userLunch[userId]) state.userLunch[userId] = { pauseActive:false, pauseDebut:'12:00', pauseFin:'13:00' };
-  state.userLunch[userId][field] = value;
+function addUserPause(userId){
+  const lunch = ensureUserLunch(userId);
+  lunch.pauseActive = true;
+  lunch.pauses.push({ id: uid('pause'), debut:'15:00', fin:'15:15' });
+  commit();
+}
+function toggleUserHoraireActive(userId, active){
+  const lunch = ensureUserLunch(userId);
+  lunch.horaireActif = !!active;
+  commit();
+}
+function updateUserHoraireField(userId, field, value){
+  const lunch = state.userLunch[userId]; if(!lunch) return;
+  if(!value) return;
+  lunch[field] = value;
+  commit();
+}
+function removeUserPause(userId, pauseId){
+  const lunch = state.userLunch[userId]; if(!lunch) return;
+  lunch.pauses = (lunch.pauses||[]).filter(p=>p.id!==pauseId);
+  commit();
+}
+function updateUserPauseField(userId, pauseId, field, value){
+  const lunch = state.userLunch[userId]; if(!lunch) return;
+  const p = (lunch.pauses||[]).find(pp=>pp.id===pauseId); if(!p) return;
+  p[field] = value;
   commit();
 }
 async function testBackupNow(){
@@ -2204,8 +2493,22 @@ function updateDraftOpDuree(idx, value){
   }
   render();
 }
+function updateDraftOpDureeMin(idx, value){
+  // Même chose que updateDraftOpDuree, mais value est déjà exprimée en minutes (double affichage h/min).
+  const o = draft.pieces[idx]; if(!o) return;
+  const val = Number(String(value).replace(',','.'));
+  const qte = Number(o.quantite);
+  if(!isNaN(val) && val > 0 && qte > 0){
+    o.tempsUnitaire = val / qte;
+    o.dureeOverrideH = null;
+  }
+  render();
+}
 
-function pieceDupKey(piece, etape){ return (piece||'').trim().toLowerCase() + '|' + (etape||'').trim().toLowerCase(); }
+// Le poste fait partie de la clé : une même pièce/étape sur deux postes différents est une vraie
+// ligne distincte (ex. la même référence à découper ET à plier), pas un doublon accidentel — sans
+// ça, il fallait inventer une étape différente juste pour pouvoir saisir la seconde ligne.
+function pieceDupKey(piece, etape, machineId){ return (piece||'').trim().toLowerCase() + '|' + (etape||'').trim().toLowerCase() + '|' + (machineId||''); }
 function isTempsModified(o){
   if(o.tempsUnitaireTheorique==null) return false;
   return Math.abs(Number(o.tempsUnitaire) - Number(o.tempsUnitaireTheorique)) > 0.01;
@@ -2215,6 +2518,22 @@ function resetTempsUnitaire(cid, oid){
   const o = c.pieces.find(o=>o.id===oid); if(!o) return;
   if(o.tempsUnitaireTheorique==null) return;
   o.tempsUnitaire = o.tempsUnitaireTheorique;
+  o.dureeOverrideH = null;
+  commit();
+}
+// Corrige directement la référence théorique (erreur de saisie initiale) plutôt que de revenir
+// dessus : demande une nouvelle valeur et l'adopte comme temps unitaire ET comme nouveau théorique,
+// pour que le badge "modifié" ne réapparaisse pas à tort ensuite.
+function corrigerTempsTheorique(cid, oid){
+  const c = state.commandes.find(c=>c.id===cid); if(!c) return;
+  const o = c.pieces.find(o=>o.id===oid); if(!o) return;
+  const actuel = o.tempsUnitaireTheorique!=null ? o.tempsUnitaireTheorique : o.tempsUnitaire;
+  const input = prompt(`Corriger le temps théorique (en minutes, par pièce) pour "${[o.piece,o.etape].filter(Boolean).join(' / ')}" :`, Math.round(actuel*100)/100);
+  if(input==null) return;
+  const val = Number(String(input).replace(',','.'));
+  if(isNaN(val) || val <= 0){ showToast('Valeur invalide.'); return; }
+  o.tempsUnitaireTheorique = val;
+  o.tempsUnitaire = val;
   o.dureeOverrideH = null;
   commit();
 }
@@ -2274,11 +2593,15 @@ function countWorkingDaysInRange(debut, fin){
 function leaveTypeById(typeId){ return state.leaveTypes.find(t=>t.id===typeId); }
 function currentUserRole(){ return currentUser && currentUser.role; }
 function isAdmin(){ return currentUserRole() === 'admin'; }
+// Superviseur : mêmes droits qu'un administrateur pour l'exploitation au quotidien (validation des
+// congés, gestion des soldes, actions sur l'équipe...) — seul Paramètres reste réservé à isAdmin().
+function canSupervise(){ const r = currentUserRole(); return r === 'admin' || r === 'superviseur'; }
+function roleLabel(role){ return role==='admin' ? 'Administrateur' : role==='superviseur' ? 'Superviseur' : 'Employé'; }
 // Solde = allocation annuelle - jours déjà comptabilisés (approuvés) - jours actuellement en attente
 // (pour ne pas laisser quelqu'un demander plus que ce qu'il lui reste, même avant validation).
-function computeLeaveBalance(userId, typeId, year){
+function computeLeaveBalance(userId, typeId, year, excludeId){
   const allocated = (state.userLeaveAllocations[userId] && state.userLeaveAllocations[userId][typeId]) || 0;
-  const requests = state.leaveRequests.filter(r => r.userId===userId && r.typeId===typeId && r.debut && r.debut.startsWith(String(year)));
+  const requests = state.leaveRequests.filter(r => r.userId===userId && r.typeId===typeId && r.id!==excludeId && r.debut && r.debut.startsWith(String(year)));
   const used = requests.filter(r=>r.statut==='approuve').reduce((s,r)=>s+countWorkingDaysInRange(r.debut,r.fin),0);
   const pending = requests.filter(r=>r.statut==='en_attente').reduce((s,r)=>s+countWorkingDaysInRange(r.debut,r.fin),0);
   return { allocated, used, pending, remaining: allocated - used - pending };
@@ -2338,15 +2661,28 @@ function startLeaveRequestSubmission(userId, typeId, debut, fin, motif){
 }
 function confirmLeaveRequestSubmission(){
   if(!pendingLeaveRequestDraft) return;
-  const { userId, typeId, debut, fin, motif, mode } = pendingLeaveRequestDraft;
+  const { id, userId, typeId, debut, fin, motif, mode } = pendingLeaveRequestDraft;
   const year = new Date(debut+'T00:00:00').getFullYear();
-  const bal = computeLeaveBalance(userId, typeId, year);
+  const bal = computeLeaveBalance(userId, typeId, year, id); // exclut le congé lui-même en mode édition, sinon il se compterait deux fois
   const demanded = countWorkingDaysInRange(debut, fin);
   if(demanded > bal.remaining){
-    const msg = mode==='admin'
+    const msg = mode==='edit'
+      ? `Attention : il ne reste que ${bal.remaining} jour(s) disponible(s) pour ce type de congé sur ${year} (cette période en compte ${demanded}). Enregistrer quand même ?`
+      : mode==='admin'
       ? `Attention : il ne reste que ${bal.remaining} jour(s) disponible(s) pour ce type de congé sur ${year} (cette période en compte ${demanded}). Attribuer quand même ?`
       : `Attention : il ne reste que ${bal.remaining} jour(s) disponible(s) pour ce type de congé sur ${year} (cette demande en compte ${demanded}). Soumettre quand même ?`;
     if(!confirm(msg)) return;
+  }
+  if(mode === 'edit'){
+    const req_ = state.leaveRequests.find(r=>r.id===id);
+    if(!req_){ pendingLeaveRequestDraft = null; render(); return; }
+    const oldReq = { ...req_ };
+    req_.typeId = typeId; req_.debut = debut; req_.fin = fin; req_.motif = motif;
+    pendingLeaveRequestDraft = null;
+    commit();
+    notifyUserOfModification(oldReq, req_);
+    showToast('Congé modifié.');
+    return;
   }
   if(mode === 'admin'){
     const imposed = !!pendingLeaveRequestDraft.imposer;
@@ -2436,20 +2772,22 @@ function renderLeaveRequestPreviewModal(){
   if(!pendingLeaveRequestDraft) return '';
   const d = pendingLeaveRequestDraft;
   const isAdminMode = d.mode === 'admin';
+  const isEditMode = d.mode === 'edit';
+  const isAdminLike = isAdminMode || isEditMode; // affichage "Pour X" et tolérance aux chevauchements : mêmes règles pour une attribution ou une correction admin
   const t = leaveTypeById(d.typeId);
   const nbJours = countWorkingDaysInRange(d.debut, d.fin);
   const affected = simulateLeaveImpactForRequest(d);
-  const personne = isAdminMode ? usersList.find(u=>String(u.id)===d.userId) : null;
+  const personne = isAdminLike ? usersList.find(u=>String(u.id)===d.userId) : null;
   return `
   <div class="modal-overlay">
     <div class="modal-box modal-box-wide" role="dialog" aria-modal="true">
       <div class="modal-head">
-        <h2>Conséquences de cette ${isAdminMode?'attribution':'demande'}</h2>
+        <h2>Conséquences de cette ${isEditMode ? 'modification' : (isAdminMode?'attribution':'demande')}</h2>
         <button class="ghost icon-btn" data-action="cancel-leave-preview" title="Fermer">✕</button>
       </div>
       <div class="modal-body">
         <div class="leave-confirm-banner">
-          ${isAdminMode ? `Pour <strong>${personne?escapeHtml(personne.username):'cette personne'}</strong> — ` : ''}<strong>${t?escapeHtml(t.nom):'Congé'}</strong> du <strong>${formatDateFr(d.debut)}</strong> au <strong>${formatDateFr(d.fin)}</strong> (${nbJours} jour(s) ouvré(s))${d.motif?` — ${escapeHtml(d.motif)}`:''}
+          ${isAdminLike ? `Pour <strong>${personne?escapeHtml(personne.username):'cette personne'}</strong> — ` : ''}<strong>${t?escapeHtml(t.nom):'Congé'}</strong> du <strong>${formatDateFr(d.debut)}</strong> au <strong>${formatDateFr(d.fin)}</strong> (${nbJours} jour(s) ouvré(s))${d.motif?` — ${escapeHtml(d.motif)}`:''}
           ${isAdminMode && d.imposer ? `<br><strong style="color:var(--amber);">⚠ Congé imposé — sera enregistré directement comme approuvé, sans confirmation de la personne.</strong>` : ''}
         </div>
         ${renderImpactSummaryHtml(affected)}
@@ -2479,10 +2817,13 @@ function renderLeaveRequestPreviewModal(){
             const conflicts = findLeaveConflicts(d.userId || (currentUser?String(currentUser.id):''), d.debut, d.fin, d.id);
             // Le salarié doit corriger ses dates ; l'administrateur, lui, voit le conflit mais garde
             // la main (il peut avoir une raison légitime de superposer, ex. régularisation).
-            if(conflicts.length > 0 && !isAdminMode){
+            if(conflicts.length > 0 && !isAdminLike){
               return `<span class="footer-note" style="color:var(--red);">Corrigez les dates : cette période chevauche un congé déjà posé.</span>`;
             }
-            return `<button class="primary" data-action="confirm-leave-preview">✓ ${isAdminMode ? (conflicts.length ? 'Attribuer malgré le chevauchement' : (d.imposer ? 'Confirmer et imposer ce congé' : 'Confirmer et envoyer la proposition')) : 'Confirmer et envoyer la demande'}</button>`;
+            const label = isEditMode ? 'Enregistrer les modifications'
+              : isAdminMode ? (conflicts.length ? 'Attribuer malgré le chevauchement' : (d.imposer ? 'Confirmer et imposer ce congé' : 'Confirmer et envoyer la proposition'))
+              : 'Confirmer et envoyer la demande';
+            return `<button class="primary" data-action="confirm-leave-preview">✓ ${label}</button>`;
           })()}
         </div>
       </div>
@@ -2504,7 +2845,7 @@ function withdrawLeaveRequest(reqId){
 // une nouvelle demande). `reqLike` : { id?, userId, typeId, debut, fin }.
 function simulateLeaveImpactForRequest(reqLike){
   const TOLERANCE_MS = 60000; // 1 minute — ignore le bruit d'arrondi des calculs de durée, pas un vrai décalage
-  const scheduleBefore = computeSchedule(state);
+  const scheduleBefore = getSchedule();
   const hypothetical = JSON.parse(JSON.stringify(state));
   if(!hypothetical.leaveRequests) hypothetical.leaveRequests = [];
   const existingIdx = reqLike.id ? hypothetical.leaveRequests.findIndex(r=>r.id===reqLike.id) : -1;
@@ -2600,6 +2941,72 @@ function revokeLeaveRequest(reqId){
   commit();
   showToast('Congé révoqué.');
 }
+async function notifyUserOfModification(oldReq, newReq){
+  const oldType = leaveTypeById(oldReq.typeId), newType = leaveTypeById(newReq.typeId);
+  const subject = `Votre congé a été modifié`;
+  const text = `Un administrateur a corrigé votre congé de "${oldType?oldType.nom:'congé'}" du ${formatDateFr(oldReq.debut)} au ${formatDateFr(oldReq.fin)}.\n\nIl est désormais enregistré comme "${newType?newType.nom:'congé'}" du ${formatDateFr(newReq.debut)} au ${formatDateFr(newReq.fin)}${newReq.motif?` (motif : ${newReq.motif})`:''}.`;
+  try{ await fetch('/api/notify-user/'+newReq.userId, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subject, text }) }); }catch(e){ /* non bloquant */ }
+}
+// Ouvre un petit formulaire de correction pour un congé déjà existant — permet à un administrateur
+// de corriger une erreur de saisie ou de transférer des jours d'un type de congé à un autre (ex.
+// congés payés → sans solde), sans passer par une révocation suivie d'une nouvelle attribution.
+// Une fois validé, débouche sur la même pop-up "Conséquences" que la création d'un congé (voir
+// confirmLeaveRequestSubmission, mode 'edit'), pour prévenir d'un éventuel impact sur le planning.
+function startEditLeaveRequest(reqId){
+  const req_ = state.leaveRequests.find(r=>r.id===reqId);
+  if(!req_) return;
+  editingLeaveRequestDraft = { id: req_.id, userId: req_.userId, typeId: req_.typeId, debut: req_.debut, fin: req_.fin, motif: req_.motif||'' };
+  render();
+}
+function updateEditLeaveField(field, value){
+  if(!editingLeaveRequestDraft) return;
+  editingLeaveRequestDraft[field] = value;
+  render();
+}
+function cancelEditLeaveRequest(){
+  editingLeaveRequestDraft = null;
+  render();
+}
+function previewEditLeaveRequest(){
+  const d = editingLeaveRequestDraft; if(!d) return;
+  if(!d.typeId){ alert('Merci de choisir un type de congé.'); return; }
+  if(!d.debut || !d.fin){ alert('Merci de renseigner une date de début et une date de fin.'); return; }
+  if(d.fin < d.debut){ alert('La date de fin doit être postérieure ou égale à la date de début.'); return; }
+  pendingLeaveRequestDraft = { id: d.id, userId: d.userId, typeId: d.typeId, debut: d.debut, fin: d.fin, motif: (d.motif||'').trim(), mode: 'edit' };
+  editingLeaveRequestDraft = null;
+  render();
+}
+function renderEditLeaveRequestModal(){
+  const d = editingLeaveRequestDraft;
+  if(!d) return '';
+  const requester = usersList.find(u=>String(u.id)===d.userId);
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>Modifier ce congé — ${requester?escapeHtml(requester.username):'(compte supprimé)'}</h2>
+        <button class="ghost icon-btn" data-action="cancel-edit-leave-request" title="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="commande-top-fields" style="grid-template-columns:1.2fr 1fr 1fr;">
+          <div><label class="field">Type</label>
+            <select data-action="edit-leave-field" data-field="typeId">
+              ${state.leaveTypes.map(t=>`<option value="${t.id}" ${d.typeId===t.id?'selected':''}>${escapeHtml(t.nom)}</option>`).join('')}
+            </select>
+          </div>
+          <div><label class="field">Début</label><input type="date" value="${d.debut}" data-action="edit-leave-field" data-field="debut"></div>
+          <div><label class="field">Fin</label><input type="date" value="${d.fin}" data-action="edit-leave-field" data-field="fin"></div>
+        </div>
+        <div style="margin-top:10px;"><label class="field">Motif (optionnel)</label><input value="${escapeHtml(d.motif||'')}" data-action="edit-leave-field" data-field="motif"></div>
+        <div class="footer-note" style="text-align:left; padding-top:10px;">Le statut actuel n'est pas modifié ici — utilisez Approuver / Refuser / Révoquer pour ça. La personne concernée est prévenue par e-mail du changement.</div>
+        <div class="form-actions" style="margin-top:16px;">
+          <button class="ghost" data-action="cancel-edit-leave-request">Annuler</button>
+          <button class="primary" data-action="preview-edit-leave-request">Voir les conséquences →</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
 // Un administrateur peut attribuer directement un congé à quelqu'un (déjà approuvé, sans passer
 // par une demande) — utile pour enregistrer un accord donné oralement, ou poser un congé pour une
 // personne qui n'a pas accès à l'appli.
@@ -2635,12 +3042,12 @@ function removeLeaveType(typeId){
 function updateLeaveTypeField(typeId, field, value){
   const t = leaveTypeById(typeId); if(!t) return;
   t[field] = value;
-  commit();
+  commit(true); // nom/couleur d'un type de congé : jamais lu par le moteur de planification
 }
 function updateUserLeaveAllocation(userId, typeId, value){
   if(!state.userLeaveAllocations[userId]) state.userLeaveAllocations[userId] = {};
   state.userLeaveAllocations[userId][typeId] = Math.max(0, Number(value)||0);
-  commit();
+  commit(true); // n'affecte que le calcul d'affichage du solde, pas le planning lui-même
 }
 function toggleModuleConges(active){
   state.config.modules.conges = !!active;
@@ -2663,7 +3070,7 @@ function submitNewCommande(){
   const dedupedOps = [];
   let skippedInDraft = 0;
   validOps.forEach(o => {
-    const key = pieceDupKey(o.piece, o.etape);
+    const key = pieceDupKey(o.piece, o.etape, o.machineId);
     if(seenInDraft.has(key)){ skippedInDraft++; return; }
     seenInDraft.add(key);
     dedupedOps.push(o);
@@ -2673,12 +3080,12 @@ function submitNewCommande(){
   const existing = state.commandes.find(c => c.nom.trim().toLowerCase() === nomTrim.toLowerCase());
 
   if(existing){
-    const seenExisting = new Set(existing.pieces.map(p => pieceDupKey(p.piece, p.etape)));
+    const seenExisting = new Set(existing.pieces.map(p => pieceDupKey(p.piece, p.etape, p.machineId)));
     const existingMaxPhase = existing.pieces.reduce((mx,p) => Math.max(mx, Number(p.phase)||1), 1);
     const toAdd = [];
     const skippedNames = [];
     dedupedOps.forEach(o => {
-      const key = pieceDupKey(o.piece, o.etape);
+      const key = pieceDupKey(o.piece, o.etape, o.machineId);
       if(seenExisting.has(key)){ skippedNames.push([o.piece.trim(), o.etape.trim()].filter(Boolean).join(' / ')); return; }
       seenExisting.add(key);
       toAdd.push({
@@ -2687,7 +3094,7 @@ function submitNewCommande(){
         manualStart: null, dureeOverrideH: null, debutReel: null, finReel: null, sessions: [], autoPaused: false,
         dependances: [], phase: (Number(o.phase)||1) + existingMaxPhase, // s'ajoute strictement après les phases déjà en place
         operatorUserId: o.operatorUserId || null, tempsUnitaireTheorique: Number(o.tempsUnitaire),
-        dateDebutPossible: o.dateDebutPossible || null
+        dateDebutPossible: o.dateDebutPossible || null, dureeReelleH: null
       });
     });
     if(toAdd.length === 0){
@@ -2711,6 +3118,7 @@ function submitNewCommande(){
       }
     };
     applyFn(state);
+    invalidateSchedule();
     const fusionGroupsToApply = draft._fusionGroups || [];
     applyDraftFusionGroups(fusionGroupsToApply);
     draft = newDraft(); showNewForm = false;
@@ -2726,7 +3134,8 @@ function submitNewCommande(){
       tempsUnitaire: Number(o.tempsUnitaire), quantite: Number(o.quantite), statut: 'a_faire',
       manualStart: null, dureeOverrideH: null, debutReel: null, finReel: null, sessions: [], autoPaused: false,
       dependances: [], phase: Number(o.phase) || 1, operatorUserId: o.operatorUserId || null,
-      tempsUnitaireTheorique: Number(o.tempsUnitaire), dateDebutPossible: o.dateDebutPossible || null
+      tempsUnitaireTheorique: Number(o.tempsUnitaire), dateDebutPossible: o.dateDebutPossible || null,
+      dureeReelleH: null
     }))
   };
   // Rejouable telle quelle sur une version fraîche en cas de conflit. Si, entre-temps, quelqu'un
@@ -2735,10 +3144,10 @@ function submitNewCommande(){
   const applyFn = (targetState) => {
     const already = targetState.commandes.find(c => c.id===newCmd.id || c.nom.trim().toLowerCase()===nomTrim.toLowerCase());
     if(already && already.id !== newCmd.id){
-      const seenNow = new Set(already.pieces.map(p=>pieceDupKey(p.piece,p.etape)));
+      const seenNow = new Set(already.pieces.map(p=>pieceDupKey(p.piece,p.etape,p.machineId)));
       const maxPhaseNow = already.pieces.reduce((mx,p)=>Math.max(mx,Number(p.phase)||1),1);
       newCmd.pieces.forEach(p => {
-        const key = pieceDupKey(p.piece, p.etape);
+        const key = pieceDupKey(p.piece, p.etape, p.machineId);
         if(seenNow.has(key)) return;
         seenNow.add(key);
         already.pieces.push({ ...p, phase: (Number(p.phase)||1) + maxPhaseNow });
@@ -2748,6 +3157,7 @@ function submitNewCommande(){
     }
   };
   applyFn(state);
+  invalidateSchedule();
   const fusionGroupsToApply = draft._fusionGroups || [];
   applyDraftFusionGroups(fusionGroupsToApply);
   draft = newDraft(); showNewForm = false;
@@ -2791,7 +3201,7 @@ function updateCommandeField(cid, field, value){
 function addOpToCommande(cid){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
   const prev = c.pieces[c.pieces.length-1];
-  c.pieces.push({ id: uid('op'), piece:'', etape:'', machineId: state.machines[0]?state.machines[0].id:'', tempsUnitaire:0, quantite:1, statut:'a_faire', manualStart:null, dureeOverrideH:null, debutReel:null, finReel:null, sessions:[], autoPaused:false, dependances:[], phase: prev ? (Number(prev.phase)||1)+1 : 1, tempsUnitaireTheorique:0 });
+  c.pieces.push({ id: uid('op'), piece:'', etape:'', machineId: state.machines[0]?state.machines[0].id:'', tempsUnitaire:0, quantite:1, statut:'a_faire', manualStart:null, dureeOverrideH:null, debutReel:null, finReel:null, sessions:[], autoPaused:false, dependances:[], phase: prev ? (Number(prev.phase)||1)+1 : 1, tempsUnitaireTheorique:0, dureeReelleH:null });
   commit();
 }
 function removeOpFromCommande(cid, oid){
@@ -2816,9 +3226,9 @@ function updateOpField(cid, oid, field, value){
     // ce n'est pas encore une "modification".
     o.tempsUnitaireTheorique = Number(value);
   }
-  if(field==='piece' || field==='etape'){
-    const key = pieceDupKey(o.piece, o.etape);
-    const dup = c.pieces.some(other => other.id!==o.id && pieceDupKey(other.piece, other.etape)===key);
+  if(field==='piece' || field==='etape' || field==='machineId'){
+    const key = pieceDupKey(o.piece, o.etape, o.machineId);
+    const dup = c.pieces.some(other => other.id!==o.id && pieceDupKey(other.piece, other.etape, other.machineId)===key);
     if(dup) showToast(`⚠ "${o.piece}"${o.etape?' / '+o.etape:''} existe déjà sur cette commande — vérifiez qu'il ne s'agit pas d'un doublon.`);
   }
   commit();
@@ -2873,6 +3283,38 @@ function opElapsedHours(o, st){
   });
   return total;
 }
+// Temps réellement passé (heures, pour la quantité totale) : dérivé des sessions quand elles existent
+// (toujours à jour, y compris tant que la tâche est en cours) ; sinon, valeur secours saisie manuellement
+// à la clôture (o.dureeReelleH — cas d'une tâche jamais passée par Démarrer/Reprendre, ex. import déjà
+// terminé). Renvoie null si le temps passé n'a jamais été mesuré ni saisi.
+function dureePasseeH(o, st){
+  const elapsedH = opElapsedHours(o, st);
+  if(elapsedH > 1e-6) return elapsedH;
+  return (o.dureeReelleH!=null && o.dureeReelleH>0) ? o.dureeReelleH : null;
+}
+// Rattrapage pour les pièces déjà terminées AVANT que la clôture ne fige elle-même dureeReelleH et
+// vide sessions[] (voir applySingleStatusChange) — sans ça, ces vieilles pièces garderaient pour
+// toujours le détail complet de leurs sessions, qui ne sert plus à rien une fois terminées et
+// n'aide en rien dureePasseeH (déjà couvert par dureeReelleH une fois figé). Balaie aussi les
+// commandes déjà archivées : leur volume compte encore dans la taille de l'état sauvegardé.
+function purgeOldSessions(st){
+  let changed = false;
+  const sweep = (commandes) => {
+    (commandes||[]).forEach(c => c.pieces.forEach(o => {
+      if(o.statut === 'termine' && o.sessions && o.sessions.length > 0){
+        if(o.dureeReelleH == null){
+          const elapsedH = opElapsedHours(o, st);
+          if(elapsedH > 1e-6) o.dureeReelleH = elapsedH;
+        }
+        o.sessions = [];
+        changed = true;
+      }
+    }));
+  };
+  sweep(st.commandes);
+  sweep(st.commandesArchivees);
+  return changed;
+}
 function isInPauseWindow(op, now, st){
   const cfg = configForPiece(op, st);
   const pause = pauseWindowFor(now, cfg);
@@ -2906,6 +3348,78 @@ function applyAutoPauseResume(st){
   });
   return changed;
 }
+// Garde-fou : repère les pièces mises en pause MANUELLEMENT (jamais les pauses déjeuner
+// automatiques, qui se résorbent déjà seules) et toujours en pause un jour calendaire plus tard —
+// un travail interrompu la veille (ou avant) qu'on a pu oublier de reprendre. Recalculé à chaque
+// connexion/rechargement ; filtré à l'opérateur assigné pour un non-admin, vue complète pour un admin.
+function pausedSinceEarlierTasks(){
+  const todayKey = toDateInputValue(new Date());
+  const admin = isAdmin();
+  const myId = currentUser ? String(currentUser.id) : null;
+  const seenGroups = new Set();
+  const results = [];
+  state.commandes.forEach(c => c.pieces.forEach(o => {
+    if(o.statut !== 'en_pause' || o.autoPaused) return;
+    if(!admin && String(o.operatorUserId||'') !== myId) return;
+    if(o.fusionGroupId){
+      // Un groupe fusionné se met en pause et reprendra en bloc (setOpStatut le fait déjà) : une
+      // seule alerte pour tout le groupe, pas une par pièce membre.
+      if(seenGroups.has(o.fusionGroupId)) return;
+      seenGroups.add(o.fusionGroupId);
+    }
+    const sessions = o.sessions || [];
+    const last = sessions[sessions.length-1];
+    if(!last || !last.fin) return; // ne devrait pas arriver pour une pause manuelle, mais rien à afficher sans date
+    if(toDateInputValue(new Date(last.fin)) >= todayKey) return;
+    let groupMembers = null;
+    if(o.fusionGroupId){
+      groupMembers = [];
+      state.commandes.forEach(cc => cc.pieces.forEach(oo => { if(oo.fusionGroupId === o.fusionGroupId) groupMembers.push({ cc, oo }); }));
+    }
+    results.push({ c, o, pausedAt: last.fin, groupMembers });
+  }));
+  return results;
+}
+const PAUSED_BANNER_DISMISS_KEY = 'planning-atelier-paused-banner-dismissed';
+let pausedBannerDismissedDate = null; // AAAA-MM-JJ à laquelle la bannière a été fermée, ou null
+function loadPausedBannerDismissDate(){
+  try{ pausedBannerDismissedDate = localStorage.getItem(PAUSED_BANNER_DISMISS_KEY); }catch(e){ /* stockage indisponible : la bannière réapparaîtra à chaque rechargement, tant pis */ }
+}
+function dismissPausedBanner(){
+  pausedBannerDismissedDate = toDateInputValue(new Date());
+  try{ localStorage.setItem(PAUSED_BANNER_DISMISS_KEY, pausedBannerDismissedDate); }catch(e){}
+  render();
+}
+function renderPausedTasksBanner(){
+  if(pausedBannerDismissedDate === toDateInputValue(new Date())) return '';
+  const tasks = pausedSinceEarlierTasks();
+  if(tasks.length === 0) return '';
+  const rows = tasks.map(({c, o, pausedAt, groupMembers}) => {
+    const m = state.machines.find(mm=>mm.id===o.machineId);
+    let label;
+    if(groupMembers && groupMembers.length > 1){
+      // Même convention que partout ailleurs pour une pièce fusionnée (fusedBarLabelAndTooltip) :
+      // le numéro de commande si toutes les pièces en partagent une seule, sinon leur nombre.
+      const distinctCmd = Array.from(new Set(groupMembers.map(({cc}) => cc.nom)));
+      const refLabel = distinctCmd.length === 1 ? escapeHtml(distinctCmd[0]) : `${distinctCmd.length} commandes`;
+      label = `🔗 ${groupMembers.length} pièces fusionnées <span class="footer-note" style="display:inline; margin:0;">(${refLabel})</span>`;
+    } else {
+      const pieceLabel = [o.piece, o.etape].filter(Boolean).join(' / ') || '(sans nom)';
+      label = `${escapeHtml(pieceLabel)} <span class="footer-note" style="display:inline; margin:0;">(${escapeHtml(c.nom)})</span>`;
+    }
+    return `<div class="paused-banner-row">
+      <span>${label} — ${m?escapeHtml(m.nom):'poste supprimé'}, en pause depuis ${formatDT(new Date(pausedAt))}</span>
+      <button class="small" data-action="resume-paused-task" data-cid="${c.id}" data-oid="${o.id}">▶ Continuer ce travail</button>
+    </div>`;
+  }).join('');
+  return `<div class="paused-banner">
+    <div class="paused-banner-head">
+      <strong>⏸ ${tasks.length} tâche${tasks.length>1?'s':''} en pause depuis la veille ou avant</strong>
+      <button class="ghost small" data-action="dismiss-paused-banner">✕ Fermer</button>
+    </div>
+    ${rows}
+  </div>`;
+}
 // Applique un changement de statut à UNE pièce précise (logique inchangée, extraite pour pouvoir
 // être rejouée sur chaque pièce d'un groupe fusionné). `plannedEndBefore` sert uniquement à détecter
 // une fin en avance ; passé pré-calculé par l'appelant.
@@ -2936,21 +3450,27 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore){
     const open = o.sessions.find(s => !s.fin);
     if(open) open.fin = nowStr;
 
+    // Le temps prévu (tempsUnitaire) n'est plus jamais modifié ici — seul le temps réellement passé
+    // est enregistré à part (voir dureePasseeH), pour que "prévu" et "passé" restent deux valeurs
+    // distinctes même une fois la tâche terminée.
     const elapsedH = opElapsedHours(o, state);
-    if(elapsedH > 1e-6){
-      o.tempsUnitaire = (elapsedH*60) / (o.quantite||1); // durée réelle calculée automatiquement depuis les sessions
-      o.dureeOverrideH = null;
-    } else {
-      // jamais démarrée via Démarrer/Reprendre : on retombe sur la saisie manuelle
+    if(elapsedH <= 1e-6){
+      // jamais démarrée via Démarrer/Reprendre (ex. import déjà terminé, sans session) : on demande
+      // la saisie manuelle du temps réellement passé, faute de pouvoir le déduire des sessions.
       const plannedTotal = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH*60 : (o.tempsUnitaire*o.quantite);
       const input = prompt(`Temps réellement passé pour "${[o.piece,o.etape].filter(Boolean).join(' / ')}" (en minutes, pour la quantité totale) :`, Math.round(plannedTotal));
       if(input !== null){
         const val = Number(String(input).replace(',','.'));
-        if(!isNaN(val) && val > 0 && o.quantite > 0){
-          o.tempsUnitaire = val / o.quantite;
-          o.dureeOverrideH = null;
+        if(!isNaN(val) && val > 0){
+          o.dureeReelleH = val / 60;
         }
       }
+    } else {
+      // Le temps réellement passé est désormais figé (dureePasseeH le relira depuis dureeReelleH) :
+      // le détail des sessions (chaque démarrage/pause/reprise) ne sert plus à rien une fois la
+      // pièce terminée, et ne fait qu'accumuler indéfiniment sur une pièce reprise plusieurs fois.
+      o.dureeReelleH = elapsedH;
+      o.sessions = [];
     }
     const m = state.machines.find(m=>m.id===o.machineId);
     if(!o.debutReel){ o.debutReel = m ? m.dispo : null; }
@@ -2971,6 +3491,7 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore){
     o.debutReel = null;
     o.finReel = null;
     o.sessions = [];
+    o.dureeReelleH = null; // le temps réellement passé sera reconstitué à la prochaine clôture
     o.autoPaused = false;
   }
   return null;
@@ -3007,9 +3528,28 @@ function setOpStatut(cid, oid, newStatut){
     }
   }
 
+  if(newStatut === 'en_cours'){
+    // Avertit si une AUTRE pièce (hors de ce même groupe fusionné, qui démarre en bloc) est déjà en
+    // cours sur le même poste — un poste ne peut physiquement traiter qu'un travail à la fois. Non
+    // bloquant : un poste avec plusieurs emplacements réels, ou une vraie exception, reste possible.
+    const groupIds = new Set(group.map(({oo}) => oo.id));
+    const conflicts = [];
+    state.commandes.forEach(cc => cc.pieces.forEach(oo => {
+      if(groupIds.has(oo.id)) return;
+      if(oo.machineId === o.machineId && oo.statut === 'en_cours'){
+        conflicts.push(`"${[oo.piece,oo.etape].filter(Boolean).join(' / ')}" (${cc.nom})`);
+      }
+    }));
+    if(conflicts.length > 0){
+      const m = state.machines.find(mm=>mm.id===o.machineId);
+      const dejaEnCours = conflicts.length > 1 ? 'sont déjà en cours' : 'est déjà en cours';
+      if(!confirm(`Attention : ${conflicts.join(', ')} ${dejaEnCours} sur ${m?m.nom:'ce poste'}.\n\nDémarrer quand même ?`)) return;
+    }
+  }
+
   const plannedEndsBefore = {};
   if(newStatut === 'termine'){
-    const scheduleBefore = computeSchedule(state);
+    const scheduleBefore = getSchedule();
     group.forEach(({cc, oo}) => {
       if(oo.statut === 'en_cours' || oo.statut === 'en_pause'){
         const cBefore = scheduleBefore.find(x=>x.id===cc.id);
@@ -3068,7 +3608,7 @@ function resetOpOverride(cid, oid){
 }
 // Fige une tâche volante pile à son horaire actuellement calculé (celui affiché dans le planning).
 function pinOpAtCurrentTime(cid, oid){
-  const schedule = computeSchedule(state);
+  const schedule = getSchedule();
   const cSched = schedule.find(cc=>cc.id===cid);
   const oSched = cSched && cSched.pieces.find(pp=>pp.id===oid);
   if(!oSched || !oSched.start) return;
@@ -3261,7 +3801,7 @@ function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU,
       id: uid('op'), piece, etape, machineId: machine ? machine.id : null,
       tempsUnitaire: tu, quantite: qte, statut:'a_faire', manualStart:null, dureeOverrideH:null,
       debutReel:null, finReel:null, sessions:[], autoPaused:false, dependances:[], phase,
-      operatorUserId: operateur ? String(operateur.id) : null, tempsUnitaireTheorique: tu,
+      operatorUserId: operateur ? String(operateur.id) : null, tempsUnitaireTheorique: tu, dureeReelleH: null,
       matiere, epaisseur, dateDebutPossible: null, sousTraitance: isSousTraitance, fusionGroupId: null,
       _importGroupTag: groupTag || null // étiquette temporaire, jamais conservée après l'import (voir confirmCustomImport)
     });
@@ -3686,6 +4226,7 @@ function confirmCustomImport(){
     return result;
   };
   const { createdNoms, updatedNoms, sansEcheance } = applyFn(state);
+  invalidateSchedule();
   excelImportResult = {
     imported: createdNoms.length, updated: updatedNoms.length,
     pieces: createdNoms.reduce((s,c)=>s+c.nbPieces,0) + updatedNoms.reduce((s,c)=>s+c.nbAjoutees,0),
@@ -3777,7 +4318,7 @@ function renderHeader(){
   const pageSwitcher = `
     <div class="page-switcher">
       <button class="page-switch-btn ${currentPage==='planning'?'active':''}" data-action="goto-planning">Planning</button>
-      ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(isAdmin()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
+      ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
     </div>`;
   return `
   <header class="top">
@@ -3794,7 +4335,7 @@ function renderHeader(){
       <button class="small" data-action="export-data" title="Télécharger un fichier .json — à déposer dans un dossier synchronisé avec votre NAS">Exporter (.json)</button>
       <button class="small" data-action="trigger-import" title="Recharger un fichier .json exporté précédemment">Importer</button>
       <input type="file" id="import-file-input" accept="application/json" style="display:none;" onchange="handleImportFile(event)">` : ''}
-      <button class="small" data-action="open-settings" title="Paramétrer les horaires de travail">⚙ Paramétrer</button>
+      ${isAdmin() ? `<button class="small" data-action="open-settings" title="Paramétrer les horaires de travail">⚙ Paramétrer</button>` : ''}
       <span class="footer-note" style="margin:0 4px;">${currentUsername?escapeHtml(currentUsername):''}</span>
       <button class="small" data-action="logout" title="Se déconnecter">Déconnexion</button>
     </div>
@@ -3816,16 +4357,16 @@ function renderCongesPage(){
   if(!(state.config.modules && state.config.modules.conges)){
     return `<section class="panel"><div class="panel-body" style="text-align:center; padding:40px;">Le module Congés est désactivé. Un administrateur peut le réactiver dans Paramètres → Congés.</div></section>`;
   }
-  const admin = isAdmin();
+  const canManage = canSupervise();
   const tabs = [{key:'mes-demandes', label:'Mes demandes'}, {key:'equipe', label:'Congés de l\'équipe'}, {key:'calendrier', label:'Calendrier annuel'}];
-  if(admin) tabs.push({key:'a-valider', label:`À valider${(() => { const n=state.leaveRequests.filter(r=>r.statut==='en_attente').length; return n>0?` (${n})`:''; })()}`});
-  if(admin) tabs.push({key:'soldes', label:'Soldes & types'});
+  if(canManage) tabs.push({key:'a-valider', label:`À valider${(() => { const n=state.leaveRequests.filter(r=>r.statut==='en_attente').length; return n>0?` (${n})`:''; })()}`});
+  if(canManage) tabs.push({key:'soldes', label:'Soldes & types'});
   const tabsHtml = tabs.map(t => `<button class="${congesTab===t.key?'active':''}" data-action="conges-tab" data-tab="${t.key}">${t.label}</button>`).join('');
   let body = '';
   if(congesTab==='equipe') body = renderEquipeTab();
   else if(congesTab==='calendrier') body = renderCalendrierAnnuelTab();
-  else if(admin && congesTab==='a-valider') body = renderAValiderTab();
-  else if(admin && congesTab==='soldes') body = renderSoldesTab();
+  else if(canManage && congesTab==='a-valider') body = renderAValiderTab();
+  else if(canManage && congesTab==='soldes') body = renderSoldesTab();
   else body = renderMesDemandesTab();
   return `
   <section class="panel">
@@ -3895,7 +4436,7 @@ function renderMesDemandesTab(){
 }
 function renderEquipeTab(){
   const today = toDateInputValue(new Date());
-  const admin = isAdmin();
+  const admin = canSupervise();
   let list = state.leaveRequests.slice();
   if(equipeStatutFilter !== 'toutes') list = list.filter(r => r.statut === equipeStatutFilter);
   if(equipePersonneFilter) list = list.filter(r => r.userId === equipePersonneFilter);
@@ -3908,6 +4449,7 @@ function renderEquipeTab(){
     const year = new Date(r.debut+'T00:00:00').getFullYear();
     const bal = computeLeaveBalance(r.userId, r.typeId, year);
     const revokeBtn = (admin && r.statut==='approuve') ? `<button class="statut-pill statut-pill-revoke" data-action="revoke-leave-request" data-id="${r.id}">Révoquer</button>` : '';
+    const editBtn = admin ? `<button class="ghost small" data-action="edit-leave-request" data-id="${r.id}" title="Corriger le type, les dates ou le motif — ex. transférer des jours de congés payés en sans solde">✎ Modifier</button>` : '';
     return `<tr class="${past?'leave-row-past':''}">
       <td>${requester?escapeHtml(requester.username):'(compte supprimé)'}</td>
       <td><span class="machine-swatch" style="background:${t?t.couleur:'#888'}"></span>${t?escapeHtml(t.nom):'—'}</td>
@@ -3915,7 +4457,7 @@ function renderEquipeTab(){
       <td>${nbJours} j</td>
       <td>${bal.remaining} / ${bal.allocated} j <span class="footer-note" style="margin:0;">(${year})</span></td>
       <td>${statutBadgeHtml(r.statut)}</td>
-      ${admin ? `<td>${revokeBtn}</td>` : ''}
+      ${admin ? `<td style="white-space:nowrap;">${editBtn} ${revokeBtn}</td>` : ''}
     </tr>`;
   }).join('');
   return `<section class="panel"><div class="panel-body">
@@ -4104,7 +4646,7 @@ function renderSoldesTab(){
           const bal = computeLeaveBalance(uid_, t.id, year);
           return `<td>
             <input type="number" min="0" step="0.5" value="${bal.allocated}" data-action="user-leave-allocation" data-user-id="${uid_}" data-type-id="${t.id}" style="width:70px;">
-            <span class="footer-note" style="margin:0;">${bal.used} pris${bal.pending?` · ${bal.pending} att.`:''}</span>
+            <span class="footer-note" style="margin:0;">${bal.used} pris${bal.pending?` · ${bal.pending} att.`:''} · <strong style="color:${bal.remaining<0?'var(--red)':'var(--text-dim)'};">${bal.remaining} restant${Math.abs(bal.remaining)>=2?'s':''}</strong></span>
           </td>`;
         }).join('')}</tr>`;
       }).join('')}</tbody>
@@ -4459,8 +5001,14 @@ function renderSettingsModal(){
         <div><label class="field">Durée travaillée lun. – jeu. (heures)</label><input type="number" min="0" step="0.25" value="${cfg.monThuHours}" data-action="update-config" data-field="monThuHours"></div>
         <div><label class="field">Durée travaillée vendredi (heures)</label><input type="number" min="0" step="0.25" value="${cfg.friHours}" data-action="update-config" data-field="friHours"></div>
         <div><label class="field">Marge avant échéance (jours)</label><input type="number" min="0" step="1" value="${cfg.margeEcheanceJours||0}" data-action="update-config" data-field="margeEcheanceJours" title="Les tâches devront être terminées ce nombre de jours avant la date de besoin réelle"></div>
+        <div><label class="field">Archiver les commandes terminées après (jours)</label>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <input type="number" min="0" step="1" value="${cfg.archiveApresJours||0}" data-action="update-config" data-field="archiveApresJours" title="0 = jamais. Une commande n'est archivée que lorsque TOUTES ses pièces sont terminées." style="flex:1;">
+            <button class="ghost small" data-action="archive-now" title="Applique ce seuil immédiatement, sans attendre le prochain démarrage de l'application">Archiver maintenant</button>
+          </div>
+        </div>
       </div>
-      <div class="footer-note" style="text-align:left; padding-top:10px;">La marge décale l'échéance utilisée pour les indicateurs "en retard" — une commande sera signalée en retard si sa fin estimée dépasse (date de besoin − marge), pas seulement la date de besoin elle-même. 0 = pas de marge.</div>` },
+      <div class="footer-note" style="text-align:left; padding-top:10px;">La marge décale l'échéance utilisée pour les indicateurs "en retard" — une commande sera signalée en retard si sa fin estimée dépasse (date de besoin − marge), pas seulement la date de besoin elle-même. 0 = pas de marge.<br>Les commandes archivées sont écartées du calcul du planning pour garder l'appli réactive — elles restent consultables et désarchivables dans le panneau "Commandes archivées", et toujours incluses dans l'export .json complet. 0 = archivage automatique désactivé (l'archivage tourne aussi automatiquement à chaque démarrage de l'application).</div>` },
     pause: { title: 'Pause déjeuner', body: `
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${cfg.pauseActive?'checked':''} data-action="update-config" data-field="pauseActive">
@@ -4514,7 +5062,7 @@ function renderSettingsModal(){
       </div>
       <div class="footer-note" style="text-align:left; padding-top:10px;">S'applique aux badges, liserés et surlignages "Importante" / "Urgente" partout dans le planning (tableau, vues Semaine/Jour/Mois/Année, Kanban, Liste). Le niveau "Normale" reste volontairement neutre, sans couleur.</div>` },
     moncompte: { title: 'Mon compte', body: `
-      <div class="footer-note" style="text-align:left; margin-bottom:10px;">Connecté en tant que <strong>${escapeHtml(currentUsername||'')}</strong> (${isAdmin()?'Administrateur':'Employé'}).</div>
+      <div class="footer-note" style="text-align:left; margin-bottom:10px;">Connecté en tant que <strong>${escapeHtml(currentUsername||'')}</strong> (${roleLabel(currentUserRole())}).</div>
       <label class="field">Adresse e-mail (pour les notifications de congés)</label>
       <input type="email" value="${escapeHtml((usersList.find(u=>currentUser&&String(u.id)===String(currentUser.id))||{}).email||'')}" placeholder="exemple@entreprise.fr" data-action="user-email" data-user-id="${currentUser?currentUser.id:''}" style="margin-bottom:12px;">
       <button class="primary small" data-action="change-my-password">Changer mon mot de passe</button>` },
@@ -4523,19 +5071,20 @@ function renderSettingsModal(){
         ${usersList.map(u => {
           const uid_ = String(u.id);
           const linkedMachineIds = state.userMachines[uid_] || [];
-          const lunch = state.userLunch[uid_] || { pauseActive:false, pauseDebut:'12:00', pauseFin:'13:00' };
+          const lunch = state.userLunch[uid_] || { pauseActive:false, pauses:[], horaireActif:false, heureDebut:'08:00', heureFin:'16:45' };
           const isLastAdmin = u.role==='admin' && usersList.filter(x=>x.role==='admin').length<=1;
           return `
           <div class="machine-card">
             <div class="row1">
               <strong style="flex:1;">${escapeHtml(u.username)}</strong>
-              <span class="statut-chip" style="padding:2px 8px; font-size:10px;">${u.role==='admin'?'Administrateur':'Employé'}</span>
+              <span class="statut-chip" style="padding:2px 8px; font-size:10px;">${roleLabel(u.role)}</span>
               <button class="danger-ghost icon-btn" data-action="delete-user" data-id="${u.id}" data-username="${escapeHtml(u.username)}" ${usersList.length<=1||isLastAdmin?'disabled title="Dernier compte / dernier administrateur — suppression impossible"':''}>✕</button>
             </div>
             <div class="footer-note" style="margin-bottom:8px;">Créé le ${formatDT(new Date(u.created_at))}</div>
             <label class="field">Rôle</label>
             <select data-action="user-role" data-user-id="${u.id}" style="margin-bottom:8px;" ${isLastAdmin?'disabled title="Dernier administrateur — impossible de retirer ce rôle"':''}>
-              <option value="employe" ${u.role!=='admin'?'selected':''}>Employé</option>
+              <option value="employe" ${u.role!=='admin'&&u.role!=='superviseur'?'selected':''}>Employé</option>
+              <option value="superviseur" ${u.role==='superviseur'?'selected':''}>Superviseur</option>
               <option value="admin" ${u.role==='admin'?'selected':''}>Administrateur</option>
             </select>
             <label class="field">Adresse e-mail (pour les notifications de congés)</label>
@@ -4548,26 +5097,43 @@ function renderSettingsModal(){
             </select>
             ${linkedMachineIds.length ? `<button class="ghost small deps-clear-btn" data-action="clear-user-machines" data-user-id="${uid_}">✕ Aucun poste lié</button>` : ''}
 
-            <div class="modal-section-title" style="font-size:10px; margin-top:12px;">Pause déjeuner de cette personne</div>
+            <div class="modal-section-title" style="font-size:10px; margin-top:12px;">Pause(s) de cette personne</div>
             <label class="statut-chip" style="margin-bottom:8px;">
               <input type="checkbox" ${lunch.pauseActive?'checked':''} data-action="toggle-user-lunch" data-user-id="${uid_}">
-              Pause propre à cette personne (remplace celle du poste quand elle est assignée comme opérateur)
+              Pause(s) propre(s) à cette personne (remplace(nt) celle(s) du poste quand elle est assignée comme opérateur)
             </label>
             ${lunch.pauseActive ? `
-            <div class="indispo-dates-row">
-              <input type="time" value="${lunch.pauseDebut}" data-action="user-lunch-field" data-user-id="${uid_}" data-field="pauseDebut" title="Début de pause">
-              <input type="time" value="${lunch.pauseFin}" data-action="user-lunch-field" data-user-id="${uid_}" data-field="pauseFin" title="Fin de pause">
-            </div>` : ''}
+            <div class="user-pauses-list">
+              ${(lunch.pauses||[]).map(p => `
+                <div class="user-pause-row">
+                  <input type="time" value="${p.debut}" data-action="user-pause-field" data-user-id="${uid_}" data-pause-id="${p.id}" data-field="debut" title="Début de pause">
+                  <input type="time" value="${p.fin}" data-action="user-pause-field" data-user-id="${uid_}" data-pause-id="${p.id}" data-field="fin" title="Fin de pause">
+                  <button class="danger-ghost icon-btn" data-action="remove-user-pause" data-user-id="${uid_}" data-pause-id="${p.id}" title="Supprimer cette pause">✕</button>
+                </div>`).join('') || `<div class="footer-note" style="margin:0;">Aucune pause définie — cette personne travaille sans interruption.</div>`}
+            </div>
+            <button class="small" style="margin-top:6px;" data-action="add-user-pause" data-user-id="${uid_}">+ Ajouter une pause</button>` : ''}
+
+            <div class="modal-section-title" style="font-size:10px; margin-top:12px;">Horaires de poste de cette personne</div>
+            <label class="statut-chip" style="margin-bottom:8px;">
+              <input type="checkbox" ${lunch.horaireActif?'checked':''} data-action="toggle-user-horaire" data-user-id="${uid_}">
+              Début/fin de poste propres à cette personne (remplacent ceux du poste quand elle est assignée comme opérateur)
+            </label>
+            ${lunch.horaireActif ? `
+            <div class="user-pause-row">
+              <input type="time" value="${lunch.heureDebut}" data-action="user-horaire-field" data-user-id="${uid_}" data-field="heureDebut" title="Début de poste">
+              <input type="time" value="${lunch.heureFin}" data-action="user-horaire-field" data-user-id="${uid_}" data-field="heureFin" title="Fin de poste">
+            </div>
+            <div class="footer-note" style="text-align:left; margin-top:4px;">Pause(s) comprise(s) dans cet intervalle — la durée réellement travaillée en est déduite automatiquement.</div>` : ''}
           </div>`;
         }).join('')}
       </div>
       <div class="user-add-row">
         <div><label class="field">Nouvel identifiant</label><input type="text" id="new-user-username" autocomplete="off"></div>
         <div><label class="field">Mot de passe (8 car. min.)</label><input type="password" id="new-user-password" autocomplete="new-password"></div>
-        <div><label class="field">Rôle</label><select id="new-user-role"><option value="employe">Employé</option><option value="admin">Administrateur</option></select></div>
+        <div><label class="field">Rôle</label><select id="new-user-role"><option value="employe">Employé</option><option value="superviseur">Superviseur</option><option value="admin">Administrateur</option></select></div>
         <button class="primary" data-action="add-user-submit">+ Ajouter</button>
       </div>
-      <div class="footer-note" style="text-align:left; padding-top:12px;">Chaque personne devant accéder au planning depuis l'extérieur doit avoir son propre compte. Supprimez un compte pour couper l'accès à cette personne immédiatement. Seuls les administrateurs peuvent créer/supprimer des comptes, changer un rôle, ou valider une demande de congé. La gestion des congés se fait désormais dans sa propre page (bouton "🏖 Congés" en haut de l'écran).</div>` },
+      <div class="footer-note" style="text-align:left; padding-top:12px;">Chaque personne devant accéder au planning depuis l'extérieur doit avoir son propre compte. Supprimez un compte pour couper l'accès à cette personne immédiatement. Seuls les administrateurs peuvent créer/supprimer des comptes ou changer un rôle — mais un Superviseur peut, comme un administrateur, valider les demandes de congé et gérer les soldes. La gestion des congés se fait désormais dans sa propre page (bouton "🏖 Congés" en haut de l'écran).</div>` },
     conges: { title: 'Module Congés', body: `
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${(state.config.modules&&state.config.modules.conges)?'checked':''} data-action="toggle-module-conges">
@@ -4743,7 +5309,10 @@ function fusedBarLabelAndTooltip(o, baseLabel, meta){
   const distinctCmd = Array.from(new Set(o._fusionMembers.map(m=>m.commandeNom)));
   const refLabel = distinctCmd.length === 1 ? distinctCmd[0] : `${distinctCmd.length} commandes`;
   const matEp = (o.matiere || o.epaisseur) ? ` — ${o.matiere||'?'}/${o.epaisseur||'?'}` : '';
-  const label = `${refLabel} · 🔗 ${o._fusionMembers.length} pièces fusionnées${matEp}`;
+  // meta.prefix porte le repère de statut (✓ terminée, ▶ en cours, ⏸ en pause, 📌 figée) — le
+  // reconstruire ici plutôt que de repartir de baseLabel l'avait fait disparaître sur les barres
+  // fusionnées alors qu'il reste affiché sur une tâche non groupée de même statut.
+  const label = `${meta.prefix}${refLabel} · 🔗 ${o._fusionMembers.length} pièces fusionnées${matEp}`;
   // Pas de liste des pièces dans l'infobulle : elle devenait illisible sur un gros groupe, et le
   // détail complet est déjà accessible d'un clic sur la barre (pop-up de regroupement).
   // Le libellé est échappé à l'affichage : pas de balises HTML ici, elles s'afficheraient telles quelles.
@@ -4969,7 +5538,8 @@ function renderYearView(schedule){
 }
 
 const PANEL_COLLAPSE_STORAGE_KEY = 'planning-atelier-panel-collapse';
-let panelCollapsed = { planning:false, active:false, done:false };
+let panelCollapsed = { planning:false, active:false, done:false, archives:true };
+let archiveSearchQuery = '';
 function loadPanelCollapsePref(){
   try{
     const raw = localStorage.getItem(PANEL_COLLAPSE_STORAGE_KEY);
@@ -5015,7 +5585,7 @@ function performFusion(items, skipCommit){
   if(items.length < 2) return;
   const groupId = uid('fusion');
   const totalDuree = items.reduce((s,it)=>s+it.dureeH, 0);
-  const schedule = computeSchedule(state);
+  const schedule = getSchedule();
   let commonStart = null;
   items.forEach(it => {
     const c = schedule.find(cc=>cc.id===it.cid);
@@ -5276,6 +5846,7 @@ function renderKanbanView(schedule){
   const doneCutoff = doneFilterCutoff(doneFilterRange);
   const colsHtml = cols.map(col => {
     let ops = allOps.filter(o => o.statut===col.key);
+    if(kanbanGroupedView) ops = mergeFusedOpsForDisplay(ops); // une seule carte par groupe fusionné, comptée comme telle dans les limites/compteurs ci-dessous
     let totalAvantLimite = ops.length;
     if(col.key==='termine'){
       if(doneCutoff) ops = ops.filter(o => !o.finReel || new Date(o.finReel) >= doneCutoff);
@@ -5311,23 +5882,33 @@ function renderKanbanView(schedule){
         : col.key==='termine'
         ? (o.finReel ? `Terminée le ${formatDT(new Date(o.finReel))}` : 'Réalisée')
         : (o.start ? `${formatDT(o.start)} → ${formatDT(o.end)}` : 'Non planifiée');
-      const label = [o.commandeNom, o.piece, o.etape].filter(Boolean).join(' · ');
+      const label = o._fusionMembers
+        ? (() => {
+            const distinctCmd = Array.from(new Set(o._fusionMembers.map(mb=>mb.commandeNom)));
+            const refLabel = distinctCmd.length===1 ? distinctCmd[0] : `${distinctCmd.length} commandes`;
+            return `🔗 ${o._fusionMembers.length} pièces — ${refLabel}`;
+          })()
+        : [o.commandeNom, o.piece, o.etape].filter(Boolean).join(' · ');
+      const fusionListLineK = o._fusionMembers
+        ? `<div class="kanban-card-fusion-list">${o._fusionMembers.map(mb=>escapeHtml([mb.piece,mb.etape].filter(Boolean).join(' / ')||'—')).join(', ')}</div>` : '';
       const hlOnK = highlightActive();
       const hlK = isHighlighted(o.cid, o.commandeNom, o.piece);
       const hlClsK = hlOnK ? (hlK ? 'spotlight' : 'dimmed') : '';
+      const operateurK = o.operatorUserId ? usersList.find(u=>String(u.id)===String(o.operatorUserId)) : null;
       const dueLineK = o.dateBesoin ? `<div class="kanban-card-due">Échéance : ${escapeHtml(new Date(o.dateBesoin+'T00:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'}))}</div>` : '';
       const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (Number(o.tempsUnitaire)*Number(o.quantite))/60;
       const plannedLineK = `<div class="kanban-card-planned">Prévu : ${durationLabel(dureeH)}</div>`;
       const elapsedLineK = (col.key==='en_cours'||col.key==='en_pause'||col.key==='termine') ? (() => {
-        const elapsedH = opElapsedHours(o, state);
-        if(elapsedH <= 0) return '';
+        const elapsedH = dureePasseeH(o, state);
+        if(!elapsedH || elapsedH <= 0) return '';
         const label2 = col.key==='termine' ? 'Passé' : 'Passé jusqu\'ici';
         return `<div class="kanban-card-elapsed">${label2} : ${durationLabel(elapsedH)}</div>`;
       })() : '';
       return `<div class="kanban-card ${hlClsK}" data-action="card-isolate" data-cid="${o.cid}" data-oid="${o.id}" style="border-left:3px solid ${urgBorder};" title="Clic : isoler la commande — clic droit : menu de statut">
         <div class="kanban-card-main">
           <div class="kanban-card-title">${escapeHtml(label)}</div>
-          <div class="kanban-card-meta"><span class="machine-swatch" style="background:${color}"></span>${m?escapeHtml(m.nom):'—'}</div>
+          <div class="kanban-card-meta"><span class="machine-swatch" style="background:${color}"></span>${m?escapeHtml(m.nom):'—'}${operateurK ? ` · 👤 ${escapeHtml(operateurK.username)}` : ''}</div>
+          ${fusionListLineK}
           ${dueLineK}
         </div>
         <div class="kanban-card-times">
@@ -5364,6 +5945,10 @@ function renderKanbanView(schedule){
         ${[5,10,15,20,50].map(n=>`<option value="${n}" ${kanbanDoneLimit===n?'selected':''}>${n}</option>`).join('')}
         <option value="all" ${kanbanDoneLimit===Infinity?'selected':''}>Tout</option>
       </select>
+      <label class="statut-chip" style="margin-left:14px;">
+        <input type="checkbox" ${kanbanGroupedView?'checked':''} data-action="toggle-kanban-grouped-view">
+        🔗 Vue groupée des pièces fusionnées
+      </label>
     </div>
     <div class="kanban-board">${colsHtml}</div>
     <div class="footer-note" style="text-align:left; padding-top:10px;">Cliquez sur une carte pour isoler sa commande ; clic droit pour ouvrir le menu (Démarrer / Mettre en pause / Terminer). "À faire" garde en priorité les tâches les plus proches dans le temps ; "Terminée" garde les plus récentes et respecte aussi le filtre de période choisi dans le tableau des tâches terminées. "En cours" et "En pause" ne sont jamais limitées (bornées naturellement par votre nombre de postes).</div>
@@ -5459,7 +6044,14 @@ function renderNewForm(){
       <div><label class="field">Opérateur</label><select data-action="draft-op" data-idx="${idx}" data-field="operatorUserId" title="Sa pause déjeuner (si réglée) remplace celle du poste">${operatorOptions(o.operatorUserId)}</select></div>
       <div><label class="field">T. unit. (min)</label><input type="number" min="0" step="0.5" value="${o.tempsUnitaire}" data-action="draft-op" data-idx="${idx}" data-field="tempsUnitaire"></div>
       <div><label class="field">Qté *</label><input type="number" min="1" step="1" required value="${o.quantite}" data-action="draft-op" data-idx="${idx}" data-field="quantite"></div>
-      <div><label class="field">Durée (h)</label><input type="number" min="0.25" step="0.25" value="${dureeH>0?Math.round(dureeH*100)/100:''}" data-action="draft-op-duree" data-idx="${idx}" title="Durée totale prévue pour la quantité — recalcule le temps unitaire"></div>
+      <div><label class="field">Durée</label>
+        <div style="display:flex; gap:3px; align-items:center;">
+          <input type="number" min="0.25" step="0.25" value="${dureeH>0?Math.round(dureeH*100)/100:''}" data-action="draft-op-duree" data-idx="${idx}" title="Durée totale prévue pour la quantité, en heures — recalcule le temps unitaire" style="min-width:0;">
+          <span style="font-size:10px;color:var(--text-faint);">h</span>
+          <input type="number" min="1" step="1" value="${dureeH>0?Math.round(dureeH*60):''}" data-action="draft-op-duree-min" data-idx="${idx}" title="Durée totale prévue pour la quantité, en minutes — recalcule le temps unitaire" style="min-width:0;">
+          <span style="font-size:10px;color:var(--text-faint);">min</span>
+        </div>
+      </div>
       <div><label class="field">Phase</label><input type="number" min="1" step="1" class="phase-input" value="${o.phase||1}" data-action="draft-op" data-idx="${idx}" data-field="phase" title="Démarre une fois terminées toutes les pièces de phase inférieure"></div>
       <div><label class="field">Départ possible</label><input type="date" value="${o.dateDebutPossible||''}" data-action="draft-op" data-idx="${idx}" data-field="dateDebutPossible" title="Optionnel — ex : en attente d'une matière qui arrive à cette date. La tâche ne pourra jamais démarrer avant."></div>
       <div><button class="danger-ghost icon-btn" data-action="remove-draft-op" data-idx="${idx}" ${draft.pieces.length<=1?'disabled':''}>✕</button></div>
@@ -5497,7 +6089,9 @@ function renderOpsRow(o, c){
   const running = o.statut==='en_cours' || o.statut==='en_pause';
   const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (o.tempsUnitaire*o.quantite)/60;
   const overridden = o.manualStart || o.dureeOverrideH;
-  const elapsedNote = running ? `<div class="elapsed-note">${durationLabel(opElapsedHours(o, state))} écoulé${o.statut==='en_pause'?(o.autoPaused?' (pause déjeuner)':' (en pause)'):''}</div>` : '';
+  const elapsedNote = running
+    ? `<div class="elapsed-note">${durationLabel(opElapsedHours(o, state))} écoulé${o.statut==='en_pause'?(o.autoPaused?' (pause déjeuner)':' (en pause)'):''}</div>`
+    : (done && dureePasseeH(o, state) ? `<div class="elapsed-note">${durationLabel(dureePasseeH(o, state))} réellement passé</div>` : '');
   const datesCell = o.sousTraitance
     ? (done
         ? (o.finReel ? `<span class="dates-val">🏭 <span class="lbl">Revenue le</span> ${formatDT(new Date(o.finReel))}</span>` : `<span class="dates-val" style="color:var(--text-faint)">🏭 Sous-traitée — revenue</span>`)
@@ -5528,7 +6122,8 @@ function renderOpsRow(o, c){
       <label class="statut-chip" style="font-size:10px; margin-top:4px; display:flex; align-items:center; gap:4px;" title="Cette pièce n'est jamais planifiée sur un poste — elle garde son statut normalement, et peut toujours bloquer une phase suivante tant qu'elle n'est pas marquée Terminée.">
         <input type="checkbox" ${o.sousTraitance?'checked':''} data-action="toggle-op-sous-traitance" data-cid="${c.id}" data-oid="${o.id}"> 🏭 Sous-traité
       </label></td>
-    <td class="col-tu"><input type="number" min="0" step="0.5" value="${o.tempsUnitaire}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="tempsUnitaire"></td>
+    <td class="col-tu"><input type="number" min="0" step="0.5" value="${o.tempsUnitaire}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="tempsUnitaire">
+      <button class="ghost small" data-action="corriger-temps-theorique" data-cid="${c.id}" data-oid="${o.id}" title="Corriger une erreur de saisie initiale : remplace directement le temps théorique de référence (et le temps unitaire) par la valeur donnée" style="display:block; width:100%; margin-top:2px; font-size:9px; padding:2px 4px;">✎ Corriger le théorique</button></td>
     <td class="col-qte"><input type="number" min="1" step="1" value="${o.quantite}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="quantite"></td>
     <td class="col-duree"><input type="number" min="0.25" step="0.25" value="${Math.round(dureeH*100)/100}" data-action="op-duree-field" data-cid="${c.id}" data-oid="${o.id}" title="Durée totale prévue, en heures"><span style="font-size:9.5px;color:var(--text-faint);">${durationLabel(dureeH)}</span>${isTempsModified(o) ? `<button class="ghost small temps-modifie-badge" data-action="reset-temps-unitaire" data-cid="${c.id}" data-oid="${o.id}" title="Temps théorique d'origine : ${durationLabel((o.tempsUnitaireTheorique*o.quantite)/60)} — cliquer pour revenir à cette valeur">⏱ Modifié — ↺ revenir au théorique</button>` : ''}</td>
     <td class="col-deps">${phaseCell}</td>
@@ -5672,6 +6267,53 @@ function renderCommandes(schedule){
   return searchBar + `<div class="commandes-columns" id="commandes-columns" style="grid-template-columns:minmax(0,${columnsRatio}fr) 9px minmax(0,${100-columnsRatio}fr);">${activeSection}<div class="columns-resize-handle" id="columns-resize-handle" title="Glisser pour ajuster la largeur — double-clic pour réinitialiser à 50/50"><div class="columns-resize-grip"></div></div>${doneSection}</div>`;
 }
 
+// Commandes entièrement terminées depuis longtemps, écartées du moteur de planification (voir
+// archiveOldCommandes) pour garder l'appli réactive — jamais perdues : consultables ici, incluses
+// dans l'export .json complet, et désarchivables en un clic si besoin d'y revenir.
+function renderArchivesPanel(){
+  const archives = state.commandesArchivees || [];
+  if(archives.length === 0) return '';
+  const collapsed = panelCollapsed.archives;
+  const filtered = archiveSearchQuery ? archives.filter(c => matchesSearch(c, archiveSearchQuery)) : archives;
+  const sorted = filtered.slice().sort((a,b) => {
+    const da = commandeCompletionDate(a), db = commandeCompletionDate(b);
+    return (db?db.getTime():0) - (da?da.getTime():0); // les plus récemment archivées d'abord
+  });
+  const rows = sorted.map(c => {
+    const completion = commandeCompletionDate(c);
+    // Sommées sur toutes les pièces de la commande — même logique que partout ailleurs dans
+    // l'appli (renderOpsRow, cartes Kanban) : dureeOverrideH prime sur tempsUnitaire×quantité,
+    // et le temps réellement passé vient de dureeReelleH (figé à la clôture de chaque pièce).
+    const totalPrevuH = c.pieces.reduce((s,o) => s + ((o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (Number(o.tempsUnitaire)*Number(o.quantite))/60), 0);
+    const totalPasseH = c.pieces.reduce((s,o) => s + (dureePasseeH(o, state) || 0), 0);
+    return `<tr>
+      <td>${escapeHtml(c.nom)}</td>
+      <td>${c.pieces.length} pièce(s)</td>
+      <td>${totalPrevuH > 0 ? durationLabel(totalPrevuH) : '—'}</td>
+      <td>${totalPasseH > 0 ? durationLabel(totalPasseH) : '—'}</td>
+      <td>${completion ? formatDateFr(toDateInputValue(completion)) : '—'}</td>
+      <td><button class="ghost small" data-action="unarchive-commande" data-cid="${c.id}" title="Remettre cette commande parmi les commandes actives">↺ Désarchiver</button></td>
+    </tr>`;
+  }).join('');
+  return `<section class="panel" style="margin-top:14px;">
+    <div class="panel-head panel-head-clickable" data-action="toggle-panel-collapse" data-key="archives">
+      <h2><span class="n">${archives.length}</span>Commandes archivées</h2>
+      <button class="ghost icon-btn collapse-chevron ${collapsed?'collapsed':''}" data-action="toggle-panel-collapse" data-key="archives" title="${collapsed?'Déplier':'Replier'}">▾</button>
+    </div>
+    ${collapsed ? '' : `<div class="panel-body" style="padding:12px;">
+      <div class="search-bar">
+        <input type="text" id="archive-search-input" placeholder="Rechercher une commande ou une pièce archivée…" value="${escapeHtml(archiveSearchQuery)}">
+        ${archiveSearchQuery ? `<button class="ghost small" data-action="clear-archive-search">✕ Effacer</button>` : ''}
+      </div>
+      <table class="ops-table" style="margin-top:8px;">
+        <thead><tr><th>Référence</th><th>Pièces</th><th>Temps prévu</th><th>Temps passé</th><th>Terminée le</th><th></th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="6" style="text-align:center; color:var(--text-faint);">Aucun résultat</td></tr>`}</tbody>
+      </table>
+      <div class="footer-note" style="text-align:left; padding-top:8px;">${state.config.archiveApresJours>0 ? `Archivées automatiquement ${state.config.archiveApresJours} jours après leur achèvement (réglable dans ⚙ Paramétrer → Horaires de travail).` : `Archivage automatique désactivé — ces commandes ont été archivées avant sa désactivation.`} Toujours incluses dans l'export .json complet.</div>
+    </div>`}
+  </section>`;
+}
+
 function renderToast(){
   if(!toastMessage) return '';
   return `<div class="toast">
@@ -5692,11 +6334,18 @@ function render(){
   // de changement dès la première partie saisie (heures) sur certains navigateurs — sans cette
   // restauration, le redessin qui s'ensuit fait perdre le focus au milieu de la saisie.
   const focusRef = captureFocusRef();
+  if(licenseBlocked){
+    appEl.innerHTML = renderLicenseBlockScreen();
+    restoreModalScroll(modalScrollTop);
+    restoreFocusRef(focusRef);
+    return;
+  }
   if(currentPage === 'conges'){
     appEl.innerHTML = [
       renderHeader(),
       renderCongesPage(),
       renderSettingsModal(),
+      renderEditLeaveRequestModal(),
       renderLeaveRequestPreviewModal(),
       renderToast()
     ].join('');
@@ -5704,15 +6353,17 @@ function render(){
     restoreFocusRef(focusRef);
     return;
   }
-  const schedule = computeSchedule(state);
+  const schedule = getSchedule();
   const html = [
     renderHeader(),
+    renderPausedTasksBanner(),
     renderStats(schedule),
     renderPlanningSection(schedule),
     renderFusionPanel(),
     renderActiveFusionGroupsPanel(),
     renderNewForm(),
-    renderCommandes(schedule),
+    `<div id="commandes-section">${renderCommandes(schedule)}</div>`,
+    `<div id="archives-section">${renderArchivesPanel()}</div>`,
     `<div class="footer-note">Les dates sont recalculées automatiquement à chaque modification — décalez un poste ou une échéance pour voir l'effet en cascade.</div>`,
     renderSettingsModal(),
     renderExcelImportModal(),
@@ -5729,7 +6380,7 @@ function captureFocusRef(){
   const el = document.activeElement;
   if(!el || el===document.body) return null;
   if(!['INPUT','SELECT','TEXTAREA'].includes(el.tagName)) return null;
-  const attrs = ['data-action','data-field','data-id','data-cid','data-oid','data-user-id','data-type-id','data-machine-id','data-conge-id','id'];
+  const attrs = ['data-action','data-field','data-id','data-cid','data-oid','data-user-id','data-type-id','data-machine-id','data-conge-id','data-pause-id','id'];
   let selector = el.tagName.toLowerCase();
   attrs.forEach(a => { const v = el.getAttribute(a); if(v!=null) selector += `[${a}="${v.replace(/"/g,'\\"')}"]`; });
   if(selector === el.tagName.toLowerCase()) return null; // aucun attribut identifiant : impossible de le retrouver après coup
@@ -5751,6 +6402,39 @@ function restoreModalScroll(scrollTop){
   if(scrollTop === null) return;
   const modal = document.querySelector('.modal-box');
   if(modal) modal.scrollTop = scrollTop;
+}
+
+/* ---------------- redessin ciblé (recherche) ----------------
+   La recherche de commandes redessine à chaque frappe : passer par render() intégral y reconstruit
+   aussi le Gantt/Kanban/Liste (potentiellement des centaines de barres) rien que pour filtrer une
+   liste en dessous — sensible dès qu'il y a beaucoup de commandes. Ces fonctions ne touchent que le
+   conteneur réellement concerné ; le reste de l'application continue de passer par render() intégral,
+   qui reste le chemin par défaut partout ailleurs. */
+function renderCommandesSectionOnly(){
+  const container = document.getElementById('commandes-section');
+  if(!container){ render(); return; } // filet de sécurité si la page n'est pas dans l'état attendu
+  container.innerHTML = renderCommandes(getSchedule());
+}
+function renderArchivesSectionOnly(){
+  const container = document.getElementById('archives-section');
+  if(!container){ render(); return; }
+  container.innerHTML = renderArchivesPanel();
+}
+// Ne modifie que les classes spotlight/dimmed des éléments déjà à l'écran (barres Gantt, puces
+// Mois, cartes Kanban, lignes Liste), sans reconstruire ces vues — le pendant "surlignage" du
+// redessin ciblé ci-dessus, pour que la recherche continue d'estomper les tâches non concernées
+// même sans reconstruire tout le planning à chaque frappe.
+function updateHighlightClasses(){
+  const schedule = getSchedule();
+  const opInfo = new Map();
+  schedule.forEach(c => c.pieces.forEach(o => { opInfo.set(String(o.id), { cid: c.id, commandeNom: c.nom, piece: o.piece }); }));
+  const hlOn = highlightActive();
+  document.querySelectorAll('.gantt-bar[data-oid], .month-chip[data-oid], .kanban-card[data-oid], .liste-row[data-oid]').forEach(el => {
+    const info = opInfo.get(el.dataset.oid);
+    const hl = info ? isHighlighted(info.cid, info.commandeNom, info.piece) : false;
+    el.classList.toggle('spotlight', hlOn && hl);
+    el.classList.toggle('dimmed', hlOn && !hl);
+  });
 }
 
 /* ---------------- délégation d'événements : clics & changements ---------------- */
@@ -5788,6 +6472,8 @@ function dispatchClickAction(action, el){
     case 'add-machine': addMachine(); break;
     case 'remove-machine': removeMachine(el.dataset.id); break;
     case 'add-machine-indispo': addMachineIndispo(el.dataset.id); break;
+    case 'add-user-pause': addUserPause(el.dataset.userId); break;
+    case 'remove-user-pause': removeUserPause(el.dataset.userId, el.dataset.pauseId); break;
     case 'remove-machine-indispo': removeMachineIndispo(el.dataset.id, el.dataset.indispoId); break;
     case 'reset-all': resetAll(); break;
     case 'export-data': exportData(); break;
@@ -5811,7 +6497,7 @@ function dispatchClickAction(action, el){
     case 'fuse-all': fuseAll(el.dataset.key); break;
     case 'toggle-fusion-group-details': toggleFusionGroupDetails(el.dataset.key); break;
     case 'toggle-fusion-panel': toggleFusionPanel(el.dataset.which); break;
-    case 'open-settings': showSettingsModal = true; render(); loadUsersList(); break;
+    case 'open-settings': if(isAdmin()){ showSettingsModal = true; render(); loadUsersList(); } break;
     case 'goto-conges': currentPage = 'conges'; render(); break;
     case 'goto-planning': currentPage = 'planning'; render(); break;
     case 'conges-tab': congesTab = el.dataset.tab; render(); break;
@@ -5831,6 +6517,9 @@ function dispatchClickAction(action, el){
     case 'toggle-leave-impact': leaveImpactPreviewId = (leaveImpactPreviewId===el.dataset.id) ? null : el.dataset.id; render(); break;
     case 'approve-leave-request': decideLeaveRequest(el.dataset.id, 'approuve'); break;
     case 'revoke-leave-request': revokeLeaveRequest(el.dataset.id); break;
+    case 'edit-leave-request': startEditLeaveRequest(el.dataset.id); break;
+    case 'cancel-edit-leave-request': cancelEditLeaveRequest(); break;
+    case 'preview-edit-leave-request': previewEditLeaveRequest(); break;
     case 'reject-leave-request': decideLeaveRequest(el.dataset.id, 'refuse'); break;
     case 'add-leave-type': addLeaveType(); break;
     case 'admin-assign-leave': adminAssignLeave(); break;
@@ -5838,6 +6527,7 @@ function dispatchClickAction(action, el){
     case 'calyear-today': calendrierYear = new Date().getFullYear(); render(); break;
     case 'remove-leave-type': removeLeaveType(el.dataset.typeId); break;
     case 'logout': logout(); break;
+    case 'activate-license': activateLicenseKey(); break;
     case 'add-user-submit': addUserSubmit(); break;
     case 'delete-user': deleteUserConfirm(el.dataset.id, el.dataset.username); break;
     case 'change-user-password': changeUserPassword(el.dataset.id, el.dataset.username); break;
@@ -5876,6 +6566,7 @@ function dispatchClickAction(action, el){
     case 'remove-op': removeOpFromCommande(el.dataset.cid, el.dataset.oid); break;
     case 'reset-op-override': resetOpOverride(el.dataset.cid, el.dataset.oid); break;
     case 'reset-temps-unitaire': contextMenu = null; resetTempsUnitaire(el.dataset.cid, el.dataset.oid); break;
+    case 'corriger-temps-theorique': corrigerTempsTheorique(el.dataset.cid, el.dataset.oid); break;
     case 'open-date-picker': {
       const input = document.getElementById(el.dataset.target);
       if(input){ if(input.showPicker) input.showPicker(); else input.focus(); }
@@ -5883,6 +6574,9 @@ function dispatchClickAction(action, el){
     }
     case 'sort-by-priority': sortByPriority(); break;
     case 'clear-search': searchQuery = ''; render(); break;
+    case 'clear-archive-search': archiveSearchQuery = ''; render(); break;
+    case 'unarchive-commande': unarchiveCommande(el.dataset.cid); break;
+    case 'archive-now': manualArchiveNow(); break;
     case 'clear-isolate': selectedCommandeId = null; render(); break;
     case 'toggle-select-commande': toggleIsolateCommande(el.dataset.id); if(selectedCommandeId) maybeJumpToHighlight(); render(); break;
     case 'toggle-panel-collapse': togglePanelCollapse(el.dataset.key); break;
@@ -5898,21 +6592,15 @@ function dispatchClickAction(action, el){
     case 'ctx-resume': contextMenu = null; setOpStatut(el.dataset.cid, el.dataset.oid, 'en_cours'); break;
     case 'ctx-finish': contextMenu = null; setOpStatut(el.dataset.cid, el.dataset.oid, 'termine'); break;
     case 'ctx-reopen': contextMenu = null; setOpStatut(el.dataset.cid, el.dataset.oid, 'a_faire'); break;
+    case 'resume-paused-task': setOpStatut(el.dataset.cid, el.dataset.oid, 'en_cours'); break;
+    case 'dismiss-paused-banner': dismissPausedBanner(); break;
   }
 }
 
-document.addEventListener('change', (e) => {
-  const el = e.target.closest('[data-action]');
-  if(!el) return;
-  const action = el.dataset.action;
-  // Différé d'un instant (0 ms) : laisse d'abord la touche Tab déplacer normalement le focus vers
-  // le champ suivant avant de redessiner la page. Sans ce délai, un redessin déclenché pendant que
-  // le focus est encore "en transit" reconstruit tout le DOM au mauvais moment — le navigateur perd
-  // alors la référence du champ suivant et Tab se met à sauter n'importe où.
-  // Pendant ce court battement, la synchronisation en tâche de fond (pollRemoteState) ne doit surtout
-  // pas redessiner la page avec une valeur pas encore mise à jour — d'où ce signal partagé.
-  changeProcessingInFlight = true;
-  setTimeout(() => {
+// Exécute réellement l'action associée à un champ modifié (extrait de l'ancien handler 'change'
+// pour pouvoir être rejoué en différé — voir le handler 'focusout' plus bas, pour les champs
+// type="time").
+function dispatchChangeAction(el, action){
   switch(action){
     case 'update-machine-name': updateMachine(el.dataset.id, 'nom', el.value); break;
     case 'update-machine-dispo': updateMachine(el.dataset.id, 'dispo', el.value); break;
@@ -5923,20 +6611,24 @@ document.addEventListener('change', (e) => {
     case 'toggle-fusion-item': toggleFusionItem(el.dataset.key, el.dataset.oid, el.checked); break;
     case 'toggle-module-conges': toggleModuleConges(el.checked); break;
     case 'toggle-user-lunch': toggleUserLunchActive(el.dataset.userId, el.checked); break;
+    case 'toggle-user-horaire': toggleUserHoraireActive(el.dataset.userId, el.checked); break;
     case 'user-role': changeUserRole(el.dataset.userId, el.value); break;
     case 'user-email': changeUserEmail(el.dataset.userId, el.value); break;
     case 'leave-type-field': updateLeaveTypeField(el.dataset.typeId, el.dataset.field, el.value); break;
+    case 'edit-leave-field': updateEditLeaveField(el.dataset.field, el.value); break;
     case 'user-leave-allocation': updateUserLeaveAllocation(el.dataset.userId, el.dataset.typeId, el.value); break;
     case 'equipe-statut-filter': equipeStatutFilter = el.value; render(); break;
     case 'equipe-personne-filter': equipePersonneFilter = el.value; render(); break;
     case 'calyear-personne-filter': calendrierPersonneFilter = el.value; render(); break;
     case 'calyear-statut-filter': calendrierStatutFilter = el.value; render(); break;
-    case 'user-lunch-field': updateUserLunchField(el.dataset.userId, el.dataset.field, el.value); break;
+    case 'user-pause-field': updateUserPauseField(el.dataset.userId, el.dataset.pauseId, el.dataset.field, el.value); break;
+    case 'user-horaire-field': updateUserHoraireField(el.dataset.userId, el.dataset.field, el.value); break;
     case 'machine-horaire': updateMachineHoraire(el.dataset.id, el.dataset.field, el.type==='checkbox' ? el.checked : el.value); break;
     case 'machine-transfert': updateMachineTransfert(el.dataset.id, el.dataset.field, el.value); break;
     case 'draft-field': updateDraftField(el.dataset.field, el.value); break;
     case 'draft-op': updateDraftOpField(Number(el.dataset.idx), el.dataset.field, el.value); break;
     case 'draft-op-duree': updateDraftOpDuree(Number(el.dataset.idx), el.value); break;
+    case 'draft-op-duree-min': updateDraftOpDureeMin(Number(el.dataset.idx), el.value); break;
     case 'commande-field': updateCommandeField(el.dataset.cid, el.dataset.field, el.value); break;
     case 'op-field': updateOpField(el.dataset.cid, el.dataset.oid, el.dataset.field, el.value); break;
     case 'op-statut-select': setOpStatut(el.dataset.cid, el.dataset.oid, el.value); break;
@@ -5951,6 +6643,7 @@ document.addEventListener('change', (e) => {
     }
     case 'set-kanban-machine-filter': kanbanMachineFilter = el.value; render(); break;
     case 'toggle-kanban-machine': toggleKanbanMachineFilter(el.dataset.id, el.checked); break;
+    case 'toggle-kanban-grouped-view': toggleKanbanGroupedView(el.checked); break;
     case 'set-manual-start': setManualStartValue(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'op-phase': updateOpPhase(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'op-date-debut-possible': updateOpDateDebutPossible(el.dataset.cid, el.dataset.oid, el.value); break;
@@ -5981,7 +6674,46 @@ document.addEventListener('change', (e) => {
     case 'update-import-preview-poste': updateImportPreviewPoste(el.dataset.oid, el.value); break;
     case 'update-import-preview-operateur': updateImportPreviewOperateur(el.dataset.oid, el.value); break;
   }
-  changeProcessingInFlight = false;
+}
+function isDeferredTimeField(el){
+  return !!(el && el.tagName === 'INPUT' && el.type === 'time');
+}
+document.addEventListener('change', (e) => {
+  const el = e.target.closest('[data-action]');
+  if(!el) return;
+  if(isDeferredTimeField(el)){
+    // Un champ type="time" peut déclencher "change" avant même que l'utilisateur ait fini de le
+    // renseigner (bascule automatique de l'heure vers les minutes) : redessiner à cet instant lui
+    // ferait perdre le segment en cours d'édition (setSelectionRange, utilisé ailleurs pour
+    // restaurer la position du curseur après un redessin, n'est pas pris en charge sur ce type de
+    // champ — impossible à restaurer). On mémorise seulement qu'une vraie modification a eu lieu
+    // (le navigateur ne déclenche "change" que si la valeur a réellement changé) ; le traitement
+    // réel — et le redessin qui va avec — n'a lieu qu'à la sortie du champ (voir 'focusout').
+    el.dataset.pendingChange = '1';
+    return;
+  }
+  const action = el.dataset.action;
+  // Différé d'un instant (0 ms) : laisse d'abord la touche Tab déplacer normalement le focus vers
+  // le champ suivant avant de redessiner la page. Sans ce délai, un redessin déclenché pendant que
+  // le focus est encore "en transit" reconstruit tout le DOM au mauvais moment — le navigateur perd
+  // alors la référence du champ suivant et Tab se met à sauter n'importe où.
+  // Pendant ce court battement, la synchronisation en tâche de fond (pollRemoteState) ne doit surtout
+  // pas redessiner la page avec une valeur pas encore mise à jour — d'où ce signal partagé.
+  changeProcessingInFlight = true;
+  setTimeout(() => {
+    dispatchChangeAction(el, action);
+    changeProcessingInFlight = false;
+  }, 0);
+});
+document.addEventListener('focusout', (e) => {
+  const el = e.target.closest ? e.target.closest('[data-action]') : null;
+  if(!el || !isDeferredTimeField(el) || el.dataset.pendingChange !== '1') return;
+  delete el.dataset.pendingChange;
+  const action = el.dataset.action;
+  changeProcessingInFlight = true;
+  setTimeout(() => {
+    dispatchChangeAction(el, action);
+    changeProcessingInFlight = false;
   }, 0);
 });
 
@@ -6322,9 +7054,26 @@ document.addEventListener('input', (e) => {
   if(e.target.id === 'commande-search-input'){
     searchQuery = e.target.value;
     if(searchQuery) selectedCommandeId = null; // évite de cumuler recherche et sélection manuelle
+    const anchorBefore = viewAnchor.getTime();
     if(searchQuery) maybeJumpToHighlight();
-    render();
+    if(viewAnchor.getTime() !== anchorBefore){
+      // La recherche a fait sauter la vue Jour/Semaine/Mois/Année vers une autre période : le
+      // planning affiché change réellement, pas seulement le surlignage — redessin intégral requis.
+      render();
+    } else {
+      // Cas courant (l'écrasante majorité des frappes) : seule la liste "Commandes actives/Terminées"
+      // et le surlignage des tâches déjà affichées changent — on évite de reconstruire tout le
+      // Gantt/Kanban/Liste à chaque caractère tapé.
+      renderCommandesSectionOnly();
+      updateHighlightClasses();
+    }
     const el = document.getElementById('commande-search-input');
+    if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
+  }
+  if(e.target.id === 'archive-search-input'){
+    archiveSearchQuery = e.target.value;
+    renderArchivesSectionOnly();
+    const el = document.getElementById('archive-search-input');
     if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
   }
 });
@@ -6345,6 +7094,8 @@ function scheduleNextPoll(){
 }
 let currentUsername = null;
 let currentUser = null; // { id, username, role }
+let licenseBlocked = false; // vrai si le serveur a refusé une requête faute de licence valide
+let licenseStatus = null; // dernier { installed, valid, client, expiresAt, error } connu du serveur
 
 // Identité visuelle récupérée avant connexion (route publique) — mémorisée pour que l'écran de
 // connexion puisse l'afficher sans attendre, y compris après une déconnexion.
@@ -6354,8 +7105,9 @@ async function loadLoginBranding(){
     const res = await fetch('/api/branding');
     if(!res.ok) return;
     loginBranding = await res.json();
-    // Si l'écran de connexion est déjà affiché, on le redessine avec le logo une fois reçu.
-    if(document.querySelector('.login-screen')) renderLoginScreen(document.querySelector('.login-error')?.textContent || '');
+    // Si l'écran de connexion (précisément — pas l'écran de reset de mot de passe, qui partage la
+    // même classe .login-screen) est déjà affiché, on le redessine avec le logo une fois reçu.
+    if(document.getElementById('login-form')) renderLoginScreen(document.querySelector('.login-error')?.textContent || '');
   }catch(e){ /* sans logo, l'écran reste parfaitement utilisable */ }
 }
 function renderLoginScreen(errorMsg){
@@ -6405,6 +7157,66 @@ function renderLoginScreen(errorMsg){
   });
   const forgotBtn = document.querySelector('[data-action="show-forgot-password"]');
   if(forgotBtn) forgotBtn.addEventListener('click', () => renderForgotPasswordScreen());
+}
+
+// Affiché à la place de l'appli normale dès que le serveur refuse une requête faute de licence
+// valide (licenseBlocked). Un administrateur peut coller une nouvelle clé directement ici, sans
+// avoir besoin d'un accès SSH/File Station au NAS — c'est la seule route encore ouverte, avec la
+// connexion elle-même (voir requireLicense côté serveur).
+function renderLicenseBlockScreen(){
+  const cfg = (state && state.config) ? state.config : {};
+  const title = cfg.appTitle || loginBranding.appTitle || 'Planning Atelier';
+  const logo = cfg.logoDataUrl || loginBranding.logoDataUrl || '';
+  const isAdminUser = currentUser && currentUser.role === 'admin';
+  const st = licenseStatus || {};
+  const reasonMsg = st.error || 'Licence invalide ou expirée.';
+  const expiryLine = st.expiresAt
+    ? `<div class="footer-note" style="margin-top:6px;">Licence${st.client?` de "${escapeHtml(st.client)}"`:''} expirée le ${formatDateFr(toDateInputValue(new Date(st.expiresAt)))}.</div>`
+    : '';
+  return `
+  <div class="login-screen">
+    <div class="login-box">
+      ${logo ? `<img src="${escapeHtml(logo)}" alt="" class="login-logo">` : ''}
+      <h1 class="login-title">${escapeHtml(title)}</h1>
+      <div class="login-sub">🔒 Accès bloqué</div>
+      <div class="login-error">${escapeHtml(reasonMsg)}</div>
+      ${expiryLine}
+      ${isAdminUser ? `
+        <div class="modal-section-title" style="margin-top:16px; text-align:left;">Installer une nouvelle clé de licence</div>
+        <textarea id="license-key-input" rows="3" placeholder="Collez la clé de licence ici" style="width:100%; box-sizing:border-box; font-family:'IBM Plex Mono',monospace; font-size:11px;"></textarea>
+        <div id="license-activate-error" class="login-error" style="display:none;"></div>
+        <button class="primary" style="width:100%; margin-top:10px; padding:10px;" data-action="activate-license">Activer</button>
+      ` : `<div class="footer-note" style="margin-top:14px;">Contactez votre administrateur pour renouveler la licence.</div>`}
+      <button class="ghost small" style="width:100%; margin-top:14px;" data-action="logout">Se déconnecter</button>
+    </div>
+  </div>`;
+}
+async function activateLicenseKey(){
+  const input = document.getElementById('license-key-input');
+  const errEl = document.getElementById('license-activate-error');
+  if(!input) return;
+  const key = input.value.trim();
+  const showError = (msg) => { if(errEl){ errEl.textContent = msg; errEl.style.display = 'block'; } };
+  if(errEl){ errEl.style.display = 'none'; errEl.textContent = ''; }
+  if(!key){ showError('Collez une clé de licence.'); return; }
+  try{
+    const res = await fetch('/api/license', {
+      method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key })
+    });
+    const json = await res.json().catch(()=>({}));
+    if(!res.ok){ showError(json.error || 'Clé invalide.'); return; }
+    licenseBlocked = false;
+    licenseStatus = json.status || null;
+    state = await loadState();
+    invalidateSchedule();
+    draft = newDraft();
+    loadUsersList();
+    render();
+    showToast('Licence activée.');
+  }catch(e){
+    showError('Impossible de contacter le serveur.');
+  }
 }
 
 function renderForgotPasswordScreen(infoMsg){
@@ -6556,19 +7368,27 @@ async function startApp(){
   loadDoneFilterPref();
   loadKanbanDoneLimitPref();
   loadKanbanMachineFilters();
+  loadKanbanGroupedViewPref();
   loadPanelCollapsePref();
   loadColumnsRatioPref();
+  loadPausedBannerDismissDate();
   state = await loadState();
+  invalidateSchedule();
   draft = newDraft();
   loadUsersList(); // nécessaire pour le sélecteur d'opérateur, pas seulement pour la pop-up Paramètres
-  if(applyAutoPauseResume(state)) silentSave(); // rattrape le cas où la page est ouverte en pleine pause déjeuner
-  if(justRanImplicitDepsMigration) silentSave(); // fige la migration des dépendances implicites côté serveur, pour tous les postes
+  if(applyAutoPauseResume(state)) queueSilentSave(); // rattrape le cas où la page est ouverte en pleine pause déjeuner
+  if(purgeOldSessions(state)) queueSilentSave(); // fige le temps réellement passé et vide le détail des sessions devenu inutile sur les pièces déjà terminées
+  if(archiveOldCommandes(state)) queueSilentSave(); // écarte les commandes terminées depuis longtemps du moteur de planification
+  if(justRanImplicitDepsMigration) queueSilentSave(); // fige la migration des dépendances implicites côté serveur, pour tous les postes
   render();
   setInterval(() => {
-    if(showSettingsModal) return; // ne pas écraser une saisie en cours dans la pop-up Paramètres
+    // Mêmes précautions que pollRemoteState : un redessin ici ne doit jamais couper une saisie en
+    // cours (ce timer tourne toutes les 60s, y compris pendant qu'on tape dans n'importe quel champ
+    // de l'appli, pas seulement dans la pop-up Paramètres).
+    if(showSettingsModal || isTypingInField() || dragCtx || changeProcessingInFlight) return;
     const changed = applyAutoPauseResume(state);
     render(); // rafraîchit aussi l'horloge / l'indicateur de poste
-    if(changed) silentSave();
+    if(changed) queueSilentSave();
   }, 60000);
   scheduleNextPoll(); // récupère les modifications des autres utilisateurs
 }
@@ -6578,6 +7398,7 @@ async function startApp(){
   const resetToken = urlParams.get('reset');
   if(resetToken){
     renderResetPasswordScreen(resetToken);
+    loadLoginBranding(); // prépare le logo pour l'écran de connexion qui suivra une fois le mot de passe changé
     return; // pas besoin de vérifier la session : ce lien fonctionne même sans être connecté
   }
   const leaveConfirmToken = urlParams.get('leave-confirm');
@@ -6594,9 +7415,11 @@ async function startApp(){
       startApp();
     } else {
       renderLoginScreen();
+      loadLoginBranding(); // sans ça, le logo ne s'affiche jamais sur une toute première visite (aucune session préalable)
     }
   }catch(e){
     renderLoginScreen("Impossible de contacter le serveur.");
+    loadLoginBranding();
   }
 })();
 </script>

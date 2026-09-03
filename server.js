@@ -7,6 +7,7 @@ const Database = require('better-sqlite3');
 const cors = require('cors');
 const { runBackup, hasSmtpConfig, sendNotificationEmail } = require('./backup');
 const auth = require('./auth');
+const license = require('./license');
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'planning.db');
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -53,6 +54,7 @@ if(!existing){
 
 auth.initUsersTable(db);
 auth.bootstrapFirstUser(db, path.dirname(DB_PATH));
+license.initLicenseTable(db);
 
 const app = express();
 app.set('trust proxy', 1); // nécessaire pour que les cookies "secure" fonctionnent derrière un reverse proxy (Synology, etc.)
@@ -87,6 +89,11 @@ function requireAdmin(req, res, next){
   if(!user || user.role !== 'admin') return res.status(403).json({ error: 'Réservé aux comptes Administrateur.' });
   next();
 }
+// Bloque l'accès aux fonctionnalités réelles de l'appli si aucune licence valide n'est installée.
+// Volontairement PAS appliqué à /api/login, /api/session, /api/branding, /api/health ni aux routes
+// /api/license/* elles-mêmes — sinon un administrateur ne pourrait plus se connecter pour justement
+// installer une nouvelle clé après expiration.
+const requireLicense = license.requireLicense(db);
 
 // ---------------- Authentification ----------------
 app.post('/api/login', (req, res) => {
@@ -181,11 +188,27 @@ app.post('/api/leave-confirm', (req, res) => {
   res.json({ ok:true, decision, typeNom: type?type.nom:'Congé' });
 });
 
+// ---------------- Licence (protection commerciale, valable pour une durée donnée) ----------------
+// Statut consultable par tout compte connecté (pour afficher l'écran de blocage le cas échéant) ;
+// seul un administrateur peut installer une nouvelle clé.
+app.get('/api/license/status', requireAuth, (req, res) => {
+  res.json(license.getLicenseStatus(db));
+});
+app.put('/api/license', requireAdmin, (req, res) => {
+  const { key } = req.body || {};
+  if(!key || typeof key !== 'string' || !key.trim()) return res.status(400).json({ error: 'Clé de licence requise.' });
+  const result = license.verifyLicenseString(key.trim());
+  if(!result.ok) return res.status(400).json({ error: result.error });
+  if(result.expired) return res.status(400).json({ error: `Cette licence a déjà expiré le ${new Date(result.payload.expiresAt).toLocaleDateString('fr-FR')}.` });
+  license.setStoredLicenseString(db, key.trim());
+  res.json({ ok: true, status: license.getLicenseStatus(db) });
+});
+
 // ---------------- Gestion des comptes (authentifié) ----------------
-app.get('/api/users', requireAuth, (req, res) => {
+app.get('/api/users', requireAuth, requireLicense, (req, res) => {
   res.json({ users: auth.listUsers(db) });
 });
-app.post('/api/users', requireAdmin, (req, res) => {
+app.post('/api/users', requireAdmin, requireLicense, (req, res) => {
   const { username, password, role } = req.body || {};
   if(!username || !username.trim()) return res.status(400).json({ error: "Identifiant requis." });
   if(!password || password.length < 8) return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caractères.' });
@@ -195,7 +218,7 @@ app.post('/api/users', requireAdmin, (req, res) => {
     res.json({ ok: true });
   }catch(e){ res.status(500).json({ error: "Impossible de créer ce compte." }); }
 });
-app.put('/api/users/:id/password', requireAuth, (req, res) => {
+app.put('/api/users/:id/password', requireAuth, requireLicense, (req, res) => {
   const { password } = req.body || {};
   const targetId = Number(req.params.id);
   const isSelf = req.session.userId === targetId;
@@ -207,13 +230,13 @@ app.put('/api/users/:id/password', requireAuth, (req, res) => {
   auth.updateUserPassword(db, targetId, password);
   res.json({ ok: true });
 });
-app.put('/api/users/:id/role', requireAdmin, (req, res) => {
+app.put('/api/users/:id/role', requireAdmin, requireLicense, (req, res) => {
   const { role } = req.body || {};
   const result = auth.updateUserRole(db, Number(req.params.id), role);
   if(!result.ok) return res.status(400).json({ error: result.error });
   res.json({ ok: true });
 });
-app.put('/api/users/:id/email', requireAuth, (req, res) => {
+app.put('/api/users/:id/email', requireAuth, requireLicense, (req, res) => {
   const targetId = Number(req.params.id);
   const isSelf = req.session.userId === targetId;
   if(!isSelf){
@@ -224,7 +247,7 @@ app.put('/api/users/:id/email', requireAuth, (req, res) => {
   auth.updateUserEmail(db, targetId, email);
   res.json({ ok: true });
 });
-app.delete('/api/users/:id', requireAdmin, (req, res) => {
+app.delete('/api/users/:id', requireAdmin, requireLicense, (req, res) => {
   const total = auth.listUsers(db).length;
   if(total <= 1) return res.status(400).json({ error: 'Impossible de supprimer le dernier compte restant.' });
   const result = auth.deleteUser(db, Number(req.params.id));
@@ -237,7 +260,7 @@ app.delete('/api/users/:id', requireAdmin, (req, res) => {
 });
 
 // ---------------- Notifications e-mail (congés) ----------------
-app.post('/api/notify-admins', requireAuth, async (req, res) => {
+app.post('/api/notify-admins', requireAuth, requireLicense, async (req, res) => {
   const { subject, text } = req.body || {};
   if(!subject || !text) return res.status(400).json({ error: 'Sujet et texte requis.' });
   const admins = db.prepare("SELECT email FROM users WHERE role='admin' AND email IS NOT NULL AND email != ''").all();
@@ -248,7 +271,7 @@ app.post('/api/notify-admins', requireAuth, async (req, res) => {
   }
   res.json({ ok: true, sent, total: admins.length });
 });
-app.post('/api/notify-user/:id', requireAdmin, async (req, res) => {
+app.post('/api/notify-user/:id', requireAdmin, requireLicense, async (req, res) => {
   const { subject, text } = req.body || {};
   if(!subject || !text) return res.status(400).json({ error: 'Sujet et texte requis.' });
   const user = db.prepare('SELECT email FROM users WHERE id = ?').get(Number(req.params.id));
@@ -258,13 +281,13 @@ app.post('/api/notify-user/:id', requireAdmin, async (req, res) => {
 });
 
 // Renvoie l'état courant du planning et sa version
-app.get('/api/state', requireAuth, (req, res) => {
+app.get('/api/state', requireAuth, requireLicense, (req, res) => {
   const row = db.prepare('SELECT data, version FROM app_state WHERE id = 1').get();
   res.json({ data: JSON.parse(row.data), version: row.version });
 });
 
 // Enregistre un nouvel état, avec verrouillage optimiste sur la version
-app.put('/api/state', requireAuth, (req, res) => {
+app.put('/api/state', requireAuth, requireLicense, (req, res) => {
   const { data, expectedVersion } = req.body || {};
   if(data === undefined || expectedVersion === undefined){
     return res.status(400).json({ error: 'Champs manquants (data, expectedVersion).' });
@@ -299,7 +322,7 @@ app.get('/api/branding', (req, res) => {
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
 // Déclenche une sauvegarde immédiate (bouton "Tester l'envoi maintenant" de la pop-up Paramètres)
-app.post('/api/backup/test', requireAuth, async (req, res) => {
+app.post('/api/backup/test', requireAuth, requireLicense, async (req, res) => {
   const row = db.prepare('SELECT data FROM app_state WHERE id = 1').get();
   const data = JSON.parse(row.data);
   const backupConfig = (data.config && data.config.backup) || {};
@@ -308,7 +331,7 @@ app.post('/api/backup/test', requireAuth, async (req, res) => {
   res.status(500).json({ ok: false, error: result.error });
 });
 
-app.get('/api/backup/status', requireAuth, (req, res) => {
+app.get('/api/backup/status', requireAuth, requireLicense, (req, res) => {
   res.json({ smtpConfigured: hasSmtpConfig() });
 });
 

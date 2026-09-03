@@ -125,10 +125,12 @@ function findUserByUsername(db, username){
 function listUsers(db){
   return db.prepare('SELECT id, username, created_at, role, email FROM users ORDER BY username COLLATE NOCASE').all();
 }
+const VALID_ROLES = ['admin', 'superviseur', 'employe'];
+function normalizeRole(role){ return VALID_ROLES.includes(role) ? role : 'employe'; }
 function createUser(db, username, password, role){
   const hash = bcrypt.hashSync(password, SALT_ROUNDS);
   db.prepare('INSERT INTO users (username, password_hash, created_at, role) VALUES (?, ?, ?, ?)')
-    .run(username, hash, new Date().toISOString(), role === 'admin' ? 'admin' : 'employe');
+    .run(username, hash, new Date().toISOString(), normalizeRole(role));
 }
 function deleteUser(db, id){
   const target = db.prepare('SELECT role FROM users WHERE id = ?').get(id);
@@ -146,10 +148,12 @@ function countAdmins(db){
   return db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get().n;
 }
 function updateUserRole(db, id, role){
-  const nextRole = role === 'admin' ? 'admin' : 'employe';
+  const nextRole = normalizeRole(role);
   const current = db.prepare('SELECT role FROM users WHERE id = ?').get(id);
   if(!current) return { ok:false, error:'Compte introuvable.' };
-  if(current.role === 'admin' && nextRole === 'employe' && countAdmins(db) <= 1){
+  // Le rôle Superviseur n'est pas compté comme Administrateur : le retirer du dernier admin, même
+  // pour le passer Superviseur, doit être bloqué comme n'importe quelle autre rétrogradation.
+  if(current.role === 'admin' && nextRole !== 'admin' && countAdmins(db) <= 1){
     return { ok:false, error:"Impossible de retirer le rôle Administrateur au dernier compte administrateur restant." };
   }
   db.prepare('UPDATE users SET role = ? WHERE id = ?').run(nextRole, id);
