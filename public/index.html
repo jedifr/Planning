@@ -2593,6 +2593,10 @@ function countWorkingDaysInRange(debut, fin){
 function leaveTypeById(typeId){ return state.leaveTypes.find(t=>t.id===typeId); }
 function currentUserRole(){ return currentUser && currentUser.role; }
 function isAdmin(){ return currentUserRole() === 'admin'; }
+// Superviseur : mêmes droits qu'un administrateur pour l'exploitation au quotidien (validation des
+// congés, gestion des soldes, actions sur l'équipe...) — seul Paramètres reste réservé à isAdmin().
+function canSupervise(){ const r = currentUserRole(); return r === 'admin' || r === 'superviseur'; }
+function roleLabel(role){ return role==='admin' ? 'Administrateur' : role==='superviseur' ? 'Superviseur' : 'Employé'; }
 // Solde = allocation annuelle - jours déjà comptabilisés (approuvés) - jours actuellement en attente
 // (pour ne pas laisser quelqu'un demander plus que ce qu'il lui reste, même avant validation).
 function computeLeaveBalance(userId, typeId, year, excludeId){
@@ -4314,7 +4318,7 @@ function renderHeader(){
   const pageSwitcher = `
     <div class="page-switcher">
       <button class="page-switch-btn ${currentPage==='planning'?'active':''}" data-action="goto-planning">Planning</button>
-      ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(isAdmin()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
+      ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
     </div>`;
   return `
   <header class="top">
@@ -4331,7 +4335,7 @@ function renderHeader(){
       <button class="small" data-action="export-data" title="Télécharger un fichier .json — à déposer dans un dossier synchronisé avec votre NAS">Exporter (.json)</button>
       <button class="small" data-action="trigger-import" title="Recharger un fichier .json exporté précédemment">Importer</button>
       <input type="file" id="import-file-input" accept="application/json" style="display:none;" onchange="handleImportFile(event)">` : ''}
-      <button class="small" data-action="open-settings" title="Paramétrer les horaires de travail">⚙ Paramétrer</button>
+      ${isAdmin() ? `<button class="small" data-action="open-settings" title="Paramétrer les horaires de travail">⚙ Paramétrer</button>` : ''}
       <span class="footer-note" style="margin:0 4px;">${currentUsername?escapeHtml(currentUsername):''}</span>
       <button class="small" data-action="logout" title="Se déconnecter">Déconnexion</button>
     </div>
@@ -4353,16 +4357,16 @@ function renderCongesPage(){
   if(!(state.config.modules && state.config.modules.conges)){
     return `<section class="panel"><div class="panel-body" style="text-align:center; padding:40px;">Le module Congés est désactivé. Un administrateur peut le réactiver dans Paramètres → Congés.</div></section>`;
   }
-  const admin = isAdmin();
+  const canManage = canSupervise();
   const tabs = [{key:'mes-demandes', label:'Mes demandes'}, {key:'equipe', label:'Congés de l\'équipe'}, {key:'calendrier', label:'Calendrier annuel'}];
-  if(admin) tabs.push({key:'a-valider', label:`À valider${(() => { const n=state.leaveRequests.filter(r=>r.statut==='en_attente').length; return n>0?` (${n})`:''; })()}`});
-  if(admin) tabs.push({key:'soldes', label:'Soldes & types'});
+  if(canManage) tabs.push({key:'a-valider', label:`À valider${(() => { const n=state.leaveRequests.filter(r=>r.statut==='en_attente').length; return n>0?` (${n})`:''; })()}`});
+  if(canManage) tabs.push({key:'soldes', label:'Soldes & types'});
   const tabsHtml = tabs.map(t => `<button class="${congesTab===t.key?'active':''}" data-action="conges-tab" data-tab="${t.key}">${t.label}</button>`).join('');
   let body = '';
   if(congesTab==='equipe') body = renderEquipeTab();
   else if(congesTab==='calendrier') body = renderCalendrierAnnuelTab();
-  else if(admin && congesTab==='a-valider') body = renderAValiderTab();
-  else if(admin && congesTab==='soldes') body = renderSoldesTab();
+  else if(canManage && congesTab==='a-valider') body = renderAValiderTab();
+  else if(canManage && congesTab==='soldes') body = renderSoldesTab();
   else body = renderMesDemandesTab();
   return `
   <section class="panel">
@@ -4432,7 +4436,7 @@ function renderMesDemandesTab(){
 }
 function renderEquipeTab(){
   const today = toDateInputValue(new Date());
-  const admin = isAdmin();
+  const admin = canSupervise();
   let list = state.leaveRequests.slice();
   if(equipeStatutFilter !== 'toutes') list = list.filter(r => r.statut === equipeStatutFilter);
   if(equipePersonneFilter) list = list.filter(r => r.userId === equipePersonneFilter);
@@ -5058,7 +5062,7 @@ function renderSettingsModal(){
       </div>
       <div class="footer-note" style="text-align:left; padding-top:10px;">S'applique aux badges, liserés et surlignages "Importante" / "Urgente" partout dans le planning (tableau, vues Semaine/Jour/Mois/Année, Kanban, Liste). Le niveau "Normale" reste volontairement neutre, sans couleur.</div>` },
     moncompte: { title: 'Mon compte', body: `
-      <div class="footer-note" style="text-align:left; margin-bottom:10px;">Connecté en tant que <strong>${escapeHtml(currentUsername||'')}</strong> (${isAdmin()?'Administrateur':'Employé'}).</div>
+      <div class="footer-note" style="text-align:left; margin-bottom:10px;">Connecté en tant que <strong>${escapeHtml(currentUsername||'')}</strong> (${roleLabel(currentUserRole())}).</div>
       <label class="field">Adresse e-mail (pour les notifications de congés)</label>
       <input type="email" value="${escapeHtml((usersList.find(u=>currentUser&&String(u.id)===String(currentUser.id))||{}).email||'')}" placeholder="exemple@entreprise.fr" data-action="user-email" data-user-id="${currentUser?currentUser.id:''}" style="margin-bottom:12px;">
       <button class="primary small" data-action="change-my-password">Changer mon mot de passe</button>` },
@@ -5073,13 +5077,14 @@ function renderSettingsModal(){
           <div class="machine-card">
             <div class="row1">
               <strong style="flex:1;">${escapeHtml(u.username)}</strong>
-              <span class="statut-chip" style="padding:2px 8px; font-size:10px;">${u.role==='admin'?'Administrateur':'Employé'}</span>
+              <span class="statut-chip" style="padding:2px 8px; font-size:10px;">${roleLabel(u.role)}</span>
               <button class="danger-ghost icon-btn" data-action="delete-user" data-id="${u.id}" data-username="${escapeHtml(u.username)}" ${usersList.length<=1||isLastAdmin?'disabled title="Dernier compte / dernier administrateur — suppression impossible"':''}>✕</button>
             </div>
             <div class="footer-note" style="margin-bottom:8px;">Créé le ${formatDT(new Date(u.created_at))}</div>
             <label class="field">Rôle</label>
             <select data-action="user-role" data-user-id="${u.id}" style="margin-bottom:8px;" ${isLastAdmin?'disabled title="Dernier administrateur — impossible de retirer ce rôle"':''}>
-              <option value="employe" ${u.role!=='admin'?'selected':''}>Employé</option>
+              <option value="employe" ${u.role!=='admin'&&u.role!=='superviseur'?'selected':''}>Employé</option>
+              <option value="superviseur" ${u.role==='superviseur'?'selected':''}>Superviseur</option>
               <option value="admin" ${u.role==='admin'?'selected':''}>Administrateur</option>
             </select>
             <label class="field">Adresse e-mail (pour les notifications de congés)</label>
@@ -5125,10 +5130,10 @@ function renderSettingsModal(){
       <div class="user-add-row">
         <div><label class="field">Nouvel identifiant</label><input type="text" id="new-user-username" autocomplete="off"></div>
         <div><label class="field">Mot de passe (8 car. min.)</label><input type="password" id="new-user-password" autocomplete="new-password"></div>
-        <div><label class="field">Rôle</label><select id="new-user-role"><option value="employe">Employé</option><option value="admin">Administrateur</option></select></div>
+        <div><label class="field">Rôle</label><select id="new-user-role"><option value="employe">Employé</option><option value="superviseur">Superviseur</option><option value="admin">Administrateur</option></select></div>
         <button class="primary" data-action="add-user-submit">+ Ajouter</button>
       </div>
-      <div class="footer-note" style="text-align:left; padding-top:12px;">Chaque personne devant accéder au planning depuis l'extérieur doit avoir son propre compte. Supprimez un compte pour couper l'accès à cette personne immédiatement. Seuls les administrateurs peuvent créer/supprimer des comptes, changer un rôle, ou valider une demande de congé. La gestion des congés se fait désormais dans sa propre page (bouton "🏖 Congés" en haut de l'écran).</div>` },
+      <div class="footer-note" style="text-align:left; padding-top:12px;">Chaque personne devant accéder au planning depuis l'extérieur doit avoir son propre compte. Supprimez un compte pour couper l'accès à cette personne immédiatement. Seuls les administrateurs peuvent créer/supprimer des comptes ou changer un rôle — mais un Superviseur peut, comme un administrateur, valider les demandes de congé et gérer les soldes. La gestion des congés se fait désormais dans sa propre page (bouton "🏖 Congés" en haut de l'écran).</div>` },
     conges: { title: 'Module Congés', body: `
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${(state.config.modules&&state.config.modules.conges)?'checked':''} data-action="toggle-module-conges">
@@ -6492,7 +6497,7 @@ function dispatchClickAction(action, el){
     case 'fuse-all': fuseAll(el.dataset.key); break;
     case 'toggle-fusion-group-details': toggleFusionGroupDetails(el.dataset.key); break;
     case 'toggle-fusion-panel': toggleFusionPanel(el.dataset.which); break;
-    case 'open-settings': showSettingsModal = true; render(); loadUsersList(); break;
+    case 'open-settings': if(isAdmin()){ showSettingsModal = true; render(); loadUsersList(); } break;
     case 'goto-conges': currentPage = 'conges'; render(); break;
     case 'goto-planning': currentPage = 'planning'; render(); break;
     case 'conges-tab': congesTab = el.dataset.tab; render(); break;
