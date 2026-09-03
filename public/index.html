@@ -1759,9 +1759,16 @@ function resolveEffectiveDeps(pieces){
   // Pour chaque groupe fusionné, les noms de pièce qu'il couvre : une phase inférieure appartenant
   // au groupe compte comme prédécesseur de toutes les pièces concernées par ce groupe.
   const groupPieceNames = {};
+  // Phase à laquelle CHAQUE pièce participe elle-même à CHAQUE groupe — sert à vérifier que le
+  // groupe est bien un prédécesseur pour MA ligne actuelle, pas pour une autre ligne de la même
+  // pièce située AVANT ce groupe dans son propre cycle de phases (ex: le Laser d'une pièce ne doit
+  // pas attendre sa propre Chaudronnerie, fusionnée, simplement parce que les deux portent le même
+  // nom de pièce).
+  const groupMyPhase = {};
   pieces.forEach(p => {
     if(!p.fusionGroupId) return;
     (groupPieceNames[p.fusionGroupId] = groupPieceNames[p.fusionGroupId] || new Set()).add(pieceKey(p));
+    groupMyPhase[p.fusionGroupId + '|' + pieceKey(p)] = Number(p.phase) || 1;
   });
   pieces.forEach(p => {
     const myPhase = Number(p.phase) || 1;
@@ -1771,8 +1778,13 @@ function resolveEffectiveDeps(pieces){
       if((Number(other.phase) || 1) >= myPhase) return false;
       if(pieceKey(other) === myKey) return true; // même pièce : cycle normal des phases
       // Pièce différente : ne compte que si elle est fusionnée avec une ligne de ma propre pièce
-      // (le bloc est découpé en un seul passage, il doit donc être terminé en entier).
-      if(other.fusionGroupId && groupPieceNames[other.fusionGroupId] && groupPieceNames[other.fusionGroupId].has(myKey)) return true;
+      // (le bloc est découpé en un seul passage, il doit donc être terminé en entier) — ET que
+      // cette ligne à moi se situe à une phase inférieure ou égale à la mienne actuelle, sinon ce
+      // groupe est en réalité APRÈS moi dans mon propre cycle, pas avant.
+      if(other.fusionGroupId && groupPieceNames[other.fusionGroupId] && groupPieceNames[other.fusionGroupId].has(myKey)){
+        const myPhaseInGroup = groupMyPhase[other.fusionGroupId + '|' + myKey];
+        return myPhaseInGroup !== undefined && myPhaseInGroup <= myPhase;
+      }
       return false;
     }).map(o => o.id);
   });
