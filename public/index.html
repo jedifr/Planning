@@ -1571,6 +1571,14 @@ function isHighlighted(cid, commandeNom, piece){
   }
   return false;
 }
+// Une barre fusionnée (mergeFusedOpsForDisplay) ne représente qu'UNE pièce du groupe à l'écran (la
+// première du tri) : tester isHighlighted seulement sur elle ratait les autres membres qui
+// correspondaient à la recherche, ou au contraire allumait tout le bloc alors que seule la
+// représentante matchait. On teste donc chaque pièce membre individuellement.
+function isFusionAwareHighlighted(o){
+  if(o._fusionMembers) return o._fusionMembers.some(m => isHighlighted(m.cid, m.commandeNom, m.piece));
+  return isHighlighted(o.cid, o.commandeNom, o.piece);
+}
 function dateInCurrentView(d){
   if(currentView==='jour') return toDateInputValue(d)===toDateInputValue(viewAnchor);
   if(currentView==='semaine'){
@@ -5377,11 +5385,11 @@ function renderDayView(schedule){
       const baseLabel = meta.prefix + [o.commandeNom, o.piece, o.etape].filter(Boolean).join(' · ');
       const { label, tooltipExtra } = fusedBarLabelAndTooltip(o, baseLabel, meta);
       const hlOn = highlightActive();
-      const hl = isHighlighted(o.cid, o.commandeNom, o.piece);
+      const hl = isFusionAwareHighlighted(o);
       const hlCls = hlOn ? (hl ? 'spotlight' : 'dimmed') : '';
       const tempsModCls = isTempsModified(o) ? 'time-modified' : '';
       return `<div class="gantt-bar ${meta.cls} ${hlCls} ${tempsModCls} ${o._fusionMembers?'fusion-bar':''} ${leftPct > 55 ? 'tooltip-right' : ''}" style="left:${leftPct}%;width:${widthPct}%;background:${meta.color};border-left:4px solid ${meta.urgBorder}"
-        data-cid="${o.cid}" data-oid="${o.id}" data-start="${o.start.toISOString()}">
+        data-cid="${o.cid}" data-oid="${o.id}" data-start="${o.start.toISOString()}" data-fusion-group="${o._fusionMembers ? o.fusionGroupId : ''}">
         <div class="gantt-bar-inner"><span>${escapeHtml(label)}</span></div>
         ${ganttBarTooltipHtml(o, label + meta.note + (isTempsModified(o) ? ' — ⏱ temps modifié manuellement' : '') + tooltipExtra)}
         <div class="resize-handle" data-cid="${o.cid}" data-oid="${o.id}"></div>
@@ -5449,11 +5457,11 @@ function renderWeekView(schedule){
       const baseLabel = meta.prefix + [o.commandeNom, o.piece, o.etape].filter(Boolean).join(' · ');
       const { label, tooltipExtra } = fusedBarLabelAndTooltip(o, baseLabel, meta);
       const hlOn = highlightActive();
-      const hl = isHighlighted(o.cid, o.commandeNom, o.piece);
+      const hl = isFusionAwareHighlighted(o);
       const hlCls = hlOn ? (hl ? 'spotlight' : 'dimmed') : '';
       const tempsModCls = isTempsModified(o) ? 'time-modified' : '';
       return `<div class="gantt-bar ${meta.cls} ${hlCls} ${tempsModCls} ${o._fusionMembers?'fusion-bar':''} ${leftPct > 55 ? 'tooltip-right' : ''}" style="left:${leftPct}%;width:${widthPct}%;background:${meta.color};border-left:4px solid ${meta.urgBorder}"
-        data-cid="${o.cid}" data-oid="${o.id}" data-start="${o.start.toISOString()}">
+        data-cid="${o.cid}" data-oid="${o.id}" data-start="${o.start.toISOString()}" data-fusion-group="${o._fusionMembers ? o.fusionGroupId : ''}">
         <div class="gantt-bar-inner"><span>${escapeHtml(label)}</span></div>
         ${ganttBarTooltipHtml(o, label + meta.note + (isTempsModified(o) ? ' — ⏱ temps modifié manuellement' : '') + tooltipExtra)}
         <div class="resize-handle" data-cid="${o.cid}" data-oid="${o.id}"></div>
@@ -5908,7 +5916,7 @@ function renderKanbanView(schedule){
       const fusionListLineK = o._fusionMembers
         ? `<div class="kanban-card-fusion-list">${o._fusionMembers.map(mb=>escapeHtml([mb.piece,mb.etape].filter(Boolean).join(' / ')||'—')).join(', ')}</div>` : '';
       const hlOnK = highlightActive();
-      const hlK = isHighlighted(o.cid, o.commandeNom, o.piece);
+      const hlK = isFusionAwareHighlighted(o);
       const hlClsK = hlOnK ? (hlK ? 'spotlight' : 'dimmed') : '';
       const operateurK = o.operatorUserId ? usersList.find(u=>String(u.id)===String(o.operatorUserId)) : null;
       const dueLineK = o.dateBesoin ? `<div class="kanban-card-due">Échéance : ${escapeHtml(new Date(o.dateBesoin+'T00:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'}))}</div>` : '';
@@ -5920,7 +5928,7 @@ function renderKanbanView(schedule){
         const label2 = col.key==='termine' ? 'Passé' : 'Passé jusqu\'ici';
         return `<div class="kanban-card-elapsed">${label2} : ${durationLabel(elapsedH)}</div>`;
       })() : '';
-      return `<div class="kanban-card ${hlClsK}" data-action="card-isolate" data-cid="${o.cid}" data-oid="${o.id}" style="border-left:3px solid ${urgBorder};" title="Clic : isoler la commande — clic droit : menu de statut">
+      return `<div class="kanban-card ${hlClsK}" data-action="card-isolate" data-cid="${o.cid}" data-oid="${o.id}" data-fusion-group="${o._fusionMembers ? o.fusionGroupId : ''}" style="border-left:3px solid ${urgBorder};" title="Clic : isoler la commande — clic droit : menu de statut">
         <div class="kanban-card-main">
           <div class="kanban-card-title">${escapeHtml(label)}</div>
           <div class="kanban-card-meta"><span class="machine-swatch" style="background:${color}"></span>${m?escapeHtml(m.nom):'—'}${operateurK ? ` · 👤 ${escapeHtml(operateurK.username)}` : ''}</div>
@@ -6443,11 +6451,24 @@ function renderArchivesSectionOnly(){
 function updateHighlightClasses(){
   const schedule = getSchedule();
   const opInfo = new Map();
-  schedule.forEach(c => c.pieces.forEach(o => { opInfo.set(String(o.id), { cid: c.id, commandeNom: c.nom, piece: o.piece }); }));
+  const groupInfo = new Map(); // fusionGroupId -> pièces membres, pour les barres fusionnées affichées en bloc
+  schedule.forEach(c => c.pieces.forEach(o => {
+    opInfo.set(String(o.id), { cid: c.id, commandeNom: c.nom, piece: o.piece });
+    if(o.fusionGroupId){
+      if(!groupInfo.has(o.fusionGroupId)) groupInfo.set(o.fusionGroupId, []);
+      groupInfo.get(o.fusionGroupId).push({ cid: c.id, commandeNom: c.nom, piece: o.piece });
+    }
+  }));
   const hlOn = highlightActive();
   document.querySelectorAll('.gantt-bar[data-oid], .month-chip[data-oid], .kanban-card[data-oid], .liste-row[data-oid]').forEach(el => {
-    const info = opInfo.get(el.dataset.oid);
-    const hl = info ? isHighlighted(info.cid, info.commandeNom, info.piece) : false;
+    const groupId = el.dataset.fusionGroup;
+    // Une barre fusionnée ne porte que l'id de sa pièce "représentante" : sans ceci, la recherche
+    // ratait les autres membres du groupe, ou au contraire allumait tout le bloc à tort (voir
+    // isFusionAwareHighlighted, utilisé au premier rendu — ce chemin est le pendant pour le
+    // surlignage à la volée pendant la frappe, qui ne reconstruit pas le DOM).
+    const hl = (groupId && groupInfo.has(groupId))
+      ? groupInfo.get(groupId).some(m => isHighlighted(m.cid, m.commandeNom, m.piece))
+      : (() => { const info = opInfo.get(el.dataset.oid); return info ? isHighlighted(info.cid, info.commandeNom, info.piece) : false; })();
     el.classList.toggle('spotlight', hlOn && hl);
     el.classList.toggle('dimmed', hlOn && !hl);
   });
