@@ -915,6 +915,7 @@ function migrateState(st){
   });
   if(!st.config.margeEcheanceJours && st.config.margeEcheanceJours !== 0) st.config.margeEcheanceJours = 0;
   if(st.config.archiveApresJours === undefined) st.config.archiveApresJours = 365; // 0 = archivage automatique désactivé
+  if(st.config.archiveAutoActive === undefined) st.config.archiveAutoActive = Number(st.config.archiveApresJours) > 0; // préserve le comportement des états déjà enregistrés
   if(!Array.isArray(st.commandesArchivees)) st.commandesArchivees = []; // commandes entièrement terminées depuis longtemps, écartées du moteur de planification pour garder l'appli réactive — toujours incluses dans l'export complet
   if(!st.userMachines) st.userMachines = {}; // { [userId]: [machineId, ...] } — lien plusieurs-à-plusieurs
   if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
@@ -2203,6 +2204,8 @@ function updateConfig(field, value){
     state.config.pauseActive = !!value;
   } else if(field==='matiereFusionActive'){
     state.config.matiereFusionActive = !!value;
+  } else if(field==='archiveAutoActive'){
+    state.config.archiveAutoActive = !!value;
   } else if(field==='pauseDebut' || field==='pauseFin'){
     if(value) state.config[field] = value;
   } else if(field==='appTitle'){
@@ -5005,14 +5008,8 @@ function renderSettingsModal(){
         <div><label class="field">Durée travaillée lun. – jeu. (heures)</label><input type="number" min="0" step="0.25" value="${cfg.monThuHours}" data-action="update-config" data-field="monThuHours"></div>
         <div><label class="field">Durée travaillée vendredi (heures)</label><input type="number" min="0" step="0.25" value="${cfg.friHours}" data-action="update-config" data-field="friHours"></div>
         <div><label class="field">Marge avant échéance (jours)</label><input type="number" min="0" step="1" value="${cfg.margeEcheanceJours||0}" data-action="update-config" data-field="margeEcheanceJours" title="Les tâches devront être terminées ce nombre de jours avant la date de besoin réelle"></div>
-        <div><label class="field">Archiver les commandes terminées après (jours)</label>
-          <div style="display:flex; gap:6px; align-items:center;">
-            <input type="number" min="0" step="1" value="${cfg.archiveApresJours||0}" data-action="update-config" data-field="archiveApresJours" title="0 = jamais. Une commande n'est archivée que lorsque TOUTES ses pièces sont terminées." style="flex:1;">
-            <button class="ghost small" data-action="archive-now" title="Applique ce seuil immédiatement, sans attendre le prochain démarrage de l'application">Archiver maintenant</button>
-          </div>
-        </div>
       </div>
-      <div class="footer-note" style="text-align:left; padding-top:10px;">La marge décale l'échéance utilisée pour les indicateurs "en retard" — une commande sera signalée en retard si sa fin estimée dépasse (date de besoin − marge), pas seulement la date de besoin elle-même. 0 = pas de marge.<br>Les commandes archivées sont écartées du calcul du planning pour garder l'appli réactive — elles restent consultables et désarchivables dans le panneau "Commandes archivées", et toujours incluses dans l'export .json complet. 0 = archivage automatique désactivé (l'archivage tourne aussi automatiquement à chaque démarrage de l'application).</div>` },
+      <div class="footer-note" style="text-align:left; padding-top:10px;">La marge décale l'échéance utilisée pour les indicateurs "en retard" — une commande sera signalée en retard si sa fin estimée dépasse (date de besoin − marge), pas seulement la date de besoin elle-même. 0 = pas de marge.</div>` },
     pause: { title: 'Pause déjeuner', body: `
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${cfg.pauseActive?'checked':''} data-action="update-config" data-field="pauseActive">
@@ -5195,6 +5192,20 @@ function renderSettingsModal(){
         <div><label class="field">Délai de synchronisation entre postes (secondes)</label><input type="number" min="2" max="120" step="1" value="${cfg.syncIntervalSec||4}" data-action="update-config" data-field="syncIntervalSec"></div>
       </div>
       <div class="footer-note" style="text-align:left; padding-bottom:10px;">Fréquence à laquelle chaque poste va vérifier si un collègue a modifié le planning. Plus court = plus réactif mais plus de requêtes vers le serveur ; plus long = l'inverse. Minimum 2 secondes. Prend effet immédiatement, sans recharger la page.</div>
+      <hr style="border:none; border-top:1px solid var(--line-soft); margin:14px 0;">
+      <label class="statut-chip" style="margin-bottom:10px;">
+        <input type="checkbox" ${cfg.archiveAutoActive?'checked':''} data-action="update-config" data-field="archiveAutoActive">
+        Archiver automatiquement les commandes terminées (à chaque démarrage de l'application)
+      </label>
+      <div class="machines-grid">
+        <div><label class="field">Archiver les commandes terminées après (jours)</label>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <input type="number" min="0" step="1" value="${cfg.archiveApresJours||0}" data-action="update-config" data-field="archiveApresJours" title="Une commande n'est archivée que lorsque TOUTES ses pièces sont terminées." style="flex:1;">
+            <button class="ghost small" data-action="archive-now" title="Applique ce seuil immédiatement, sans attendre le prochain démarrage de l'application">Archiver maintenant</button>
+          </div>
+        </div>
+      </div>
+      <div class="footer-note" style="text-align:left; padding:10px 0;">Les commandes archivées sont écartées du calcul du planning pour garder l'appli réactive — elles restent consultables et désarchivables dans le panneau "Commandes archivées", et toujours incluses dans l'export .json complet. Décocher la case ci-dessus n'empêche pas "Archiver maintenant" de fonctionner ponctuellement.</div>
       <hr style="border:none; border-top:1px solid var(--line-soft); margin:14px 0;">
       <div class="footer-note" style="text-align:left; padding-bottom:10px;">Efface toutes les commandes et remet les postes à leurs réglages par défaut. Cette action est irréversible — une confirmation vous sera demandée.</div>
       <button class="danger-ghost small" style="border:1px solid var(--red); padding:7px 14px;" data-action="reset-all">Réinitialiser tout le planning</button>` }
@@ -6314,7 +6325,7 @@ function renderArchivesPanel(){
         <thead><tr><th>Référence</th><th>Pièces</th><th>Temps prévu</th><th>Temps passé</th><th>Terminée le</th><th></th></tr></thead>
         <tbody>${rows || `<tr><td colspan="6" style="text-align:center; color:var(--text-faint);">Aucun résultat</td></tr>`}</tbody>
       </table>
-      <div class="footer-note" style="text-align:left; padding-top:8px;">${state.config.archiveApresJours>0 ? `Archivées automatiquement ${state.config.archiveApresJours} jours après leur achèvement (réglable dans ⚙ Paramétrer → Horaires de travail).` : `Archivage automatique désactivé — ces commandes ont été archivées avant sa désactivation.`} Toujours incluses dans l'export .json complet.</div>
+      <div class="footer-note" style="text-align:left; padding-top:8px;">${state.config.archiveAutoActive && state.config.archiveApresJours>0 ? `Archivées automatiquement ${state.config.archiveApresJours} jours après leur achèvement (réglable dans ⚙ Paramétrer → Maintenance).` : `Archivage automatique désactivé — ces commandes ont été archivées avant sa désactivation ou manuellement.`} Toujours incluses dans l'export .json complet.</div>
     </div>`}
   </section>`;
 }
@@ -7384,7 +7395,7 @@ async function startApp(){
   loadUsersList(); // nécessaire pour le sélecteur d'opérateur, pas seulement pour la pop-up Paramètres
   if(applyAutoPauseResume(state)) queueSilentSave(); // rattrape le cas où la page est ouverte en pleine pause déjeuner
   if(purgeOldSessions(state)) queueSilentSave(); // fige le temps réellement passé et vide le détail des sessions devenu inutile sur les pièces déjà terminées
-  if(archiveOldCommandes(state)) queueSilentSave(); // écarte les commandes terminées depuis longtemps du moteur de planification
+  if(state.config.archiveAutoActive && archiveOldCommandes(state)) queueSilentSave(); // écarte les commandes terminées depuis longtemps du moteur de planification
   if(justRanImplicitDepsMigration) queueSilentSave(); // fige la migration des dépendances implicites côté serveur, pour tous les postes
   render();
   setInterval(() => {
