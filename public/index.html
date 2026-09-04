@@ -407,9 +407,9 @@
   .commande-rank:hover{ border-color:var(--line); color:var(--text); }
   .commande-rank.selected{ background:var(--accent); color:#fff; border-color:var(--accent); }
   .commande-card.commande-selected{ box-shadow:0 0 0 2px var(--accent); }
-  input.commande-name{font-family:'Oswald',sans-serif; font-size:15px; font-weight:600; background:transparent; border:none; flex:1; min-width:160px; padding:3px 0;}
+  input.commande-name{font-family:'Oswald',sans-serif; font-size:15px; font-weight:600; background:transparent; border:none; flex:0 1 260px; min-width:160px; padding:3px 0;}
   input.commande-name:focus{border-bottom:1px solid var(--blue);}
-  input.commande-ref-client{font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--text-faint); background:transparent; border:none; border-bottom:1px solid transparent; width:150px; padding:3px 2px;}
+  input.commande-ref-client{font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--text-faint); background:transparent; border:none; border-bottom:1px solid transparent; width:210px; padding:3px 2px;}
   input.commande-ref-client:hover{border-bottom-color:var(--line);}
   input.commande-ref-client:focus{color:var(--text); border-bottom-color:var(--blue);}
   .due-field{display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--text-faint);}
@@ -1537,6 +1537,7 @@ function matchesSearch(c, query){
   if(!query) return true;
   const q = query.toLowerCase();
   if(c.nom && c.nom.toLowerCase().includes(q)) return true;
+  if(c.refClient && c.refClient.toLowerCase().includes(q)) return true;
   return c.pieces.some(p => p.piece && p.piece.toLowerCase().includes(q));
 }
 let selectedCommandeId = null;
@@ -1575,11 +1576,12 @@ function saveColumnsRatioPref(){
   try{ localStorage.setItem(COLUMNS_RATIO_KEY, String(Math.round(columnsRatio))); }catch(e){}
 }
 function highlightActive(){ return !!(selectedCommandeId || searchQuery); }
-function isHighlighted(cid, commandeNom, piece){
+function isHighlighted(cid, commandeNom, piece, refClient){
   if(selectedCommandeId) return cid === selectedCommandeId;
   if(searchQuery){
     const q = searchQuery.toLowerCase();
     if(commandeNom && commandeNom.toLowerCase().includes(q)) return true;
+    if(refClient && refClient.toLowerCase().includes(q)) return true;
     if(piece && piece.toLowerCase().includes(q)) return true;
     return false;
   }
@@ -1590,8 +1592,8 @@ function isHighlighted(cid, commandeNom, piece){
 // correspondaient à la recherche, ou au contraire allumait tout le bloc alors que seule la
 // représentante matchait. On teste donc chaque pièce membre individuellement.
 function isFusionAwareHighlighted(o){
-  if(o._fusionMembers) return o._fusionMembers.some(m => isHighlighted(m.cid, m.commandeNom, m.piece));
-  return isHighlighted(o.cid, o.commandeNom, o.piece);
+  if(o._fusionMembers) return o._fusionMembers.some(m => isHighlighted(m.cid, m.commandeNom, m.piece, m.refClient));
+  return isHighlighted(o.cid, o.commandeNom, o.piece, o.refClient);
 }
 function dateInCurrentView(d){
   if(currentView==='jour') return toDateInputValue(d)===toDateInputValue(viewAnchor);
@@ -1613,7 +1615,7 @@ function maybeJumpToHighlight(){
   let matches = [];
   schedule.forEach(c => c.pieces.forEach(o => {
     if(!o.start) return;
-    if(isHighlighted(c.id, c.nom, o.piece)) matches.push(o.start);
+    if(isHighlighted(c.id, c.nom, o.piece, c.refClient)) matches.push(o.start);
   }));
   if(matches.length === 0) return;
   matches.sort((a,b) => a - b);
@@ -5414,7 +5416,7 @@ function renderDayView(schedule){
   }).join('');
 
   let allOps = [];
-  schedule.forEach(c => c.pieces.forEach(o => { if(o.start && o.end) allOps.push({...o, commandeNom:c.nom, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin}); }));
+  schedule.forEach(c => c.pieces.forEach(o => { if(o.start && o.end) allOps.push({...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin}); }));
   const dayEndExclusive = nextDayStart(day);
   const visibleOps = allOps.filter(o => o.end > day && o.start < dayEndExclusive);
 
@@ -5486,7 +5488,7 @@ function renderWeekView(schedule){
   }).join('');
 
   let allOps = [];
-  schedule.forEach(c => c.pieces.forEach(o => { if(o.start && o.end) allOps.push({...o, commandeNom:c.nom, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin}); }));
+  schedule.forEach(c => c.pieces.forEach(o => { if(o.start && o.end) allOps.push({...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin}); }));
   const weekEndExclusive = new Date(days[4]); weekEndExclusive.setDate(weekEndExclusive.getDate()+1);
   const visibleOps = allOps.filter(o => o.end > days[0] && o.start < weekEndExclusive);
 
@@ -5542,7 +5544,7 @@ function renderMonthView(schedule){
   schedule.forEach(c=>c.pieces.forEach(o=>{
     if(!o.start) return;
     const key = toDateInputValue(o.start);
-    (byDay[key]=byDay[key]||[]).push({...o, commandeNom:c.nom, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin});
+    (byDay[key]=byDay[key]||[]).push({...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin});
   }));
   const hd = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'].map(w=>`<div class="month-weekday-hd">${w}</div>`).join('');
   const dayCells = cells.map(d=>{
@@ -5561,7 +5563,7 @@ function renderMonthView(schedule){
       const label = tempsModPrefixM + meta.prefix + [o.commandeNom, o.piece].filter(Boolean).join(' · ');
       const timeStr = pad(o.start.getHours())+':'+pad(o.start.getMinutes());
       const hlOnM = highlightActive();
-      const hlM = isHighlighted(o.cid, o.commandeNom, o.piece);
+      const hlM = isHighlighted(o.cid, o.commandeNom, o.piece, o.refClient);
       const hlClsM = hlOnM ? (hlM ? 'spotlight' : 'dimmed') : '';
       return `<div class="month-chip ${meta.cls} ${hlClsM}" draggable="${meta.draggable?'true':'false'}" data-cid="${o.cid}" data-oid="${o.id}" data-time="${timeStr}" style="background:${meta.color};border-left:4px solid ${meta.urgBorder}" title="${escapeHtml(label)} — ${formatDT(o.start)}${o.dateBesoin?` — Échéance : ${escapeHtml(new Date(o.dateBesoin+'T00:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'}))}`:''}${isTempsModified(o)?' — temps modifié manuellement':''}">${escapeHtml(label||'(sans nom)')}</div>`;
     }).join('');
@@ -5904,7 +5906,7 @@ function renderKanbanView(schedule){
   ];
   let allOps = [];
   schedule.forEach(c => c.pieces.forEach(o => {
-    allOps.push({ ...o, commandeNom:c.nom, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin });
+    allOps.push({ ...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin });
   }));
   allOps = allOps.filter(o => matchesSearch({ nom:o.commandeNom, pieces:[o] }, searchQuery));
   if(kanbanMachineFilters) allOps = allOps.filter(o => kanbanMachineFilters.has(o.machineId));
@@ -6025,7 +6027,7 @@ function renderListeView(schedule){
   let allOps = [];
   schedule.forEach(c => c.pieces.forEach(o => {
     if(o.statut==='termine') return; // déjà couvert par le tableau des tâches terminées
-    allOps.push({ ...o, commandeNom:c.nom, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin });
+    allOps.push({ ...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin });
   }));
   allOps = allOps.filter(o => matchesSearch({ nom:o.commandeNom, pieces:[o] }, searchQuery));
   allOps.sort((a,b) => {
@@ -6045,7 +6047,7 @@ function renderListeView(schedule){
     const meta = barStatusMeta(o, color, isPositionPinned(o));
     const statutLabel = { a_faire:'À faire', en_cours:'En cours', en_pause:'En pause' }[o.statut] || o.statut;
     const hlOnL = highlightActive();
-    const hlL = isHighlighted(o.cid, o.commandeNom, o.piece);
+    const hlL = isHighlighted(o.cid, o.commandeNom, o.piece, o.refClient);
     const hlClsL = hlOnL ? (hlL ? 'spotlight' : 'dimmed') : '';
     return `<tr class="liste-row ${hlClsL}" data-action="card-isolate" data-cid="${o.cid}" data-oid="${o.id}" title="Clic : isoler la commande — clic droit : menu de statut">
       <td><span class="machine-swatch" style="background:${color}"></span>${m?escapeHtml(m.nom):'—'}</td>
@@ -6220,10 +6222,11 @@ function renderCommandeCard(c, idx, total){
   if(allDone) badge = `<span class="badge done">Terminée</span>`;
 
   // Une recherche par référence de PIÈCE ne doit faire ressortir que les lignes concernées, pas
-  // toutes celles de la commande — sauf si c'est la commande elle-même qui correspond (matchesSearch
-  // fait ressortir la commande entière dans ce cas, et il est alors logique de tout montrer).
+  // toutes celles de la commande — sauf si c'est la commande elle-même (par son nom ou sa réf.
+  // client) qui correspond (matchesSearch fait ressortir la commande entière dans ce cas, et il est
+  // alors logique de tout montrer).
   const searchQ = searchQuery ? searchQuery.toLowerCase() : '';
-  const cmdNameMatchesSearch = searchQ && c.nom.toLowerCase().includes(searchQ);
+  const cmdNameMatchesSearch = !!(searchQ && ((c.nom && c.nom.toLowerCase().includes(searchQ)) || (c.refClient && c.refClient.toLowerCase().includes(searchQ))));
   const pieceMatchesSearch = o => !searchQ || cmdNameMatchesSearch || (o.piece && o.piece.toLowerCase().includes(searchQ));
   const activePieces = c.pieces.filter(o=>o.statut!=='termine').filter(pieceMatchesSearch);
   const donePieces = c.pieces.filter(o=>o.statut==='termine').filter(pieceMatchesSearch);
@@ -6503,10 +6506,10 @@ function updateHighlightClasses(){
   const opInfo = new Map();
   const groupInfo = new Map(); // fusionGroupId -> pièces membres, pour les barres fusionnées affichées en bloc
   schedule.forEach(c => c.pieces.forEach(o => {
-    opInfo.set(String(o.id), { cid: c.id, commandeNom: c.nom, piece: o.piece });
+    opInfo.set(String(o.id), { cid: c.id, commandeNom: c.nom, piece: o.piece, refClient: c.refClient });
     if(o.fusionGroupId){
       if(!groupInfo.has(o.fusionGroupId)) groupInfo.set(o.fusionGroupId, []);
-      groupInfo.get(o.fusionGroupId).push({ cid: c.id, commandeNom: c.nom, piece: o.piece });
+      groupInfo.get(o.fusionGroupId).push({ cid: c.id, commandeNom: c.nom, piece: o.piece, refClient: c.refClient });
     }
   }));
   const hlOn = highlightActive();
@@ -6517,8 +6520,8 @@ function updateHighlightClasses(){
     // isFusionAwareHighlighted, utilisé au premier rendu — ce chemin est le pendant pour le
     // surlignage à la volée pendant la frappe, qui ne reconstruit pas le DOM).
     const hl = (groupId && groupInfo.has(groupId))
-      ? groupInfo.get(groupId).some(m => isHighlighted(m.cid, m.commandeNom, m.piece))
-      : (() => { const info = opInfo.get(el.dataset.oid); return info ? isHighlighted(info.cid, info.commandeNom, info.piece) : false; })();
+      ? groupInfo.get(groupId).some(m => isHighlighted(m.cid, m.commandeNom, m.piece, m.refClient))
+      : (() => { const info = opInfo.get(el.dataset.oid); return info ? isHighlighted(info.cid, info.commandeNom, info.piece, info.refClient) : false; })();
     el.classList.toggle('spotlight', hlOn && hl);
     el.classList.toggle('dimmed', hlOn && !hl);
   });
