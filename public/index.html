@@ -3557,7 +3557,15 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore){
       o.sessions = [];
     }
     const m = state.machines.find(m=>m.id===o.machineId);
-    if(!o.debutReel){ o.debutReel = m ? m.dispo : null; }
+    if(!o.debutReel){
+      // Jamais démarrée via Démarrer/Reprendre : retomber sur m.dispo (la disponibilité générale du
+      // poste, pas l'instant réel de cette tâche) figeait la barre depuis cette date — parfois très
+      // ancienne — jusqu'à la clôture, l'étirant à tort sur plusieurs jours. On déduit plutôt un
+      // départ cohérent avec le temps réellement passé qui vient d'être saisi (fin moins ce temps) ;
+      // à défaut de temps saisi, la tâche s'affiche comme instantanée plutôt que dans le passé.
+      const passedH = (o.dureeReelleH!=null && o.dureeReelleH>0) ? o.dureeReelleH : 0;
+      o.debutReel = passedH > 0 ? toInputValue(new Date(new Date(nowStr).getTime() - passedH*3600000)) : nowStr;
+    }
     o.finReel = nowStr;
     if(m){
       const now = new Date();
