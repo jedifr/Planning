@@ -3756,14 +3756,14 @@ function handleImportFile(e){
 }
 function downloadExcelTemplate(){
   if(typeof XLSX === 'undefined'){ alert("La bibliothèque Excel n'a pas pu se charger (connexion internet requise pour cette fonction)."); return; }
-  const headers = ['Référence commande','Date de besoin (JJ/MM/AAAA)','Urgence','Poste','Pièce','Étape','Temps unitaire (min)','Quantité','Phase','Opérateur'];
+  const headers = ['Référence commande','Réf commande client','Date de besoin (JJ/MM/AAAA)','Urgence','Poste','Pièce','Étape','Temps unitaire (min)','Quantité','Phase','Opérateur'];
   const posteEx1 = state.machines[0] ? state.machines[0].nom : 'Fraiseuse 1';
   const posteEx2 = state.machines[1] ? state.machines[1].nom : posteEx1;
   const operateurEx = usersList[0] ? usersList[0].username : '';
   const example = [
-    ['CDE-0001','15/09/2026','Normale', posteEx1, 'Flasque 12', 'Ébauche', 45, 4, 1, operateurEx],
-    ['CDE-0001','15/09/2026','Normale', posteEx1, 'Flasque 12', 'Finition', 20, 4, 2, ''],
-    ['CDE-0002','20/09/2026','Urgente', posteEx2, 'Axe 8', '', 30, 10, 1, '']
+    ['CDE-0001','PO-2026-0451','15/09/2026','Normale', posteEx1, 'Flasque 12', 'Ébauche', 45, 4, 1, operateurEx],
+    ['CDE-0001','PO-2026-0451','15/09/2026','Normale', posteEx1, 'Flasque 12', 'Finition', 20, 4, 2, ''],
+    ['CDE-0002','','20/09/2026','Urgente', posteEx2, 'Axe 8', '', 30, 10, 1, '']
   ];
   const ws = XLSX.utils.aoa_to_sheet([headers, ...example]);
   ws['!cols'] = headers.map(() => ({ wch: 24 }));
@@ -3826,7 +3826,7 @@ function handleExcelImportFile(e){
 // (kRef etc. sont les noms de colonnes réels à utiliser) — ne modifie rien dans state, se contente
 // de calculer. Réutilisée par l'import standard ET par l'import personnalisé (qui l'appelle après
 // avoir traduit ses propres colonnes vers ces mêmes clés), pour ne jamais dupliquer cette logique.
-function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU, kQte, kPhase, kOperateur, kMatiere, kEpaisseur, kGroupTag, kSousTraitance){
+function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU, kQte, kPhase, kOperateur, kMatiere, kEpaisseur, kGroupTag, kSousTraitance, kRefClient){
   const errors = [];
   const duplicateLines = []; // doublons pièce/étape (dans le fichier ou déjà présents sur la commande)
   const groups = {}; // référence commande -> { dateBesoin, urgence, pieces: [], seen: Set }
@@ -3867,10 +3867,11 @@ function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU,
       let dateBesoin = parseFlexibleDate(row[kDate]);
       let urgence = String(row[kUrg]||'normale').trim().toLowerCase();
       if(!['normale','importante','urgente'].includes(urgence)) urgence = 'normale';
+      const refClient = kRefClient ? String(row[kRefClient]||'').trim() : '';
       const existing = existingByNom[ref.toLowerCase()];
       const seen = new Set();
       if(existing) existing.pieces.forEach(p => seen.add(pieceKey(p.piece||'', p.etape||'')));
-      groups[ref] = { dateBesoin, urgence, pieces: [], seen, existing };
+      groups[ref] = { dateBesoin, urgence, refClient, pieces: [], seen, existing };
     }
 
     const key = pieceKey(piece, etape);
@@ -3926,7 +3927,7 @@ function commitImportGroups(targetState, groups){
       const d = new Date(); d.setDate(d.getDate()+14);
       g.dateBesoin = toDateInputValue(d); // échéance provisoire, à corriger manuellement
     }
-    targetState.commandes.push({ id: uid('c'), nom: ref, dateBesoin: g.dateBesoin, urgence: g.urgence, pieces: g.pieces.map(p=>({...p})) });
+    targetState.commandes.push({ id: uid('c'), nom: ref, refClient: g.refClient||'', dateBesoin: g.dateBesoin, urgence: g.urgence, pieces: g.pieces.map(p=>({...p})) });
     createdNoms.push({ nom: ref, dateBesoin: g.dateBesoin, urgence: g.urgence, nbPieces: g.pieces.length });
   });
   return { createdNoms, updatedNoms, sansEcheance };
@@ -3935,6 +3936,7 @@ function processExcelImportRows(rows){
   if(!rows.length){ alert('Le fichier ne contient aucune ligne de données.'); return; }
   const sample = rows[0];
   const kRef = normalizeHeaderKey(sample, ['Référence commande','Reference commande','Commande']);
+  const kRefClient = normalizeHeaderKey(sample, ['Réf commande client','Référence commande client','Ref commande client','Reference commande client','Commande client']);
   const kDate = normalizeHeaderKey(sample, ['Date de besoin (JJ/MM/AAAA)','Date de besoin (AAAA-MM-JJ)','Date de besoin','Echeance','Échéance']);
   const kUrg = normalizeHeaderKey(sample, ['Urgence']);
   const kPoste = normalizeHeaderKey(sample, ['Poste','Machine']);
@@ -3953,7 +3955,7 @@ function processExcelImportRows(rows){
     return;
   }
 
-  const { groups, errors, duplicateLines } = buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU, kQte, kPhase, kOperateur, kMatiere, kEpaisseur, null, kSousTraitance);
+  const { groups, errors, duplicateLines } = buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU, kQte, kPhase, kOperateur, kMatiere, kEpaisseur, null, kSousTraitance, kRefClient);
 
   const refs = Object.keys(groups);
   if(refs.length===0){
@@ -3994,7 +3996,7 @@ function handleCustomImportFile(e){
       customImportState = {
         step: 'mapping', headers, rows,
         profileId: null, profileName: '',
-        map: { reference:'', referenceSplitSlash:true, reference2:'', reference2Sep:' ', dateBesoin:'', urgence:'', poste:'', piece:'', etape:'',
+        map: { reference:'', referenceSplitSlash:true, reference2:'', reference2Sep:' ', refClient:'', dateBesoin:'', urgence:'', poste:'', piece:'', etape:'',
                quantite:'', dureeMode:'unitaire', dureeColonne:'', phase:'', operateur:'', matiere:'', epaisseur:'',
                defaultMachineId:'', defaultOperatorByMachine:{} },
         posteValues: [], posteMapping: {}, groupByValue: {}, sousTraitanceByValue: {}, profileMapSnapshot: null, preview: null
@@ -4018,6 +4020,7 @@ function applyImportProfile(profileId){
   if(!customImportState.map.defaultOperatorByMachine) customImportState.map.defaultOperatorByMachine = {}; // profil créé avant l'ajout de ce réglage
   if(customImportState.map.reference2 === undefined) customImportState.map.reference2 = '';       // profil créé avant la référence composée
   if(customImportState.map.reference2Sep === undefined) customImportState.map.reference2Sep = ' ';
+  if(customImportState.map.refClient === undefined) customImportState.map.refClient = '';         // profil créé avant la réf. commande client
   // Reclasse les clés du profil (valeurs brutes du fichier) selon la même normalisation que le
   // reste de l'import — un profil enregistré avant l'ajout de cette normalisation avait ses clés
   // dans la casse d'origine, ce qui les rendait invisibles aux comparaisons normalisées actuelles.
@@ -4148,6 +4151,7 @@ function transformCustomRow(row, map, posteMapping, groupByValue, sousTraitanceB
   }
   return {
     'Référence commande': ref,
+    'Réf commande client': map.refClient ? row[map.refClient] : '',
     'Date de besoin (JJ/MM/AAAA)': map.dateBesoin ? row[map.dateBesoin] : '',
     'Urgence': map.urgence ? row[map.urgence] : '',
     'Poste': machine ? machine.nom : '', // vide si non associé -> buildImportGroups la rejette proprement, avec un message clair
@@ -4173,7 +4177,7 @@ function proceedFromPostes(){
   const transformedRows = cs.rows.map(r => transformCustomRow(r, cs.map, cs.posteMapping, cs.groupByValue, cs.sousTraitanceByValue));
   const { groups, errors, duplicateLines } = buildImportGroups(
     transformedRows, 'Référence commande', 'Date de besoin (JJ/MM/AAAA)', 'Urgence', 'Poste',
-    'Pièce', 'Étape', 'Temps unitaire (min)', 'Quantité', 'Phase', 'Opérateur', 'Matière', 'Épaisseur', 'GroupTag', 'SousTraitance'
+    'Pièce', 'Étape', 'Temps unitaire (min)', 'Quantité', 'Phase', 'Opérateur', 'Matière', 'Épaisseur', 'GroupTag', 'SousTraitance', 'Réf commande client'
   );
   const refs = Object.keys(groups);
   const nbNouvelles = refs.filter(r=>!groups[r].existing && groups[r].pieces.length>0).length;
@@ -4786,6 +4790,7 @@ function renderCustomImportModal(){
       <div class="commande-top-fields" style="grid-template-columns:1fr 1fr 1fr;">
         ${fieldSelect('reference','Référence commande',true, `<label style="font-size:11px; font-weight:400; display:flex; align-items:center; gap:4px; margin-top:4px;"><input type="checkbox" data-action="custom-import-split-slash" ${cs.map.referenceSplitSlash?'checked':''}> Découper sur le dernier "/"</label>`)}
         ${fieldSelect('reference2','Compléter la référence avec…',false, `<div style="display:flex; align-items:center; gap:6px; margin-top:4px;"><span style="font-size:11px; color:var(--text-faint);">séparé par</span><input value="${escapeHtml(cs.map.reference2Sep !== undefined ? cs.map.reference2Sep : ' ')}" data-action="custom-import-ref2-sep" style="width:60px; text-align:center;" title="Caractère(s) inséré(s) entre les deux colonnes"></div>`)}
+        ${fieldSelect('refClient','Réf. commande client',false)}
         ${fieldSelect('dateBesoin','Date de besoin',false)}
         ${fieldSelect('urgence','Urgence',false)}
         ${fieldSelect('poste','Poste',true)}
