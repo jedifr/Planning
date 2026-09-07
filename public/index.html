@@ -4808,6 +4808,15 @@ function navigateTempsProdPeriod(dir){
   else tempsProdAnchor = new Date(tempsProdAnchor.getFullYear(), tempsProdAnchor.getMonth(), tempsProdAnchor.getDate()+delta);
   render();
 }
+function tempsProdToday(){
+  tempsProdAnchor = new Date();
+  render();
+}
+// Temps prévu (théorique) pour la quantité totale de la ligne — même repli que partout ailleurs
+// dans le moteur (dureeOverrideH d'un groupe fusionné, sinon tempsUnitaire × quantité).
+function dureePrevueH(o){
+  return (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (o.tempsUnitaire*o.quantite)/60;
+}
 // Temps de production par salarié sur [periodStart, periodEnd[, à partir des commandes actives ET
 // archivées. Deux sources, comme dureePasseeH() : les sessions[] (tâche en_cours/en_pause, ou pas
 // encore purgées — voir purgeOldSessions) donnent le détail réel, chaque session étant bornée à la
@@ -4816,7 +4825,7 @@ function navigateTempsProdPeriod(dir){
 // période si sa date de fin réelle (ou de début, à défaut) tombe dedans.
 function computeProductionTimeByUser(st, periodStart, periodEnd){
   const byUser = {};
-  const ensure = (uid) => byUser[uid] || (byUser[uid] = { totalH:0, details:[] });
+  const ensure = (uid) => byUser[uid] || (byUser[uid] = { totalH:0, totalPrevuH:0, details:[] });
   const consider = (c, o) => {
     if(!o.operatorUserId) return;
     const uid = String(o.operatorUserId);
@@ -4844,7 +4853,9 @@ function computeProductionTimeByUser(st, periodStart, periodEnd){
     if(h > 1e-6){
       const u = ensure(uid);
       u.totalH += h;
-      u.details.push({ cid:c.id, commandeNom:c.nom, refClient:c.refClient||'', piece:o.piece, etape:o.etape, machineNom: m?m.nom:'—', h, date: repDate });
+      const prevuH = dureePrevueH(o);
+      u.totalPrevuH += prevuH;
+      u.details.push({ cid:c.id, commandeNom:c.nom, refClient:c.refClient||'', piece:o.piece, etape:o.etape, machineNom: m?m.nom:'—', h, prevuH, date: repDate });
     }
   };
   (st.commandes||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
@@ -4853,6 +4864,13 @@ function computeProductionTimeByUser(st, periodStart, periodEnd){
 }
 function formatHeures(h){
   return (Math.round(h*10)/10).toLocaleString('fr-FR', { minimumFractionDigits:0, maximumFractionDigits:1 }) + ' h';
+}
+// Écart temps passé - temps prévu : rouge si dépassement, vert si la tâche a pris moins de temps
+// que prévu — ne préjuge de rien pour une tâche encore en cours (le prévu couvre toute la quantité).
+function formatEcart(h){
+  const sign = h > 0 ? '+' : '';
+  const color = h > 0.05 ? 'var(--red)' : (h < -0.05 ? 'var(--green)' : 'var(--text-dim)');
+  return `<span style="color:${color};">${sign}${formatHeures(h)}</span>`;
 }
 function setTempsProdSort(key){
   if(tempsProdSort.key === key) tempsProdSort.dir = tempsProdSort.dir==='asc' ? 'desc' : 'asc';
@@ -4873,13 +4891,15 @@ function tempsProdRows(byUser){
   let rows = Object.keys(byUser).map(uid => {
     const u = usersList.find(uu=>String(uu.id)===uid);
     const rec = byUser[uid];
-    return { uid, username: u?u.username:'(compte supprimé)', totalH: rec.totalH, nbTaches: rec.details.length, details: rec.details };
+    return { uid, username: u?u.username:'(compte supprimé)', totalH: rec.totalH, totalPrevuH: rec.totalPrevuH, ecartH: rec.totalH-rec.totalPrevuH, nbTaches: rec.details.length, details: rec.details };
   });
   const { key, dir } = tempsProdSort;
   const mult = dir==='asc' ? 1 : -1;
   rows.sort((a,b) => {
     if(key==='username') return mult * a.username.localeCompare(b.username);
     if(key==='nbTaches') return mult * (a.nbTaches - b.nbTaches);
+    if(key==='prevu') return mult * (a.totalPrevuH - b.totalPrevuH);
+    if(key==='ecart') return mult * (a.ecartH - b.ecartH);
     return mult * (a.totalH - b.totalH); // 'total' par défaut
   });
   return rows;
@@ -4891,7 +4911,9 @@ function renderTempsProdDetail(row){
     if(sortState.key==='commande') return mult * (a.commandeNom||'').localeCompare(b.commandeNom||'');
     if(sortState.key==='piece') return mult * (a.piece||'').localeCompare(b.piece||'');
     if(sortState.key==='poste') return mult * (a.machineNom||'').localeCompare(b.machineNom||'');
+    if(sortState.key==='prevu') return mult * (a.prevuH - b.prevuH);
     if(sortState.key==='h') return mult * (a.h - b.h);
+    if(sortState.key==='ecart') return mult * ((a.h-a.prevuH) - (b.h-b.prevuH));
     const da = a.date ? a.date.getTime() : 0, db = b.date ? b.date.getTime() : 0;
     return mult * (da - db); // 'date' par défaut
   });
@@ -4901,11 +4923,13 @@ function renderTempsProdDetail(row){
     <td>${escapeHtml(d.piece)} / ${escapeHtml(d.etape)}</td>
     <td>${escapeHtml(d.machineNom)}</td>
     <td>${d.date ? d.date.toLocaleDateString('fr-FR') : '—'}</td>
+    <td>${formatHeures(d.prevuH)}</td>
     <td>${formatHeures(d.h)}</td>
+    <td>${formatEcart(d.h - d.prevuH)}</td>
   </tr>`).join('');
   return `<table class="ops-table" style="margin:0 0 0 24px; width:calc(100% - 24px);">
-    <thead><tr>${th('commande','Commande')}${th('piece','Pièce / Étape')}${th('poste','Poste')}${th('date','Date')}${th('h','Durée')}</tr></thead>
-    <tbody>${rows || `<tr><td colspan="5" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
+    <thead><tr>${th('commande','Commande')}${th('piece','Pièce / Étape')}${th('poste','Poste')}${th('date','Date')}${th('prevu','Temps prévu')}${th('h','Temps passé')}${th('ecart','Écart')}</tr></thead>
+    <tbody>${rows || `<tr><td colspan="7" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
   </table>`;
 }
 function renderTempsProdPage(){
@@ -4928,16 +4952,19 @@ function renderTempsProdPage(){
       <button class="ghost small" data-action="temps-prod-nav" data-dir="prev">◀</button>
       <strong style="text-transform:capitalize;">${escapeHtml(label)}</strong>
       <button class="ghost small" data-action="temps-prod-nav" data-dir="next">▶</button>
+      <button class="small" data-action="temps-prod-today">Aujourd'hui</button>
     </div>`;
   const th = (key, label) => `<th data-action="temps-prod-sort" data-key="${key}" style="cursor:pointer; white-space:nowrap;">${label}${sortIndicatorHtml(key, tempsProdSort)}</th>`;
   const rowsHtml = rows.map(r => {
     const expanded = !!tempsProdExpanded[r.uid];
     return `<tr>
         <td><button class="ghost small" data-action="temps-prod-toggle" data-user-id="${r.uid}" style="margin-right:6px;">${expanded?'▾':'▸'}</button>${escapeHtml(r.username)}</td>
+        <td>${formatHeures(r.totalPrevuH)}</td>
         <td>${formatHeures(r.totalH)}</td>
+        <td>${formatEcart(r.ecartH)}</td>
         <td>${r.nbTaches}</td>
       </tr>
-      ${expanded ? `<tr><td colspan="3" style="padding:8px 0;">${renderTempsProdDetail(r)}</td></tr>` : ''}`;
+      ${expanded ? `<tr><td colspan="5" style="padding:8px 0;">${renderTempsProdDetail(r)}</td></tr>` : ''}`;
   }).join('');
   return `
   <section class="panel">
@@ -4949,10 +4976,10 @@ function renderTempsProdPage(){
   </section>
   <section class="panel"><div class="panel-body">
     <table class="ops-table">
-      <thead><tr>${th('username','Salarié')}${th('total','Temps de production')}${th('nbTaches','Nb tâches')}</tr></thead>
-      <tbody>${rowsHtml || `<tr><td colspan="3" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
+      <thead><tr>${th('username','Salarié')}${th('prevu','Temps prévu')}${th('total','Temps passé')}${th('ecart','Écart')}${th('nbTaches','Nb tâches')}</tr></thead>
+      <tbody>${rowsHtml || `<tr><td colspan="5" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
     </table>
-    <div class="footer-note" style="text-align:left; padding-top:10px;">Basé sur le temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses.</div>
+    <div class="footer-note" style="text-align:left; padding-top:10px;">Le temps prévu vient de la durée théorique de chaque ligne (temps unitaire × quantité, ou durée d'un groupe fusionné) ; le temps passé du temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses. L'écart compare les deux sur les tâches déjà comptées dans la période, y compris en cours (le prévu couvre alors toute la quantité).</div>
   </div></section>`;
 }
 
@@ -6871,6 +6898,7 @@ function dispatchClickAction(action, el){
     case 'conges-tab': congesTab = el.dataset.tab; render(); break;
     case 'temps-prod-mode': tempsProdPeriodMode = el.dataset.mode; render(); break;
     case 'temps-prod-nav': navigateTempsProdPeriod(el.dataset.dir); break;
+    case 'temps-prod-today': tempsProdToday(); break;
     case 'temps-prod-sort': setTempsProdSort(el.dataset.key); break;
     case 'temps-prod-detail-sort': setTempsProdDetailSort(el.dataset.userId, el.dataset.key); break;
     case 'temps-prod-toggle': tempsProdExpanded[el.dataset.userId] = !tempsProdExpanded[el.dataset.userId]; render(); break;
