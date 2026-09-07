@@ -4872,6 +4872,12 @@ function formatEcart(h){
   const color = h > 0.05 ? 'var(--red)' : (h < -0.05 ? 'var(--green)' : 'var(--text-dim)');
   return `<span style="color:${color};">${sign}${formatHeures(h)}</span>`;
 }
+// Dépassement "notable" : +50% ET au moins 15 minutes d'écart absolu — le double seuil évite de
+// signaler une tâche de 2 minutes prévue à 1 minute (100% de dépassement, mais insignifiant).
+function isOverrunTask(prevuH, h){
+  if(!(prevuH > 0)) return false;
+  return (h - prevuH) > 0.25 && h > prevuH * 1.5;
+}
 function setTempsProdSort(key){
   if(tempsProdSort.key === key) tempsProdSort.dir = tempsProdSort.dir==='asc' ? 'desc' : 'asc';
   else tempsProdSort = { key, dir: key==='username' ? 'asc' : 'desc' };
@@ -4891,7 +4897,8 @@ function tempsProdRows(byUser){
   let rows = Object.keys(byUser).map(uid => {
     const u = usersList.find(uu=>String(uu.id)===uid);
     const rec = byUser[uid];
-    return { uid, username: u?u.username:'(compte supprimé)', totalH: rec.totalH, totalPrevuH: rec.totalPrevuH, ecartH: rec.totalH-rec.totalPrevuH, nbTaches: rec.details.length, details: rec.details };
+    const nbOverrun = rec.details.filter(d => isOverrunTask(d.prevuH, d.h)).length;
+    return { uid, username: u?u.username:'(compte supprimé)', totalH: rec.totalH, totalPrevuH: rec.totalPrevuH, ecartH: rec.totalH-rec.totalPrevuH, nbTaches: rec.details.length, nbOverrun, details: rec.details };
   });
   const { key, dir } = tempsProdSort;
   const mult = dir==='asc' ? 1 : -1;
@@ -4900,6 +4907,7 @@ function tempsProdRows(byUser){
     if(key==='nbTaches') return mult * (a.nbTaches - b.nbTaches);
     if(key==='prevu') return mult * (a.totalPrevuH - b.totalPrevuH);
     if(key==='ecart') return mult * (a.ecartH - b.ecartH);
+    if(key==='overrun') return mult * (a.nbOverrun - b.nbOverrun);
     return mult * (a.totalH - b.totalH); // 'total' par défaut
   });
   return rows;
@@ -4918,15 +4926,18 @@ function renderTempsProdDetail(row){
     return mult * (da - db); // 'date' par défaut
   });
   const th = (key, label) => `<th data-action="temps-prod-detail-sort" data-user-id="${row.uid}" data-key="${key}" style="cursor:pointer; white-space:nowrap;">${label}${sortIndicatorHtml(key, sortState)}</th>`;
-  const rows = details.map(d => `<tr>
+  const rows = details.map(d => {
+    const overrun = isOverrunTask(d.prevuH, d.h);
+    return `<tr${overrun?` style="background:${hexToRgba('#b23a30',0.08)};"`:''}>
     <td>${escapeHtml(d.commandeNom)}${d.refClient?` <span class="footer-note" style="margin:0;">(${escapeHtml(d.refClient)})</span>`:''}</td>
     <td>${escapeHtml(d.piece)} / ${escapeHtml(d.etape)}</td>
     <td>${escapeHtml(d.machineNom)}</td>
     <td>${d.date ? d.date.toLocaleDateString('fr-FR') : '—'}</td>
     <td>${formatHeures(d.prevuH)}</td>
     <td>${formatHeures(d.h)}</td>
-    <td>${formatEcart(d.h - d.prevuH)}</td>
-  </tr>`).join('');
+    <td>${formatEcart(d.h - d.prevuH)}${overrun?` <span title="Dépassement notable (+50% et plus de 15 min)">⚠️</span>`:''}</td>
+  </tr>`;
+  }).join('');
   return `<table class="ops-table" style="margin:0 0 0 24px; width:calc(100% - 24px);">
     <thead><tr>${th('commande','Commande')}${th('piece','Pièce / Étape')}${th('poste','Poste')}${th('date','Date')}${th('prevu','Temps prévu')}${th('h','Temps passé')}${th('ecart','Écart')}</tr></thead>
     <tbody>${rows || `<tr><td colspan="7" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
@@ -4963,24 +4974,65 @@ function renderTempsProdPage(){
         <td>${formatHeures(r.totalH)}</td>
         <td>${formatEcart(r.ecartH)}</td>
         <td>${r.nbTaches}</td>
+        <td>${r.nbOverrun>0 ? `<span title="${r.nbOverrun} tâche(s) avec un dépassement notable (+50% et plus de 15 min)" style="color:var(--red); font-weight:600;">⚠️ ${r.nbOverrun}</span>` : '—'}</td>
       </tr>
-      ${expanded ? `<tr><td colspan="5" style="padding:8px 0;">${renderTempsProdDetail(r)}</td></tr>` : ''}`;
+      ${expanded ? `<tr><td colspan="6" style="padding:8px 0;">${renderTempsProdDetail(r)}</td></tr>` : ''}`;
   }).join('');
   return `
   <section class="panel">
-    <div class="panel-body" style="padding-bottom:0;">
-      <h2 style="margin:0 0 12px; font-family:'Oswald',sans-serif; font-size:15px; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-dim);">⏱ Temps de production</h2>
+    <div class="panel-head">
+      <h2>⏱ Temps de production</h2>
+      <button class="small" data-action="temps-prod-export" title="Exporter le résumé et le détail de la période affichée">⬇ Exporter (.xlsx)</button>
+    </div>
+    <div class="panel-body">
       <div class="view-tabs">${modesHtml}</div>
       ${navHtml}
     </div>
   </section>
   <section class="panel"><div class="panel-body">
     <table class="ops-table">
-      <thead><tr>${th('username','Salarié')}${th('prevu','Temps prévu')}${th('total','Temps passé')}${th('ecart','Écart')}${th('nbTaches','Nb tâches')}</tr></thead>
-      <tbody>${rowsHtml || `<tr><td colspan="5" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
+      <thead><tr>${th('username','Salarié')}${th('prevu','Temps prévu')}${th('total','Temps passé')}${th('ecart','Écart')}${th('nbTaches','Nb tâches')}${th('overrun','⚠️ Dépassements')}</tr></thead>
+      <tbody>${rowsHtml || `<tr><td colspan="6" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
     </table>
-    <div class="footer-note" style="text-align:left; padding-top:10px;">Le temps prévu vient de la durée théorique de chaque ligne (temps unitaire × quantité, ou durée d'un groupe fusionné) ; le temps passé du temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses. L'écart compare les deux sur les tâches déjà comptées dans la période, y compris en cours (le prévu couvre alors toute la quantité).</div>
+    <div class="footer-note" style="text-align:left; padding-top:10px;">Le temps prévu vient de la durée théorique de chaque ligne (temps unitaire × quantité, ou durée d'un groupe fusionné) ; le temps passé du temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses. L'écart compare les deux sur les tâches déjà comptées dans la période, y compris en cours (le prévu couvre alors toute la quantité). Un ⚠️ signale une tâche ayant dépassé son temps prévu de plus de 50% (et d'au moins 15 minutes).</div>
   </div></section>`;
+}
+// Classeur à 2 feuilles (Résumé / Détail) pour la période actuellement affichée dans l'onglet
+// Temps de production — indépendant du tri choisi à l'écran (toujours trié par salarié puis par
+// date, pour un fichier reproductible d'un export à l'autre).
+function exportTempsProdExcel(){
+  if(typeof XLSX === 'undefined'){ alert("La bibliothèque Excel n'a pas pu se charger (connexion internet requise pour cette fonction)."); return; }
+  const { start, end, label } = tempsProdPeriodBounds();
+  const byUser = computeProductionTimeByUser(state, start, end);
+  const rows = tempsProdRows(byUser).slice().sort((a,b) => a.username.localeCompare(b.username));
+  const round2 = (h) => Math.round(h*100)/100;
+
+  const resumeHeaders = ['Salarié','Temps prévu (h)','Temps passé (h)','Écart (h)','Nb tâches','Dépassements notables'];
+  const resumeRows = rows.map(r => [r.username, round2(r.totalPrevuH), round2(r.totalH), round2(r.ecartH), r.nbTaches, r.nbOverrun]);
+
+  const detailHeaders = ['Salarié','Commande','Réf. client','Pièce','Étape','Poste','Date','Temps prévu (h)','Temps passé (h)','Écart (h)','Dépassement notable'];
+  const detailRows = [];
+  rows.forEach(r => {
+    r.details.slice().sort((a,b) => (a.date?a.date.getTime():0) - (b.date?b.date.getTime():0)).forEach(d => {
+      detailRows.push([
+        r.username, d.commandeNom, d.refClient||'', d.piece, d.etape, d.machineNom,
+        d.date ? d.date.toLocaleDateString('fr-FR') : '',
+        round2(d.prevuH), round2(d.h), round2(d.h - d.prevuH),
+        isOverrunTask(d.prevuH, d.h) ? 'Oui' : ''
+      ]);
+    });
+  });
+
+  const wsResume = XLSX.utils.aoa_to_sheet([[`Période : ${label}`], resumeHeaders, ...resumeRows]);
+  wsResume['!cols'] = resumeHeaders.map(() => ({ wch: 20 }));
+  const wsDetail = XLSX.utils.aoa_to_sheet([[`Période : ${label}`], detailHeaders, ...detailRows]);
+  wsDetail['!cols'] = detailHeaders.map(() => ({ wch: 20 }));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, wsResume, 'Résumé');
+  XLSX.utils.book_append_sheet(wb, wsDetail, 'Détail');
+  const stamp = `${toDateInputValue(start)}_${toDateInputValue(new Date(end.getTime()-86400000))}`;
+  XLSX.writeFile(wb, `temps-production_${stamp}.xlsx`);
 }
 
 function renderStats(schedule){
@@ -6899,6 +6951,7 @@ function dispatchClickAction(action, el){
     case 'temps-prod-mode': tempsProdPeriodMode = el.dataset.mode; render(); break;
     case 'temps-prod-nav': navigateTempsProdPeriod(el.dataset.dir); break;
     case 'temps-prod-today': tempsProdToday(); break;
+    case 'temps-prod-export': exportTempsProdExcel(); break;
     case 'temps-prod-sort': setTempsProdSort(el.dataset.key); break;
     case 'temps-prod-detail-sort': setTempsProdDetailSort(el.dataset.userId, el.dataset.key); break;
     case 'temps-prod-toggle': tempsProdExpanded[el.dataset.userId] = !tempsProdExpanded[el.dataset.userId]; render(); break;
