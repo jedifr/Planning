@@ -459,6 +459,9 @@
   .ops-subhead .ops-subcount{color:var(--text-faint); font-weight:400; text-transform:none; letter-spacing:0;}
   .ops-subhead-done{color:var(--text-faint);}
   .ops-empty{padding:4px 12px 12px; font-size:11.5px; color:var(--text-faint);}
+  table.ops-table.ops-table-done{opacity:0.55; transition:opacity 0.15s;}
+  table.ops-table.ops-table-done:hover, table.ops-table.ops-table-done:focus-within{opacity:1;}
+  table.ops-table.ops-table-done td{padding:4px 8px;}
   table.ops-table th{
     text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-faint);
     padding:8px 8px 6px; font-weight:500; border-bottom:1px solid var(--line-soft);
@@ -3458,7 +3461,7 @@ function applyAutoPauseResume(st){
 // connexion/rechargement ; filtré à l'opérateur assigné pour un non-admin, vue complète pour un admin.
 function pausedSinceEarlierTasks(){
   const todayKey = toDateInputValue(new Date());
-  const admin = isAdmin();
+  const admin = canSupervise(); // un Superviseur a la même vue complète qu'un Administrateur ici
   const myId = currentUser ? String(currentUser.id) : null;
   const seenGroups = new Set();
   const results = [];
@@ -6177,6 +6180,22 @@ function renderNewForm(){
   </section>`;
 }
 
+// Trie les lignes d'une commande pour que les différentes étapes d'une même pièce se lisent dans
+// l'ordre de leur phase (10, 20, 30…) — sans changer l'ordre relatif des pièces entre elles, qui
+// reste celui de leur première apparition (import, création manuelle).
+function sortPiecesByPieceThenPhase(pieces){
+  const firstSeen = new Map();
+  pieces.forEach((p, idx) => {
+    const key = String(p.piece||'').trim().toLowerCase();
+    if(!firstSeen.has(key)) firstSeen.set(key, idx);
+  });
+  return [...pieces].sort((a, b) => {
+    const ka = String(a.piece||'').trim().toLowerCase(), kb = String(b.piece||'').trim().toLowerCase();
+    const fa = firstSeen.get(ka), fb = firstSeen.get(kb);
+    if(fa !== fb) return fa - fb;
+    return (Number(a.phase)||1) - (Number(b.phase)||1);
+  });
+}
 function renderOpsRow(o, c){
   const done = o.statut==='termine';
   const running = o.statut==='en_cours' || o.statut==='en_pause';
@@ -6194,21 +6213,29 @@ function renderOpsRow(o, c){
     : (o.start ? `<span class="dates-val"><span class="lbl">Début</span> ${formatDT(o.start)} <button class="ghost icon-btn date-pin-btn" data-action="open-date-picker" data-target="ms-${o.id}" title="Modifier et figer la date de départ">📅</button><input type="datetime-local" id="ms-${o.id}" class="hidden-date-input" data-action="set-manual-start" data-cid="${c.id}" data-oid="${o.id}" value="${o.manualStart || toInputValue(o.start)}"><br><span class="lbl">Fin</span> ${formatDT(o.end)}<br><span class="pin-badge ${overridden?'pinned':'floating'}">${overridden?'📌 Figée':'〰️ Volante'}</span>${overridden?` <button class="ghost small" data-action="reset-op-override" data-cid="${c.id}" data-oid="${o.id}" style="padding:2px 6px;">↺ Libérer</button>`:''}</span>` : '—');
   const phaseCell = `<input type="number" min="1" step="1" class="phase-input" value="${o.phase||1}" data-action="op-phase" data-cid="${c.id}" data-oid="${o.id}" title="Cette pièce démarre une fois terminées toutes les pièces de phase inférieure de la même commande">
     <input type="date" class="phase-input" style="margin-top:4px;" value="${o.dateDebutPossible||''}" data-action="op-date-debut-possible" data-cid="${c.id}" data-oid="${o.id}" title="Départ possible au plus tôt (optionnel) — ex : en attente d'une matière qui arrive à cette date">`;
-  const machinePourPiece = state.machines.find(mm=>mm.id===o.machineId);
+  const machineIdxPourPiece = state.machines.findIndex(mm=>mm.id===o.machineId);
+  const machinePourPiece = machineIdxPourPiece>=0 ? state.machines[machineIdxPourPiece] : null;
   // Les champs Matière/Épaisseur ne servent qu'à la détection automatique par matière/épaisseur :
   // ils disparaissent quand ce réglage global est désactivé (Paramètres → Postes). L'indicateur
   // "fusionnée" reste visible dans tous les cas, puisqu'une pièce peut être regroupée autrement
   // (case "Regrouper" à l'import, ou bouton manuel en création de commande).
-  const showMatiereFields = state.config.matiereFusionActive && machinePourPiece && machinePourPiece.fusionnable;
+  const showMatiereColumn = !!state.config.matiereFusionActive; // colonne entière, indépendamment du poste
+  const showMatiereFields = showMatiereColumn && machinePourPiece && machinePourPiece.fusionnable;
   const fusionBadge = o.fusionGroupId ? `<div class="footer-note" style="margin:2px 0 0;">🔗 fusionnée</div>` : '';
   const matiereCell = showMatiereFields
     ? `<input placeholder="Matière" value="${escapeHtml(o.matiere||'')}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="matiere" style="margin-bottom:4px;">
        <input placeholder="Épaisseur" value="${escapeHtml(o.epaisseur||'')}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="epaisseur">
        ${fusionBadge}`
     : (fusionBadge || `<span class="footer-note">—</span>`);
+  // Colonne masquée (regroupement automatique par matière désactivé) : le repère "fusionnée" se
+  // reporte sur la ligne elle-même — teinte pâle de la couleur du poste (même logique que les
+  // barres du planning visuel) + une icône fixe, pour rester lisible même sans la couleur
+  // (daltonisme, impression noir/blanc de la liste imprimable qui réutilise ce tableau).
+  const fusionRowTint = (!showMatiereColumn && o.fusionGroupId) ? softenColor(machineColor(machinePourPiece, Math.max(machineIdxPourPiece,0)), 0.85) : null;
+  const fusionRowIcon = (!showMatiereColumn && o.fusionGroupId) ? `<span title="Pièce fusionnée avec d'autres" style="margin-right:3px;">🔗</span>` : '';
   return `
-  <tr>
-    <td class="col-piece"><input value="${escapeHtml(o.piece)}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="piece" placeholder="Pièce"></td>
+  <tr ${fusionRowTint ? `style="background-color:${fusionRowTint};"` : ''}>
+    <td class="col-piece">${fusionRowIcon}<input value="${escapeHtml(o.piece)}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="piece" placeholder="Pièce"></td>
     <td class="col-etape"><input value="${escapeHtml(o.etape)}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="etape" placeholder="Étape"></td>
     <td class="col-machine"><select data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="machineId">${machineOptions(o.machineId)}</select>
       <select class="op-operator-select" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="operatorUserId" title="Opérateur assigné — sa pause déjeuner (si réglée) remplace celle du poste">${operatorOptions(o.operatorUserId)}</select>
@@ -6220,7 +6247,7 @@ function renderOpsRow(o, c){
     <td class="col-qte"><input type="number" min="1" step="1" value="${o.quantite}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="quantite"></td>
     <td class="col-duree"><input type="number" min="0.25" step="0.25" value="${Math.round(dureeH*100)/100}" data-action="op-duree-field" data-cid="${c.id}" data-oid="${o.id}" title="Durée totale prévue, en heures"><span style="font-size:9.5px;color:var(--text-faint);">${durationLabel(dureeH)}</span>${isTempsModified(o) ? `<button class="ghost small temps-modifie-badge" data-action="reset-temps-unitaire" data-cid="${c.id}" data-oid="${o.id}" title="Temps théorique d'origine : ${durationLabel((o.tempsUnitaireTheorique*o.quantite)/60)} — cliquer pour revenir à cette valeur">⏱ Modifié — ↺ revenir au théorique</button>` : ''}</td>
     <td class="col-deps">${phaseCell}</td>
-    <td class="col-matiere">${matiereCell}</td>
+    ${showMatiereColumn ? `<td class="col-matiere">${matiereCell}</td>` : ''}
     <td class="col-statut"><select class="statut-select" data-action="op-statut-select" data-cid="${c.id}" data-oid="${o.id}">
       <option value="a_faire" ${o.statut==='a_faire'?'selected':''}>À faire</option>
       <option value="en_cours" ${o.statut==='en_cours'?'selected':''}>En cours</option>
@@ -6231,7 +6258,10 @@ function renderOpsRow(o, c){
     <td class="col-del"><button class="danger-ghost icon-btn" data-action="remove-op" data-cid="${c.id}" data-oid="${o.id}">✕</button></td>
   </tr>`;
 }
-const OPS_TABLE_HEAD = `<thead><tr><th>Pièce</th><th>Étape</th><th>Poste</th><th>T. unit. (min)</th><th>Qté</th><th>Durée</th><th>Phase</th><th>Matière / Ép.</th><th>Statut</th><th>Planifié</th><th></th></tr></thead>`;
+function opsTableHead(){
+  const matiereTh = state.config.matiereFusionActive ? '<th>Matière / Ép.</th>' : '';
+  return `<thead><tr><th>Pièce</th><th>Étape</th><th>Poste</th><th>T. unit. (min)</th><th>Qté</th><th>Durée</th><th>Phase</th>${matiereTh}<th>Statut</th><th>Planifié</th><th></th></tr></thead>`;
+}
 
 function renderCommandeCard(c, idx, total){
   let badge = `<span class="badge neutral">Fin est. ${c.finEstimee ? formatDT(c.finEstimee) : '—'}</span>`;
@@ -6252,16 +6282,18 @@ function renderCommandeCard(c, idx, total){
   const searchQ = searchQuery ? searchQuery.toLowerCase() : '';
   const cmdNameMatchesSearch = !!(searchQ && ((c.nom && c.nom.toLowerCase().includes(searchQ)) || (c.refClient && c.refClient.toLowerCase().includes(searchQ))));
   const pieceMatchesSearch = o => !searchQ || cmdNameMatchesSearch || (o.piece && o.piece.toLowerCase().includes(searchQ));
-  const activePieces = c.pieces.filter(o=>o.statut!=='termine').filter(pieceMatchesSearch);
-  const donePieces = c.pieces.filter(o=>o.statut==='termine').filter(pieceMatchesSearch);
+  const activePieces = sortPiecesByPieceThenPhase(c.pieces.filter(o=>o.statut!=='termine').filter(pieceMatchesSearch));
+  const donePieces = sortPiecesByPieceThenPhase(c.pieces.filter(o=>o.statut==='termine').filter(pieceMatchesSearch));
 
   const activeBlock = `
     <div class="ops-subhead">Tâches en cours <span class="ops-subcount">(${activePieces.length})</span></div>
-    ${activePieces.length ? `<table class="ops-table">${OPS_TABLE_HEAD}<tbody>${activePieces.map(o=>renderOpsRow(o,c)).join('')}</tbody></table>` : `<div class="ops-empty">Aucune ligne en cours.</div>`}`;
+    ${activePieces.length ? `<table class="ops-table">${opsTableHead()}<tbody>${activePieces.map(o=>renderOpsRow(o,c)).join('')}</tbody></table>` : `<div class="ops-empty">Aucune ligne en cours.</div>`}`;
 
+  // Table volontairement estompée (opacité réduite, redevient nette au survol) : une commande
+  // encore active attire l'attention sur ce qui reste à faire, pas sur ce qui est déjà terminé.
   const doneBlock = donePieces.length ? `
     <div class="ops-subhead ops-subhead-done">Tâches terminées <span class="ops-subcount">(${donePieces.length})</span></div>
-    <table class="ops-table">${OPS_TABLE_HEAD}<tbody>${donePieces.map(o=>renderOpsRow(o,c)).join('')}</tbody></table>` : '';
+    <table class="ops-table ops-table-done">${opsTableHead()}<tbody>${donePieces.map(o=>renderOpsRow(o,c)).join('')}</tbody></table>` : '';
 
   const cardUCol = urgencyColorFor(c.urgence);
   const cardBorderStyle = cardUCol ? `border-left-color:${cardUCol};` : '';
