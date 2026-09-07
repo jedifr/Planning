@@ -869,7 +869,7 @@ function manualArchiveNow(){
   showToast(`${nb} commande${nb>1?'s':''} archivée${nb>1?'s':''}.`);
 }
 let currentView = 'semaine'; // 'semaine' | 'mois' | 'annee'
-let currentPage = 'planning'; // 'planning' | 'conges'
+let currentPage = 'planning'; // 'planning' | 'conges' | 'tempsProd'
 let congesTab = 'mes-demandes'; // 'mes-demandes' | 'equipe' | 'calendrier' | 'a-valider' | 'soldes'
 let equipeStatutFilter = 'approuve'; // filtre de l'onglet "Congés de l'équipe"
 let leaveImpactPreviewId = null; // id de la demande dont on affiche l'aperçu d'impact, dans "À valider"
@@ -892,6 +892,14 @@ let fusionCheckedItems = {}; // clé "posteId|matière|épaisseur" -> Set des id
 let customImportState = null;
 let toastMessage = null;
 let toastTimer = null;
+// Onglet "Temps de production" (superviseurs/administrateurs) — voir renderTempsProdPage().
+let tempsProdPeriodMode = 'jour'; // 'jour' | 'mois' | 'annee' | 'plage'
+let tempsProdAnchor = new Date(); // date de référence pour les modes jour/mois/année
+let tempsProdRangeDebut = null; // 'AAAA-MM-JJ', mode 'plage'
+let tempsProdRangeFin = null; // 'AAAA-MM-JJ', mode 'plage'
+let tempsProdSort = { key:'total', dir:'desc' }; // tri du tableau par salarié
+let tempsProdDetailSort = {}; // { [userId]: {key,dir} } — tri du détail déplié, par salarié
+let tempsProdExpanded = {}; // { [userId]: true } — lignes salarié dépliées
 function showToast(msg){
   toastMessage = msg;
   if(toastTimer) clearTimeout(toastTimer);
@@ -4405,6 +4413,7 @@ function renderHeader(){
     <div class="page-switcher">
       <button class="page-switch-btn ${currentPage==='planning'?'active':''}" data-action="goto-planning">Planning</button>
       ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
+      ${canSupervise() ? `<button class="page-switch-btn ${currentPage==='tempsProd'?'active':''}" data-action="goto-temps-prod">⏱ Temps de production</button>` : ''}
     </div>`;
   return `
   <header class="top">
@@ -4761,6 +4770,189 @@ function renderSoldesTab(){
       Imposer ce congé (enregistré directement comme approuvé, sans demander l'accord de la personne)
     </label>
     <div class="footer-note" style="text-align:left; padding-top:8px;">Par défaut, la personne reçoit une proposition qu'elle doit confirmer avant que le congé ne soit vraiment approuvé. Cochez "Imposer" pour l'enregistrer directement comme approuvé — la personne est alors simplement informée, sans avoir à confirmer.</div>
+  </div></section>`;
+}
+
+/* ---------------- Temps de production (superviseurs/administrateurs) ---------------- */
+// Bornes [start, end[ de la période choisie, à partir de tempsProdPeriodMode/tempsProdAnchor
+// (jour/mois/année) ou tempsProdRangeDebut/Fin (plage personnalisée, bornes incluses).
+function tempsProdPeriodBounds(){
+  const a = tempsProdAnchor;
+  if(tempsProdPeriodMode === 'mois'){
+    const start = new Date(a.getFullYear(), a.getMonth(), 1, 0,0,0,0);
+    const end = new Date(a.getFullYear(), a.getMonth()+1, 1, 0,0,0,0);
+    return { start, end, label: start.toLocaleDateString('fr-FR', { month:'long', year:'numeric' }) };
+  }
+  if(tempsProdPeriodMode === 'annee'){
+    const start = new Date(a.getFullYear(), 0, 1, 0,0,0,0);
+    const end = new Date(a.getFullYear()+1, 0, 1, 0,0,0,0);
+    return { start, end, label: String(a.getFullYear()) };
+  }
+  if(tempsProdPeriodMode === 'plage'){
+    const debutStr = tempsProdRangeDebut || toDateInputValue(weeksAgo(1));
+    const finStr = tempsProdRangeFin || toDateInputValue(new Date());
+    const start = new Date(debutStr+'T00:00:00');
+    const finDay = new Date(finStr+'T00:00:00');
+    const end = new Date(finDay.getFullYear(), finDay.getMonth(), finDay.getDate()+1, 0,0,0,0);
+    return { start, end, label: `${formatDateFr(debutStr)} → ${formatDateFr(finStr)}` };
+  }
+  // 'jour' par défaut
+  const start = new Date(a.getFullYear(), a.getMonth(), a.getDate(), 0,0,0,0);
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate()+1, 0,0,0,0);
+  return { start, end, label: start.toLocaleDateString('fr-FR', { weekday:'long', day:'2-digit', month:'long', year:'numeric' }) };
+}
+function navigateTempsProdPeriod(dir){
+  const delta = dir==='prev' ? -1 : 1;
+  if(tempsProdPeriodMode==='mois') tempsProdAnchor = new Date(tempsProdAnchor.getFullYear(), tempsProdAnchor.getMonth()+delta, 1);
+  else if(tempsProdPeriodMode==='annee') tempsProdAnchor = new Date(tempsProdAnchor.getFullYear()+delta, 0, 1);
+  else tempsProdAnchor = new Date(tempsProdAnchor.getFullYear(), tempsProdAnchor.getMonth(), tempsProdAnchor.getDate()+delta);
+  render();
+}
+// Temps de production par salarié sur [periodStart, periodEnd[, à partir des commandes actives ET
+// archivées. Deux sources, comme dureePasseeH() : les sessions[] (tâche en_cours/en_pause, ou pas
+// encore purgées — voir purgeOldSessions) donnent le détail réel, chaque session étant bornée à la
+// période puis mesurée avec workingHoursBetween (hors nuits/week-ends/pause) ; une pièce déjà
+// "termine" dont les sessions ont été purgées retombe sur dureeReelleH, attribué en bloc à la
+// période si sa date de fin réelle (ou de début, à défaut) tombe dedans.
+function computeProductionTimeByUser(st, periodStart, periodEnd){
+  const byUser = {};
+  const ensure = (uid) => byUser[uid] || (byUser[uid] = { totalH:0, details:[] });
+  const consider = (c, o) => {
+    if(!o.operatorUserId) return;
+    const uid = String(o.operatorUserId);
+    const cfg = configForPiece(o, st);
+    const m = state.machines.find(mm=>mm.id===o.machineId);
+    let h = 0, repDate = null;
+    if(o.sessions && o.sessions.length){
+      o.sessions.forEach(s => {
+        const sStart = new Date(s.debut);
+        const sEnd = s.fin ? new Date(s.fin) : new Date();
+        const clampStart = sStart < periodStart ? periodStart : sStart;
+        const clampEnd = sEnd > periodEnd ? periodEnd : sEnd;
+        if(clampEnd > clampStart){
+          h += workingHoursBetween(clampStart, clampEnd, cfg);
+          if(!repDate || sStart > repDate) repDate = sStart;
+        }
+      });
+    } else if(o.statut === 'termine' && o.dureeReelleH != null && o.dureeReelleH > 0){
+      const refStr = o.finReel || o.debutReel;
+      if(refStr){
+        const refDate = new Date(refStr);
+        if(refDate >= periodStart && refDate < periodEnd){ h = o.dureeReelleH; repDate = refDate; }
+      }
+    }
+    if(h > 1e-6){
+      const u = ensure(uid);
+      u.totalH += h;
+      u.details.push({ cid:c.id, commandeNom:c.nom, refClient:c.refClient||'', piece:o.piece, etape:o.etape, machineNom: m?m.nom:'—', h, date: repDate });
+    }
+  };
+  (st.commandes||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
+  (st.commandesArchivees||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
+  return byUser;
+}
+function formatHeures(h){
+  return (Math.round(h*10)/10).toLocaleString('fr-FR', { minimumFractionDigits:0, maximumFractionDigits:1 }) + ' h';
+}
+function setTempsProdSort(key){
+  if(tempsProdSort.key === key) tempsProdSort.dir = tempsProdSort.dir==='asc' ? 'desc' : 'asc';
+  else tempsProdSort = { key, dir: key==='username' ? 'asc' : 'desc' };
+  render();
+}
+function setTempsProdDetailSort(userId, key){
+  const cur = tempsProdDetailSort[userId] || { key:'date', dir:'desc' };
+  if(cur.key === key) tempsProdDetailSort[userId] = { key, dir: cur.dir==='asc'?'desc':'asc' };
+  else tempsProdDetailSort[userId] = { key, dir: (key==='date'||key==='h') ? 'desc' : 'asc' };
+  render();
+}
+function sortIndicatorHtml(key, sortState){
+  if(!sortState || sortState.key !== key) return '';
+  return sortState.dir==='asc' ? ' ▲' : ' ▼';
+}
+function tempsProdRows(byUser){
+  let rows = Object.keys(byUser).map(uid => {
+    const u = usersList.find(uu=>String(uu.id)===uid);
+    const rec = byUser[uid];
+    return { uid, username: u?u.username:'(compte supprimé)', totalH: rec.totalH, nbTaches: rec.details.length, details: rec.details };
+  });
+  const { key, dir } = tempsProdSort;
+  const mult = dir==='asc' ? 1 : -1;
+  rows.sort((a,b) => {
+    if(key==='username') return mult * a.username.localeCompare(b.username);
+    if(key==='nbTaches') return mult * (a.nbTaches - b.nbTaches);
+    return mult * (a.totalH - b.totalH); // 'total' par défaut
+  });
+  return rows;
+}
+function renderTempsProdDetail(row){
+  const sortState = tempsProdDetailSort[row.uid] || { key:'date', dir:'desc' };
+  const mult = sortState.dir==='asc' ? 1 : -1;
+  const details = row.details.slice().sort((a,b) => {
+    if(sortState.key==='commande') return mult * (a.commandeNom||'').localeCompare(b.commandeNom||'');
+    if(sortState.key==='piece') return mult * (a.piece||'').localeCompare(b.piece||'');
+    if(sortState.key==='poste') return mult * (a.machineNom||'').localeCompare(b.machineNom||'');
+    if(sortState.key==='h') return mult * (a.h - b.h);
+    const da = a.date ? a.date.getTime() : 0, db = b.date ? b.date.getTime() : 0;
+    return mult * (da - db); // 'date' par défaut
+  });
+  const th = (key, label) => `<th data-action="temps-prod-detail-sort" data-user-id="${row.uid}" data-key="${key}" style="cursor:pointer; white-space:nowrap;">${label}${sortIndicatorHtml(key, sortState)}</th>`;
+  const rows = details.map(d => `<tr>
+    <td>${escapeHtml(d.commandeNom)}${d.refClient?` <span class="footer-note" style="margin:0;">(${escapeHtml(d.refClient)})</span>`:''}</td>
+    <td>${escapeHtml(d.piece)} / ${escapeHtml(d.etape)}</td>
+    <td>${escapeHtml(d.machineNom)}</td>
+    <td>${d.date ? d.date.toLocaleDateString('fr-FR') : '—'}</td>
+    <td>${formatHeures(d.h)}</td>
+  </tr>`).join('');
+  return `<table class="ops-table" style="margin:0 0 0 24px; width:calc(100% - 24px);">
+    <thead><tr>${th('commande','Commande')}${th('piece','Pièce / Étape')}${th('poste','Poste')}${th('date','Date')}${th('h','Durée')}</tr></thead>
+    <tbody>${rows || `<tr><td colspan="5" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
+  </table>`;
+}
+function renderTempsProdPage(){
+  if(!canSupervise()){
+    return `<section class="panel"><div class="panel-body" style="text-align:center; padding:40px;">Accès réservé aux superviseurs et administrateurs.</div></section>`;
+  }
+  const { start, end, label } = tempsProdPeriodBounds();
+  const byUser = computeProductionTimeByUser(state, start, end);
+  const rows = tempsProdRows(byUser);
+  const modes = [{key:'jour',label:'Jour'},{key:'mois',label:'Mois'},{key:'annee',label:'Année'},{key:'plage',label:'Période personnalisée'}];
+  const modesHtml = modes.map(m => `<button class="${tempsProdPeriodMode===m.key?'active':''}" data-action="temps-prod-mode" data-mode="${m.key}">${m.label}</button>`).join('');
+  const navHtml = tempsProdPeriodMode==='plage' ? `
+    <div class="search-bar" style="margin-top:10px;">
+      <label class="field" style="margin:0;">Du</label>
+      <input type="date" data-action="temps-prod-range-debut" value="${tempsProdRangeDebut||''}">
+      <label class="field" style="margin:0;">Au</label>
+      <input type="date" data-action="temps-prod-range-fin" value="${tempsProdRangeFin||''}">
+    </div>` : `
+    <div class="search-bar" style="margin-top:10px; align-items:center;">
+      <button class="ghost small" data-action="temps-prod-nav" data-dir="prev">◀</button>
+      <strong style="text-transform:capitalize;">${escapeHtml(label)}</strong>
+      <button class="ghost small" data-action="temps-prod-nav" data-dir="next">▶</button>
+    </div>`;
+  const th = (key, label) => `<th data-action="temps-prod-sort" data-key="${key}" style="cursor:pointer; white-space:nowrap;">${label}${sortIndicatorHtml(key, tempsProdSort)}</th>`;
+  const rowsHtml = rows.map(r => {
+    const expanded = !!tempsProdExpanded[r.uid];
+    return `<tr>
+        <td><button class="ghost small" data-action="temps-prod-toggle" data-user-id="${r.uid}" style="margin-right:6px;">${expanded?'▾':'▸'}</button>${escapeHtml(r.username)}</td>
+        <td>${formatHeures(r.totalH)}</td>
+        <td>${r.nbTaches}</td>
+      </tr>
+      ${expanded ? `<tr><td colspan="3" style="padding:8px 0;">${renderTempsProdDetail(r)}</td></tr>` : ''}`;
+  }).join('');
+  return `
+  <section class="panel">
+    <div class="panel-body" style="padding-bottom:0;">
+      <h2 style="margin:0 0 12px; font-family:'Oswald',sans-serif; font-size:15px; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-dim);">⏱ Temps de production</h2>
+      <div class="view-tabs">${modesHtml}</div>
+      ${navHtml}
+    </div>
+  </section>
+  <section class="panel"><div class="panel-body">
+    <table class="ops-table">
+      <thead><tr>${th('username','Salarié')}${th('total','Temps de production')}${th('nbTaches','Nb tâches')}</tr></thead>
+      <tbody>${rowsHtml || `<tr><td colspan="3" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
+    </table>
+    <div class="footer-note" style="text-align:left; padding-top:10px;">Basé sur le temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses.</div>
   </div></section>`;
 }
 
@@ -6504,6 +6696,17 @@ function render(){
     restoreFocusRef(focusRef);
     return;
   }
+  if(currentPage === 'tempsProd'){
+    appEl.innerHTML = [
+      renderHeader(),
+      renderTempsProdPage(),
+      renderSettingsModal(),
+      renderToast()
+    ].join('');
+    restoreModalScroll(modalScrollTop);
+    restoreFocusRef(focusRef);
+    return;
+  }
   const schedule = getSchedule();
   const html = [
     renderHeader(),
@@ -6664,7 +6867,13 @@ function dispatchClickAction(action, el){
     case 'open-settings': if(isAdmin()){ showSettingsModal = true; render(); loadUsersList(); } break;
     case 'goto-conges': currentPage = 'conges'; render(); break;
     case 'goto-planning': currentPage = 'planning'; render(); break;
+    case 'goto-temps-prod': if(canSupervise()){ currentPage = 'tempsProd'; render(); } break;
     case 'conges-tab': congesTab = el.dataset.tab; render(); break;
+    case 'temps-prod-mode': tempsProdPeriodMode = el.dataset.mode; render(); break;
+    case 'temps-prod-nav': navigateTempsProdPeriod(el.dataset.dir); break;
+    case 'temps-prod-sort': setTempsProdSort(el.dataset.key); break;
+    case 'temps-prod-detail-sort': setTempsProdDetailSort(el.dataset.userId, el.dataset.key); break;
+    case 'temps-prod-toggle': tempsProdExpanded[el.dataset.userId] = !tempsProdExpanded[el.dataset.userId]; render(); break;
     case 'submit-leave-request': {
       const typeEl = document.getElementById('leavereq-type');
       const debutEl = document.getElementById('leavereq-debut');
@@ -6787,6 +6996,8 @@ function dispatchChangeAction(el, action){
     case 'equipe-personne-filter': equipePersonneFilter = el.value; render(); break;
     case 'calyear-personne-filter': calendrierPersonneFilter = el.value; render(); break;
     case 'calyear-statut-filter': calendrierStatutFilter = el.value; render(); break;
+    case 'temps-prod-range-debut': tempsProdRangeDebut = el.value; render(); break;
+    case 'temps-prod-range-fin': tempsProdRangeFin = el.value; render(); break;
     case 'user-pause-field': updateUserPauseField(el.dataset.userId, el.dataset.pauseId, el.dataset.field, el.value); break;
     case 'user-horaire-field': updateUserHoraireField(el.dataset.userId, el.dataset.field, el.value); break;
     case 'machine-horaire': updateMachineHoraire(el.dataset.id, el.dataset.field, el.type==='checkbox' ? el.checked : el.value); break;
