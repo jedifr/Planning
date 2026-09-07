@@ -4413,7 +4413,7 @@ function renderHeader(){
     <div class="page-switcher">
       <button class="page-switch-btn ${currentPage==='planning'?'active':''}" data-action="goto-planning">Planning</button>
       ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
-      ${canSupervise() ? `<button class="page-switch-btn ${currentPage==='tempsProd'?'active':''}" data-action="goto-temps-prod">⏱ Temps de production</button>` : ''}
+      <button class="page-switch-btn ${currentPage==='tempsProd'?'active':''}" data-action="goto-temps-prod">⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}</button>
     </div>`;
   return `
   <header class="top">
@@ -4912,7 +4912,10 @@ function tempsProdRows(byUser){
   });
   return rows;
 }
-function renderTempsProdDetail(row){
+// indent=true : retrait de 24px (ligne dépliée sous un salarié dans la vue superviseur) ;
+// indent=false : tableau de premier niveau (vue "Mon temps de production" d'un opérateur).
+function renderTempsProdDetail(row, indent){
+  if(indent === undefined) indent = true;
   const sortState = tempsProdDetailSort[row.uid] || { key:'date', dir:'desc' };
   const mult = sortState.dir==='asc' ? 1 : -1;
   const details = row.details.slice().sort((a,b) => {
@@ -4938,18 +4941,13 @@ function renderTempsProdDetail(row){
     <td>${formatEcart(d.h - d.prevuH)}${overrun?` <span title="Dépassement notable (+50% et plus de 15 min)">⚠️</span>`:''}</td>
   </tr>`;
   }).join('');
-  return `<table class="ops-table" style="margin:0 0 0 24px; width:calc(100% - 24px);">
+  return `<table class="ops-table" style="${indent?'margin:0 0 0 24px; width:calc(100% - 24px);':''}">
     <thead><tr>${th('commande','Commande')}${th('piece','Pièce / Étape')}${th('poste','Poste')}${th('date','Date')}${th('prevu','Temps prévu')}${th('h','Temps passé')}${th('ecart','Écart')}</tr></thead>
     <tbody>${rows || `<tr><td colspan="7" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
   </table>`;
 }
-function renderTempsProdPage(){
-  if(!canSupervise()){
-    return `<section class="panel"><div class="panel-body" style="text-align:center; padding:40px;">Accès réservé aux superviseurs et administrateurs.</div></section>`;
-  }
-  const { start, end, label } = tempsProdPeriodBounds();
-  const byUser = computeProductionTimeByUser(state, start, end);
-  const rows = tempsProdRows(byUser);
+// Bornes et sélecteur de période, communs aux deux vues (superviseur et opérateur).
+function renderTempsProdPeriodControls(label){
   const modes = [{key:'jour',label:'Jour'},{key:'mois',label:'Mois'},{key:'annee',label:'Année'},{key:'plage',label:'Période personnalisée'}];
   const modesHtml = modes.map(m => `<button class="${tempsProdPeriodMode===m.key?'active':''}" data-action="temps-prod-mode" data-mode="${m.key}">${m.label}</button>`).join('');
   const navHtml = tempsProdPeriodMode==='plage' ? `
@@ -4965,6 +4963,44 @@ function renderTempsProdPage(){
       <button class="ghost small" data-action="temps-prod-nav" data-dir="next">▶</button>
       <button class="small" data-action="temps-prod-today">Aujourd'hui</button>
     </div>`;
+  return `<div class="view-tabs">${modesHtml}</div>${navHtml}`;
+}
+// Vue d'un opérateur (non superviseur) : uniquement ses propres tâches, sans liste des collègues —
+// même moteur de calcul (computeProductionTimeByUser) que la vue superviseur, simplement filtré à
+// currentUser.
+function renderTempsProdSelfPage(start, end, label){
+  const uid = String(currentUser.id);
+  const byUser = computeProductionTimeByUser(state, start, end);
+  const rec = byUser[uid] || { totalH:0, totalPrevuH:0, details:[] };
+  const nbOverrun = rec.details.filter(d => isOverrunTask(d.prevuH, d.h)).length;
+  const row = { uid, username: currentUser.username, totalH: rec.totalH, totalPrevuH: rec.totalPrevuH, ecartH: rec.totalH-rec.totalPrevuH, nbTaches: rec.details.length, nbOverrun, details: rec.details };
+  return `
+  <section class="panel">
+    <div class="panel-head">
+      <h2>⏱ Mon temps de production</h2>
+      <button class="small" data-action="temps-prod-export" title="Exporter mon détail sur la période affichée">⬇ Exporter (.xlsx)</button>
+    </div>
+    <div class="panel-body">${renderTempsProdPeriodControls(label)}</div>
+  </section>
+  <section class="panel"><div class="panel-body" style="padding:9px 16px;">
+    <div class="stat-row">
+      <div class="stat"><div class="num mono">${formatHeures(row.totalPrevuH)}</div><div class="lbl">Temps prévu</div></div>
+      <div class="stat"><div class="num mono">${formatHeures(row.totalH)}</div><div class="lbl">Temps passé</div></div>
+      <div class="stat"><div class="num mono">${formatEcart(row.ecartH)}</div><div class="lbl">Écart</div></div>
+      <div class="stat"><div class="num mono">${row.nbTaches}</div><div class="lbl">Tâches</div></div>
+      <div class="stat ${row.nbOverrun>0?'alert':''}"><div class="num mono">${row.nbOverrun}</div><div class="lbl">Dépassements notables</div></div>
+    </div>
+  </div></section>
+  <section class="panel"><div class="panel-body">
+    ${renderTempsProdDetail(row, false)}
+    <div class="footer-note" style="text-align:left; padding-top:10px;">Le temps prévu vient de la durée théorique de chaque ligne (temps unitaire × quantité, ou durée d'un groupe fusionné) ; le temps passé du temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses. Un ⚠️ signale une tâche ayant dépassé son temps prévu de plus de 50% (et d'au moins 15 minutes).</div>
+  </div></section>`;
+}
+function renderTempsProdPage(){
+  const { start, end, label } = tempsProdPeriodBounds();
+  if(!canSupervise()) return renderTempsProdSelfPage(start, end, label);
+  const byUser = computeProductionTimeByUser(state, start, end);
+  const rows = tempsProdRows(byUser);
   const th = (key, label) => `<th data-action="temps-prod-sort" data-key="${key}" style="cursor:pointer; white-space:nowrap;">${label}${sortIndicatorHtml(key, tempsProdSort)}</th>`;
   const rowsHtml = rows.map(r => {
     const expanded = !!tempsProdExpanded[r.uid];
@@ -4984,10 +5020,7 @@ function renderTempsProdPage(){
       <h2>⏱ Temps de production</h2>
       <button class="small" data-action="temps-prod-export" title="Exporter le résumé et le détail de la période affichée">⬇ Exporter (.xlsx)</button>
     </div>
-    <div class="panel-body">
-      <div class="view-tabs">${modesHtml}</div>
-      ${navHtml}
-    </div>
+    <div class="panel-body">${renderTempsProdPeriodControls(label)}</div>
   </section>
   <section class="panel"><div class="panel-body">
     <table class="ops-table">
@@ -5000,11 +5033,15 @@ function renderTempsProdPage(){
 // Classeur à 2 feuilles (Résumé / Détail) pour la période actuellement affichée dans l'onglet
 // Temps de production — indépendant du tri choisi à l'écran (toujours trié par salarié puis par
 // date, pour un fichier reproductible d'un export à l'autre).
-function exportTempsProdExcel(){
+// onlyUid : limite l'export à ce salarié (String(id)) — utilisé par la vue "Mon temps de
+// production" d'un opérateur, qui n'a pas accès aux données des autres. Omis (undefined) pour
+// l'export complet de la vue superviseur.
+function exportTempsProdExcel(onlyUid){
   if(typeof XLSX === 'undefined'){ alert("La bibliothèque Excel n'a pas pu se charger (connexion internet requise pour cette fonction)."); return; }
   const { start, end, label } = tempsProdPeriodBounds();
   const byUser = computeProductionTimeByUser(state, start, end);
-  const rows = tempsProdRows(byUser).slice().sort((a,b) => a.username.localeCompare(b.username));
+  let rows = tempsProdRows(byUser).slice().sort((a,b) => a.username.localeCompare(b.username));
+  if(onlyUid) rows = rows.filter(r => r.uid === onlyUid);
   const round2 = (h) => Math.round(h*100)/100;
 
   const resumeHeaders = ['Salarié','Temps prévu (h)','Temps passé (h)','Écart (h)','Nb tâches','Dépassements notables'];
@@ -6946,12 +6983,12 @@ function dispatchClickAction(action, el){
     case 'open-settings': if(isAdmin()){ showSettingsModal = true; render(); loadUsersList(); } break;
     case 'goto-conges': currentPage = 'conges'; render(); break;
     case 'goto-planning': currentPage = 'planning'; render(); break;
-    case 'goto-temps-prod': if(canSupervise()){ currentPage = 'tempsProd'; render(); } break;
+    case 'goto-temps-prod': currentPage = 'tempsProd'; render(); break;
     case 'conges-tab': congesTab = el.dataset.tab; render(); break;
     case 'temps-prod-mode': tempsProdPeriodMode = el.dataset.mode; render(); break;
     case 'temps-prod-nav': navigateTempsProdPeriod(el.dataset.dir); break;
     case 'temps-prod-today': tempsProdToday(); break;
-    case 'temps-prod-export': exportTempsProdExcel(); break;
+    case 'temps-prod-export': exportTempsProdExcel(canSupervise() ? undefined : String(currentUser.id)); break;
     case 'temps-prod-sort': setTempsProdSort(el.dataset.key); break;
     case 'temps-prod-detail-sort': setTempsProdDetailSort(el.dataset.userId, el.dataset.key); break;
     case 'temps-prod-toggle': tempsProdExpanded[el.dataset.userId] = !tempsProdExpanded[el.dataset.userId]; render(); break;
