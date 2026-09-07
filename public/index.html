@@ -764,6 +764,20 @@ function loadDoneFilterPref(){
   try{ const v = localStorage.getItem(DONE_FILTER_STORAGE_KEY); if(v) doneFilterRange = v; }
   catch(e){ /* préférence absente ou indisponible */ }
 }
+// Limite le nombre de commandes actives affichées dans la liste détaillée (le tableau complet,
+// ~10 champs par ligne, est la partie la plus coûteuse à construire — voir CLAUDE.md) : par défaut
+// "Tout" pour ne rien changer au comportement existant, réglable pour qui a beaucoup de commandes
+// actives et veut alléger l'affichage sur un poste peu puissant.
+const ACTIVE_LIMIT_STORAGE_KEY = 'planning-atelier-active-commandes-limit';
+let activeCommandesLimit = Infinity;
+function loadActiveCommandesLimitPref(){
+  try{
+    const raw = localStorage.getItem(ACTIVE_LIMIT_STORAGE_KEY);
+    if(raw === 'all' || !raw) activeCommandesLimit = Infinity;
+    else { const v = Number(raw); if([10,25,50,75,100].includes(v)) activeCommandesLimit = v; }
+  }
+  catch(e){ /* préférence absente ou indisponible */ }
+}
 const KANBAN_GROUPED_VIEW_KEY = 'planning-atelier-kanban-grouped-view';
 let kanbanGroupedView = false; // true = les pièces fusionnées n'affichent qu'une seule carte groupée
 function loadKanbanGroupedViewPref(){
@@ -6299,9 +6313,13 @@ function renderCommandes(schedule){
   </div>
   ${isolatedCommande ? `<div class="isolate-banner">Commande isolée : <strong>${escapeHtml(isolatedCommande.nom)}</strong><button class="ghost small" data-action="clear-isolate">✕ Afficher toutes les commandes</button></div>` : ''}`;
 
+  // Limite le nombre de commandes réellement construites dans le DOM : le tableau détaillé
+  // (~10 champs par ligne) est la partie la plus coûteuse à afficher — voir CLAUDE.md. Le compteur
+  // en tête de section reste toujours le total réel ; seule la liste rendue est tronquée.
+  const activeShown = activeCommandesLimit === Infinity ? active : active.slice(0, activeCommandesLimit);
   let activeBody;
   if(active.length){
-    activeBody = active.map((c,idx)=>renderCommandeCard(c, idx, active.length)).join('');
+    activeBody = activeShown.map((c,idx)=>renderCommandeCard(c, idx, activeShown.length)).join('');
   } else if(schedule.length===0){
     activeBody = `<div class="empty-state"><strong>Aucune commande en cours</strong>Ajoutez votre première commande ci-dessous pour démarrer le planning.</div>`;
   } else if(searchQuery){
@@ -6309,13 +6327,26 @@ function renderCommandes(schedule){
   } else {
     activeBody = `<div class="empty-state"><strong>Toutes les commandes sont terminées</strong>Retrouvez-les dans la section ci-dessous.</div>`;
   }
+  const activeCountLabel = (activeShown.length !== active.length)
+    ? `<span class="n">${active.length}</span>Tâches en cours — priorité de haut en bas <span class="footer-note" style="display:inline; margin:0;">(${activeShown.length} affichées)</span>`
+    : `<span class="n">${active.length}</span>Tâches en cours — priorité de haut en bas`;
+  const activeLimitControl = `
+    <select class="small done-filter-select" data-action="set-active-limit" title="Limiter le nombre de commandes affichées — allège l'affichage sur un poste peu puissant">
+      <option value="10" ${activeCommandesLimit===10?'selected':''}>10</option>
+      <option value="25" ${activeCommandesLimit===25?'selected':''}>25</option>
+      <option value="50" ${activeCommandesLimit===50?'selected':''}>50</option>
+      <option value="75" ${activeCommandesLimit===75?'selected':''}>75</option>
+      <option value="100" ${activeCommandesLimit===100?'selected':''}>100</option>
+      <option value="all" ${activeCommandesLimit===Infinity?'selected':''}>Tout</option>
+    </select>`;
 
   const activeSection = `
   <section class="panel">
     <div class="panel-head">
-      <h2><span class="n">${active.length}</span>Tâches en cours — priorité de haut en bas</h2>
+      <h2>${activeCountLabel}</h2>
+      <button class="small primary" data-action="sort-by-priority" title="Urgence d'abord (Urgente > Importante > Normale), puis échéance la plus proche">⇕ Trier par priorité</button>
       <div style="display:flex; align-items:center; gap:8px;">
-        <button class="small" data-action="sort-by-priority" title="Urgence d'abord (Urgente > Importante > Normale), puis échéance la plus proche">Trier par priorité</button>
+        ${activeLimitControl}
         <button class="ghost icon-btn collapse-chevron ${panelCollapsed.active?'collapsed':''}" data-action="toggle-panel-collapse" data-key="active" title="${panelCollapsed.active?'Déplier':'Replier'}">▾</button>
       </div>
     </div>
@@ -6737,6 +6768,13 @@ function dispatchChangeAction(el, action){
     case 'op-statut-select': setOpStatut(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'op-duree-field': updateOpDuree(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'set-done-filter': doneFilterRange = el.value; try{ localStorage.setItem(DONE_FILTER_STORAGE_KEY, doneFilterRange); }catch(e){} render(); break;
+    case 'set-active-limit': {
+      const isAllActive = el.value === 'all';
+      activeCommandesLimit = isAllActive ? Infinity : Number(el.value);
+      try{ localStorage.setItem(ACTIVE_LIMIT_STORAGE_KEY, isAllActive ? 'all' : String(activeCommandesLimit)); }catch(e){}
+      render();
+      break;
+    }
     case 'set-kanban-done-limit': {
       // "Tout" = Infinity : slice(0, Infinity) renvoie simplement toute la liste, sans cas particulier.
       const isAll = el.value === 'all';
@@ -7473,6 +7511,7 @@ async function startApp(){
   loadSettingsUIPrefs();
   loadDoneFilterPref();
   loadKanbanDoneLimitPref();
+  loadActiveCommandesLimitPref();
   loadKanbanMachineFilters();
   loadKanbanGroupedViewPref();
   loadPanelCollapsePref();
