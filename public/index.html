@@ -443,6 +443,8 @@
   .commandes-columns .panel{margin-bottom:0;}
   .search-bar input{max-width:360px; background:var(--panel); border-color:var(--line);}
   .search-bar input.search-active{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent);}
+  .active-identity-select{font-size:11.5px; padding:4px 6px;}
+  .active-identity-select.active{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); font-weight:600;}
   .done-filter-select{width:auto; max-width:170px; padding:5px 8px; font-size:11.5px;}
   .badge{font-family:'IBM Plex Mono',monospace; font-size:11px; padding:3px 9px; border-radius:20px; white-space:nowrap; border:1px solid transparent;}
   .badge.green{color:var(--green); border-color:var(--green); background:rgba(53,117,87,0.1);}
@@ -780,6 +782,28 @@ function loadActiveCommandesLimitPref(){
     else { const v = Number(raw); if([10,25,50,75,100].includes(v)) activeCommandesLimit = v; }
   }
   catch(e){ /* préférence absente ou indisponible */ }
+}
+// Identité "active" sur ce poste — voir le sélecteur dans l'en-tête (renderHeader). Permet à
+// plusieurs opérateurs de se relayer sur un même poste partagé sans se déconnecter/reconnecter :
+// sert à préremplir l'opérateur des nouvelles tâches et à cibler "Mon temps de production" pour
+// qui n'a pas accès au tableau de bord superviseur. Ne change JAMAIS les droits réels : un
+// superviseur/administrateur connecté garde toujours sa vue complète quelle que soit l'identité
+// choisie ici — c'est une préférence de saisie/affichage locale à ce poste, pas une authentification.
+const ACTIVE_IDENTITY_STORAGE_KEY = 'planning-atelier-active-identity';
+let activeIdentityUserId = null; // null = utiliser le compte réellement connecté
+function loadActiveIdentityPref(){
+  try{ activeIdentityUserId = localStorage.getItem(ACTIVE_IDENTITY_STORAGE_KEY) || null; }
+  catch(e){ /* préférence absente ou indisponible */ }
+}
+// Id effectif à utiliser pour taguer une nouvelle tâche ou cibler "Mon temps de production" :
+// l'identité active choisie sur ce poste, sinon le compte réellement connecté.
+function activeIdentityId(){
+  return activeIdentityUserId || (currentUser ? String(currentUser.id) : null);
+}
+function activeIdentityUsername(){
+  if(!activeIdentityUserId) return currentUsername;
+  const u = usersList.find(uu => String(uu.id)===String(activeIdentityUserId));
+  return u ? u.username : currentUsername;
 }
 const KANBAN_GROUPED_VIEW_KEY = 'planning-atelier-kanban-grouped-view';
 let kanbanGroupedView = false; // true = les pièces fusionnées n'affichent qu'une seule carte groupée
@@ -2550,7 +2574,7 @@ async function testBackupNow(){
 
 function newDraft(){
   return { nom: '', refClient: '', dateBesoin: '', urgence: 'normale', _fusionGroups: [],
-    pieces: [ { id: uid('op'), piece: '', etape: '', machineId: state.machines[0] ? state.machines[0].id : '', tempsUnitaire: '', quantite: '1', phase: 1, dureeOverrideH: null, dateDebutPossible: null } ] };
+    pieces: [ { id: uid('op'), piece: '', etape: '', machineId: state.machines[0] ? state.machines[0].id : '', tempsUnitaire: '', quantite: '1', phase: 1, dureeOverrideH: null, dateDebutPossible: null, operatorUserId: activeIdentityId() } ] };
 }
 // Regroupe, dans le formulaire de nouvelle commande, toutes les lignes déjà saisies qui visent le
 // même poste marqué "fusionnable" — la fusion réelle (mêmes id que ces lignes) n'est appliquée
@@ -2575,7 +2599,7 @@ function groupDraftRowsByPoste(){
 function toggleNewForm(){ showNewForm = !showNewForm; if(showNewForm && !draft) draft = newDraft(); render(); }
 function addDraftOp(){
   const prev = draft.pieces[draft.pieces.length-1];
-  draft.pieces.push({ id: uid('op'), piece:'', etape:'', machineId: state.machines[0]?state.machines[0].id:'', tempsUnitaire:'', quantite:'1', phase: prev ? (Number(prev.phase)||1)+1 : 1, dureeOverrideH: null, dateDebutPossible: null });
+  draft.pieces.push({ id: uid('op'), piece:'', etape:'', machineId: state.machines[0]?state.machines[0].id:'', tempsUnitaire:'', quantite:'1', phase: prev ? (Number(prev.phase)||1)+1 : 1, dureeOverrideH: null, dateDebutPossible: null, operatorUserId: activeIdentityId() });
   render();
 }
 function removeDraftOp(idx){
@@ -3546,6 +3570,9 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore){
     if(prev === 'a_faire'){
       o.debutReel = nowStr;
       o.manualStart = nowStr; // la tâche démarre réellement maintenant : on fige son début
+      // Tague automatiquement l'opérateur si personne ne l'a fait à la création (poste partagé :
+      // voir activeIdentityId) — jamais d'écrasement si un opérateur était déjà choisi.
+      if(!o.operatorUserId){ const aid = activeIdentityId(); if(aid) o.operatorUserId = aid; }
     }
     if(o.machineId && isInPauseWindow(o, new Date(), state)){
       // on démarre/reprend en pleine pause déjeuner : elle part directement en pause automatique
@@ -4432,6 +4459,11 @@ function renderHeader(){
       <button class="small" data-action="trigger-import" title="Recharger un fichier .json exporté précédemment">Importer</button>
       <input type="file" id="import-file-input" accept="application/json" style="display:none;" onchange="handleImportFile(event)">` : ''}
       ${isAdmin() ? `<button class="small" data-action="open-settings" title="Paramétrer les horaires de travail">⚙ Paramétrer</button>` : ''}
+      ${usersList.length > 1 ? `
+      <select data-action="set-active-identity" class="${activeIdentityUserId?'active-identity-select active':'active-identity-select'}" title="Identité active sur ce poste — préremplit l'opérateur des nouvelles tâches et cible « Mon temps de production », sans changer les droits réels ni se déconnecter">
+        <option value="" ${!activeIdentityUserId?'selected':''}>👤 ${currentUsername?escapeHtml(currentUsername):'Moi'} (connecté)</option>
+        ${usersList.filter(u=>!currentUser || String(u.id)!==String(currentUser.id)).map(u=>`<option value="${u.id}" ${String(activeIdentityUserId)===String(u.id)?'selected':''}>👤 ${escapeHtml(u.username)}</option>`).join('')}
+      </select>` : ''}
       <span class="footer-note" style="margin:0 4px;">${currentUsername?escapeHtml(currentUsername):''}</span>
       <button class="small" data-action="logout" title="Se déconnecter">Déconnexion</button>
     </div>
@@ -4965,19 +4997,21 @@ function renderTempsProdPeriodControls(label){
     </div>`;
   return `<div class="view-tabs">${modesHtml}</div>${navHtml}`;
 }
-// Vue d'un opérateur (non superviseur) : uniquement ses propres tâches, sans liste des collègues —
-// même moteur de calcul (computeProductionTimeByUser) que la vue superviseur, simplement filtré à
-// currentUser.
+// Vue d'un opérateur (non superviseur) : uniquement les tâches de l'identité active sur ce poste
+// (compte connecté par défaut, ou la personne choisie dans le sélecteur de l'en-tête sur un poste
+// partagé — voir activeIdentityId) — jamais la liste des collègues. Même moteur de calcul
+// (computeProductionTimeByUser) que la vue superviseur, simplement filtré à cette seule identité.
 function renderTempsProdSelfPage(start, end, label){
-  const uid = String(currentUser.id);
+  const uid = activeIdentityId();
   const byUser = computeProductionTimeByUser(state, start, end);
   const rec = byUser[uid] || { totalH:0, totalPrevuH:0, details:[] };
   const nbOverrun = rec.details.filter(d => isOverrunTask(d.prevuH, d.h)).length;
-  const row = { uid, username: currentUser.username, totalH: rec.totalH, totalPrevuH: rec.totalPrevuH, ecartH: rec.totalH-rec.totalPrevuH, nbTaches: rec.details.length, nbOverrun, details: rec.details };
+  const row = { uid, username: activeIdentityUsername(), totalH: rec.totalH, totalPrevuH: rec.totalPrevuH, ecartH: rec.totalH-rec.totalPrevuH, nbTaches: rec.details.length, nbOverrun, details: rec.details };
+  const title = activeIdentityUserId ? `⏱ Temps de production — ${escapeHtml(row.username)}` : '⏱ Mon temps de production';
   return `
   <section class="panel">
     <div class="panel-head">
-      <h2>⏱ Mon temps de production</h2>
+      <h2>${title}</h2>
       <button class="small" data-action="temps-prod-export" title="Exporter mon détail sur la période affichée">⬇ Exporter (.xlsx)</button>
     </div>
     <div class="panel-body">${renderTempsProdPeriodControls(label)}</div>
@@ -6988,7 +7022,7 @@ function dispatchClickAction(action, el){
     case 'temps-prod-mode': tempsProdPeriodMode = el.dataset.mode; render(); break;
     case 'temps-prod-nav': navigateTempsProdPeriod(el.dataset.dir); break;
     case 'temps-prod-today': tempsProdToday(); break;
-    case 'temps-prod-export': exportTempsProdExcel(canSupervise() ? undefined : String(currentUser.id)); break;
+    case 'temps-prod-export': exportTempsProdExcel(canSupervise() ? undefined : activeIdentityId()); break;
     case 'temps-prod-sort': setTempsProdSort(el.dataset.key); break;
     case 'temps-prod-detail-sort': setTempsProdDetailSort(el.dataset.userId, el.dataset.key); break;
     case 'temps-prod-toggle': tempsProdExpanded[el.dataset.userId] = !tempsProdExpanded[el.dataset.userId]; render(); break;
@@ -7112,6 +7146,13 @@ function dispatchChangeAction(el, action){
     case 'user-leave-allocation': updateUserLeaveAllocation(el.dataset.userId, el.dataset.typeId, el.value); break;
     case 'equipe-statut-filter': equipeStatutFilter = el.value; render(); break;
     case 'equipe-personne-filter': equipePersonneFilter = el.value; render(); break;
+    case 'set-active-identity': {
+      activeIdentityUserId = el.value || null;
+      try{ localStorage.setItem(ACTIVE_IDENTITY_STORAGE_KEY, activeIdentityUserId || ''); }catch(e){}
+      showToast(activeIdentityUserId ? `Identité active : ${activeIdentityUsername()}` : 'Identité active : compte connecté');
+      render();
+      break;
+    }
     case 'calyear-personne-filter': calendrierPersonneFilter = el.value; render(); break;
     case 'calyear-statut-filter': calendrierStatutFilter = el.value; render(); break;
     case 'temps-prod-range-debut': tempsProdRangeDebut = el.value; render(); break;
@@ -7873,6 +7914,7 @@ async function startApp(){
   loadDoneFilterPref();
   loadKanbanDoneLimitPref();
   loadActiveCommandesLimitPref();
+  loadActiveIdentityPref();
   loadKanbanMachineFilters();
   loadKanbanGroupedViewPref();
   loadPanelCollapsePref();
