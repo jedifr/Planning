@@ -4997,6 +4997,7 @@ function renderTempsProdSessionModal(){
   const m = state.machines.find(mm=>mm.id===o.machineId);
   const operateur = o.operatorUserId ? usersList.find(u=>String(u.id)===String(o.operatorUserId)) : null;
   const fmtJour = (d) => d.toLocaleDateString('fr-FR', { weekday:'long', day:'2-digit', month:'long' });
+  const fmtJourCourt = (d) => d.toLocaleDateString('fr-FR', { weekday:'short', day:'2-digit', month:'short' });
   const fmtHeure = (d) => d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' });
   let rows = '';
   if(o.sessions && o.sessions.length){
@@ -5021,15 +5022,23 @@ function renderTempsProdSessionModal(){
       }
     });
   } else if(o.debutReel || o.finReel){
+    // Sessions purgées : il ne reste qu'un début et une fin globaux, qui peuvent tomber des jours
+    // différents (nuits, week-end, jours de pause entre deux reprises) — un seul jour affiché
+    // ferait croire à tort que tout s'est joué le jour du début (voir le bug rapporté : une tâche
+    // commencée un vendredi et terminée le lundi suivant affichait juste "vendredi").
+    const dDebut = o.debutReel ? new Date(o.debutReel) : null;
+    const dFin = o.finReel ? new Date(o.finReel) : null;
+    const sameDay = dDebut && dFin && dDebut.toDateString() === dFin.toDateString();
+    const jourCell = (dDebut && dFin && !sameDay) ? `${fmtJourCourt(dDebut)} → ${fmtJourCourt(dFin)}` : fmtJour(dDebut || dFin);
     rows = `<tr>
-      <td>${o.debutReel ? fmtJour(new Date(o.debutReel)) : '—'}</td>
-      <td>${o.debutReel ? fmtHeure(new Date(o.debutReel)) : '—'}</td>
-      <td>${o.finReel ? fmtHeure(new Date(o.finReel)) : '—'}</td>
+      <td>${jourCell}</td>
+      <td>${dDebut ? fmtHeure(dDebut) : '—'}</td>
+      <td>${dFin ? fmtHeure(dFin) : '—'}</td>
       <td>${o.dureeReelleH!=null ? formatHeures(o.dureeReelleH) : '—'}</td>
     </tr>`;
   }
   const purgedNote = (!o.sessions || !o.sessions.length)
-    ? `<div class="footer-note" style="text-align:left; margin-top:10px;">Détail des reprises/pauses non disponible : cette tâche est terminée depuis un moment, seul le bilan global (début/fin/durée) a été conservé.</div>`
+    ? `<div class="footer-note" style="text-align:left; margin-top:10px;">Détail des reprises/pauses non disponible : cette tâche est terminée depuis un moment, seul le bilan global a été conservé. Le début et la fin peuvent être à plusieurs jours d'écart (nuits, week-end, pauses) — seule la durée indiquée correspond au temps de travail réellement compté.</div>`
     : '';
   return `<div class="modal-overlay">
     <div class="modal-box" role="dialog" aria-modal="true">
