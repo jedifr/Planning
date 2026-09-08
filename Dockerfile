@@ -1,6 +1,6 @@
 FROM node:18-bullseye
 
-RUN apt-get update && apt-get install -y --no-install-recommends zip && rm -rf /var/lib/apt/lists/*
+RUN apt-get update -o Acquire::Check-Valid-Until=false && apt-get install -y --no-install-recommends zip && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
