@@ -443,6 +443,9 @@
   .commandes-columns .panel{margin-bottom:0;}
   .search-bar input{max-width:360px; background:var(--panel); border-color:var(--line);}
   .search-bar input.search-active{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent);}
+  .temps-prod-commande-link{cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px;}
+  .temps-prod-commande-link:hover{color:var(--accent);}
+  .temps-prod-pause-row td{color:var(--text-faint); font-style:italic; background:var(--panel-2); text-align:center; font-size:11.5px;}
   .active-identity-select{font-size:11.5px; padding:4px 6px; width:auto;}
   .active-identity-select.active{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); font-weight:600;}
   .done-filter-select{width:auto; max-width:170px; padding:5px 8px; font-size:11.5px;}
@@ -4887,7 +4890,7 @@ function computeProductionTimeByUser(st, periodStart, periodEnd){
       u.totalH += h;
       const prevuH = dureePrevueH(o);
       u.totalPrevuH += prevuH;
-      u.details.push({ cid:c.id, commandeNom:c.nom, refClient:c.refClient||'', piece:o.piece, etape:o.etape, machineNom: m?m.nom:'—', h, prevuH, date: repDate });
+      u.details.push({ cid:c.id, oid:o.id, commandeNom:c.nom, refClient:c.refClient||'', piece:o.piece, etape:o.etape, machineNom: m?m.nom:'—', h, prevuH, date: repDate });
     }
   };
   (st.commandes||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
@@ -4964,7 +4967,7 @@ function renderTempsProdDetail(row, indent){
   const rows = details.map(d => {
     const overrun = isOverrunTask(d.prevuH, d.h);
     return `<tr${overrun?` style="background:${hexToRgba('#b23a30',0.08)};"`:''}>
-    <td>${escapeHtml(d.commandeNom)}${d.refClient?` <span class="footer-note" style="margin:0;">(${escapeHtml(d.refClient)})</span>`:''}</td>
+    <td><span class="temps-prod-commande-link" data-action="show-temps-prod-sessions" data-cid="${d.cid}" data-oid="${d.oid}" title="Voir le détail des horaires (jours, début, pauses, fin)">${escapeHtml(d.commandeNom)}</span>${d.refClient?` <span class="footer-note" style="margin:0;">(${escapeHtml(d.refClient)})</span>`:''}</td>
     <td>${escapeHtml(d.piece)} / ${escapeHtml(d.etape)}</td>
     <td>${escapeHtml(d.machineNom)}</td>
     <td>${d.date ? d.date.toLocaleDateString('fr-FR') : '—'}</td>
@@ -4977,6 +4980,74 @@ function renderTempsProdDetail(row, indent){
     <thead><tr>${th('commande','Commande')}${th('piece','Pièce / Étape')}${th('poste','Poste')}${th('date','Date')}${th('prevu','Temps prévu')}${th('h','Temps passé')}${th('ecart','Écart')}</tr></thead>
     <tbody>${rows || `<tr><td colspan="7" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
   </table>`;
+}
+// Pop-up "détail des horaires" au clic sur une commande dans le tableau de détail — voir CLAUDE.md :
+// sessions[] est le détail réel tant qu'une pièce n'est pas "termine" (ou pas encore purgée par
+// purgeOldSessions) ; une fois purgée, seuls debutReel/finReel/dureeReelleH restent — le détail
+// jour par jour n'existe alors plus.
+let tempsProdSessionModal = null; // { cid, oid }
+function showTempsProdSessions(cid, oid){ tempsProdSessionModal = { cid, oid }; render(); }
+function closeTempsProdSessions(){ tempsProdSessionModal = null; render(); }
+function renderTempsProdSessionModal(){
+  if(!tempsProdSessionModal) return '';
+  const { cid, oid } = tempsProdSessionModal;
+  const c = (state.commandes||[]).find(cc=>cc.id===cid) || (state.commandesArchivees||[]).find(cc=>cc.id===cid);
+  const o = c ? c.pieces.find(oo=>oo.id===oid) : null;
+  if(!c || !o) return '';
+  const m = state.machines.find(mm=>mm.id===o.machineId);
+  const operateur = o.operatorUserId ? usersList.find(u=>String(u.id)===String(o.operatorUserId)) : null;
+  const fmtJour = (d) => d.toLocaleDateString('fr-FR', { weekday:'long', day:'2-digit', month:'long' });
+  const fmtHeure = (d) => d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' });
+  let rows = '';
+  if(o.sessions && o.sessions.length){
+    o.sessions.forEach((s, i) => {
+      const debut = new Date(s.debut);
+      const fin = s.fin ? new Date(s.fin) : null;
+      const dureeH = ((fin || new Date()).getTime() - debut.getTime()) / 3600000;
+      rows += `<tr>
+        <td>${fmtJour(debut)}</td>
+        <td>${fmtHeure(debut)}</td>
+        <td>${fin ? fmtHeure(fin) : '<em>en cours</em>'}</td>
+        <td>${formatHeures(dureeH)}</td>
+      </tr>`;
+      const next = o.sessions[i+1];
+      if(fin && next){
+        const nextDebut = new Date(next.debut);
+        const gapH = (nextDebut.getTime() - fin.getTime()) / 3600000;
+        if(gapH > 0.01){
+          const sameDay = fin.toDateString() === nextDebut.toDateString();
+          rows += `<tr class="temps-prod-pause-row"><td colspan="4">⏸ Pause — ${formatHeures(gapH)}${sameDay ? ` (reprise à ${fmtHeure(nextDebut)})` : ` (reprise le ${fmtJour(nextDebut)} à ${fmtHeure(nextDebut)})`}</td></tr>`;
+        }
+      }
+    });
+  } else if(o.debutReel || o.finReel){
+    rows = `<tr>
+      <td>${o.debutReel ? fmtJour(new Date(o.debutReel)) : '—'}</td>
+      <td>${o.debutReel ? fmtHeure(new Date(o.debutReel)) : '—'}</td>
+      <td>${o.finReel ? fmtHeure(new Date(o.finReel)) : '—'}</td>
+      <td>${o.dureeReelleH!=null ? formatHeures(o.dureeReelleH) : '—'}</td>
+    </tr>`;
+  }
+  const purgedNote = (!o.sessions || !o.sessions.length)
+    ? `<div class="footer-note" style="text-align:left; margin-top:10px;">Détail des reprises/pauses non disponible : cette tâche est terminée depuis un moment, seul le bilan global (début/fin/durée) a été conservé.</div>`
+    : '';
+  return `<div class="modal-overlay">
+    <div class="modal-box" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>⏱ Détail des horaires</h2>
+        <button class="ghost icon-btn" data-action="close-temps-prod-sessions" title="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="footer-note" style="text-align:left; margin-bottom:4px;">${escapeHtml(c.nom)}${c.refClient?` <span style="opacity:.7;">(${escapeHtml(c.refClient)})</span>`:''}</div>
+        <div class="footer-note" style="text-align:left; margin-bottom:10px;">${escapeHtml(o.piece)} / ${escapeHtml(o.etape)} — ${escapeHtml(m?m.nom:'—')}${operateur?` — ${escapeHtml(operateur.username)}`:''}</div>
+        <table class="ops-table">
+          <thead><tr><th>Jour</th><th>Début</th><th>Fin</th><th>Durée</th></tr></thead>
+          <tbody>${rows || `<tr><td colspan="4" style="text-align:center; color:var(--text-faint);">Aucun horaire enregistré</td></tr>`}</tbody>
+        </table>
+        ${purgedNote}
+      </div>
+    </div>
+  </div>`;
 }
 // Bornes et sélecteur de période, communs aux deux vues (superviseur et opérateur).
 function renderTempsProdPeriodControls(label){
@@ -6850,6 +6921,7 @@ function render(){
     appEl.innerHTML = [
       renderHeader(),
       renderTempsProdPage(),
+      renderTempsProdSessionModal(),
       renderSettingsModal(),
       renderToast()
     ].join('');
@@ -6957,7 +7029,7 @@ function updateHighlightClasses(){
 /* ---------------- délégation d'événements : clics & changements ---------------- */
 document.addEventListener('click', (e) => {
   if(e.target.classList && e.target.classList.contains('modal-overlay')){
-    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; closeSettingsModal(); return;
+    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; closeSettingsModal(); return;
   }
   if(contextMenu && !e.target.closest('.context-menu')){
     contextMenu = null; render();
@@ -7026,6 +7098,8 @@ function dispatchClickAction(action, el){
     case 'temps-prod-sort': setTempsProdSort(el.dataset.key); break;
     case 'temps-prod-detail-sort': setTempsProdDetailSort(el.dataset.userId, el.dataset.key); break;
     case 'temps-prod-toggle': tempsProdExpanded[el.dataset.userId] = !tempsProdExpanded[el.dataset.userId]; render(); break;
+    case 'show-temps-prod-sessions': showTempsProdSessions(el.dataset.cid, el.dataset.oid); break;
+    case 'close-temps-prod-sessions': closeTempsProdSessions(); break;
     case 'submit-leave-request': {
       const typeEl = document.getElementById('leavereq-type');
       const debutEl = document.getElementById('leavereq-debut');
