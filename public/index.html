@@ -4147,6 +4147,11 @@ function processExcelImportRows(rows){
 }
 // ---------------- Import personnalisé : correspondance de colonnes pour un fichier venant d'un
 // autre logiciel (ex. un autre GPAO), avec profils de correspondance réutilisables. ----------------
+// Mémorise le profil réellement utilisé au dernier import confirmé (pas juste survolé dans le menu
+// déroulant), pour le proposer par défaut au prochain import plutôt que de repartir d'un mapping vide
+// à chaque fois — préférence de navigateur, jamais synchronisée dans state (voir les autres clés
+// localStorage du fichier).
+const LAST_IMPORT_PROFILE_KEY = 'planning-atelier-last-import-profile';
 function startCustomImport(){
   document.getElementById('custom-import-file-input').click();
 }
@@ -4170,7 +4175,13 @@ function handleCustomImportFile(e){
                defaultMachineId:'', defaultOperatorByMachine:{} },
         posteValues: [], posteMapping: {}, groupByValue: {}, sousTraitanceByValue: {}, profileMapSnapshot: null, preview: null
       };
-      render();
+      let lastProfileId = null;
+      try{ lastProfileId = localStorage.getItem(LAST_IMPORT_PROFILE_KEY); }catch(e){ /* stockage indisponible : pas de profil par défaut, tant pis */ }
+      if(lastProfileId && (state.importProfiles||[]).some(p=>p.id===lastProfileId)){
+        applyImportProfile(lastProfileId); // rappelle le dernier profil utilisé plutôt qu'un mapping vide ; appelle déjà render()
+      } else {
+        render();
+      }
     }catch(err){
       alert("Impossible de lire ce fichier : " + err.message);
     }
@@ -4463,6 +4474,7 @@ function confirmCustomImport(){
     return result;
   };
   const { createdNoms, updatedNoms, sansEcheance } = applyFn(state);
+  try{ localStorage.setItem(LAST_IMPORT_PROFILE_KEY, profileId); }catch(e){ /* stockage indisponible : sans effet sur cet import, juste pas de mémorisation */ }
   invalidateSchedule();
   excelImportResult = {
     imported: createdNoms.length, updated: updatedNoms.length,

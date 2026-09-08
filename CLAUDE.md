@@ -66,7 +66,10 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
     une même pièce : voir « Travail à plusieurs sur une même pièce » ci-dessous. Toujours
     fermer (`.filter(s=>!s.fin).forEach(...)`), jamais une seule (`.find`), en pause/clôture.
 - `leaveTypes[]`, `leaveRequests[]`, `userLeaveAllocations`, `userMachines`, `userLunch`
-- `importProfiles[]` — profils de correspondance de l'import personnalisé
+- `importProfiles[]` — profils de correspondance de l'import personnalisé. Le dernier profil
+  réellement utilisé (confirmé, pas juste survolé) est proposé par défaut au prochain import via
+  `localStorage` (`LAST_IMPORT_PROFILE_KEY`), pas dans `state` — préférence de navigateur, pas
+  donnée d'atelier à synchroniser.
 
 `migrateState()` initialise tout nouveau champ sur les sauvegardes existantes.
 **Toujours y ajouter les nouveaux champs**, sinon les états anciens plantent ou se
