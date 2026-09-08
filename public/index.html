@@ -456,6 +456,13 @@
   .badge.done{color:var(--text-faint); border-color:var(--line);}
 
   table.ops-table{width:100%; border-collapse:collapse;}
+  /* Largeurs de colonnes fixes (via <colgroup>), pas dépendantes du contenu : sans ça, chaque
+     tableau "Temps de production" (un par salarié déplié) recalculait ses propres largeurs selon
+     le texte de ses cellules, et les colonnes (Poste, Date...) ne s'alignaient jamais d'un salarié
+     à l'autre. table-layout:fixed force le respect des largeurs du <colgroup>, quel que soit le
+     contenu (qui passe à la ligne au besoin plutôt que d'élargir la colonne). */
+  table.temps-prod-fixed{table-layout:fixed;}
+  table.temps-prod-fixed td{word-break:break-word;}
   .ops-subhead{
     font-family:'Oswald',sans-serif; font-size:10.5px; font-weight:600; letter-spacing:0.7px; text-transform:uppercase;
     color:var(--text-faint); padding:9px 12px 5px; border-top:1px solid var(--line-soft);
@@ -5035,7 +5042,8 @@ function renderTempsProdDetail(row, indent){
     <td>${formatEcart(d.h - d.prevuH)}${overrun?` <span title="Dépassement notable (+50% et plus de 15 min)">⚠️</span>`:''}</td>
   </tr>`;
   }).join('');
-  return `<table class="ops-table" style="${indent?'margin:0 0 0 24px; width:calc(100% - 24px);':''}">
+  return `<table class="ops-table temps-prod-fixed" style="${indent?'margin:0 0 0 24px; width:calc(100% - 24px);':''}">
+    <colgroup><col style="width:22%"><col style="width:22%"><col style="width:12%"><col style="width:10%"><col style="width:12%"><col style="width:12%"><col style="width:10%"></colgroup>
     <thead><tr>${th('commande','Commande')}${th('piece','Pièce / Étape')}${th('poste','Poste')}${th('date','Date')}${th('prevu','Temps prévu')}${th('h','Temps passé')}${th('ecart','Écart')}</tr></thead>
     <tbody>${rows || `<tr><td colspan="7" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
   </table>`;
@@ -5239,7 +5247,8 @@ function renderTempsProdPage(){
     <div class="panel-body">${renderTempsProdPeriodControls(label)}</div>
   </section>
   <section class="panel"><div class="panel-body">
-    <table class="ops-table">
+    <table class="ops-table temps-prod-fixed">
+      <colgroup><col style="width:28%"><col style="width:16%"><col style="width:16%"><col style="width:14%"><col style="width:12%"><col style="width:14%"></colgroup>
       <thead><tr>${th('username','Salarié')}${th('prevu','Temps prévu')}${th('total','Temps passé')}${th('ecart','Écart')}${th('nbTaches','Nb tâches')}${th('overrun','⚠️ Dépassements')}</tr></thead>
       <tbody>${rowsHtml || `<tr><td colspan="6" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
     </table>
