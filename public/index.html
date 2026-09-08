@@ -544,6 +544,10 @@
   .stat .num{font-family:'IBM Plex Mono',monospace; font-size:17px; color:var(--text); line-height:1;}
   .stat .lbl{font-size:10.5px; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-faint); white-space:nowrap;}
   .stat.alert .num{color:var(--red);}
+  .stat-clickable{cursor:pointer; border-radius:3px; padding:2px 6px; margin:-2px -6px;}
+  .stat-clickable:hover{background:rgba(178,58,48,0.1);}
+  .btn-at-risk-active{background:var(--red); border-color:var(--red); color:#fff;}
+  .btn-at-risk-active:hover{background:#96302a;}
 
   .footer-note{color:var(--text-faint); font-size:11px; margin-top:6px; text-align:center;}
   .pending-count-badge{display:inline-block; background:var(--red); color:#fff; border-radius:20px; padding:0 6px; font-size:10px; font-weight:700; margin-left:2px;}
@@ -722,6 +726,7 @@ function saveSettingsUIPrefs(){
   catch(e){ /* stockage indisponible : préférence simplement non retenue */ }
 }
 let searchQuery = '';
+let atRiskFilterActive = false; // filtre "⚠️ À risque" de la liste des commandes actives
 const DONE_FILTER_STORAGE_KEY = 'planning-atelier-done-filter';
 let doneFilterRange = 'all'; // 'all' | 'w1'|'w2'|'w3' (semaines) | 'm1'|'m2'|'m3'|'m6' (mois)
 const KANBAN_DONE_LIMIT_KEY = 'planning-atelier-kanban-done-limit';
@@ -1542,6 +1547,18 @@ function effectiveDueDate(dateBesoin){
   const d = new Date(dateBesoin+'T23:59:59');
   if(marge > 0) d.setDate(d.getDate() - marge);
   return d;
+}
+// Une commande est "à risque" dès que sa fin estimée dépasse son échéance effective — signal
+// avancé (pas seulement un retard déjà constaté), recalculé à chaque planning. Même prédicat que
+// le compteur "En retard sur échéance" des statistiques et que le filtre "⚠️ À risque" de la
+// liste des commandes actives — centralisé ici pour que les deux restent toujours d'accord.
+function isCommandeAtRisk(c){
+  return !!(c.dateBesoin && c.finEstimee && c.finEstimee > effectiveDueDate(c.dateBesoin));
+}
+// Jours (fractionnaires) de dépassement — sert à trier les commandes à risque de la plus en
+// retard à la moins en retard. Suppose isCommandeAtRisk(c) déjà vérifié par l'appelant.
+function commandeRiskDaysLate(c){
+  return (c.finEstimee.getTime() - effectiveDueDate(c.dateBesoin).getTime()) / 86400000;
 }
 function urgencyColorFor(u){
   const uc = (state.config && state.config.urgencyColors) || {};
@@ -3804,6 +3821,19 @@ function sortByPriority(){
   });
   commit();
 }
+// Filtre d'affichage (ne modifie jamais state.commandes) : isole les commandes actives à risque
+// de retard, triées de la plus en retard à la moins en retard. Activé aussi bien depuis le bouton
+// dédié que depuis le compteur cliquable de renderStats().
+function toggleAtRiskFilter(){
+  atRiskFilterActive = !atRiskFilterActive;
+  if(atRiskFilterActive){
+    panelCollapsed.active = false; // inutile d'activer un filtre qu'on ne voit pas
+    render();
+    document.getElementById('commandes-section')?.scrollIntoView({ behavior:'smooth', block:'start' });
+  } else {
+    render();
+  }
+}
 function exportData(){
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5260,14 +5290,17 @@ function exportTempsProdExcel(onlyUid){
 
 function renderStats(schedule){
   const total = schedule.length;
-  const enRetard = schedule.filter(c => c.dateBesoin && c.finEstimee && c.finEstimee > effectiveDueDate(c.dateBesoin)).length;
+  const enRetard = schedule.filter(isCommandeAtRisk).length;
   const opsRestantes = schedule.reduce((s,c)=> s + c.pieces.filter(o=>o.statut!=='termine').length, 0);
+  const enRetardStat = enRetard>0
+    ? `<div class="stat alert stat-clickable" data-action="toggle-at-risk-filter" title="Isoler les commandes actives à risque de retard, triées de la plus en retard à la moins en retard"><div class="num mono">${enRetard}</div><div class="lbl">En retard sur échéance</div></div>`
+    : `<div class="stat"><div class="num mono">${enRetard}</div><div class="lbl">En retard sur échéance</div></div>`;
   return `
   <section class="panel"><div class="panel-body" style="padding:9px 16px;">
     <div class="stat-row">
       <div class="stat"><div class="num mono">${total}</div><div class="lbl">Commandes actives</div></div>
       <div class="stat"><div class="num mono">${opsRestantes}</div><div class="lbl">Lignes restant à faire</div></div>
-      <div class="stat ${enRetard>0?'alert':''}"><div class="num mono">${enRetard}</div><div class="lbl">En retard sur échéance</div></div>
+      ${enRetardStat}
       <div class="stat"><div class="num mono">${state.machines.length}</div><div class="lbl">Postes actifs</div></div>
     </div>
   </div></section>`;
@@ -6823,7 +6856,11 @@ function renderCommandeCard(c, idx, total){
 
 function renderCommandes(schedule){
   const filtered = schedule.filter(c => matchesSearch(c, searchQuery) && (!selectedCommandeId || c.id===selectedCommandeId));
-  const active = filtered.filter(c => c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine'));
+  let active = filtered.filter(c => c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine'));
+  const nbAtRisk = active.filter(isCommandeAtRisk).length;
+  if(atRiskFilterActive){
+    active = active.filter(isCommandeAtRisk).sort((a,b) => commandeRiskDaysLate(b) - commandeRiskDaysLate(a));
+  }
   const doneAll = filtered.filter(c => c.pieces.length>0 && c.pieces.every(o=>o.statut==='termine'));
   const doneCutoff = doneFilterCutoff(doneFilterRange);
   const done = !doneCutoff ? doneAll : doneAll.filter(c => {
@@ -6848,6 +6885,8 @@ function renderCommandes(schedule){
     activeBody = activeShown.map((c,idx)=>renderCommandeCard(c, idx, activeShown.length)).join('');
   } else if(schedule.length===0){
     activeBody = `<div class="empty-state"><strong>Aucune commande en cours</strong>Ajoutez votre première commande ci-dessous pour démarrer le planning.</div>`;
+  } else if(atRiskFilterActive){
+    activeBody = `<div class="empty-state"><strong>Aucune commande à risque</strong>Toutes les commandes en cours respectent leur échéance estimée.</div>`;
   } else if(searchQuery){
     activeBody = `<div class="empty-state"><strong>Aucun résultat</strong>Aucune commande en cours ne correspond à votre recherche.</div>`;
   } else {
@@ -6866,11 +6905,15 @@ function renderCommandes(schedule){
       <option value="all" ${activeCommandesLimit===Infinity?'selected':''}>Tout</option>
     </select>`;
 
+  const atRiskBtn = `<button class="small ${atRiskFilterActive?'btn-at-risk-active':''}" data-action="toggle-at-risk-filter" title="N'afficher que les commandes actives dont la fin estimée dépasse l'échéance, triées de la plus en retard à la moins en retard">${atRiskFilterActive?'✕ Afficher tout':`⚠️ À risque${nbAtRisk>0?` (${nbAtRisk})`:''}`}</button>`;
   const activeSection = `
   <section class="panel">
     <div class="panel-head">
       <h2>${activeCountLabel}</h2>
-      <button class="small primary" data-action="sort-by-priority" title="Urgence d'abord (Urgente > Importante > Normale), puis échéance la plus proche">⇕ Trier par priorité</button>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <button class="small primary" data-action="sort-by-priority" title="Urgence d'abord (Urgente > Importante > Normale), puis échéance la plus proche">⇕ Trier par priorité</button>
+        ${atRiskBtn}
+      </div>
       <div style="display:flex; align-items:center; gap:8px;">
         ${activeLimitControl}
         <button class="ghost icon-btn collapse-chevron ${panelCollapsed.active?'collapsed':''}" data-action="toggle-panel-collapse" data-key="active" title="${panelCollapsed.active?'Déplier':'Replier'}">▾</button>
@@ -7254,6 +7297,7 @@ function dispatchClickAction(action, el){
       break;
     }
     case 'sort-by-priority': sortByPriority(); break;
+    case 'toggle-at-risk-filter': toggleAtRiskFilter(); break;
     case 'clear-search': searchQuery = ''; render(); break;
     case 'clear-archive-search': archiveSearchQuery = ''; render(); break;
     case 'unarchive-commande': unarchiveCommande(el.dataset.cid); break;
