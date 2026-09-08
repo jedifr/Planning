@@ -3434,28 +3434,57 @@ function dureePasseeH(o, st){
   if(elapsedH > 1e-6) return elapsedH;
   return (o.dureeReelleH!=null && o.dureeReelleH>0) ? o.dureeReelleH : null;
 }
-// Rattrapage pour les pièces déjà terminées AVANT que la clôture ne fige elle-même dureeReelleH et
-// vide sessions[] (voir applySingleStatusChange) — sans ça, ces vieilles pièces garderaient pour
-// toujours le détail complet de leurs sessions, qui ne sert plus à rien une fois terminées et
-// n'aide en rien dureePasseeH (déjà couvert par dureeReelleH une fois figé). Balaie aussi les
-// commandes déjà archivées : leur volume compte encore dans la taille de l'état sauvegardé.
-function purgeOldSessions(st){
+// Rattrapage pour les pièces déjà terminées AVANT que la clôture ne fige elle-même dureeReelleH
+// (voir applySingleStatusChange) — sans ça, dureePasseeH() n'aurait aucun repli une fois les
+// sessions purgées par archiveOldSessions() ci-dessous. Purement local, sans risque : ne touche
+// jamais à sessions[] elle-même. Balaie aussi les commandes déjà archivées.
+function backfillDureeReelle(st){
   let changed = false;
   const sweep = (commandes) => {
     (commandes||[]).forEach(c => c.pieces.forEach(o => {
-      if(o.statut === 'termine' && o.sessions && o.sessions.length > 0){
-        if(o.dureeReelleH == null){
-          const elapsedH = opElapsedHours(o, st);
-          if(elapsedH > 1e-6) o.dureeReelleH = elapsedH;
-        }
-        o.sessions = [];
-        changed = true;
+      if(o.statut === 'termine' && o.sessions && o.sessions.length > 0 && o.dureeReelleH == null){
+        const elapsedH = opElapsedHours(o, st);
+        if(elapsedH > 1e-6){ o.dureeReelleH = elapsedH; changed = true; }
       }
     }));
   };
   sweep(st.commandes);
   sweep(st.commandesArchivees);
   return changed;
+}
+// Archive dans l'historique serveur (table session_history — jamais synchronisée avec app_state à
+// chaque poll, voir CLAUDE.md) les sessions des pièces déjà terminées, PUIS les retire de l'état —
+// dans cet ordre précis, et seulement si l'archivage est confirmé par le serveur : sans ça, un
+// échec réseau au moment de vider sessions[] perdrait ces horaires pour toujours. En cas d'échec,
+// les sessions restent en place et seront retentées au prochain démarrage de l'appli — idempotent
+// côté serveur (INSERT OR IGNORE), un même lot renvoyé deux fois ne crée jamais de doublon.
+async function archiveOldSessions(st){
+  const candidates = []; // { o, entries }
+  const sweep = (commandes) => {
+    (commandes||[]).forEach(c => c.pieces.forEach(o => {
+      if(o.statut === 'termine' && o.sessions && o.sessions.length > 0){
+        const m = st.machines.find(mm=>mm.id===o.machineId);
+        const entries = o.sessions.map(s => ({
+          commandeId: c.id, pieceId: o.id, commandeNom: c.nom, refClient: c.refClient||'',
+          piece: o.piece, etape: o.etape, machineNom: m?m.nom:'', operatorUserId: o.operatorUserId||null,
+          debut: s.debut, fin: s.fin
+        }));
+        candidates.push({ o, entries });
+      }
+    }));
+  };
+  sweep(st.commandes);
+  sweep(st.commandesArchivees);
+  if(!candidates.length) return false;
+  try{
+    const res = await fetch('/api/session-history', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries: candidates.flatMap(cand => cand.entries) })
+    });
+    if(!res.ok) return false;
+  }catch(e){ return false; }
+  candidates.forEach(({ o }) => { o.sessions = []; });
+  return true;
 }
 function isInPauseWindow(op, now, st){
   const cfg = configForPiece(op, st);
@@ -4982,12 +5011,64 @@ function renderTempsProdDetail(row, indent){
   </table>`;
 }
 // Pop-up "détail des horaires" au clic sur une commande dans le tableau de détail — voir CLAUDE.md :
-// sessions[] est le détail réel tant qu'une pièce n'est pas "termine" (ou pas encore purgée par
-// purgeOldSessions) ; une fois purgée, seuls debutReel/finReel/dureeReelleH restent — le détail
-// jour par jour n'existe alors plus.
+// sessions[] est le détail réel tant qu'une pièce n'est pas "termine" (ou pas encore archivée par
+// archiveOldSessions) ; une fois archivée, sessions[] est vide mais le détail complet reste
+// consultable via /api/session-history/:cid/:oid (chargé à la demande, voir loadTempsProdHistory).
 let tempsProdSessionModal = null; // { cid, oid }
-function showTempsProdSessions(cid, oid){ tempsProdSessionModal = { cid, oid }; render(); }
+// Clé "cid|oid" -> tableau de sessions archivées ({debut,fin}), ou null pendant le chargement.
+// Absent tant qu'aucune demande n'a été faite pour cette pièce.
+let tempsProdHistoryCache = {};
+function showTempsProdSessions(cid, oid){
+  tempsProdSessionModal = { cid, oid };
+  render();
+  const c = (state.commandes||[]).find(cc=>cc.id===cid) || (state.commandesArchivees||[]).find(cc=>cc.id===cid);
+  const o = c ? c.pieces.find(oo=>oo.id===oid) : null;
+  const key = cid+'|'+oid;
+  // Pas la peine d'interroger le serveur si les sessions sont encore là localement, ou si on les a déjà.
+  if(o && (!o.sessions || !o.sessions.length) && tempsProdHistoryCache[key] === undefined){
+    loadTempsProdHistory(cid, oid);
+  }
+}
 function closeTempsProdSessions(){ tempsProdSessionModal = null; render(); }
+async function loadTempsProdHistory(cid, oid){
+  const key = cid+'|'+oid;
+  tempsProdHistoryCache[key] = null; // en cours de chargement
+  if(tempsProdSessionModal && tempsProdSessionModal.cid===cid && tempsProdSessionModal.oid===oid) render(); // affiche tout de suite "Chargement…"
+  let entries = [];
+  try{
+    const res = await fetch(`/api/session-history/${encodeURIComponent(cid)}/${encodeURIComponent(oid)}`, { credentials:'include' });
+    if(res.ok){ const json = await res.json(); entries = json.entries || []; }
+  }catch(e){ /* silencieux : la pop-up retombera sur le bilan global (debutReel/finReel) */ }
+  tempsProdHistoryCache[key] = entries;
+  if(tempsProdSessionModal && tempsProdSessionModal.cid===cid && tempsProdSessionModal.oid===oid) render();
+}
+// Rendu commun à une liste de sessions {debut,fin} — qu'elles viennent de sessions[] (tâche encore
+// en cours/en pause) ou de l'historique archivé côté serveur (tâche déjà terminée). Une pause est
+// simplement l'écart entre la fin d'une session et le début de la suivante.
+function renderSessionRowsHtml(sessions, fmtJour, fmtHeure){
+  let rows = '';
+  sessions.forEach((s, i) => {
+    const debut = new Date(s.debut);
+    const fin = s.fin ? new Date(s.fin) : null;
+    const dureeH = ((fin || new Date()).getTime() - debut.getTime()) / 3600000;
+    rows += `<tr>
+      <td>${fmtJour(debut)}</td>
+      <td>${fmtHeure(debut)}</td>
+      <td>${fin ? fmtHeure(fin) : '<em>en cours</em>'}</td>
+      <td>${formatHeures(dureeH)}</td>
+    </tr>`;
+    const next = sessions[i+1];
+    if(fin && next){
+      const nextDebut = new Date(next.debut);
+      const gapH = (nextDebut.getTime() - fin.getTime()) / 3600000;
+      if(gapH > 0.01){
+        const sameDay = fin.toDateString() === nextDebut.toDateString();
+        rows += `<tr class="temps-prod-pause-row"><td colspan="4">⏸ Pause — ${formatHeures(gapH)}${sameDay ? ` (reprise à ${fmtHeure(nextDebut)})` : ` (reprise le ${fmtJour(nextDebut)} à ${fmtHeure(nextDebut)})`}</td></tr>`;
+      }
+    }
+  });
+  return rows;
+}
 function renderTempsProdSessionModal(){
   if(!tempsProdSessionModal) return '';
   const { cid, oid } = tempsProdSessionModal;
@@ -5000,45 +5081,36 @@ function renderTempsProdSessionModal(){
   const fmtJourCourt = (d) => d.toLocaleDateString('fr-FR', { weekday:'short', day:'2-digit', month:'short' });
   const fmtHeure = (d) => d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' });
   let rows = '';
+  let historyUsed = false;
   if(o.sessions && o.sessions.length){
-    o.sessions.forEach((s, i) => {
-      const debut = new Date(s.debut);
-      const fin = s.fin ? new Date(s.fin) : null;
-      const dureeH = ((fin || new Date()).getTime() - debut.getTime()) / 3600000;
-      rows += `<tr>
-        <td>${fmtJour(debut)}</td>
-        <td>${fmtHeure(debut)}</td>
-        <td>${fin ? fmtHeure(fin) : '<em>en cours</em>'}</td>
-        <td>${formatHeures(dureeH)}</td>
+    rows = renderSessionRowsHtml(o.sessions, fmtJour, fmtHeure);
+  } else {
+    const history = tempsProdHistoryCache[cid+'|'+oid];
+    if(Array.isArray(history) && history.length){
+      rows = renderSessionRowsHtml(history, fmtJour, fmtHeure);
+      historyUsed = true;
+    } else if(history === null){
+      rows = `<tr><td colspan="4" style="text-align:center; color:var(--text-faint);">Chargement de l'historique…</td></tr>`;
+    } else if(o.debutReel || o.finReel){
+      // Ni sessions[] locales, ni historique archivé (tâche terminée avant l'introduction de
+      // session_history) : il ne reste qu'un début et une fin globaux, qui peuvent tomber des
+      // jours différents (nuits, week-end, jours de pause entre deux reprises) — un seul jour
+      // affiché ferait croire à tort que tout s'est joué le jour du début (bug déjà rapporté : une
+      // tâche commencée un vendredi et terminée le lundi suivant affichait juste "vendredi").
+      const dDebut = o.debutReel ? new Date(o.debutReel) : null;
+      const dFin = o.finReel ? new Date(o.finReel) : null;
+      const sameDay = dDebut && dFin && dDebut.toDateString() === dFin.toDateString();
+      const jourCell = (dDebut && dFin && !sameDay) ? `${fmtJourCourt(dDebut)} → ${fmtJourCourt(dFin)}` : fmtJour(dDebut || dFin);
+      rows = `<tr>
+        <td>${jourCell}</td>
+        <td>${dDebut ? fmtHeure(dDebut) : '—'}</td>
+        <td>${dFin ? fmtHeure(dFin) : '—'}</td>
+        <td>${o.dureeReelleH!=null ? formatHeures(o.dureeReelleH) : '—'}</td>
       </tr>`;
-      const next = o.sessions[i+1];
-      if(fin && next){
-        const nextDebut = new Date(next.debut);
-        const gapH = (nextDebut.getTime() - fin.getTime()) / 3600000;
-        if(gapH > 0.01){
-          const sameDay = fin.toDateString() === nextDebut.toDateString();
-          rows += `<tr class="temps-prod-pause-row"><td colspan="4">⏸ Pause — ${formatHeures(gapH)}${sameDay ? ` (reprise à ${fmtHeure(nextDebut)})` : ` (reprise le ${fmtJour(nextDebut)} à ${fmtHeure(nextDebut)})`}</td></tr>`;
-        }
-      }
-    });
-  } else if(o.debutReel || o.finReel){
-    // Sessions purgées : il ne reste qu'un début et une fin globaux, qui peuvent tomber des jours
-    // différents (nuits, week-end, jours de pause entre deux reprises) — un seul jour affiché
-    // ferait croire à tort que tout s'est joué le jour du début (voir le bug rapporté : une tâche
-    // commencée un vendredi et terminée le lundi suivant affichait juste "vendredi").
-    const dDebut = o.debutReel ? new Date(o.debutReel) : null;
-    const dFin = o.finReel ? new Date(o.finReel) : null;
-    const sameDay = dDebut && dFin && dDebut.toDateString() === dFin.toDateString();
-    const jourCell = (dDebut && dFin && !sameDay) ? `${fmtJourCourt(dDebut)} → ${fmtJourCourt(dFin)}` : fmtJour(dDebut || dFin);
-    rows = `<tr>
-      <td>${jourCell}</td>
-      <td>${dDebut ? fmtHeure(dDebut) : '—'}</td>
-      <td>${dFin ? fmtHeure(dFin) : '—'}</td>
-      <td>${o.dureeReelleH!=null ? formatHeures(o.dureeReelleH) : '—'}</td>
-    </tr>`;
+    }
   }
-  const purgedNote = (!o.sessions || !o.sessions.length)
-    ? `<div class="footer-note" style="text-align:left; margin-top:10px;">Détail des reprises/pauses non disponible : cette tâche est terminée depuis un moment, seul le bilan global a été conservé. Le début et la fin peuvent être à plusieurs jours d'écart (nuits, week-end, pauses) — seule la durée indiquée correspond au temps de travail réellement compté.</div>`
+  const purgedNote = (!o.sessions || !o.sessions.length) && !historyUsed
+    ? `<div class="footer-note" style="text-align:left; margin-top:10px;">Détail des reprises/pauses non disponible pour cette tâche (terminée avant la mise en place de l'historique) : seul le bilan global a été conservé. Le début et la fin peuvent être à plusieurs jours d'écart (nuits, week-end, pauses) — seule la durée indiquée correspond au temps de travail réellement compté.</div>`
     : '';
   return `<div class="modal-overlay">
     <div class="modal-box" role="dialog" aria-modal="true">
@@ -8008,7 +8080,8 @@ async function startApp(){
   draft = newDraft();
   loadUsersList(); // nécessaire pour le sélecteur d'opérateur, pas seulement pour la pop-up Paramètres
   if(applyAutoPauseResume(state)) queueSilentSave(); // rattrape le cas où la page est ouverte en pleine pause déjeuner
-  if(purgeOldSessions(state)) queueSilentSave(); // fige le temps réellement passé et vide le détail des sessions devenu inutile sur les pièces déjà terminées
+  if(backfillDureeReelle(state)) queueSilentSave(); // fige le temps réellement passé sur les pièces déjà terminées
+  if(await archiveOldSessions(state)) queueSilentSave(); // archive puis vide sessions[], seulement une fois l'archivage confirmé par le serveur
   if(state.config.archiveAutoActive && archiveOldCommandes(state)) queueSilentSave(); // écarte les commandes terminées depuis longtemps du moteur de planification
   if(justRanImplicitDepsMigration) queueSilentSave(); // fige la migration des dépendances implicites côté serveur, pour tous les postes
   render();

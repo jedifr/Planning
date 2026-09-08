@@ -26,9 +26,10 @@ cache a déjà provoqué de fausses pistes de débogage.
 | `server.js` | Express + better-sqlite3. Sert le statique, expose l'API d'état, gère les congés. |
 | `auth.js` | Sessions (express-session), bcryptjs, rôles, réinitialisation de mot de passe. |
 | `backup.js` | Sauvegarde automatique par e-mail (nodemailer). |
+| `sessionHistory.js` | Historique des sessions de travail archivées (voir plus bas). |
 
-Base SQLite, deux tables : `app_state` (l'état entier en JSON + numéro de version) et
-`users`. Volume Docker nommé `planning-data`.
+Base SQLite, trois tables : `app_state` (l'état entier en JSON + numéro de version), `users`,
+et `session_history` (voir ci-dessous). Volume Docker nommé `planning-data`.
 
 **Il n'y a pas d'étape de compilation.** On édite `public/index.html` directement.
 
@@ -52,6 +53,27 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
 `migrateState()` initialise tout nouveau champ sur les sauvegardes existantes.
 **Toujours y ajouter les nouveaux champs**, sinon les états anciens plantent ou se
 comportent mal.
+
+## Historique des sessions (`session_history`)
+
+Une pièce `termine` voit ses `sessions[]` (détail Démarrer/Pause/Reprendre) archivées puis vidées
+de l'état — sans ça, l'état synchronisé à chaque poll grossirait indéfiniment. L'archivage vit dans
+une table SQLite **séparée**, jamais incluse dans `app_state` ni dans la synchro habituelle :
+
+- `backfillDureeReelle(st)` fige `dureeReelleH` si besoin — purement local, ne touche jamais
+  `sessions[]`.
+- `archiveOldSessions(st)` (async) envoie les sessions à `POST /api/session-history`, et **ne vide
+  `sessions[]` qu'une fois le serveur confirmé (`res.ok`)**. Un échec réseau laisse les sessions en
+  place, retentées au prochain démarrage — jamais de perte de données. Idempotent côté serveur
+  (`INSERT OR IGNORE` sur un index unique `piece_id, debut, fin`) : un même lot renvoyé deux fois
+  (deux onglets, une retentative) ne crée jamais de doublon.
+- La pop-up « Détail des horaires » (`renderTempsProdSessionModal`, onglet Temps de production)
+  interroge `GET /api/session-history/:cid/:oid` **à la demande** (jamais au chargement de la page)
+  quand `sessions[]` est vide localement, via `tempsProdHistoryCache` (clé `"cid|oid"`). Sans
+  historique disponible (tâche terminée avant l'introduction de cette table), elle retombe sur
+  `debutReel`/`finReel`/`dureeReelleH` — voir le piège plus bas sur l'affichage du jour dans ce cas.
+- Les sauvegardes (`/api/backup/test` et le planificateur) ajoutent `sessionHistory` à la copie en
+  mémoire de `app_state` juste avant l'envoi — jamais réenregistré dans `app_state` lui-même.
 
 ## Moteur de planification — `computeSchedule(st)`
 
@@ -189,6 +211,15 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   du HTML (`<br>`) affiche les balises littéralement.
 - **Champs de configuration texte.** `updateConfig` convertit par défaut en nombre ;
   un nouveau champ texte a besoin de son cas explicite, sinon il est silencieusement ignoré.
+- **Vider une donnée avant confirmation de son archivage.** `archiveOldSessions()` ne met
+  `o.sessions = []` qu'après un `POST /api/session-history` réussi — vider d'abord et archiver
+  ensuite perdrait ces horaires pour toujours au moindre problème réseau.
+- **N'afficher que le jour du début sur une plage début/fin.** Une pièce `termine` sans
+  `sessions[]` (déjà archivées, ou terminée avant l'introduction de `session_history`) n'a plus que
+  `debutReel`/`finReel`, qui peuvent tomber des jours différents (nuit, week-end, pause entre deux
+  reprises). Un rendu du type "Jour : {jour du début}" fait croire à tort que tout s'est joué ce
+  jour-là (bug réel : une tâche commencée un vendredi et terminée le lundi suivant affichait
+  seulement "vendredi"). Toujours comparer les deux dates et afficher la plage si elles diffèrent.
 
 ## Conventions
 

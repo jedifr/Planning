@@ -8,6 +8,7 @@ const cors = require('cors');
 const { runBackup, hasSmtpConfig, sendNotificationEmail } = require('./backup');
 const auth = require('./auth');
 const license = require('./license');
+const sessionHistory = require('./sessionHistory');
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'planning.db');
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -56,6 +57,7 @@ auth.initUsersTable(db);
 auth.bootstrapFirstUser(db, path.dirname(DB_PATH));
 license.initLicenseTable(db);
 license.bootstrapInitialLicense(db);
+sessionHistory.initSessionHistoryTable(db);
 
 const app = express();
 app.set('trust proxy', 1); // nécessaire pour que les cookies "secure" fonctionnent derrière un reverse proxy (Synology, etc.)
@@ -304,6 +306,24 @@ app.put('/api/state', requireAuth, requireLicense, (req, res) => {
   res.json({ version: newVersion });
 });
 
+// ---------------- Historique des sessions (voir sessionHistory.js) ----------------
+// Reçoit les sessions qu'un client vient de purger de app_state (pièce terminée) pour les
+// conserver indéfiniment sans jamais alourdir l'état synchronisé à chaque poll. Idempotent
+// (INSERT OR IGNORE sur un index unique) : un même lot renvoyé deux fois (deux onglets, un
+// échec réseau retenté) ne crée jamais de doublon.
+app.post('/api/session-history', requireAuth, requireLicense, (req, res) => {
+  const { entries } = req.body || {};
+  if(!Array.isArray(entries)) return res.status(400).json({ error: 'Champ "entries" (tableau) requis.' });
+  const inserted = sessionHistory.insertSessionHistoryBatch(db, entries);
+  res.json({ ok: true, inserted });
+});
+// Détail archivé d'une pièce précise — consulté à la demande (pop-up "Détail des horaires" sur
+// une tâche dont les sessions ont déjà été purgées de app_state), jamais chargé en masse.
+app.get('/api/session-history/:cid/:oid', requireAuth, requireLicense, (req, res) => {
+  const rows = sessionHistory.getSessionHistoryForPiece(db, req.params.cid, req.params.oid);
+  res.json({ entries: rows });
+});
+
 // Identité visuelle (titre, logo, mention de copyright) — publique, car l'écran de connexion
 // s'affiche avant toute authentification. N'expose volontairement rien d'autre de l'état.
 app.get('/api/branding', (req, res) => {
@@ -326,6 +346,9 @@ app.get('/api/health', (req, res) => res.json({ ok: true }));
 app.post('/api/backup/test', requireAuth, requireLicense, async (req, res) => {
   const row = db.prepare('SELECT data FROM app_state WHERE id = 1').get();
   const data = JSON.parse(row.data);
+  // Ajouté seulement sur cette copie en mémoire, pour la sauvegarde — jamais réenregistré dans
+  // app_state (l'historique des sessions reste hors du blob synchronisé à chaque poll).
+  data.sessionHistory = sessionHistory.getAllSessionHistory(db);
   const backupConfig = (data.config && data.config.backup) || {};
   const result = await runBackup(data, backupConfig);
   if(result.ok) return res.json({ ok: true });
@@ -351,6 +374,7 @@ async function checkScheduledBackup(){
     if(backupConfig.dernierEnvoi === todayStr()) return; // déjà envoyée aujourd'hui
 
     console.log('Sauvegarde automatique programmée : envoi en cours...');
+    data.sessionHistory = sessionHistory.getAllSessionHistory(db); // idem : copie en mémoire uniquement, voir /api/backup/test
     const result = await runBackup(data, backupConfig);
     if(result.ok){
       console.log('Sauvegarde automatique envoyée avec succès à', backupConfig.destinataire);
