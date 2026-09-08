@@ -7,8 +7,16 @@ Ordonnancement automatique, suivi des délais, gestion des congés.
 
 Le projet tourne en Docker sur un NAS Synology DS1817+.
 
+**Mise à jour** : `bash deploy.sh` depuis le dossier du projet — récupère la dernière version
+(en gérant proprement d'éventuelles modifications locales sur le NAS, ex. Cfg_admin.yml) puis
+reconstruit et redémarre le conteneur. Corrige aussi au passage un piège connu du NAS : son
+système de fichiers modifie parfois le bit exécutable des fichiers, ce qui fait apparaître à tort
+*tout* le dépôt comme modifié pour git (`git config core.fileMode false` — déjà dans le script).
+
+Sans le script, l'équivalent manuel :
 ```bash
 cd /volume1/TRAVAIL/PLANNING_ATELIER/planning-atelier-serveur
+git pull
 sudo docker compose down
 sudo docker compose up -d --build
 ```
