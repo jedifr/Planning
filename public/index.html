@@ -1081,6 +1081,7 @@ function migrateState(st){
       if(o.finReel === undefined) o.finReel = null;
       if(!o.sessions) o.sessions = [];
       if(o.autoPaused === undefined) o.autoPaused = false;
+      if(o.autoPausedOperators === undefined) o.autoPausedOperators = null;
       if(!Array.isArray(o.dependances)) o.dependances = [];
       if(o.phase === undefined || o.phase === null || isNaN(Number(o.phase))) o.phase = 1;
       if(o.tempsUnitaireTheorique === undefined || o.tempsUnitaireTheorique === null) o.tempsUnitaireTheorique = o.tempsUnitaire; // référence figée une seule fois (migration : valeur actuelle prise comme référence)
@@ -3528,19 +3529,26 @@ function applyAutoPauseResume(st){
       if(o.statut === 'en_cours' && inPause){
         const cfg = configForPiece(o, st);
         const pause = pauseWindowFor(now, cfg);
-        const open = (o.sessions||[]).find(s => !s.fin);
-        if(open) open.fin = toInputValue(pause.start);
+        // .filter, pas .find : plusieurs opérateurs peuvent travailler en parallèle sur cette pièce
+        // (voir joinOpSession) — toutes leurs sessions ouvertes doivent être refermées, et on retient
+        // qui elles étaient pour les rouvrir individuellement à la reprise ci-dessous.
+        const openSessions = (o.sessions||[]).filter(s => !s.fin);
+        openSessions.forEach(s => { s.fin = toInputValue(pause.start); });
+        o.autoPausedOperators = openSessions.map(s => s.operatorUserId || null);
         o.statut = 'en_pause';
         o.autoPaused = true;
         changed = true;
       } else if(o.statut === 'en_pause' && o.autoPaused && !inPause){
         if(!o.sessions) o.sessions = [];
-        // Reprise automatique (pas un clic de quelqu'un) : on garde le même opérateur que la
-        // session qu'on vient de refermer plutôt que l'identité active de ce poste-ci — sinon le
-        // travail de la personne d'avant la pause serait crédité à qui que ce soit dont le
-        // navigateur a déclenché la reprise.
-        const lastClosed = o.sessions[o.sessions.length-1];
-        o.sessions.push({ debut: toInputValue(now), fin: null, operatorUserId: lastClosed ? lastClosed.operatorUserId : (o.operatorUserId||null) });
+        // Reprise automatique (pas un clic de quelqu'un) : on garde les mêmes opérateurs que les
+        // sessions qu'on vient de refermer plutôt que l'identité active de ce poste-ci — sinon le
+        // travail des personnes d'avant la pause serait crédité à qui que ce soit dont le
+        // navigateur a déclenché la reprise. Une session rouverte par opérateur mis en pause.
+        const operators = (o.autoPausedOperators && o.autoPausedOperators.length)
+          ? o.autoPausedOperators
+          : [ (o.sessions[o.sessions.length-1]||{}).operatorUserId || o.operatorUserId || null ];
+        operators.forEach(opId => o.sessions.push({ debut: toInputValue(now), fin: null, operatorUserId: opId }));
+        o.autoPausedOperators = null;
         o.statut = 'en_cours';
         o.autoPaused = false;
         changed = true;
@@ -3650,13 +3658,14 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore){
       o.autoPaused = false;
     }
   } else if(newStatut === 'en_pause'){
-    const open = o.sessions.find(s => !s.fin);
-    if(open) open.fin = nowStr; // ferme la session en cours ; le temps de pause ne sera jamais comptabilisé
+    // .forEach, pas .find : plusieurs sessions peuvent être ouvertes en même temps si plusieurs
+    // opérateurs travaillent en parallèle sur cette pièce (voir joinOpSession) — il faut toutes les
+    // fermer, sinon celle d'un second opérateur resterait ouverte indéfiniment.
+    o.sessions.filter(s => !s.fin).forEach(s => { s.fin = nowStr; }); // le temps de pause ne sera jamais comptabilisé
     o.statut = 'en_pause';
     o.autoPaused = false; // pause déclenchée manuellement : ne sera pas reprise automatiquement
   } else if(newStatut === 'termine'){
-    const open = o.sessions.find(s => !s.fin);
-    if(open) open.fin = nowStr;
+    o.sessions.filter(s => !s.fin).forEach(s => { s.fin = nowStr; });
 
     // Le temps prévu (tempsUnitaire) n'est plus jamais modifié ici — seul le temps réellement passé
     // est enregistré à part (voir dureePasseeH), pour que "prévu" et "passé" restent deux valeurs
@@ -3784,6 +3793,34 @@ function setOpStatut(cid, oid, newStatut){
   if(maxAdvanceH > 0){
     showToast(`Terminée ${durationLabel(maxAdvanceH)} en avance — les tâches non figées viennent de se recaler automatiquement.`);
   }
+  commit();
+}
+// Permet à un second (ou troisième…) opérateur de se signaler comme travaillant, en parallèle, sur
+// une pièce déjà en_cours — cas réel d'un travail à plusieurs mains sur la même ligne (à distinguer
+// du split en plusieurs lignes utilisé pour deux MACHINES différentes, voir CLAUDE.md). Contrairement
+// à setOpStatut, ne touche pas o.statut (déjà en_cours) : ouvre juste une session supplémentaire. Les
+// heures de chaque opérateur s'additionnent ensuite naturellement puisque opElapsedHours/dureePasseeH
+// et computeProductionTimeByUser somment chaque session indépendamment (voulu : le temps de
+// production reflète le travail cumulé, pas seulement le temps d'horloge écoulé).
+function joinOpSession(cid, oid){
+  const c = state.commandes.find(c=>c.id===cid); if(!c) return;
+  const o = c.pieces.find(o=>o.id===oid); if(!o) return;
+  if(o.statut !== 'en_cours') return;
+  if(!o.sessions) o.sessions = [];
+  const myId = activeIdentityId();
+  const openSessions = o.sessions.filter(s => !s.fin);
+  if(myId && openSessions.some(s => String(s.operatorUserId) === String(myId))){
+    showToast('Vous travaillez déjà sur cette tâche.');
+    return;
+  }
+  const noms = Array.from(new Set(openSessions.map(s => {
+    const u = s.operatorUserId ? usersList.find(uu=>String(uu.id)===String(s.operatorUserId)) : null;
+    return u ? u.username : null;
+  }).filter(Boolean)));
+  const label = [o.piece, o.etape].filter(Boolean).join(' / ') || '(sans nom)';
+  const qui = noms.length ? noms.join(', ') : 'quelqu\'un d\'autre';
+  if(!confirm(`⚠️ "${label}" est déjà en cours (${qui}).\n\nEn la rejoignant, vous travaillez en parallèle : le temps de chacun est compté séparément et s'additionne dans le temps de production (ex. 2h à deux personnes = 4h cumulées).\n\nContinuer ?`)) return;
+  o.sessions.push({ debut: toInputValue(new Date()), fin: null, operatorUserId: myId });
   commit();
 }
 function setManualStartValue(cid, oid, value){
@@ -5572,6 +5609,7 @@ function renderContextMenu(){
   if(o.statut==='en_cours'){
     items.push({action:'ctx-pause', label:'⏸ Mettre en pause'});
     items.push({action:'ctx-finish', label:'✔ Terminer'});
+    items.push({action:'ctx-join', label:'➕ Travailler aussi sur cette tâche'});
   }
   if(o.statut==='en_pause'){
     items.push({action:'ctx-resume', label:'▶ Reprendre'});
@@ -6564,12 +6602,25 @@ function renderKanbanView(schedule){
       // diverger de l'opérateur assigné sur un poste partagé (voir activeIdentityId). Non
       // disponible une fois les sessions archivées/purgées (tâche terminée depuis un moment) :
       // l'assigné reste alors la seule info affichable.
-      const lastSessionK = (o.sessions && o.sessions.length) ? o.sessions[o.sessions.length-1] : null;
-      const producteurUidK = lastSessionK ? (lastSessionK.operatorUserId || o.operatorUserId) : null;
-      const producteurK = producteurUidK ? usersList.find(u=>String(u.id)===String(producteurUidK)) : null;
-      const operateurMetaK = (producteurK && operateurK && String(producteurK.id)!==String(operateurK.id))
-        ? ` · 👤 ${escapeHtml(operateurK.username)} (assigné) → ${escapeHtml(producteurK.username)} (réalise)`
-        : ((producteurK||operateurK) ? ` · 👤 ${escapeHtml((producteurK||operateurK).username)}` : '');
+      const openSessionsK = (o.sessions||[]).filter(s => !s.fin);
+      let operateurMetaK;
+      if(openSessionsK.length > 1){
+        // Plusieurs opérateurs travaillent en parallèle sur cette même pièce (voir joinOpSession) :
+        // on les liste tous plutôt qu'un seul "réalise", sinon la carte ferait croire à tort qu'une
+        // seule personne y travaille alors que leurs heures s'additionnent.
+        const nomsK = Array.from(new Set(openSessionsK.map(s => {
+          const u = s.operatorUserId ? usersList.find(uu=>String(uu.id)===String(s.operatorUserId)) : null;
+          return u ? u.username : null;
+        }).filter(Boolean)));
+        operateurMetaK = nomsK.length ? ` · 👤 ${nomsK.map(escapeHtml).join(' + ')} (en parallèle)` : '';
+      } else {
+        const lastSessionK = (o.sessions && o.sessions.length) ? o.sessions[o.sessions.length-1] : null;
+        const producteurUidK = lastSessionK ? (lastSessionK.operatorUserId || o.operatorUserId) : null;
+        const producteurK = producteurUidK ? usersList.find(u=>String(u.id)===String(producteurUidK)) : null;
+        operateurMetaK = (producteurK && operateurK && String(producteurK.id)!==String(operateurK.id))
+          ? ` · 👤 ${escapeHtml(operateurK.username)} (assigné) → ${escapeHtml(producteurK.username)} (réalise)`
+          : ((producteurK||operateurK) ? ` · 👤 ${escapeHtml((producteurK||operateurK).username)}` : '');
+      }
       const dueLineK = o.dateBesoin ? `<div class="kanban-card-due">Échéance : ${escapeHtml(new Date(o.dateBesoin+'T00:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'}))}</div>` : '';
       const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (Number(o.tempsUnitaire)*Number(o.quantite))/60;
       const plannedLineK = `<div class="kanban-card-planned">Prévu : ${durationLabel(dureeH)}</div>`;
@@ -7369,6 +7420,7 @@ function dispatchClickAction(action, el){
     case 'ctx-pause': contextMenu = null; setOpStatut(el.dataset.cid, el.dataset.oid, 'en_pause'); break;
     case 'ctx-resume': contextMenu = null; setOpStatut(el.dataset.cid, el.dataset.oid, 'en_cours'); break;
     case 'ctx-finish': contextMenu = null; setOpStatut(el.dataset.cid, el.dataset.oid, 'termine'); break;
+    case 'ctx-join': contextMenu = null; joinOpSession(el.dataset.cid, el.dataset.oid); break;
     case 'ctx-reopen': contextMenu = null; setOpStatut(el.dataset.cid, el.dataset.oid, 'a_faire'); break;
     case 'resume-paused-task': setOpStatut(el.dataset.cid, el.dataset.oid, 'en_cours'); break;
     case 'dismiss-paused-banner': dismissPausedBanner(); break;

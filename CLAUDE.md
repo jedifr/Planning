@@ -54,13 +54,17 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
 - `pieces[]` (dans une commande) — `piece`, `etape`, `machineId`, `tempsUnitaire`
   (minutes), `quantite`, `statut`, `phase`, `manualStart`, `dureeOverrideH`,
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
-  `fusionGroupId`, `fusionPinned`, `sousTraitance`, `dateDebutPossible`
+  `fusionGroupId`, `fusionPinned`, `sousTraitance`, `dateDebutPossible`,
+  `autoPausedOperators`
   - `operatorUserId` de la pièce = **opérateur assigné** (intention de planification, jamais
     écrasé automatiquement). Chaque élément de `sessions[]` porte son propre `operatorUserId`
     = qui a **réellement** ouvert cette session (identité active au moment du clic — voir
     plus bas) : les deux peuvent diverger sur un poste partagé (tâche assignée à Simon,
     démarrée/reprise par Louca). Repli sur l'opérateur assigné pour une session qui n'a pas ce
     champ (données antérieures à ce suivi).
+  - `sessions[]` peut contenir **plusieurs entrées ouvertes en même temps** (`fin: null`) sur
+    une même pièce : voir « Travail à plusieurs sur une même pièce » ci-dessous. Toujours
+    fermer (`.filter(s=>!s.fin).forEach(...)`), jamais une seule (`.find`), en pause/clôture.
 - `leaveTypes[]`, `leaveRequests[]`, `userLeaveAllocations`, `userMachines`, `userLunch`
 - `importProfiles[]` — profils de correspondance de l'import personnalisé
 
@@ -104,6 +108,26 @@ Louca, pas Simon, pour cette session.
 **Reprise automatique après pause déjeuner** (`applyAutoPauseResume`) : ce n'est PAS un clic de
 quelqu'un — on conserve l'`operatorUserId` de la session qu'on referme, jamais l'identité active du
 poste qui déclenche la reprise (qui peut être n'importe quel navigateur en train de sonder l'état).
+
+### Travail à plusieurs sur une même pièce
+
+Cas volontairement géré, distinct du split en plusieurs lignes utilisé pour deux **machines**
+différentes (une ligne par poste) : deux personnes peuvent physiquement travailler **en même
+temps sur la même ligne**. `joinOpSession(cid, oid)` (menu contextuel « ➕ Travailler aussi sur
+cette tâche », visible seulement si `statut==='en_cours'`) ouvre une session supplémentaire sans
+toucher au statut — la pièce peut donc avoir **plusieurs sessions ouvertes simultanément**
+(`fin: null`). Avertissement `confirm()` avant de rejoindre : les heures de chacun sont comptées
+séparément et **s'additionnent** (2h à deux personnes = 4h cumulées), assumé volontairement — ce
+n'est pas un bug de double-comptage, c'est la mesure du travail (main-d'œuvre) réellement investi,
+pas du temps d'horloge. `opElapsedHours`/`dureePasseeH` et `computeProductionTimeByUser` n'ont rien
+de spécial à faire : ils somment déjà chaque session indépendamment par son propre `operatorUserId`.
+
+Conséquence sur tout code qui ferme une session : `applySingleStatusChange` (pause/clôture) et
+`applyAutoPauseResume` (pause déjeuner automatique) doivent fermer **toutes** les sessions
+ouvertes (`.filter(s=>!s.fin).forEach(...)`), jamais une seule (`.find(s=>!s.fin)`) — sinon la
+session d'un second opérateur resterait ouverte indéfiniment. La reprise automatique après pause
+déjeuner rouvre une session par opérateur qui était en train de travailler (`autoPausedOperators`,
+peuplé à la pause, vidé à la reprise), pas une seule.
 
 ## Moteur de planification — `computeSchedule(st)`
 
@@ -244,6 +268,11 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
 - **Vider une donnée avant confirmation de son archivage.** `archiveOldSessions()` ne met
   `o.sessions = []` qu'après un `POST /api/session-history` réussi — vider d'abord et archiver
   ensuite perdrait ces horaires pour toujours au moindre problème réseau.
+- **Fermer une seule session avec `.find` alors que plusieurs peuvent être ouvertes.** Depuis
+  l'ajout du travail à plusieurs sur une même pièce (`joinOpSession`), `o.sessions` peut avoir
+  2+ entrées avec `fin: null` en même temps. Un `.find(s=>!s.fin)` (comme l'ancien code de pause/
+  clôture) n'en ferme qu'une seule et laisse les autres ouvertes pour toujours, gonflant
+  indéfiniment `opElapsedHours`. Toujours `.filter(s=>!s.fin).forEach(...)`.
 - **N'afficher que le jour du début sur une plage début/fin.** Une pièce `termine` sans
   `sessions[]` (déjà archivées, ou terminée avant l'introduction de `session_history`) n'a plus que
   `debutReel`/`finReel`, qui peuvent tomber des jours différents (nuit, week-end, pause entre deux
