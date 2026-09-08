@@ -63,7 +63,8 @@ function insertSessionHistoryBatch(db, entries){
 
 function getSessionHistoryForPiece(db, commandeId, pieceId){
   return db.prepare(`
-    SELECT debut, fin FROM session_history WHERE commande_id = ? AND piece_id = ? ORDER BY debut ASC
+    SELECT debut, fin, operator_user_id AS operatorUserId
+    FROM session_history WHERE commande_id = ? AND piece_id = ? ORDER BY debut ASC
   `).all(String(commandeId), String(pieceId));
 }
 

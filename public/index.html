@@ -3490,7 +3490,8 @@ async function archiveOldSessions(st){
         const m = st.machines.find(mm=>mm.id===o.machineId);
         const entries = o.sessions.map(s => ({
           commandeId: c.id, pieceId: o.id, commandeNom: c.nom, refClient: c.refClient||'',
-          piece: o.piece, etape: o.etape, machineNom: m?m.nom:'', operatorUserId: o.operatorUserId||null,
+          piece: o.piece, etape: o.etape, machineNom: m?m.nom:'',
+          operatorUserId: s.operatorUserId || o.operatorUserId || null, // qui a réellement fait CETTE session, pas forcément l'assigné
           debut: s.debut, fin: s.fin
         }));
         candidates.push({ o, entries });
@@ -3534,7 +3535,12 @@ function applyAutoPauseResume(st){
         changed = true;
       } else if(o.statut === 'en_pause' && o.autoPaused && !inPause){
         if(!o.sessions) o.sessions = [];
-        o.sessions.push({ debut: toInputValue(now), fin: null });
+        // Reprise automatique (pas un clic de quelqu'un) : on garde le même opérateur que la
+        // session qu'on vient de refermer plutôt que l'identité active de ce poste-ci — sinon le
+        // travail de la personne d'avant la pause serait crédité à qui que ce soit dont le
+        // navigateur a déclenché la reprise.
+        const lastClosed = o.sessions[o.sessions.length-1];
+        o.sessions.push({ debut: toInputValue(now), fin: null, operatorUserId: lastClosed ? lastClosed.operatorUserId : (o.operatorUserId||null) });
         o.statut = 'en_cours';
         o.autoPaused = false;
         changed = true;
@@ -3635,7 +3641,11 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore){
       o.statut = 'en_pause';
       o.autoPaused = true;
     } else {
-      o.sessions.push({ debut: nowStr, fin: null }); // ouvre une session (démarrage ou reprise après pause)
+      // L'identité active au moment précis du clic — potentiellement différente de l'opérateur
+      // assigné (o.operatorUserId, simple intention de planification, jamais écrasée ici) — voir
+      // computeProductionTimeByUser : chaque session est créditée à qui l'a réellement ouverte,
+      // pas forcément à qui était assigné sur la tâche.
+      o.sessions.push({ debut: nowStr, fin: null, operatorUserId: activeIdentityId() }); // ouvre une session (démarrage ou reprise après pause)
       o.statut = 'en_cours';
       o.autoPaused = false;
     }
@@ -4924,40 +4934,55 @@ function dureePrevueH(o){
 // période puis mesurée avec workingHoursBetween (hors nuits/week-ends/pause) ; une pièce déjà
 // "termine" dont les sessions ont été purgées retombe sur dureeReelleH, attribué en bloc à la
 // période si sa date de fin réelle (ou de début, à défaut) tombe dedans.
+// Attribue le temps de chaque SESSION à qui l'a réellement ouverte (s.operatorUserId), pas à
+// l'opérateur assigné sur la pièce (o.operatorUserId) — les deux peuvent diverger (tâche assignée
+// à Simon, mais réellement démarrée/reprise par Louca sur un poste partagé). Repli sur l'opérateur
+// assigné pour les sessions antérieures à ce suivi par session (qui n'ont pas operatorUserId) ou
+// si l'identité active était inconnue au moment du clic. Une même pièce peut donc apparaître dans
+// le détail de plusieurs salariés à la fois si elle a changé de mains — chacun n'y voit que sa
+// propre part du temps passé (le temps prévu, lui, reste le total théorique de la ligne entière).
 function computeProductionTimeByUser(st, periodStart, periodEnd){
   const byUser = {};
   const ensure = (uid) => byUser[uid] || (byUser[uid] = { totalH:0, totalPrevuH:0, details:[] });
   const consider = (c, o) => {
-    if(!o.operatorUserId) return;
-    const uid = String(o.operatorUserId);
     const cfg = configForPiece(o, st);
     const m = state.machines.find(mm=>mm.id===o.machineId);
-    let h = 0, repDate = null;
+    const prevuH = dureePrevueH(o);
+    const hByOperator = {}, dateByOperator = {};
     if(o.sessions && o.sessions.length){
       o.sessions.forEach(s => {
+        const opUid = s.operatorUserId || o.operatorUserId;
+        if(!opUid) return;
         const sStart = new Date(s.debut);
         const sEnd = s.fin ? new Date(s.fin) : new Date();
         const clampStart = sStart < periodStart ? periodStart : sStart;
         const clampEnd = sEnd > periodEnd ? periodEnd : sEnd;
         if(clampEnd > clampStart){
-          h += workingHoursBetween(clampStart, clampEnd, cfg);
-          if(!repDate || sStart > repDate) repDate = sStart;
+          const h = workingHoursBetween(clampStart, clampEnd, cfg);
+          hByOperator[opUid] = (hByOperator[opUid]||0) + h;
+          if(!dateByOperator[opUid] || sStart > dateByOperator[opUid]) dateByOperator[opUid] = sStart;
         }
       });
-    } else if(o.statut === 'termine' && o.dureeReelleH != null && o.dureeReelleH > 0){
+    } else if(o.statut === 'termine' && o.dureeReelleH != null && o.dureeReelleH > 0 && o.operatorUserId){
       const refStr = o.finReel || o.debutReel;
       if(refStr){
         const refDate = new Date(refStr);
-        if(refDate >= periodStart && refDate < periodEnd){ h = o.dureeReelleH; repDate = refDate; }
+        if(refDate >= periodStart && refDate < periodEnd){
+          hByOperator[o.operatorUserId] = o.dureeReelleH;
+          dateByOperator[o.operatorUserId] = refDate;
+        }
       }
     }
-    if(h > 1e-6){
-      const u = ensure(uid);
-      u.totalH += h;
-      const prevuH = dureePrevueH(o);
-      u.totalPrevuH += prevuH;
-      u.details.push({ cid:c.id, oid:o.id, commandeNom:c.nom, refClient:c.refClient||'', piece:o.piece, etape:o.etape, machineNom: m?m.nom:'—', h, prevuH, date: repDate });
-    }
+    Object.keys(hByOperator).forEach(opUid => {
+      const h = hByOperator[opUid];
+      if(h > 1e-6){
+        const uid = String(opUid);
+        const u = ensure(uid);
+        u.totalH += h;
+        u.totalPrevuH += prevuH;
+        u.details.push({ cid:c.id, oid:o.id, commandeNom:c.nom, refClient:c.refClient||'', piece:o.piece, etape:o.etape, machineNom: m?m.nom:'—', h, prevuH, date: dateByOperator[opUid] });
+      }
+    });
   };
   (st.commandes||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
   (st.commandesArchivees||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
@@ -5080,20 +5105,26 @@ async function loadTempsProdHistory(cid, oid){
   tempsProdHistoryCache[key] = entries;
   if(tempsProdSessionModal && tempsProdSessionModal.cid===cid && tempsProdSessionModal.oid===oid) render();
 }
-// Rendu commun à une liste de sessions {debut,fin} — qu'elles viennent de sessions[] (tâche encore
-// en cours/en pause) ou de l'historique archivé côté serveur (tâche déjà terminée). Une pause est
-// simplement l'écart entre la fin d'une session et le début de la suivante.
-function renderSessionRowsHtml(sessions, fmtJour, fmtHeure){
+// Rendu commun à une liste de sessions {debut,fin,operatorUserId} — qu'elles viennent de
+// sessions[] (tâche encore en cours/en pause) ou de l'historique archivé côté serveur (tâche déjà
+// terminée). Une pause est simplement l'écart entre la fin d'une session et le début de la
+// suivante. fallbackOperatorUserId (l'opérateur assigné) est utilisé pour les sessions qui n'ont
+// pas encore ce champ (antérieures au suivi par session) ou sans identité active connue au moment
+// du clic — voir computeProductionTimeByUser, même repli.
+function renderSessionRowsHtml(sessions, fmtJour, fmtHeure, fallbackOperatorUserId){
   let rows = '';
   sessions.forEach((s, i) => {
     const debut = new Date(s.debut);
     const fin = s.fin ? new Date(s.fin) : null;
     const dureeH = ((fin || new Date()).getTime() - debut.getTime()) / 3600000;
+    const opUid = s.operatorUserId || fallbackOperatorUserId;
+    const op = opUid ? usersList.find(u=>String(u.id)===String(opUid)) : null;
     rows += `<tr>
       <td>${fmtJour(debut)}</td>
       <td>${fmtHeure(debut)}</td>
       <td>${fin ? fmtHeure(fin) : '<em>en cours</em>'}</td>
       <td>${formatHeures(dureeH)}</td>
+      <td>${op ? escapeHtml(op.username) : '—'}</td>
     </tr>`;
     const next = sessions[i+1];
     if(fin && next){
@@ -5101,7 +5132,7 @@ function renderSessionRowsHtml(sessions, fmtJour, fmtHeure){
       const gapH = (nextDebut.getTime() - fin.getTime()) / 3600000;
       if(gapH > 0.01){
         const sameDay = fin.toDateString() === nextDebut.toDateString();
-        rows += `<tr class="temps-prod-pause-row"><td colspan="4">⏸ Pause — ${formatHeures(gapH)}${sameDay ? ` (reprise à ${fmtHeure(nextDebut)})` : ` (reprise le ${fmtJour(nextDebut)} à ${fmtHeure(nextDebut)})`}</td></tr>`;
+        rows += `<tr class="temps-prod-pause-row"><td colspan="5">⏸ Pause — ${formatHeures(gapH)}${sameDay ? ` (reprise à ${fmtHeure(nextDebut)})` : ` (reprise le ${fmtJour(nextDebut)} à ${fmtHeure(nextDebut)})`}</td></tr>`;
       }
     }
   });
@@ -5121,20 +5152,22 @@ function renderTempsProdSessionModal(){
   let rows = '';
   let historyUsed = false;
   if(o.sessions && o.sessions.length){
-    rows = renderSessionRowsHtml(o.sessions, fmtJour, fmtHeure);
+    rows = renderSessionRowsHtml(o.sessions, fmtJour, fmtHeure, o.operatorUserId);
   } else {
     const history = tempsProdHistoryCache[cid+'|'+oid];
     if(Array.isArray(history) && history.length){
-      rows = renderSessionRowsHtml(history, fmtJour, fmtHeure);
+      rows = renderSessionRowsHtml(history, fmtJour, fmtHeure, o.operatorUserId);
       historyUsed = true;
     } else if(history === null){
-      rows = `<tr><td colspan="4" style="text-align:center; color:var(--text-faint);">Chargement de l'historique…</td></tr>`;
+      rows = `<tr><td colspan="5" style="text-align:center; color:var(--text-faint);">Chargement de l'historique…</td></tr>`;
     } else if(o.debutReel || o.finReel){
       // Ni sessions[] locales, ni historique archivé (tâche terminée avant l'introduction de
       // session_history) : il ne reste qu'un début et une fin globaux, qui peuvent tomber des
       // jours différents (nuits, week-end, jours de pause entre deux reprises) — un seul jour
       // affiché ferait croire à tort que tout s'est joué le jour du début (bug déjà rapporté : une
       // tâche commencée un vendredi et terminée le lundi suivant affichait juste "vendredi").
+      // On ne connaît qu'un seul opérateur ici (celui assigné) : impossible de savoir si quelqu'un
+      // d'autre a réellement fait le travail sans le détail par session, perdu à l'archivage.
       const dDebut = o.debutReel ? new Date(o.debutReel) : null;
       const dFin = o.finReel ? new Date(o.finReel) : null;
       const sameDay = dDebut && dFin && dDebut.toDateString() === dFin.toDateString();
@@ -5144,6 +5177,7 @@ function renderTempsProdSessionModal(){
         <td>${dDebut ? fmtHeure(dDebut) : '—'}</td>
         <td>${dFin ? fmtHeure(dFin) : '—'}</td>
         <td>${o.dureeReelleH!=null ? formatHeures(o.dureeReelleH) : '—'}</td>
+        <td>${operateur ? escapeHtml(operateur.username) : '—'}</td>
       </tr>`;
     }
   }
@@ -5158,10 +5192,10 @@ function renderTempsProdSessionModal(){
       </div>
       <div class="modal-body">
         <div class="footer-note" style="text-align:left; margin-bottom:4px;">${escapeHtml(c.nom)}${c.refClient?` <span style="opacity:.7;">(${escapeHtml(c.refClient)})</span>`:''}</div>
-        <div class="footer-note" style="text-align:left; margin-bottom:10px;">${escapeHtml(o.piece)} / ${escapeHtml(o.etape)} — ${escapeHtml(m?m.nom:'—')}${operateur?` — ${escapeHtml(operateur.username)}`:''}</div>
+        <div class="footer-note" style="text-align:left; margin-bottom:10px;">${escapeHtml(o.piece)} / ${escapeHtml(o.etape)} — ${escapeHtml(m?m.nom:'—')}${operateur?` — assigné à ${escapeHtml(operateur.username)}`:''}</div>
         <table class="ops-table">
-          <thead><tr><th>Jour</th><th>Début</th><th>Fin</th><th>Durée</th></tr></thead>
-          <tbody>${rows || `<tr><td colspan="4" style="text-align:center; color:var(--text-faint);">Aucun horaire enregistré</td></tr>`}</tbody>
+          <thead><tr><th>Jour</th><th>Début</th><th>Fin</th><th>Durée</th><th>Opérateur</th></tr></thead>
+          <tbody>${rows || `<tr><td colspan="5" style="text-align:center; color:var(--text-faint);">Aucun horaire enregistré</td></tr>`}</tbody>
         </table>
         ${purgedNote}
       </div>
@@ -6526,6 +6560,16 @@ function renderKanbanView(schedule){
       const hlK = isFusionAwareHighlighted(o);
       const hlClsK = hlOnK ? (hlK ? 'spotlight' : 'dimmed') : '';
       const operateurK = o.operatorUserId ? usersList.find(u=>String(u.id)===String(o.operatorUserId)) : null;
+      // Qui réalise/a réalisé RÉELLEMENT la tâche (dernière session ouverte ou close) — peut
+      // diverger de l'opérateur assigné sur un poste partagé (voir activeIdentityId). Non
+      // disponible une fois les sessions archivées/purgées (tâche terminée depuis un moment) :
+      // l'assigné reste alors la seule info affichable.
+      const lastSessionK = (o.sessions && o.sessions.length) ? o.sessions[o.sessions.length-1] : null;
+      const producteurUidK = lastSessionK ? (lastSessionK.operatorUserId || o.operatorUserId) : null;
+      const producteurK = producteurUidK ? usersList.find(u=>String(u.id)===String(producteurUidK)) : null;
+      const operateurMetaK = (producteurK && operateurK && String(producteurK.id)!==String(operateurK.id))
+        ? ` · 👤 ${escapeHtml(operateurK.username)} (assigné) → ${escapeHtml(producteurK.username)} (réalise)`
+        : ((producteurK||operateurK) ? ` · 👤 ${escapeHtml((producteurK||operateurK).username)}` : '');
       const dueLineK = o.dateBesoin ? `<div class="kanban-card-due">Échéance : ${escapeHtml(new Date(o.dateBesoin+'T00:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'}))}</div>` : '';
       const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (Number(o.tempsUnitaire)*Number(o.quantite))/60;
       const plannedLineK = `<div class="kanban-card-planned">Prévu : ${durationLabel(dureeH)}</div>`;
@@ -6538,7 +6582,7 @@ function renderKanbanView(schedule){
       return `<div class="kanban-card ${hlClsK}" data-action="card-isolate" data-cid="${o.cid}" data-oid="${o.id}" data-fusion-group="${o._fusionMembers ? o.fusionGroupId : ''}" style="border-left:3px solid ${urgBorder};" title="Clic : isoler la commande — clic droit : menu de statut">
         <div class="kanban-card-main">
           <div class="kanban-card-title">${escapeHtml(label)}</div>
-          <div class="kanban-card-meta"><span class="machine-swatch" style="background:${color}"></span>${m?escapeHtml(m.nom):'—'}${operateurK ? ` · 👤 ${escapeHtml(operateurK.username)}` : ''}</div>
+          <div class="kanban-card-meta"><span class="machine-swatch" style="background:${color}"></span>${m?escapeHtml(m.nom):'—'}${operateurMetaK}</div>
           ${fusionListLineK}
           ${dueLineK}
         </div>

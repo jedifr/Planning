@@ -55,6 +55,12 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
   (minutes), `quantite`, `statut`, `phase`, `manualStart`, `dureeOverrideH`,
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
   `fusionGroupId`, `fusionPinned`, `sousTraitance`, `dateDebutPossible`
+  - `operatorUserId` de la pièce = **opérateur assigné** (intention de planification, jamais
+    écrasé automatiquement). Chaque élément de `sessions[]` porte son propre `operatorUserId`
+    = qui a **réellement** ouvert cette session (identité active au moment du clic — voir
+    plus bas) : les deux peuvent diverger sur un poste partagé (tâche assignée à Simon,
+    démarrée/reprise par Louca). Repli sur l'opérateur assigné pour une session qui n'a pas ce
+    champ (données antérieures à ce suivi).
 - `leaveTypes[]`, `leaveRequests[]`, `userLeaveAllocations`, `userMachines`, `userLunch`
 - `importProfiles[]` — profils de correspondance de l'import personnalisé
 
@@ -82,6 +88,22 @@ une table SQLite **séparée**, jamais incluse dans `app_state` ni dans la synch
   `debutReel`/`finReel`/`dureeReelleH` — voir le piège plus bas sur l'affichage du jour dans ce cas.
 - Les sauvegardes (`/api/backup/test` et le planificateur) ajoutent `sessionHistory` à la copie en
   mémoire de `app_state` juste avant l'envoi — jamais réenregistré dans `app_state` lui-même.
+- Chaque ligne de `session_history` porte l'`operator_user_id` **de la session** (qui l'a
+  réellement ouverte), pas celui de la pièce — voir `computeProductionTimeByUser` et la note sur
+  `operatorUserId` dans le modèle de données.
+
+### Qui a réellement produit, vs qui est assigné
+
+`applySingleStatusChange` tague chaque session ouverte (`en_cours`) avec `activeIdentityId()` au
+moment précis du clic — **jamais** l'opérateur assigné de la pièce, qu'on ne touche que s'il était
+vide (auto-remplissage au tout premier démarrage, jamais d'écrasement ensuite). Sur un poste
+partagé, une tâche assignée à Simon peut donc être réellement réalisée par Louca : le Kanban
+affiche alors « 👤 Simon (assigné) → Louca (réalise) », et `computeProductionTimeByUser` crédite
+Louca, pas Simon, pour cette session.
+
+**Reprise automatique après pause déjeuner** (`applyAutoPauseResume`) : ce n'est PAS un clic de
+quelqu'un — on conserve l'`operatorUserId` de la session qu'on referme, jamais l'identité active du
+poste qui déclenche la reprise (qui peut être n'importe quel navigateur en train de sonder l'état).
 
 ## Moteur de planification — `computeSchedule(st)`
 
