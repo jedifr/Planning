@@ -136,27 +136,42 @@ peuplé à la pause, vidé à la reprise), pas une seule.
 
 Emplacements physiques fixes où sont entreposées les pièces d'une commande pendant sa production —
 `STORAGE_ZONES` (48 zones : A1-A16, B1-B16, C1-C16). Attribut de la **commande** (`zoneStockage`),
-pas de la pièce : toutes les pièces d'une commande partagent une seule zone.
+pas de la pièce : toutes les pièces d'une commande partagent une seule zone. Plusieurs commandes
+peuvent aussi partager volontairement la même zone (regroupement manuel de petites affaires dans un
+même casier) — voir `setCommandeZone` ci-dessous.
 
 - `isCommandeFullyDone(c)` — même condition que le badge "Terminée" de `renderCommandeCard`
   (`pieces.length>0 && pieces.every(termine)`) — une commande dans cet état n'occupe plus rien,
   **même si `zoneStockage` n'est pas effacé** (trace historique volontairement conservée).
-- `occupiedStorageZones(st, excludeCommandeId)` — zones occupées par une commande active (donc pas
-  totalement terminée) autre que `excludeCommandeId`.
-- `assignStorageZone(st, c)` — attribue la première zone `STORAGE_ZONES` non occupée à une commande
-  qui n'en a pas encore ; ne fait rien si elle en a déjà une, si elle est déjà totalement terminée,
-  ou si les 48 zones sont occupées (reste alors `null` jusqu'à une attribution manuelle). Appelée à
-  chaque création de commande (les trois `targetState.commandes.push(...)`, dont celui de l'import
-  personnalisé) et une seule fois au chargement pour les commandes déjà en cours au moment de
-  l'introduction de cette fonctionnalité (`migrateState`, garde `_zonesStockageMigrated` — ne
-  retente jamais après coup, y compris si une zone se libère : seules la création d'une commande ou
-  l'action manuelle réattribuent).
-- `setCommandeZone(cid, zone)` — changement manuel depuis le badge "📍 Zone" (`renderCommandeCard`) :
-  refuse une zone déjà occupée par une AUTRE commande active (message d'erreur), mais autorise à
-  reposer sur soi-même sa propre zone déjà occupée (pas de faux-positif).
+- `occupiedStorageZones(st, excludeCommandeId)` — l'ENSEMBLE des zones occupées par au moins une
+  commande active (donc pas totalement terminée) autre que `excludeCommandeId`. Sert uniquement à
+  `assignStorageZone` pour trouver une zone **entièrement vide** — ne dit pas combien ni qui.
+- `commandesInZone(st, zone, excludeCommandeId)` — la LISTE des commandes actives occupant
+  précisément une zone donnée (hors `excludeCommandeId`), potentiellement plusieurs si regroupées
+  manuellement. Sert au badge (`renderCommandeCard`) et à la page "Zones de stockage" pour afficher
+  qui est déjà là.
+- `assignStorageZone(st, c)` — attribue la première zone `STORAGE_ZONES` **entièrement vide** à une
+  commande qui n'en a pas encore ; ne fait rien si elle en a déjà une, si elle est déjà totalement
+  terminée, ou si les 48 zones sont occupées (reste alors `null` jusqu'à une attribution manuelle).
+  Ne rejoint jamais automatiquement une zone déjà partagée — le regroupement reste un choix humain
+  délibéré. Appelée à chaque création de commande (les trois `targetState.commandes.push(...)`, dont
+  celui de l'import personnalisé) et une seule fois au chargement pour les commandes déjà en cours au
+  moment de l'introduction de cette fonctionnalité (`migrateState`, garde `_zonesStockageMigrated` —
+  ne retente jamais après coup, y compris si une zone se libère : seules la création d'une commande
+  ou l'action manuelle réattribuent).
+- `setCommandeZone(cid, zone)` — changement manuel depuis le badge "📍 Zone" (`renderCommandeCard`).
+  Contrairement à `assignStorageZone`, autorise le regroupement dans une zone déjà occupée par
+  d'autres commandes actives, mais demande confirmation (`confirm()`, listant qui est déjà là) avant
+  de le faire — jamais silencieux. Réattribuer à une commande sa PROPRE zone déjà occupée ne redemande
+  rien (pas de faux-positif, `commandesInZone` exclut `cid`).
 - Page "📍 Zones de stockage" (`renderZonesPage`, `currentPage==='zones'`) — vue d'ensemble en
-  lecture des 48 emplacements ; cliquer une zone occupée isole sa commande dans le planning
-  (`selectedCommandeId` + retour à `currentPage='planning'`).
+  lecture des 48 emplacements, listant TOUTES les commandes d'une zone partagée ; cliquer le nom
+  d'une commande occupante l'isole dans le planning (`selectedCommandeId` + retour à
+  `currentPage='planning'`).
+- Kanban (`renderKanbanView`) — chaque carte affiche « 📍 {zone} » quand sa commande en a une, sauf
+  sur une carte fusionnée multi-commandes (`o._fusionMembers`) : `o.zoneStockage` n'y porterait que
+  la zone du premier membre du groupe, ce qui serait trompeur pour les autres — volontairement omis
+  dans ce cas plutôt que d'afficher une info fausse.
 
 ## Moteur de planification — `computeSchedule(st)`
 

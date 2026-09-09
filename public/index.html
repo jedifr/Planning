@@ -316,6 +316,7 @@
   .kanban-card-due{font-size:10px; color:var(--red); font-weight:600; margin-top:2px;}
   .kanban-card-fusion-list{font-size:10px; color:var(--text-faint); margin-top:2px;}
   .kanban-card-elapsed{font-size:10px; color:var(--accent); font-weight:600; margin-top:2px;}
+  .kanban-card-zone{font-size:10px; color:var(--blue); font-weight:600; margin-top:2px;}
   .kanban-empty{padding:14px 6px; text-align:center; font-size:11px; color:var(--text-faint);}
 
   .liste-table td{font-size:12px;}
@@ -432,9 +433,14 @@
   .zone-cell-code{font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:11.5px;}
   .zone-cell-label{font-size:10px; color:var(--text-faint); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .zone-cell-free{opacity:0.55;}
-  .zone-cell-occupied{cursor:pointer; background:rgba(49,111,152,0.1); border-color:var(--blue);}
-  .zone-cell-occupied .zone-cell-label{color:var(--blue); font-weight:600;}
-  .zone-cell-occupied:hover{background:rgba(49,111,152,0.18);}
+  .zone-cell-occupied{background:rgba(49,111,152,0.1); border-color:var(--blue);}
+  .zone-cell-occupied .zone-cell-label{white-space:normal; overflow:visible; display:flex; flex-direction:column; gap:2px;}
+  .zone-cell-occupant{
+    display:block; width:100%; background:none; border:none; padding:0; margin:0; cursor:pointer;
+    font-family:'IBM Plex Sans',sans-serif; font-size:10px; font-weight:600; color:var(--blue);
+    white-space:normal; overflow-wrap:anywhere; text-align:center;
+  }
+  .zone-cell-occupant:hover{text-decoration:underline;}
   .search-bar{display:flex; align-items:center; gap:10px; margin-bottom:10px;}
   .isolate-banner{
     display:flex; align-items:center; gap:10px; margin-bottom:10px; padding:7px 12px;
@@ -1620,12 +1626,20 @@ function occupiedStorageZones(st, excludeCommandeId){
 // Attribue automatiquement la première zone libre à une commande qui n'en a pas encore — appelé à
 // la création d'une commande, et une seule fois au chargement pour rattraper les commandes déjà en
 // cours (voir migrateState). Ne fait rien si toutes les zones sont occupées : la commande reste sans
-// zone jusqu'à une attribution manuelle depuis son badge "📍 Zone".
+// zone jusqu'à une attribution manuelle depuis son badge "📍 Zone". Choisit toujours une zone
+// entièrement vide (jamais une zone déjà partagée par regroupement manuel) — le regroupement de
+// plusieurs commandes dans un même casier reste un choix humain délibéré, jamais automatique.
 function assignStorageZone(st, c){
   if(c.zoneStockage || isCommandeFullyDone(c)) return;
   const occupied = occupiedStorageZones(st, c.id);
   const free = STORAGE_ZONES.find(z => !occupied.has(z));
   if(free) c.zoneStockage = free;
+}
+// Commandes actives occupant réellement une zone donnée (hors excludeCommandeId) — plusieurs
+// commandes peuvent partager la même zone depuis qu'on autorise le regroupement manuel (voir
+// setCommandeZone). Sert à afficher qui est déjà là, dans le badge comme dans renderZonesPage.
+function commandesInZone(st, zone, excludeCommandeId){
+  return (st.commandes||[]).filter(c => c.id!==excludeCommandeId && c.zoneStockage===zone && !isCommandeFullyDone(c));
 }
 function urgencyColorFor(u){
   const uc = (state.config && state.config.urgencyColors) || {};
@@ -3421,17 +3435,17 @@ function updateCommandeField(cid, field, value){
   if(field==='dateBesoin' && !value){ alert("La date d'échéance est obligatoire — elle ne peut pas être vidée."); render(); return; }
   c[field] = value; commit();
 }
-// Attribution manuelle/changement de zone depuis le badge "📍 Zone" d'une commande — passe par sa
-// propre fonction (plutôt que updateCommandeField) pour vérifier qu'aucune autre commande active
-// n'occupe déjà cette zone (voir occupiedStorageZones).
+// Attribution manuelle/changement de zone depuis le badge "📍 Zone" d'une commande. Contrairement à
+// l'attribution automatique (toujours une zone vide), le choix manuel autorise le regroupement
+// volontaire de plusieurs commandes dans le même casier — physiquement réel (petites pièces
+// entreposées ensemble) — mais demande confirmation pour ne jamais le faire par erreur.
 function setCommandeZone(cid, zone){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
   if(!zone){ c.zoneStockage = null; commit(); return; }
-  const occupied = occupiedStorageZones(state, cid);
-  if(occupied.has(zone)){
-    const other = state.commandes.find(cc => cc.id!==cid && cc.zoneStockage===zone && !isCommandeFullyDone(cc));
-    alert(`La zone ${zone} est déjà occupée par la commande "${other ? other.nom : '?'}".`);
-    return;
+  const others = commandesInZone(state, zone, cid);
+  if(others.length > 0){
+    const noms = others.map(cc=>cc.nom).join(', ');
+    if(!confirm(`La zone ${zone} est déjà utilisée par : ${noms}.\n\nRegrouper "${c.nom}" dans la même zone ?`)) return;
   }
   c.zoneStockage = zone; commit();
 }
@@ -5019,20 +5033,23 @@ function renderSoldesTab(){
 // se fait depuis le badge "📍 Zone" de chaque commande (renderCommandeCard) — cette page est en
 // lecture, sauf le clic sur une zone occupée qui isole sa commande dans le planning.
 function renderZonesPage(){
+  // Plusieurs commandes actives peuvent partager la même zone (regroupement manuel volontaire, voir
+  // setCommandeZone) — byZone liste donc TOUTES les occupantes de chaque zone, pas une seule.
   const activeCommandes = state.commandes.filter(c => !isCommandeFullyDone(c));
   const byZone = {};
-  activeCommandes.forEach(c => { if(c.zoneStockage) byZone[c.zoneStockage] = c; });
+  activeCommandes.forEach(c => { if(c.zoneStockage){ (byZone[c.zoneStockage] = byZone[c.zoneStockage] || []).push(c); } });
   const nbOccupied = Object.keys(byZone).length;
   const allees = ['A','B','C'];
   const rowsHtml = allees.map(lettre => {
     const cellsHtml = Array.from({length:16}, (_,i) => `${lettre}${i+1}`).map(z => {
-      const occupant = byZone[z];
-      if(!occupant){
+      const occupants = byZone[z];
+      if(!occupants || !occupants.length){
         return `<div class="zone-cell zone-cell-free"><div class="zone-cell-code">${z}</div><div class="zone-cell-label">Libre</div></div>`;
       }
-      return `<button class="zone-cell zone-cell-occupied" data-action="isolate-from-zone" data-cid="${occupant.id}" title="Isoler « ${escapeHtml(occupant.nom)} » dans le planning">
-        <div class="zone-cell-code">${z}</div><div class="zone-cell-label">${escapeHtml(occupant.nom)}</div>
-      </button>`;
+      const namesHtml = occupants.map(o => `<button class="zone-cell-occupant" data-action="isolate-from-zone" data-cid="${o.id}" title="Isoler « ${escapeHtml(o.nom)} » dans le planning">${escapeHtml(o.nom)}</button>`).join('');
+      return `<div class="zone-cell zone-cell-occupied">
+        <div class="zone-cell-code">${z}</div><div class="zone-cell-label">${namesHtml}</div>
+      </div>`;
     }).join('');
     return `<div class="zone-row"><div class="zone-row-label">Allée ${lettre}</div><div class="zone-row-cells">${cellsHtml}</div></div>`;
   }).join('');
@@ -5044,7 +5061,7 @@ function renderZonesPage(){
     </div>
     <div class="panel-body">
       ${rowsHtml}
-      <div class="footer-note" style="text-align:left; padding-top:10px;">Une zone est attribuée automatiquement à la création d'une commande (première libre disponible) et se libère automatiquement dès que toutes ses pièces sont Terminées — pas besoin de la vider à la main. Pour changer la zone d'une commande, utilisez son badge "📍 Zone" dans le planning.</div>
+      <div class="footer-note" style="text-align:left; padding-top:10px;">Une zone est attribuée automatiquement à la création d'une commande (première libre disponible) et se libère automatiquement dès que toutes ses pièces sont Terminées — pas besoin de la vider à la main. Pour changer la zone d'une commande, utilisez son badge "📍 Zone" dans le planning ; plusieurs commandes peuvent volontairement partager le même casier.</div>
     </div>
   </section>`;
 }
@@ -6669,7 +6686,7 @@ function renderKanbanView(schedule){
   ];
   let allOps = [];
   schedule.forEach(c => c.pieces.forEach(o => {
-    allOps.push({ ...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin });
+    allOps.push({ ...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin, zoneStockage:c.zoneStockage });
   }));
   allOps = allOps.filter(o => matchesSearch({ nom:o.commandeNom, pieces:[o] }, searchQuery));
   if(kanbanMachineFilters) allOps = allOps.filter(o => kanbanMachineFilters.has(o.machineId));
@@ -6750,6 +6767,9 @@ function renderKanbanView(schedule){
           : ((producteurK||operateurK) ? ` · 👤 ${escapeHtml((producteurK||operateurK).username)}` : '');
       }
       const dueLineK = o.dateBesoin ? `<div class="kanban-card-due">Échéance : ${escapeHtml(new Date(o.dateBesoin+'T00:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'}))}</div>` : '';
+      // Pas affiché sur une carte fusionnée multi-commandes : o.zoneStockage ne porterait alors que
+      // la zone de la première commande du groupe, ce qui serait trompeur pour les autres membres.
+      const zoneLineK = (!o._fusionMembers && o.zoneStockage) ? `<div class="kanban-card-zone">📍 ${escapeHtml(o.zoneStockage)}</div>` : '';
       const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (Number(o.tempsUnitaire)*Number(o.quantite))/60;
       const plannedLineK = `<div class="kanban-card-planned">Prévu : ${durationLabel(dureeH)}</div>`;
       const elapsedLineK = (col.key==='en_cours'||col.key==='en_pause'||col.key==='termine') ? (() => {
@@ -6764,6 +6784,7 @@ function renderKanbanView(schedule){
           <div class="kanban-card-meta"><span class="machine-swatch" style="background:${color}"></span>${m?escapeHtml(m.nom):'—'}${operateurMetaK}</div>
           ${fusionListLineK}
           ${dueLineK}
+          ${zoneLineK}
         </div>
         <div class="kanban-card-times">
           <div class="kanban-card-time">${escapeHtml(timeInfo)}</div>
@@ -7034,15 +7055,15 @@ function renderCommandeCard(c, idx, total){
   const allDone = c.pieces.length>0 && c.pieces.every(o=>o.statut==='termine');
   if(allDone) badge = `<span class="badge done">Terminée</span>`;
 
-  // Zone de stockage physique (voir CLAUDE.md) : les zones déjà occupées par une AUTRE commande
-  // encore active sont grisées, pour ne jamais pouvoir en assigner deux fois la même par erreur.
-  const occupiedZonesForCard = occupiedStorageZones(state, c.id);
+  // Zone de stockage physique (voir CLAUDE.md) : une zone déjà occupée par une AUTRE commande
+  // active reste sélectionnable — regrouper plusieurs commandes dans le même casier est un choix
+  // manuel volontaire (confirmation demandée par setCommandeZone) — mais son occupant est indiqué
+  // dans le libellé pour que ce ne soit jamais accidentel.
   const zoneOptionsHtml = ['<option value="">— Aucune —</option>'].concat(
     STORAGE_ZONES.map(z => {
-      const isOccupiedByOther = occupiedZonesForCard.has(z);
-      const occupant = isOccupiedByOther ? state.commandes.find(cc => cc.id!==c.id && cc.zoneStockage===z && !isCommandeFullyDone(cc)) : null;
-      const label = occupant ? `${z} — occupée (${occupant.nom})` : z;
-      return `<option value="${z}" ${c.zoneStockage===z?'selected':''} ${isOccupiedByOther?'disabled':''}>${escapeHtml(label)}</option>`;
+      const others = commandesInZone(state, z, c.id);
+      const label = others.length ? `${z} — avec ${others.map(cc=>cc.nom).join(', ')}` : z;
+      return `<option value="${z}" ${c.zoneStockage===z?'selected':''}>${escapeHtml(label)}</option>`;
     })
   ).join('');
   const zoneSelect = `<select class="zone-select ${c.zoneStockage?'zone-set':''}" data-action="set-commande-zone" data-cid="${c.id}" title="Zone de stockage — se libère automatiquement une fois la commande totalement terminée">${zoneOptionsHtml}</select>`;
