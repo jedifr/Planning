@@ -50,7 +50,7 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
 - `machines[]` — postes : `nom`, `dispo` (disponible à partir de), `couleur`,
   `horairesActifs`/`horaires` (horaires spécifiques), `indisponibilites[]`,
   `fusionnable`, `transfertFixeMin`, `transfertParPieceMin`
-- `commandes[]` — `nom` (référence), `dateBesoin`, `urgence`, `pieces[]`
+- `commandes[]` — `nom` (référence), `dateBesoin`, `urgence`, `zoneStockage`, `pieces[]`
 - `pieces[]` (dans une commande) — `piece`, `etape`, `machineId`, `tempsUnitaire`
   (minutes), `quantite`, `statut`, `phase`, `manualStart`, `dureeOverrideH`,
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
@@ -131,6 +131,32 @@ ouvertes (`.filter(s=>!s.fin).forEach(...)`), jamais une seule (`.find(s=>!s.fin
 session d'un second opérateur resterait ouverte indéfiniment. La reprise automatique après pause
 déjeuner rouvre une session par opérateur qui était en train de travailler (`autoPausedOperators`,
 peuplé à la pause, vidé à la reprise), pas une seule.
+
+## Zones de stockage
+
+Emplacements physiques fixes où sont entreposées les pièces d'une commande pendant sa production —
+`STORAGE_ZONES` (48 zones : A1-A16, B1-B16, C1-C16). Attribut de la **commande** (`zoneStockage`),
+pas de la pièce : toutes les pièces d'une commande partagent une seule zone.
+
+- `isCommandeFullyDone(c)` — même condition que le badge "Terminée" de `renderCommandeCard`
+  (`pieces.length>0 && pieces.every(termine)`) — une commande dans cet état n'occupe plus rien,
+  **même si `zoneStockage` n'est pas effacé** (trace historique volontairement conservée).
+- `occupiedStorageZones(st, excludeCommandeId)` — zones occupées par une commande active (donc pas
+  totalement terminée) autre que `excludeCommandeId`.
+- `assignStorageZone(st, c)` — attribue la première zone `STORAGE_ZONES` non occupée à une commande
+  qui n'en a pas encore ; ne fait rien si elle en a déjà une, si elle est déjà totalement terminée,
+  ou si les 48 zones sont occupées (reste alors `null` jusqu'à une attribution manuelle). Appelée à
+  chaque création de commande (les trois `targetState.commandes.push(...)`, dont celui de l'import
+  personnalisé) et une seule fois au chargement pour les commandes déjà en cours au moment de
+  l'introduction de cette fonctionnalité (`migrateState`, garde `_zonesStockageMigrated` — ne
+  retente jamais après coup, y compris si une zone se libère : seules la création d'une commande ou
+  l'action manuelle réattribuent).
+- `setCommandeZone(cid, zone)` — changement manuel depuis le badge "📍 Zone" (`renderCommandeCard`) :
+  refuse une zone déjà occupée par une AUTRE commande active (message d'erreur), mais autorise à
+  reposer sur soi-même sa propre zone déjà occupée (pas de faux-positif).
+- Page "📍 Zones de stockage" (`renderZonesPage`, `currentPage==='zones'`) — vue d'ensemble en
+  lecture des 48 emplacements ; cliquer une zone occupée isole sa commande dans le planning
+  (`selectedCommandeId` + retour à `currentPage='planning'`).
 
 ## Moteur de planification — `computeSchedule(st)`
 

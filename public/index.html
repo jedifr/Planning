@@ -416,6 +416,25 @@
   .chead-spacer{flex:1 1 auto;}
   .due-field{display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--text-faint);}
   .due-field input{width:140px;}
+  .zone-select{
+    width:auto; padding:3px 7px; font-size:11px; font-family:'IBM Plex Mono',monospace; font-weight:600;
+    border-radius:20px; border:1px solid var(--line); background:var(--panel-2); color:var(--text-dim); cursor:pointer;
+  }
+  .zone-select.zone-set{border-color:var(--blue); color:var(--blue); background:rgba(49,111,152,0.1);}
+  .zone-row{display:flex; align-items:flex-start; gap:12px; margin-bottom:14px;}
+  .zone-row:last-child{margin-bottom:0;}
+  .zone-row-label{width:70px; flex:0 0 70px; font-family:'IBM Plex Mono',monospace; font-weight:600; color:var(--text-faint); padding-top:8px;}
+  .zone-row-cells{display:grid; grid-template-columns:repeat(16, minmax(64px,1fr)); gap:6px; flex:1 1 auto;}
+  .zone-cell{
+    border:1px solid var(--line); border-radius:4px; padding:6px 4px; text-align:center; font-family:'IBM Plex Sans',sans-serif;
+    background:var(--panel); cursor:default; min-width:0;
+  }
+  .zone-cell-code{font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:11.5px;}
+  .zone-cell-label{font-size:10px; color:var(--text-faint); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .zone-cell-free{opacity:0.55;}
+  .zone-cell-occupied{cursor:pointer; background:rgba(49,111,152,0.1); border-color:var(--blue);}
+  .zone-cell-occupied .zone-cell-label{color:var(--blue); font-weight:600;}
+  .zone-cell-occupied:hover{background:rgba(49,111,152,0.18);}
   .search-bar{display:flex; align-items:center; gap:10px; margin-bottom:10px;}
   .isolate-banner{
     display:flex; align-items:center; gap:10px; margin-bottom:10px; padding:7px 12px;
@@ -679,6 +698,9 @@
    ========================================================= */
 
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
+// Zones physiques d'entreposage des pièces en cours de production — 3 allées fixes de 16
+// emplacements (A1-A16, B1-B16, C1-C16), voir CLAUDE.md.
+const STORAGE_ZONES = ['A','B','C'].flatMap(lettre => Array.from({length:16}, (_,i) => `${lettre}${i+1}`));
 const DEFAULT_CONFIG = { startHour: 8, startMinute: 0, monThuHours: 8.75, friHours: 4, pauseActive: true, pauseDebut: '12:00', pauseFin: '13:00' };
 
 function uid(prefix){ return prefix + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -908,7 +930,7 @@ function manualArchiveNow(){
   showToast(`${nb} commande${nb>1?'s':''} archivée${nb>1?'s':''}.`);
 }
 let currentView = 'semaine'; // 'semaine' | 'mois' | 'annee'
-let currentPage = 'planning'; // 'planning' | 'conges' | 'tempsProd'
+let currentPage = 'planning'; // 'planning' | 'conges' | 'tempsProd' | 'zones'
 let congesTab = 'mes-demandes'; // 'mes-demandes' | 'equipe' | 'calendrier' | 'a-valider' | 'soldes'
 let equipeStatutFilter = 'approuve'; // filtre de l'onglet "Congés de l'équipe"
 let leaveImpactPreviewId = null; // id de la demande dont on affiche l'aperçu d'impact, dans "À valider"
@@ -1030,6 +1052,16 @@ function migrateState(st){
     st.config._leaveRequestsMigrated = true;
   }
   if(!st.commandes) st.commandes = [];
+  st.commandes.forEach(c => { if(c.zoneStockage === undefined) c.zoneStockage = null; });
+  // Migration ponctuelle (une seule fois) : attribue automatiquement une zone de stockage aux
+  // commandes déjà en cours au moment de l'introduction de cette fonctionnalité (voir CLAUDE.md).
+  // Sans garde, ça retenterait une assignation à chaque chargement — inutile (assignStorageZone est
+  // déjà un no-op si zoneStockage est posé) mais surtout incohérent avec l'esprit "une seule fois"
+  // des autres migrations ponctuelles ci-dessous.
+  if(!st.config._zonesStockageMigrated){
+    st.commandes.forEach(c => assignStorageZone(st, c));
+    st.config._zonesStockageMigrated = true;
+  }
   // Migration ponctuelle (une seule fois) : l'ancien moteur faisait implicitement dépendre
   // chaque pièce sans dépendance choisie de la précédente dans la liste, même sur une autre
   // machine — ce qui créait des "trous" de planning inattendus. On fige ce comportement
@@ -1567,6 +1599,33 @@ function isCommandeAtRisk(c){
 // retard à la moins en retard. Suppose isCommandeAtRisk(c) déjà vérifié par l'appelant.
 function commandeRiskDaysLate(c){
   return (c.finEstimee.getTime() - effectiveDueDate(c.dateBesoin).getTime()) / 86400000;
+}
+// Une commande "totalement terminée" libère sa zone de stockage (voir CLAUDE.md) — même condition
+// que le badge "Terminée" de renderCommandeCard et le filtre actives/terminées de renderCommandes.
+function isCommandeFullyDone(c){
+  return c.pieces.length > 0 && c.pieces.every(o => o.statut === 'termine');
+}
+// Zones occupées par une commande active à cet instant (hors excludeCommandeId, pour pouvoir
+// vérifier la disponibilité en gardant la zone déjà posée sur la commande qu'on modifie). Une
+// commande totalement terminée n'occupe plus rien, même si zoneStockage n'a pas été effacé (trace
+// historique volontairement conservée — voir CLAUDE.md).
+function occupiedStorageZones(st, excludeCommandeId){
+  const occupied = new Set();
+  (st.commandes||[]).forEach(c => {
+    if(c.id === excludeCommandeId) return;
+    if(c.zoneStockage && !isCommandeFullyDone(c)) occupied.add(c.zoneStockage);
+  });
+  return occupied;
+}
+// Attribue automatiquement la première zone libre à une commande qui n'en a pas encore — appelé à
+// la création d'une commande, et une seule fois au chargement pour rattraper les commandes déjà en
+// cours (voir migrateState). Ne fait rien si toutes les zones sont occupées : la commande reste sans
+// zone jusqu'à une attribution manuelle depuis son badge "📍 Zone".
+function assignStorageZone(st, c){
+  if(c.zoneStockage || isCommandeFullyDone(c)) return;
+  const occupied = occupiedStorageZones(st, c.id);
+  const free = STORAGE_ZONES.find(z => !occupied.has(z));
+  if(free) c.zoneStockage = free;
 }
 function urgencyColorFor(u){
   const uc = (state.config && state.config.urgencyColors) || {};
@@ -3274,7 +3333,9 @@ function submitNewCommande(){
         const already = new Set(target.pieces.map(p=>p.id));
         toAdd.forEach(p => { if(!already.has(p.id)) target.pieces.push(p); });
       } else {
-        targetState.commandes.push({ id: uid('c'), nom: nomTrim, refClient: (draft.refClient||'').trim(), dateBesoin: draft.dateBesoin, urgence: draft.urgence || 'normale', pieces: toAdd.slice() });
+        const createdCmd = { id: uid('c'), nom: nomTrim, refClient: (draft.refClient||'').trim(), dateBesoin: draft.dateBesoin, urgence: draft.urgence || 'normale', pieces: toAdd.slice(), zoneStockage: null };
+        targetState.commandes.push(createdCmd);
+        assignStorageZone(targetState, createdCmd);
       }
     };
     applyFn(state);
@@ -3289,6 +3350,7 @@ function submitNewCommande(){
 
   const newCmd = {
     id: uid('c'), nom: nomTrim, refClient: (draft.refClient||'').trim(), dateBesoin: draft.dateBesoin, urgence: draft.urgence || 'normale',
+    zoneStockage: null,
     pieces: dedupedOps.map(o => ({
       id: o.id, piece: o.piece.trim(), etape: o.etape.trim(), machineId: o.machineId,
       tempsUnitaire: Number(o.tempsUnitaire), quantite: Number(o.quantite), statut: 'a_faire',
@@ -3314,6 +3376,7 @@ function submitNewCommande(){
       });
     } else if(!already){
       targetState.commandes.push(newCmd);
+      assignStorageZone(targetState, newCmd);
     }
   };
   applyFn(state);
@@ -3357,6 +3420,20 @@ function updateCommandeField(cid, field, value){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
   if(field==='dateBesoin' && !value){ alert("La date d'échéance est obligatoire — elle ne peut pas être vidée."); render(); return; }
   c[field] = value; commit();
+}
+// Attribution manuelle/changement de zone depuis le badge "📍 Zone" d'une commande — passe par sa
+// propre fonction (plutôt que updateCommandeField) pour vérifier qu'aucune autre commande active
+// n'occupe déjà cette zone (voir occupiedStorageZones).
+function setCommandeZone(cid, zone){
+  const c = state.commandes.find(c=>c.id===cid); if(!c) return;
+  if(!zone){ c.zoneStockage = null; commit(); return; }
+  const occupied = occupiedStorageZones(state, cid);
+  if(occupied.has(zone)){
+    const other = state.commandes.find(cc => cc.id!==cid && cc.zoneStockage===zone && !isCommandeFullyDone(cc));
+    alert(`La zone ${zone} est déjà occupée par la commande "${other ? other.nom : '?'}".`);
+    return;
+  }
+  c.zoneStockage = zone; commit();
 }
 function addOpToCommande(cid){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
@@ -4096,7 +4173,9 @@ function commitImportGroups(targetState, groups){
       const d = new Date(); d.setDate(d.getDate()+14);
       g.dateBesoin = toDateInputValue(d); // échéance provisoire, à corriger manuellement
     }
-    targetState.commandes.push({ id: uid('c'), nom: ref, refClient: g.refClient||'', dateBesoin: g.dateBesoin, urgence: g.urgence, pieces: g.pieces.map(p=>({...p})) });
+    const importedCmd = { id: uid('c'), nom: ref, refClient: g.refClient||'', dateBesoin: g.dateBesoin, urgence: g.urgence, pieces: g.pieces.map(p=>({...p})), zoneStockage: null };
+    targetState.commandes.push(importedCmd);
+    assignStorageZone(targetState, importedCmd);
     createdNoms.push({ nom: ref, dateBesoin: g.dateBesoin, urgence: g.urgence, nbPieces: g.pieces.length });
   });
   return { createdNoms, updatedNoms, sansEcheance };
@@ -4569,6 +4648,7 @@ function renderHeader(){
       <button class="page-switch-btn ${currentPage==='planning'?'active':''}" data-action="goto-planning">Planning</button>
       ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
       <button class="page-switch-btn ${currentPage==='tempsProd'?'active':''}" data-action="goto-temps-prod">⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}</button>
+      <button class="page-switch-btn ${currentPage==='zones'?'active':''}" data-action="goto-zones">📍 Zones de stockage</button>
     </div>`;
   return `
   <header class="top">
@@ -4931,6 +5011,42 @@ function renderSoldesTab(){
     </label>
     <div class="footer-note" style="text-align:left; padding-top:8px;">Par défaut, la personne reçoit une proposition qu'elle doit confirmer avant que le congé ne soit vraiment approuvé. Cochez "Imposer" pour l'enregistrer directement comme approuvé — la personne est alors simplement informée, sans avoir à confirmer.</div>
   </div></section>`;
+}
+
+/* ---------------- Zones de stockage ---------------- */
+// Vue d'ensemble des 48 emplacements physiques (voir STORAGE_ZONES/CLAUDE.md) : qui occupe quoi,
+// en un coup d'œil pour quelqu'un qui cherche une place libre à l'atelier. L'attribution elle-même
+// se fait depuis le badge "📍 Zone" de chaque commande (renderCommandeCard) — cette page est en
+// lecture, sauf le clic sur une zone occupée qui isole sa commande dans le planning.
+function renderZonesPage(){
+  const activeCommandes = state.commandes.filter(c => !isCommandeFullyDone(c));
+  const byZone = {};
+  activeCommandes.forEach(c => { if(c.zoneStockage) byZone[c.zoneStockage] = c; });
+  const nbOccupied = Object.keys(byZone).length;
+  const allees = ['A','B','C'];
+  const rowsHtml = allees.map(lettre => {
+    const cellsHtml = Array.from({length:16}, (_,i) => `${lettre}${i+1}`).map(z => {
+      const occupant = byZone[z];
+      if(!occupant){
+        return `<div class="zone-cell zone-cell-free"><div class="zone-cell-code">${z}</div><div class="zone-cell-label">Libre</div></div>`;
+      }
+      return `<button class="zone-cell zone-cell-occupied" data-action="isolate-from-zone" data-cid="${occupant.id}" title="Isoler « ${escapeHtml(occupant.nom)} » dans le planning">
+        <div class="zone-cell-code">${z}</div><div class="zone-cell-label">${escapeHtml(occupant.nom)}</div>
+      </button>`;
+    }).join('');
+    return `<div class="zone-row"><div class="zone-row-label">Allée ${lettre}</div><div class="zone-row-cells">${cellsHtml}</div></div>`;
+  }).join('');
+  return `
+  <section class="panel">
+    <div class="panel-head">
+      <h2>📍 Zones de stockage</h2>
+      <span class="footer-note" style="margin:0;">${nbOccupied} / ${STORAGE_ZONES.length} occupées</span>
+    </div>
+    <div class="panel-body">
+      ${rowsHtml}
+      <div class="footer-note" style="text-align:left; padding-top:10px;">Une zone est attribuée automatiquement à la création d'une commande (première libre disponible) et se libère automatiquement dès que toutes ses pièces sont Terminées — pas besoin de la vider à la main. Pour changer la zone d'une commande, utilisez son badge "📍 Zone" dans le planning.</div>
+    </div>
+  </section>`;
 }
 
 /* ---------------- Temps de production (superviseurs/administrateurs) ---------------- */
@@ -6918,6 +7034,19 @@ function renderCommandeCard(c, idx, total){
   const allDone = c.pieces.length>0 && c.pieces.every(o=>o.statut==='termine');
   if(allDone) badge = `<span class="badge done">Terminée</span>`;
 
+  // Zone de stockage physique (voir CLAUDE.md) : les zones déjà occupées par une AUTRE commande
+  // encore active sont grisées, pour ne jamais pouvoir en assigner deux fois la même par erreur.
+  const occupiedZonesForCard = occupiedStorageZones(state, c.id);
+  const zoneOptionsHtml = ['<option value="">— Aucune —</option>'].concat(
+    STORAGE_ZONES.map(z => {
+      const isOccupiedByOther = occupiedZonesForCard.has(z);
+      const occupant = isOccupiedByOther ? state.commandes.find(cc => cc.id!==c.id && cc.zoneStockage===z && !isCommandeFullyDone(cc)) : null;
+      const label = occupant ? `${z} — occupée (${occupant.nom})` : z;
+      return `<option value="${z}" ${c.zoneStockage===z?'selected':''} ${isOccupiedByOther?'disabled':''}>${escapeHtml(label)}</option>`;
+    })
+  ).join('');
+  const zoneSelect = `<select class="zone-select ${c.zoneStockage?'zone-set':''}" data-action="set-commande-zone" data-cid="${c.id}" title="Zone de stockage — se libère automatiquement une fois la commande totalement terminée">${zoneOptionsHtml}</select>`;
+
   // Une recherche par référence de PIÈCE ne doit faire ressortir que les lignes concernées, pas
   // toutes celles de la commande — sauf si c'est la commande elle-même (par son nom ou sa réf.
   // client) qui correspond (matchesSearch fait ressortir la commande entière dans ce cas, et il est
@@ -6959,6 +7088,7 @@ function renderCommandeCard(c, idx, total){
         <option value="urgente" ${c.urgence==='urgente'?'selected':''}>Urgente</option>
       </select>
       <div class="due-field">Échéance <input type="date" required value="${c.dateBesoin}" data-action="commande-field" data-cid="${c.id}" data-field="dateBesoin"></div>
+      ${zoneSelect}
       ${badge}
     </div>
     ${activeBlock}
@@ -7169,6 +7299,17 @@ function render(){
     restoreFocusRef(focusRef);
     return;
   }
+  if(currentPage === 'zones'){
+    appEl.innerHTML = [
+      renderHeader(),
+      renderZonesPage(),
+      renderSettingsModal(),
+      renderToast()
+    ].join('');
+    restoreModalScroll(modalScrollTop);
+    restoreFocusRef(focusRef);
+    return;
+  }
   const schedule = getSchedule();
   const html = [
     renderHeader(),
@@ -7330,6 +7471,7 @@ function dispatchClickAction(action, el){
     case 'goto-conges': currentPage = 'conges'; render(); break;
     case 'goto-planning': currentPage = 'planning'; render(); break;
     case 'goto-temps-prod': currentPage = 'tempsProd'; render(); break;
+    case 'goto-zones': currentPage = 'zones'; render(); break;
     case 'conges-tab': congesTab = el.dataset.tab; render(); break;
     case 'temps-prod-mode': tempsProdPeriodMode = el.dataset.mode; render(); break;
     case 'temps-prod-nav': navigateTempsProdPeriod(el.dataset.dir); break;
@@ -7419,6 +7561,7 @@ function dispatchClickAction(action, el){
     case 'unarchive-commande': unarchiveCommande(el.dataset.cid); break;
     case 'archive-now': manualArchiveNow(); break;
     case 'clear-isolate': selectedCommandeId = null; render(); break;
+    case 'isolate-from-zone': selectedCommandeId = el.dataset.cid; currentPage = 'planning'; render(); break;
     case 'toggle-select-commande': toggleIsolateCommande(el.dataset.id); if(selectedCommandeId) maybeJumpToHighlight(); render(); break;
     case 'toggle-panel-collapse': togglePanelCollapse(el.dataset.key); break;
     case 'set-view': setView(el.dataset.view); break;
@@ -7482,6 +7625,7 @@ function dispatchChangeAction(el, action){
     case 'draft-op-duree': updateDraftOpDuree(Number(el.dataset.idx), el.value); break;
     case 'draft-op-duree-min': updateDraftOpDureeMin(Number(el.dataset.idx), el.value); break;
     case 'commande-field': updateCommandeField(el.dataset.cid, el.dataset.field, el.value); break;
+    case 'set-commande-zone': setCommandeZone(el.dataset.cid, el.value); break;
     case 'op-field': updateOpField(el.dataset.cid, el.dataset.oid, el.dataset.field, el.value); break;
     case 'op-statut-select': setOpStatut(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'op-duree-field': updateOpDuree(el.dataset.cid, el.dataset.oid, el.value); break;
