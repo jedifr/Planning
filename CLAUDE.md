@@ -57,6 +57,11 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
   `fusionGroupId`, `fusionPinned`, `sousTraitance`, `dateDebutPossible`,
   `autoPausedOperators`
+  - `sousTraitance` se coche **automatiquement** (jamais décoché automatiquement) dès que le poste
+    choisi pour la ligne a un nom contenant "sous-traitance"/"sous traitance"
+    (`machineNameLooksLikeSousTraitance`) — dans `updateOpField` (ligne d'une commande existante) et
+    dans `applyImportProfile` (correspondance de poste de l'import personnalisé). Reste modifiable à
+    la main ensuite dans les deux cas.
   - `operatorUserId` de la pièce = **opérateur assigné** (intention de planification, jamais
     écrasé automatiquement). Chaque élément de `sessions[]` porte son propre `operatorUserId`
     = qui a **réellement** ouvert cette session (identité active au moment du clic — voir

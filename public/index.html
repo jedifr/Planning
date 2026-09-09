@@ -3565,6 +3565,13 @@ function updateOpField(cid, oid, field, value){
     const dup = c.pieces.some(other => other.id!==o.id && pieceDupKey(other.piece, other.etape, other.machineId)===key);
     if(dup) showToast(`⚠ "${o.piece}"${o.etape?' / '+o.etape:''} existe déjà sur cette commande — vérifiez qu'il ne s'agit pas d'un doublon.`);
   }
+  if(field==='machineId'){
+    // Même auto-cochage que pour la correspondance de poste de l'import personnalisé (voir
+    // applyImportProfile) — reste modifiable si ce n'est pas ce qui était voulu : jamais d'auto-décochage
+    // si on choisit ensuite un autre poste, pour ne jamais défaire un choix manuel.
+    const m = state.machines.find(mm=>mm.id===value);
+    if(m && machineNameLooksLikeSousTraitance(m.nom)) o.sousTraitance = true;
+  }
   commit();
 }
 function updateOpPhase(cid, oid, value){
@@ -3579,6 +3586,13 @@ function updateOpDateDebutPossible(cid, oid, value){
   const o = c.pieces.find(o=>o.id===oid); if(!o) return;
   o.dateDebutPossible = value || null;
   commit();
+}
+// Détection par nom de poste utilisée pour cocher automatiquement "Sous-traité" (updateOpField,
+// applyImportProfile) — tolère "sous-traitance" et "sous traitance", jamais bloquant : la case reste
+// modifiable ensuite si ce n'était pas ce qui était voulu.
+function machineNameLooksLikeSousTraitance(nom){
+  const n = String(nom||'').toLowerCase();
+  return n.includes('sous-traitance') || n.includes('sous traitance');
 }
 function toggleOpSousTraitance(cid, oid, checked){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
@@ -4456,10 +4470,7 @@ function updateCustomImportPosteMap(rawValue, machineId){
   // automatiquement pour cette valeur — reste modifiable si ce n'est pas ce qui était voulu.
   if(machineId){
     const m = state.machines.find(mm=>mm.id===machineId);
-    if(m){
-      const n = m.nom.toLowerCase();
-      if(n.includes('sous-traitance') || n.includes('sous traitance')) customImportState.sousTraitanceByValue[rawValue] = true;
-    }
+    if(m && machineNameLooksLikeSousTraitance(m.nom)) customImportState.sousTraitanceByValue[rawValue] = true;
   }
   render();
 }
