@@ -336,6 +336,19 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   du HTML (`<br>`) affiche les balises littéralement.
 - **Champs de configuration texte.** `updateConfig` convertit par défaut en nombre ;
   un nouveau champ texte a besoin de son cas explicite, sinon il est silencieusement ignoré.
+- **Restauration du focus sur une ligne répétée sans identifiant unique reconnu.**
+  `captureFocusRef()`/`restoreFocusRef()` retrouvent le champ actif après un `render()` via un
+  sélecteur CSS construit à partir d'une liste fixe d'attributs (`data-action`, `data-field`,
+  `data-cid`, `data-oid`, `data-idx`...). Les lignes du formulaire "Nouvelle commande"
+  (`renderDraftOpRow`) n'utilisent QUE `data-idx` pour distinguer une ligne d'une autre (pas de
+  `data-cid`/`data-oid`, ces pièces n'existent pas encore) — `data-idx` manquait de cette liste, donc
+  le sélecteur reconstruit après le `render()` déclenché par `updateDraftOpField`/`updateDraftOpDuree`
+  ne contenait que `data-action`+`data-field`, communs à toutes les lignes : `document.querySelector`
+  renvoyait toujours le premier élément correspondant, ramenant le focus sur la ligne 1 quel que soit
+  la ligne modifiée (bug rapporté : taper le temps unitaire/la quantité/la durée sur une ligne 2+ fait
+  sauter le curseur sur ce même champ, mais ligne 1). Réflexe : tout nouvel attribut `data-*` servant
+  à distinguer des lignes répétées d'un même formulaire doit être ajouté à la liste `attrs` de
+  `captureFocusRef`, pas seulement utilisé dans le marquage HTML.
 - **Vider une donnée avant confirmation de son archivage.** `archiveOldSessions()` ne met
   `o.sessions = []` qu'après un `POST /api/session-history` réussi — vider d'abord et archiver
   ensuite perdrait ces horaires pour toujours au moindre problème réseau.

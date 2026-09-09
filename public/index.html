@@ -7482,7 +7482,7 @@ function captureFocusRef(){
   const el = document.activeElement;
   if(!el || el===document.body) return null;
   if(!['INPUT','SELECT','TEXTAREA'].includes(el.tagName)) return null;
-  const attrs = ['data-action','data-field','data-id','data-cid','data-oid','data-user-id','data-type-id','data-machine-id','data-conge-id','data-pause-id','id'];
+  const attrs = ['data-action','data-field','data-id','data-idx','data-cid','data-oid','data-user-id','data-type-id','data-machine-id','data-conge-id','data-pause-id','id'];
   let selector = el.tagName.toLowerCase();
   attrs.forEach(a => { const v = el.getAttribute(a); if(v!=null) selector += `[${a}="${v.replace(/"/g,'\\"')}"]`; });
   if(selector === el.tagName.toLowerCase()) return null; // aucun attribut identifiant : impossible de le retrouver après coup
