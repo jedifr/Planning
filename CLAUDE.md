@@ -213,6 +213,17 @@ volontairement la même zone (regroupement manuel de petites affaires dans un m�
   `renderExcelImportModal` (déjà partagée par les deux flux d'import) l'affiche directement dans sa
   colonne "Zone de stockage" du tableau récapitulatif — plus adapté qu'une pop-up par commande quand
   un import en crée plusieurs d'un coup.
+- **Casiers désactivés** (`state.config.inactiveStorageZones`, simple tableau de codes comme `"A13"`)
+  — un casier cassé/réservé, à sortir de la rotation. `isZoneInactive(st, zone)` : jamais proposé par
+  `assignStorageZone` (exclu de la sélection automatique) ni acceptable par `setCommandeZone`
+  (refusé avec message). `toggleStorageZoneActive(zone)`, déclenché en cliquant une case **libre**
+  de `renderZonesPage`, bascule l'état — refuse de désactiver une zone actuellement occupée
+  (`commandesInZone` non vide : il faut d'abord la libérer). Rendu : case hachurée rouge avec
+  « 🚫 Désactivée » dans la grille, option `disabled` (avec la mention "désactivée") dans le menu
+  déroulant `renderCommandeCard` — sauf si c'est déjà la zone en cours de cette commande, jamais
+  masquée pour ne pas la faire disparaître du `<select>` sans explication. Comme pour un allée
+  réduite/supprimée, un code désactivé n'est jamais nettoyé automatiquement des données existantes
+  (mêmes conséquences inoffensives qu'une zone "hors configuration actuelle").
 
 ## Moteur de planification — `computeSchedule(st)`
 

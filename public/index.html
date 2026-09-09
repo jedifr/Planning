@@ -437,7 +437,14 @@
   }
   .zone-cell-code{font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:12px;}
   .zone-cell-label{font-size:10.5px; color:var(--text-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%;}
-  .zone-cell-free{opacity:0.55;}
+  .zone-cell-free{opacity:0.55; cursor:pointer;}
+  .zone-cell-free:hover{opacity:0.9; border-color:var(--text-faint);}
+  .zone-cell-inactive{
+    cursor:pointer; opacity:1; border-style:dashed; border-color:var(--red);
+    background:repeating-linear-gradient(45deg, var(--panel), var(--panel) 6px, rgba(178,58,48,0.1) 6px, rgba(178,58,48,0.1) 12px);
+  }
+  .zone-cell-inactive .zone-cell-code, .zone-cell-inactive .zone-cell-label{color:var(--red);}
+  .zone-cell-inactive:hover{border-color:var(--red); opacity:0.85;}
   .zone-cell-occupied{background:rgba(49,111,152,0.1); border-color:var(--blue);}
   .zone-cell-occupied .zone-cell-label{white-space:normal; overflow:visible; display:flex; flex-direction:column; gap:3px; width:100%;}
   .zone-cell-occupant{
@@ -1061,6 +1068,10 @@ function migrateState(st){
     if(!(Number(a.nbEmplacements) > 0)) a.nbEmplacements = 16;
     if(!a.couleur) a.couleur = MACHINE_COLORS[i%MACHINE_COLORS.length];
   });
+  // Casiers désactivés manuellement (cassés, réservés...) — voir toggleStorageZoneActive. Simple
+  // liste de codes, jamais nettoyée si une allée rétrécit/disparaît ensuite (mêmes conséquences
+  // inoffensives qu'une zoneStockage "hors configuration actuelle", voir plus bas).
+  if(!Array.isArray(st.config.inactiveStorageZones)) st.config.inactiveStorageZones = [];
   if(!st.config.modules) st.config.modules = { conges: true }; // interrupteur du module Congés
   if(st.config.matiereFusionActive === undefined) st.config.matiereFusionActive = false; // détection par matière/épaisseur désactivée par défaut
   if(st.config.copyright === undefined) st.config.copyright = ''; // mention de l'écran de connexion
@@ -1669,6 +1680,11 @@ function computeStorageZones(st){
   });
   return { list, byCode };
 }
+// Une zone désactivée (casier cassé, réservé...) n'est jamais proposée à l'attribution automatique
+// ni sélectionnable manuellement — voir toggleStorageZoneActive/renderZonesPage.
+function isZoneInactive(st, zone){
+  return (st.config.inactiveStorageZones||[]).includes(zone);
+}
 // Attribue automatiquement la première zone libre à une commande qui n'en a pas encore — appelé à
 // la création d'une commande, et une seule fois au chargement pour rattraper les commandes déjà en
 // cours (voir migrateState). Ne fait rien si toutes les zones sont occupées : la commande reste sans
@@ -1678,7 +1694,7 @@ function computeStorageZones(st){
 function assignStorageZone(st, c){
   if(c.zoneStockage || isCommandeFullyDone(c)) return;
   const occupied = occupiedStorageZones(st, c.id);
-  const free = computeStorageZones(st).list.find(z => !occupied.has(z));
+  const free = computeStorageZones(st).list.find(z => !occupied.has(z) && !isZoneInactive(st, z));
   if(free) c.zoneStockage = free;
 }
 // Commandes actives occupant réellement une zone donnée (hors excludeCommandeId) — plusieurs
@@ -3532,12 +3548,30 @@ function updateCommandeField(cid, field, value){
 function setCommandeZone(cid, zone){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
   if(!zone){ c.zoneStockage = null; commit(); return; }
+  if(isZoneInactive(state, zone)){ alert(`La zone ${zone} a été désactivée (casier indisponible) — réactivez-la depuis la page "Zones de stockage" si besoin.`); return; }
   const others = commandesInZone(state, zone, cid);
   if(others.length > 0){
     const noms = others.map(cc=>cc.nom).join(', ');
     if(!confirm(`La zone ${zone} est déjà utilisée par : ${noms}.\n\nRegrouper "${c.nom}" dans la même zone ?`)) return;
   }
   c.zoneStockage = zone; commit();
+}
+// Active/désactive un casier (cassé, réservé...) depuis la page "Zones de stockage" — un clic sur
+// une case libre. Une zone occupée ne peut pas être désactivée directement : il faut d'abord la
+// libérer (changer la zone de la/les commande(s) concernée(s)), pour ne jamais désactiver un casier
+// réellement utilisé sans s'en rendre compte.
+function toggleStorageZoneActive(zone){
+  const occupants = commandesInZone(state, zone, null);
+  if(occupants.length > 0){
+    alert(`La zone ${zone} est occupée par ${occupants.map(c=>c.nom).join(', ')} — libérez-la d'abord avant de la désactiver.`);
+    return;
+  }
+  const cfg = state.config;
+  if(!Array.isArray(cfg.inactiveStorageZones)) cfg.inactiveStorageZones = [];
+  const idx = cfg.inactiveStorageZones.indexOf(zone);
+  if(idx >= 0) cfg.inactiveStorageZones.splice(idx, 1);
+  else cfg.inactiveStorageZones.push(zone);
+  commit();
 }
 function addOpToCommande(cid){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
@@ -5148,7 +5182,13 @@ function renderZonesPage(){
     const cellsHtml = Array.from({length:n}, (_,i) => `${allee.code}${i+1}`).map(z => {
       const occupants = byZone[z];
       if(!occupants || !occupants.length){
-        return `<div class="zone-cell zone-cell-free"><div class="zone-cell-code">${z}</div><div class="zone-cell-label">Libre</div></div>`;
+        // Case libre : cliquable pour désactiver/réactiver ce casier (cassé, réservé...) — voir
+        // toggleStorageZoneActive. Une case occupée ne l'est jamais (il faut d'abord la libérer).
+        const inactive = isZoneInactive(state, z);
+        const cls = inactive ? 'zone-cell zone-cell-inactive' : 'zone-cell zone-cell-free';
+        const title = inactive ? `Réactiver ${z}` : `Désactiver ${z} (casier cassé, réservé...)`;
+        const labelTxt = inactive ? '🚫 Désactivée' : 'Libre';
+        return `<button class="${cls}" data-action="toggle-zone-active" data-zone="${z}" title="${title}"><div class="zone-cell-code">${z}</div><div class="zone-cell-label">${labelTxt}</div></button>`;
       }
       const namesHtml = occupants.map(o => `<button class="zone-cell-occupant" data-action="isolate-from-zone" data-cid="${o.id}" title="Isoler « ${escapeHtml(o.nom)} » dans le planning">${escapeHtml(o.nom)}</button>`).join('');
       return `<div class="zone-cell zone-cell-occupied" style="border-color:${allee.couleur}; background:${hexToRgba(allee.couleur,0.14)};">
@@ -5167,16 +5207,17 @@ function renderZonesPage(){
   const orphanNote = orphanNames.length
     ? `<div class="footer-note" style="text-align:left; padding-top:10px; color:var(--red);">Hors configuration actuelle : ${orphanNames.map(escapeHtml).join(', ')} — l'allée correspondante a été réduite ou supprimée. Réattribuez une zone valide depuis leur badge "📍 Zone".</div>`
     : '';
+  const nbInactive = (state.config.inactiveStorageZones||[]).filter(z => zonesInfo.list.includes(z)).length;
   return `
   <section class="panel">
     <div class="panel-head">
       <h2>📍 Zones de stockage</h2>
-      <span class="footer-note" style="margin:0;">${nbOccupied} / ${zonesInfo.list.length} occupées</span>
+      <span class="footer-note" style="margin:0;">${nbOccupied} / ${zonesInfo.list.length} occupées${nbInactive?` · ${nbInactive} désactivée${nbInactive>1?'s':''}`:''}</span>
     </div>
     <div class="panel-body">
       ${rowsHtml || `<div class="footer-note" style="text-align:left;">Aucune allée configurée — définissez-en dans Paramètres → Zones de stockage.</div>`}
       ${orphanNote}
-      <div class="footer-note" style="text-align:left; padding-top:10px;">Une zone est attribuée automatiquement à la création d'une commande (première libre disponible) et se libère automatiquement dès que toutes ses pièces sont Terminées — pas besoin de la vider à la main. Pour changer la zone d'une commande, utilisez son badge "📍 Zone" dans le planning ; plusieurs commandes peuvent volontairement partager le même casier. Les allées se règlent dans Paramètres → Zones de stockage.</div>
+      <div class="footer-note" style="text-align:left; padding-top:10px;">Une zone est attribuée automatiquement à la création d'une commande (première libre disponible) et se libère automatiquement dès que toutes ses pièces sont Terminées — pas besoin de la vider à la main. Pour changer la zone d'une commande, utilisez son badge "📍 Zone" dans le planning ; plusieurs commandes peuvent volontairement partager le même casier. Cliquez une case libre pour désactiver un casier indisponible (cassé, réservé...), recliquez pour le réactiver. Les allées se règlent dans Paramètres → Zones de stockage.</div>
     </div>
   </section>`;
 }
@@ -7235,6 +7276,12 @@ function renderCommandeCard(c, idx, total){
   const currentAllee = c.zoneStockage ? zonesInfoCard.byCode[c.zoneStockage] : null;
   const zoneOptions = ['<option value="">— Aucune —</option>'];
   zonesInfoCard.list.forEach(z => {
+    if(isZoneInactive(state, z) && c.zoneStockage!==z){
+      // Casier désactivé (voir toggleStorageZoneActive) : jamais proposé, sauf s'il s'agit déjà de
+      // la zone en cours sur cette commande (ne doit jamais disparaître du <select> sans explication).
+      zoneOptions.push(`<option value="${z}" disabled>${escapeHtml(z)} — désactivée</option>`);
+      return;
+    }
     const others = commandesInZone(state, z, c.id);
     const label = others.length ? `${z} — avec ${others.map(cc=>cc.nom).join(', ')}` : z;
     zoneOptions.push(`<option value="${z}" ${c.zoneStockage===z?'selected':''}>${escapeHtml(label)}</option>`);
@@ -7766,6 +7813,7 @@ function dispatchClickAction(action, el){
     case 'archive-now': manualArchiveNow(); break;
     case 'clear-isolate': selectedCommandeId = null; render(); break;
     case 'isolate-from-zone': selectedCommandeId = el.dataset.cid; currentPage = 'planning'; render(); break;
+    case 'toggle-zone-active': toggleStorageZoneActive(el.dataset.zone); break;
     case 'toggle-select-commande': toggleIsolateCommande(el.dataset.id); if(selectedCommandeId) maybeJumpToHighlight(); render(); break;
     case 'toggle-panel-collapse': togglePanelCollapse(el.dataset.key); break;
     case 'set-view': setView(el.dataset.view); break;
