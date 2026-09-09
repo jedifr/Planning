@@ -46,7 +46,8 @@ et `session_history` (voir ci-dessous). Volume Docker nommé `planning-data`.
 Tout l'état applicatif est un seul objet JSON (`state`) :
 
 - `config` — horaires, pause déjeuner, couleurs, titre, logo, `copyright`,
-  `matiereFusionActive`, `modules.conges`
+  `matiereFusionActive`, `modules.conges`, `storageZones[]` (allées de zones de stockage —
+  voir section dédiée plus bas)
 - `machines[]` — postes : `nom`, `dispo` (disponible à partir de), `couleur`,
   `horairesActifs`/`horaires` (horaires spécifiques), `indisponibilites[]`,
   `fusionnable`, `transfertFixeMin`, `transfertParPieceMin`
@@ -134,12 +135,23 @@ peuplé à la pause, vidé à la reprise), pas une seule.
 
 ## Zones de stockage
 
-Emplacements physiques fixes où sont entreposées les pièces d'une commande pendant sa production —
-`STORAGE_ZONES` (48 zones : A1-A16, B1-B16, C1-C16). Attribut de la **commande** (`zoneStockage`),
-pas de la pièce : toutes les pièces d'une commande partagent une seule zone. Plusieurs commandes
-peuvent aussi partager volontairement la même zone (regroupement manuel de petites affaires dans un
-même casier) — voir `setCommandeZone` ci-dessous.
+Emplacements physiques où sont entreposées les pièces d'une commande pendant sa production.
+**Paramétrable** (Paramètres → Zones de stockage) : `state.config.storageZones[]` est la liste des
+**allées** — `{ id, code, nom, nbEmplacements, couleur }`. Une allée de code `"B"` et
+`nbEmplacements:16` produit les emplacements `B1`…`B16`. `DEFAULT_STORAGE_ZONES` (3 allées A/B/C de
+16, sans nom, couleurs de `MACHINE_COLORS`) est la valeur de migration — reprise telle quelle par
+`migrateState` sur une installation existante pour ne rien changer aux zones déjà attribuées.
+Attribut de la **commande** (`zoneStockage`, une chaîne comme `"B7"`), pas de la pièce : toutes les
+pièces d'une commande partagent une seule zone. Plusieurs commandes peuvent aussi partager
+volontairement la même zone (regroupement manuel de petites affaires dans un même casier) — voir
+`setCommandeZone` ci-dessous.
 
+- `computeStorageZones(st)` — reconstruit `{ list, byCode }` à partir de `st.config.storageZones` :
+  `list` est la liste à plat de tous les codes de zone dans l'ordre des allées, `byCode` associe
+  chaque code à son allée (pour la couleur/le nom). Remplace l'ancienne constante figée
+  `STORAGE_ZONES` — **toujours** passer par cette fonction plutôt que de reconstruire la liste
+  ailleurs, sinon un changement de configuration (allée ajoutée/redimensionnée) ne serait pas pris
+  en compte partout.
 - `isCommandeFullyDone(c)` — même condition que le badge "Terminée" de `renderCommandeCard`
   (`pieces.length>0 && pieces.every(termine)`) — une commande dans cet état n'occupe plus rien,
   **même si `zoneStockage` n'est pas effacé** (trace historique volontairement conservée).
@@ -150,25 +162,40 @@ même casier) — voir `setCommandeZone` ci-dessous.
   précisément une zone donnée (hors `excludeCommandeId`), potentiellement plusieurs si regroupées
   manuellement. Sert au badge (`renderCommandeCard`) et à la page "Zones de stockage" pour afficher
   qui est déjà là.
-- `assignStorageZone(st, c)` — attribue la première zone `STORAGE_ZONES` **entièrement vide** à une
-  commande qui n'en a pas encore ; ne fait rien si elle en a déjà une, si elle est déjà totalement
-  terminée, ou si les 48 zones sont occupées (reste alors `null` jusqu'à une attribution manuelle).
-  Ne rejoint jamais automatiquement une zone déjà partagée — le regroupement reste un choix humain
-  délibéré. Appelée à chaque création de commande (les trois `targetState.commandes.push(...)`, dont
-  celui de l'import personnalisé) et une seule fois au chargement pour les commandes déjà en cours au
-  moment de l'introduction de cette fonctionnalité (`migrateState`, garde `_zonesStockageMigrated` —
-  ne retente jamais après coup, y compris si une zone se libère : seules la création d'une commande
-  ou l'action manuelle réattribuent).
+- `assignStorageZone(st, c)` — attribue la première zone de `computeStorageZones(st).list`
+  **entièrement vide** à une commande qui n'en a pas encore ; ne fait rien si elle en a déjà une, si
+  elle est déjà totalement terminée, ou si toutes les zones sont occupées (reste alors `null` jusqu'à
+  une attribution manuelle). Ne rejoint jamais automatiquement une zone déjà partagée — le
+  regroupement reste un choix humain délibéré. Appelée à chaque création de commande (les trois
+  `targetState.commandes.push(...)`, dont celui de l'import personnalisé) et une seule fois au
+  chargement pour les commandes déjà en cours au moment de l'introduction de cette fonctionnalité
+  (`migrateState`, garde `_zonesStockageMigrated` — ne retente jamais après coup, y compris si une
+  zone se libère : seules la création d'une commande ou l'action manuelle réattribuent).
 - `setCommandeZone(cid, zone)` — changement manuel depuis le badge "📍 Zone" (`renderCommandeCard`).
   Contrairement à `assignStorageZone`, autorise le regroupement dans une zone déjà occupée par
   d'autres commandes actives, mais demande confirmation (`confirm()`, listant qui est déjà là) avant
   de le faire — jamais silencieux. Réattribuer à une commande sa PROPRE zone déjà occupée ne redemande
   rien (pas de faux-positif, `commandesInZone` exclut `cid`).
+- **Zone "hors configuration actuelle"** : si une allée est supprimée ou réduite (Paramètres) après
+  qu'une commande y a été assignée, cette commande garde sa valeur de `zoneStockage` **telle quelle**
+  (jamais effacée automatiquement) mais le code n'apparaît plus dans `computeStorageZones(...).list` —
+  `renderCommandeCard` l'ajoute alors comme option supplémentaire du menu déroulant (étiquetée "hors
+  configuration actuelle") pour ne jamais la perdre silencieusement du `<select>`, et `renderZonesPage`
+  la signale dans une note dédiée plutôt que dans la grille (qui n'affiche que les emplacements
+  encore configurés). `removeStorageAllee` avertit explicitement (via `confirm()`, en les nommant) si
+  des commandes actives seraient concernées avant de supprimer une allée.
 - Page "📍 Zones de stockage" (`renderZonesPage`, `currentPage==='zones'`) — vue d'ensemble en
-  lecture des 48 emplacements, listant TOUTES les commandes d'une zone partagée ; cliquer le nom
-  d'une commande occupante l'isole dans le planning (`selectedCommandeId` + retour à
-  `currentPage='planning'`).
-- Kanban (`renderKanbanView`) — chaque carte affiche « 📍 {zone} » quand sa commande en a une, sauf
+  lecture, une ligne par allée dans l'ordre de `state.config.storageZones`, colorée avec la couleur
+  de l'allée ; hauteur de ligne homogène entre toutes les allées (`grid-auto-rows` sur
+  `.zone-row-cells` + `min-height` sur `.zone-cell`), qu'une case contienne 0, 1 ou plusieurs
+  commandes regroupées. Cliquer le nom d'une commande occupante l'isole dans le planning
+  (`selectedCommandeId` + retour à `currentPage='planning'`).
+- Paramètres → Zones de stockage (`sectionDefs.storageZones`) — une carte par allée (réutilise les
+  classes `.machine-card`/`.machines-grid`/`.add-machine-row` des postes, par cohérence visuelle) :
+  couleur, code (préfixe, unique — `updateStorageAllee` refuse un doublon), nom optionnel, nombre
+  d'emplacements. `addStorageAllee` propose automatiquement la prochaine lettre A-Z libre.
+- Kanban (`renderKanbanView`) — chaque carte affiche « 📍 {zone} », coloré selon l'allée
+  (`computeStorageZones` calculé une fois par rendu, pas par carte), quand sa commande en a une, sauf
   sur une carte fusionnée multi-commandes (`o._fusionMembers`) : `o.zoneStockage` n'y porterait que
   la zone du premier membre du groupe, ce qui serait trompeur pour les autres — volontairement omis
   dans ce cas plutôt que d'afficher une info fausse.

@@ -422,22 +422,26 @@
     border-radius:20px; border:1px solid var(--line); background:var(--panel-2); color:var(--text-dim); cursor:pointer;
   }
   .zone-select.zone-set{border-color:var(--blue); color:var(--blue); background:rgba(49,111,152,0.1);}
-  .zone-row{display:flex; align-items:flex-start; gap:12px; margin-bottom:14px;}
+  /* Hauteur homogène : min-height fixe sur chaque case + grid-auto-rows sur la grille, pour que
+     toutes les allées gardent la même hauteur de ligne même si l'une d'elles a plus de monde
+     dedans (plusieurs commandes regroupées dans un même casier) qu'une autre. */
+  .zone-row{display:flex; align-items:center; gap:12px; margin-bottom:16px;}
   .zone-row:last-child{margin-bottom:0;}
-  .zone-row-label{width:70px; flex:0 0 70px; font-family:'IBM Plex Mono',monospace; font-weight:600; color:var(--text-faint); padding-top:8px;}
-  .zone-row-cells{display:grid; grid-template-columns:repeat(16, minmax(64px,1fr)); gap:6px; flex:1 1 auto;}
+  .zone-row-label{width:76px; flex:0 0 76px; font-family:'IBM Plex Mono',monospace; font-weight:600; color:var(--text-dim); align-self:stretch; display:flex; align-items:center; gap:6px;}
+  .zone-row-swatch{width:10px; height:10px; border-radius:50%; flex:0 0 10px; display:inline-block;}
+  .zone-row-cells{display:grid; grid-template-columns:repeat(16, minmax(64px,1fr)); grid-auto-rows:minmax(78px, auto); gap:6px; flex:1 1 auto;}
   .zone-cell{
-    border:1px solid var(--line); border-radius:4px; padding:6px 4px; text-align:center; font-family:'IBM Plex Sans',sans-serif;
-    background:var(--panel); cursor:default; min-width:0;
+    border:1px solid var(--line); border-radius:4px; padding:8px 6px; text-align:center; font-family:'IBM Plex Sans',sans-serif;
+    background:var(--panel); cursor:default; min-width:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
   }
-  .zone-cell-code{font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:11.5px;}
-  .zone-cell-label{font-size:10px; color:var(--text-faint); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .zone-cell-code{font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:12px;}
+  .zone-cell-label{font-size:10.5px; color:var(--text-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%;}
   .zone-cell-free{opacity:0.55;}
   .zone-cell-occupied{background:rgba(49,111,152,0.1); border-color:var(--blue);}
-  .zone-cell-occupied .zone-cell-label{white-space:normal; overflow:visible; display:flex; flex-direction:column; gap:2px;}
+  .zone-cell-occupied .zone-cell-label{white-space:normal; overflow:visible; display:flex; flex-direction:column; gap:3px; width:100%;}
   .zone-cell-occupant{
     display:block; width:100%; background:none; border:none; padding:0; margin:0; cursor:pointer;
-    font-family:'IBM Plex Sans',sans-serif; font-size:10px; font-weight:600; color:var(--blue);
+    font-family:'IBM Plex Sans',sans-serif; font-size:10.5px; font-weight:600; color:var(--blue);
     white-space:normal; overflow-wrap:anywhere; text-align:center;
   }
   .zone-cell-occupant:hover{text-decoration:underline;}
@@ -704,9 +708,15 @@
    ========================================================= */
 
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
-// Zones physiques d'entreposage des pièces en cours de production — 3 allées fixes de 16
-// emplacements (A1-A16, B1-B16, C1-C16), voir CLAUDE.md.
-const STORAGE_ZONES = ['A','B','C'].flatMap(lettre => Array.from({length:16}, (_,i) => `${lettre}${i+1}`));
+// Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
+// Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
+// DEFAULT_STORAGE_ZONES reprend l'ancienne configuration figée (3 allées de 16 emplacements) comme
+// valeur de migration, pour ne rien changer aux zones déjà attribuées sur une installation existante.
+const DEFAULT_STORAGE_ZONES = [
+  { code:'A', nom:'', nbEmplacements:16, couleur:'#4c8fbd' },
+  { code:'B', nom:'', nbEmplacements:16, couleur:'#7fb08a' },
+  { code:'C', nom:'', nbEmplacements:16, couleur:'#c98f2e' },
+];
 const DEFAULT_CONFIG = { startHour: 8, startMinute: 0, monThuHours: 8.75, friHours: 4, pauseActive: true, pauseDebut: '12:00', pauseFin: '13:00' };
 
 function uid(prefix){ return prefix + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -736,10 +746,10 @@ let stateVersion = 0;
 let draft = null;
 let showNewForm = false;
 let showSettingsModal = false;
-const SETTINGS_SECTION_KEYS = ['moncompte', 'horaires', 'pause', 'affichage', 'utilisateurs', 'conges', 'backup', 'machines', 'importProfiles', 'maintenance'];
+const SETTINGS_SECTION_KEYS = ['moncompte', 'horaires', 'pause', 'affichage', 'utilisateurs', 'conges', 'backup', 'machines', 'storageZones', 'importProfiles', 'maintenance'];
 const SETTINGS_UI_STORAGE_KEY = 'planning-atelier-settings-ui';
 let settingsSectionOrder = [...SETTINGS_SECTION_KEYS];
-let settingsSectionOpen = { horaires:true, pause:false, affichage:false, utilisateurs:false, backup:false, machines:false, importProfiles:false, maintenance:false };
+let settingsSectionOpen = { horaires:true, pause:false, affichage:false, utilisateurs:false, backup:false, machines:false, storageZones:false, importProfiles:false, maintenance:false };
 // Préférence propre à ce navigateur (pas synchronisée entre les postes) : ordre et
 // état replié/déplié de chaque section de la pop-up Paramètres.
 function loadSettingsUIPrefs(){
@@ -1030,6 +1040,20 @@ function migrateState(st){
     if(lunch.horaireActif === undefined) lunch.horaireActif = false;
     if(!lunch.heureDebut) lunch.heureDebut = `${pad(DEFAULT_CONFIG.startHour)}:${pad(DEFAULT_CONFIG.startMinute)}`;
     if(!lunch.heureFin) lunch.heureFin = '16:45';
+  });
+  // Zones de stockage (Paramètres → Zones de stockage) : reprend l'ancienne configuration figée
+  // (3 allées de 16 emplacements) comme valeur par défaut, pour ne rien changer aux zones déjà
+  // attribuées sur une installation existante. Normalise aussi chaque allée (un ancien enregistrement
+  // partiel, ou créé avant l'ajout d'un champ, ne doit jamais planter l'affichage).
+  if(!Array.isArray(st.config.storageZones)){
+    st.config.storageZones = DEFAULT_STORAGE_ZONES.map(a => ({ id: uid('allee'), ...a }));
+  }
+  st.config.storageZones.forEach((a,i) => {
+    if(!a.id) a.id = uid('allee');
+    if(!a.code) a.code = String.fromCharCode(65+i);
+    if(a.nom === undefined) a.nom = '';
+    if(!(Number(a.nbEmplacements) > 0)) a.nbEmplacements = 16;
+    if(!a.couleur) a.couleur = MACHINE_COLORS[i%MACHINE_COLORS.length];
   });
   if(!st.config.modules) st.config.modules = { conges: true }; // interrupteur du module Congés
   if(st.config.matiereFusionActive === undefined) st.config.matiereFusionActive = false; // détection par matière/épaisseur désactivée par défaut
@@ -1623,6 +1647,22 @@ function occupiedStorageZones(st, excludeCommandeId){
   });
   return occupied;
 }
+// Construit la liste des emplacements réels à partir de la configuration des allées (Paramètres →
+// Zones de stockage) — remplace l'ancienne constante figée STORAGE_ZONES. `byCode` associe chaque
+// code de zone (ex. "B7") à son allée (couleur, nom), pour l'affichage.
+function computeStorageZones(st){
+  const list = [];
+  const byCode = {};
+  (st.config.storageZones||[]).forEach(allee => {
+    const n = Math.max(0, Number(allee.nbEmplacements)||0);
+    for(let i=1;i<=n;i++){
+      const code = `${allee.code}${i}`;
+      list.push(code);
+      byCode[code] = allee;
+    }
+  });
+  return { list, byCode };
+}
 // Attribue automatiquement la première zone libre à une commande qui n'en a pas encore — appelé à
 // la création d'une commande, et une seule fois au chargement pour rattraper les commandes déjà en
 // cours (voir migrateState). Ne fait rien si toutes les zones sont occupées : la commande reste sans
@@ -1632,7 +1672,7 @@ function occupiedStorageZones(st, excludeCommandeId){
 function assignStorageZone(st, c){
   if(c.zoneStockage || isCommandeFullyDone(c)) return;
   const occupied = occupiedStorageZones(st, c.id);
-  const free = STORAGE_ZONES.find(z => !occupied.has(z));
+  const free = computeStorageZones(st).list.find(z => !occupied.has(z));
   if(free) c.zoneStockage = free;
 }
 // Commandes actives occupant réellement une zone donnée (hors excludeCommandeId) — plusieurs
@@ -2348,6 +2388,48 @@ function removeMachine(id){
   commit();
 }
 function updateMachine(id, field, value){ const m = state.machines.find(m => m.id===id); if(!m) return; m[field] = value; commit(); }
+// Emplacements générés par une allée donnée, à sa taille actuelle — utilisé pour savoir qui
+// l'occupe avant suppression (removeStorageAllee), sans dupliquer la logique de computeStorageZones.
+function zonesForAllee(allee){
+  const n = Math.max(0, Number(allee.nbEmplacements)||0);
+  const list = [];
+  for(let i=1;i<=n;i++) list.push(`${allee.code}${i}`);
+  return list;
+}
+function addStorageAllee(){
+  const cfg = state.config;
+  if(!Array.isArray(cfg.storageZones)) cfg.storageZones = [];
+  const usedCodes = new Set(cfg.storageZones.map(a=>a.code));
+  let code = null;
+  for(let i=0;i<26;i++){ const c = String.fromCharCode(65+i); if(!usedCodes.has(c)){ code = c; break; } }
+  if(!code) code = 'Z'+(cfg.storageZones.length+1); // 26 allées déjà prises : cas improbable, mais ne doit jamais planter
+  cfg.storageZones.push({ id: uid('allee'), code, nom:'', nbEmplacements:16, couleur: MACHINE_COLORS[cfg.storageZones.length%MACHINE_COLORS.length] });
+  commit();
+}
+function removeStorageAllee(id){
+  const cfg = state.config;
+  const allee = (cfg.storageZones||[]).find(a=>a.id===id); if(!allee) return;
+  const zones = new Set(zonesForAllee(allee));
+  const occupantes = state.commandes.filter(c => !isCommandeFullyDone(c) && zones.has(c.zoneStockage));
+  const msg = occupantes.length > 0
+    ? `Supprimer l'allée "${allee.code}" ? ${occupantes.length} commande(s) y sont actuellement stockées (${occupantes.map(c=>c.nom).join(', ')}) — elles garderont leur zone affichée à titre d'historique, mais elle sera signalée comme "hors configuration" jusqu'à réattribution manuelle.`
+    : `Supprimer l'allée "${allee.code}" ?`;
+  if(!confirm(msg)) return;
+  cfg.storageZones = cfg.storageZones.filter(a=>a.id!==id);
+  commit();
+}
+function updateStorageAllee(id, field, value){
+  const cfg = state.config;
+  const allee = (cfg.storageZones||[]).find(a=>a.id===id); if(!allee) return;
+  if(field==='code'){
+    const code = String(value||'').trim().toUpperCase();
+    if(!code){ alert('Le code ne peut pas être vide.'); render(); return; }
+    if(cfg.storageZones.some(a=>a.id!==id && a.code===code)){ alert(`Le code "${code}" est déjà utilisé par une autre allée.`); render(); return; }
+    allee.code = code; commit(); return;
+  }
+  if(field==='nbEmplacements'){ allee.nbEmplacements = Math.max(1, Math.round(Number(value)||1)); commit(); return; }
+  allee[field] = value; commit();
+}
 function addMachineIndispo(machineId){
   const m = state.machines.find(m=>m.id===machineId); if(!m) return;
   const debutEl = document.getElementById('indispo-debut-'+machineId);
@@ -5028,40 +5110,54 @@ function renderSoldesTab(){
 }
 
 /* ---------------- Zones de stockage ---------------- */
-// Vue d'ensemble des 48 emplacements physiques (voir STORAGE_ZONES/CLAUDE.md) : qui occupe quoi,
-// en un coup d'œil pour quelqu'un qui cherche une place libre à l'atelier. L'attribution elle-même
-// se fait depuis le badge "📍 Zone" de chaque commande (renderCommandeCard) — cette page est en
-// lecture, sauf le clic sur une zone occupée qui isole sa commande dans le planning.
+// Vue d'ensemble des emplacements physiques (voir computeStorageZones()/CLAUDE.md) : qui occupe
+// quoi, en un coup d'œil pour quelqu'un qui cherche une place libre à l'atelier. Les allées
+// (nombre, taille, couleur) se règlent dans Paramètres → Zones de stockage. L'attribution
+// elle-même se fait depuis le badge "📍 Zone" de chaque commande (renderCommandeCard) — cette page
+// est en lecture, sauf le clic sur le nom d'une commande occupante qui l'isole dans le planning.
 function renderZonesPage(){
   // Plusieurs commandes actives peuvent partager la même zone (regroupement manuel volontaire, voir
   // setCommandeZone) — byZone liste donc TOUTES les occupantes de chaque zone, pas une seule.
   const activeCommandes = state.commandes.filter(c => !isCommandeFullyDone(c));
   const byZone = {};
   activeCommandes.forEach(c => { if(c.zoneStockage){ (byZone[c.zoneStockage] = byZone[c.zoneStockage] || []).push(c); } });
-  const nbOccupied = Object.keys(byZone).length;
-  const allees = ['A','B','C'];
-  const rowsHtml = allees.map(lettre => {
-    const cellsHtml = Array.from({length:16}, (_,i) => `${lettre}${i+1}`).map(z => {
+  const zonesInfo = computeStorageZones(state);
+  const nbOccupied = Object.keys(byZone).filter(z => byZone[z].length && zonesInfo.list.includes(z)).length;
+  const allees = state.config.storageZones||[];
+  const rowsHtml = allees.map(allee => {
+    const n = Math.max(0, Number(allee.nbEmplacements)||0);
+    const cellsHtml = Array.from({length:n}, (_,i) => `${allee.code}${i+1}`).map(z => {
       const occupants = byZone[z];
       if(!occupants || !occupants.length){
         return `<div class="zone-cell zone-cell-free"><div class="zone-cell-code">${z}</div><div class="zone-cell-label">Libre</div></div>`;
       }
       const namesHtml = occupants.map(o => `<button class="zone-cell-occupant" data-action="isolate-from-zone" data-cid="${o.id}" title="Isoler « ${escapeHtml(o.nom)} » dans le planning">${escapeHtml(o.nom)}</button>`).join('');
-      return `<div class="zone-cell zone-cell-occupied">
-        <div class="zone-cell-code">${z}</div><div class="zone-cell-label">${namesHtml}</div>
+      return `<div class="zone-cell zone-cell-occupied" style="border-color:${allee.couleur}; background:${hexToRgba(allee.couleur,0.14)};">
+        <div class="zone-cell-code" style="color:${allee.couleur};">${z}</div><div class="zone-cell-label">${namesHtml}</div>
       </div>`;
     }).join('');
-    return `<div class="zone-row"><div class="zone-row-label">Allée ${lettre}</div><div class="zone-row-cells">${cellsHtml}</div></div>`;
+    const label = allee.nom ? `${escapeHtml(allee.code)} — ${escapeHtml(allee.nom)}` : `Allée ${escapeHtml(allee.code)}`;
+    return `<div class="zone-row">
+      <div class="zone-row-label"><span class="zone-row-swatch" style="background:${allee.couleur};"></span>${label}</div>
+      <div class="zone-row-cells">${cellsHtml || `<div class="footer-note" style="margin:0;">Aucun emplacement (0 configuré)</div>`}</div>
+    </div>`;
   }).join('');
+  // Une commande peut pointer vers une zone qui n'existe plus (allée réduite/supprimée depuis —
+  // voir CLAUDE.md) : jamais perdue silencieusement, juste signalée ici plutôt que dans la grille.
+  const orphanNames = activeCommandes.filter(c => c.zoneStockage && !zonesInfo.byCode[c.zoneStockage]).map(c => `${c.nom} (${c.zoneStockage})`);
+  const orphanNote = orphanNames.length
+    ? `<div class="footer-note" style="text-align:left; padding-top:10px; color:var(--red);">Hors configuration actuelle : ${orphanNames.map(escapeHtml).join(', ')} — l'allée correspondante a été réduite ou supprimée. Réattribuez une zone valide depuis leur badge "📍 Zone".</div>`
+    : '';
   return `
   <section class="panel">
     <div class="panel-head">
       <h2>📍 Zones de stockage</h2>
-      <span class="footer-note" style="margin:0;">${nbOccupied} / ${STORAGE_ZONES.length} occupées</span>
+      <span class="footer-note" style="margin:0;">${nbOccupied} / ${zonesInfo.list.length} occupées</span>
     </div>
     <div class="panel-body">
-      ${rowsHtml}
-      <div class="footer-note" style="text-align:left; padding-top:10px;">Une zone est attribuée automatiquement à la création d'une commande (première libre disponible) et se libère automatiquement dès que toutes ses pièces sont Terminées — pas besoin de la vider à la main. Pour changer la zone d'une commande, utilisez son badge "📍 Zone" dans le planning ; plusieurs commandes peuvent volontairement partager le même casier.</div>
+      ${rowsHtml || `<div class="footer-note" style="text-align:left;">Aucune allée configurée — définissez-en dans Paramètres → Zones de stockage.</div>`}
+      ${orphanNote}
+      <div class="footer-note" style="text-align:left; padding-top:10px;">Une zone est attribuée automatiquement à la création d'une commande (première libre disponible) et se libère automatiquement dès que toutes ses pièces sont Terminées — pas besoin de la vider à la main. Pour changer la zone d'une commande, utilisez son badge "📍 Zone" dans le planning ; plusieurs commandes peuvent volontairement partager le même casier. Les allées se règlent dans Paramètres → Zones de stockage.</div>
     </div>
   </section>`;
 }
@@ -5835,6 +5931,19 @@ function renderSettingsModal(){
     </div>`;
   }).join('');
 
+  const alleeCards = (cfg.storageZones||[]).map(a => `
+    <div class="machine-card">
+      <div class="row1">
+        <input type="color" class="machine-color-input" value="${a.couleur}" data-action="update-allee-couleur" data-id="${a.id}" title="Couleur de cette allée">
+        <input class="name-input" style="flex:0 0 46px; text-transform:uppercase;" maxlength="4" value="${escapeHtml(a.code)}" data-action="update-allee-code" data-id="${a.id}" title="Code — préfixe des zones de cette allée (ex. A → A1, A2…)">
+        <input class="name-input" placeholder="Nom (optionnel)" value="${escapeHtml(a.nom)}" data-action="update-allee-nom" data-id="${a.id}" title="Libellé affiché en plus du code, ex. « Extérieur »">
+        <button class="danger-ghost icon-btn" data-action="remove-allee" data-id="${a.id}" title="Supprimer cette allée">✕</button>
+      </div>
+      <div class="machine-horaires">
+        <div><label class="field">Nombre d'emplacements</label><input type="number" min="1" step="1" value="${a.nbEmplacements}" data-action="update-allee-nb" data-id="${a.id}"></div>
+      </div>
+    </div>`).join('');
+
   const sectionDefs = {
     horaires: { title: 'Horaires de travail', body: `
       <div class="machines-grid">
@@ -6000,6 +6109,10 @@ function renderSettingsModal(){
       <div class="footer-note" style="text-align:left; padding-bottom:10px;">Une fois activé, le panneau "Regroupements possibles" apparaît sur le planning dès que des pièces "à faire" partagent poste, matière et épaisseur. Sans effet sur le regroupement manuel (bouton "Regrouper les lignes du même poste" en création de commande) ni sur celui de l'import personnalisé, qui restent toujours disponibles.</div>
       <div class="machines-grid">${machineCards}</div>
       <div class="add-machine-row"><button data-action="add-machine">+ Ajouter un poste</button></div>` },
+    storageZones: { title: `Zones de stockage (${(cfg.storageZones||[]).reduce((s,a)=>s+(Number(a.nbEmplacements)||0),0)} emplacements)`, body: `
+      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Chaque allée devient un ensemble d'emplacements numérotés à partir de son code (ex. code "A", 16 emplacements → A1 à A16). La couleur sert à reconnaître l'allée d'un coup d'œil dans le planning, le Kanban et la page "Zones de stockage".</div>
+      <div class="machines-grid">${alleeCards}</div>
+      <div class="add-machine-row"><button data-action="add-allee">+ Ajouter une allée</button></div>` },
     importProfiles: { title: `Profils d'import personnalisé (${(state.importProfiles||[]).length})`, body: `
       ${(state.importProfiles||[]).length===0 ? `<div class="footer-note" style="text-align:left;">Aucun profil enregistré pour l'instant — ils se créent depuis "Import personnalisé" au moment de faire correspondre les colonnes d'un fichier.</div>` : (state.importProfiles||[]).map(p => `
       <div class="fusion-group">
@@ -6684,6 +6797,7 @@ function renderKanbanView(schedule){
     { key:'en_pause', label:'En pause' },
     { key:'termine', label:'Terminée' }
   ];
+  const zonesInfoK = computeStorageZones(state); // calculé une fois, pas par carte
   let allOps = [];
   schedule.forEach(c => c.pieces.forEach(o => {
     allOps.push({ ...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin, zoneStockage:c.zoneStockage });
@@ -6769,7 +6883,8 @@ function renderKanbanView(schedule){
       const dueLineK = o.dateBesoin ? `<div class="kanban-card-due">Échéance : ${escapeHtml(new Date(o.dateBesoin+'T00:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'}))}</div>` : '';
       // Pas affiché sur une carte fusionnée multi-commandes : o.zoneStockage ne porterait alors que
       // la zone de la première commande du groupe, ce qui serait trompeur pour les autres membres.
-      const zoneLineK = (!o._fusionMembers && o.zoneStockage) ? `<div class="kanban-card-zone">📍 ${escapeHtml(o.zoneStockage)}</div>` : '';
+      const zoneAlleeK = o.zoneStockage ? zonesInfoK.byCode[o.zoneStockage] : null;
+      const zoneLineK = (!o._fusionMembers && o.zoneStockage) ? `<div class="kanban-card-zone" style="${zoneAlleeK?`color:${zoneAlleeK.couleur};`:''}">📍 ${escapeHtml(o.zoneStockage)}</div>` : '';
       const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (Number(o.tempsUnitaire)*Number(o.quantite))/60;
       const plannedLineK = `<div class="kanban-card-planned">Prévu : ${durationLabel(dureeH)}</div>`;
       const elapsedLineK = (col.key==='en_cours'||col.key==='en_pause'||col.key==='termine') ? (() => {
@@ -7058,15 +7173,23 @@ function renderCommandeCard(c, idx, total){
   // Zone de stockage physique (voir CLAUDE.md) : une zone déjà occupée par une AUTRE commande
   // active reste sélectionnable — regrouper plusieurs commandes dans le même casier est un choix
   // manuel volontaire (confirmation demandée par setCommandeZone) — mais son occupant est indiqué
-  // dans le libellé pour que ce ne soit jamais accidentel.
-  const zoneOptionsHtml = ['<option value="">— Aucune —</option>'].concat(
-    STORAGE_ZONES.map(z => {
-      const others = commandesInZone(state, z, c.id);
-      const label = others.length ? `${z} — avec ${others.map(cc=>cc.nom).join(', ')}` : z;
-      return `<option value="${z}" ${c.zoneStockage===z?'selected':''}>${escapeHtml(label)}</option>`;
-    })
-  ).join('');
-  const zoneSelect = `<select class="zone-select ${c.zoneStockage?'zone-set':''}" data-action="set-commande-zone" data-cid="${c.id}" title="Zone de stockage — se libère automatiquement une fois la commande totalement terminée">${zoneOptionsHtml}</select>`;
+  // dans le libellé pour que ce ne soit jamais accidentel. Coloré selon l'allée (Paramètres → Zones
+  // de stockage).
+  const zonesInfoCard = computeStorageZones(state);
+  const currentAllee = c.zoneStockage ? zonesInfoCard.byCode[c.zoneStockage] : null;
+  const zoneOptions = ['<option value="">— Aucune —</option>'];
+  zonesInfoCard.list.forEach(z => {
+    const others = commandesInZone(state, z, c.id);
+    const label = others.length ? `${z} — avec ${others.map(cc=>cc.nom).join(', ')}` : z;
+    zoneOptions.push(`<option value="${z}" ${c.zoneStockage===z?'selected':''}>${escapeHtml(label)}</option>`);
+  });
+  if(c.zoneStockage && !currentAllee){
+    // Zone posée avant que son allée ne soit réduite/supprimée (Paramètres → Zones de stockage) :
+    // gardée sélectionnée pour ne jamais la perdre silencieusement, mais signalée comme telle.
+    zoneOptions.push(`<option value="${c.zoneStockage}" selected>${escapeHtml(c.zoneStockage)} — hors configuration actuelle</option>`);
+  }
+  const zoneColorStyle = currentAllee ? `border-color:${currentAllee.couleur}; color:${currentAllee.couleur}; background:${hexToRgba(currentAllee.couleur,0.12)};` : '';
+  const zoneSelect = `<select class="zone-select ${c.zoneStockage?'zone-set':''}" style="${zoneColorStyle}" data-action="set-commande-zone" data-cid="${c.id}" title="Zone de stockage — se libère automatiquement une fois la commande totalement terminée">${zoneOptions.join('')}</select>`;
 
   // Une recherche par référence de PIÈCE ne doit faire ressortir que les lignes concernées, pas
   // toutes celles de la commande — sauf si c'est la commande elle-même (par son nom ou sa réf.
@@ -7462,6 +7585,8 @@ function dispatchClickAction(action, el){
   switch(action){
     case 'add-machine': addMachine(); break;
     case 'remove-machine': removeMachine(el.dataset.id); break;
+    case 'add-allee': addStorageAllee(); break;
+    case 'remove-allee': removeStorageAllee(el.dataset.id); break;
     case 'add-machine-indispo': addMachineIndispo(el.dataset.id); break;
     case 'add-user-pause': addUserPause(el.dataset.userId); break;
     case 'remove-user-pause': removeUserPause(el.dataset.userId, el.dataset.pauseId); break;
@@ -7612,6 +7737,10 @@ function dispatchChangeAction(el, action){
     case 'update-machine-name': updateMachine(el.dataset.id, 'nom', el.value); break;
     case 'update-machine-dispo': updateMachine(el.dataset.id, 'dispo', el.value); break;
     case 'update-machine-color': updateMachine(el.dataset.id, 'couleur', el.value); break;
+    case 'update-allee-code': updateStorageAllee(el.dataset.id, 'code', el.value); break;
+    case 'update-allee-nom': updateStorageAllee(el.dataset.id, 'nom', el.value); break;
+    case 'update-allee-nb': updateStorageAllee(el.dataset.id, 'nbEmplacements', el.value); break;
+    case 'update-allee-couleur': updateStorageAllee(el.dataset.id, 'couleur', el.value); break;
     case 'update-config': updateConfig(el.dataset.field, el.type==='checkbox' ? el.checked : el.value); break;
     case 'toggle-machine-horaires': toggleMachineHoraires(el.dataset.id, el.checked); break;
     case 'toggle-machine-fusionnable': toggleMachineFusionnable(el.dataset.id, el.checked); break;
