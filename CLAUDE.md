@@ -204,6 +204,15 @@ volontairement la même zone (regroupement manuel de petites affaires dans un m�
   sur une carte fusionnée multi-commandes (`o._fusionMembers`) : `o.zoneStockage` n'y porterait que
   la zone du premier membre du groupe, ce qui serait trompeur pour les autres — volontairement omis
   dans ce cas plutôt que d'afficher une info fausse.
+- **Notification de la zone à la création** : `newCommandeZoneNotice` (`{ nom, zoneStockage } | null`)
+  déclenche une pop-up dédiée (`renderNewCommandeZoneNoticeModal`) juste après la création manuelle
+  d'une commande (`submitNewCommande`, uniquement dans les branches qui créent VRAIMENT une nouvelle
+  commande — pas quand des lignes s'ajoutent à une commande déjà existante du même nom, où aucune
+  zone n'est réattribuée). L'import (Excel ou personnalisé) n'utilise pas cette pop-up à une seule
+  commande : `commitImportGroups` porte `zoneStockage` sur chaque entrée de `createdNoms`, et
+  `renderExcelImportModal` (déjà partagée par les deux flux d'import) l'affiche directement dans sa
+  colonne "Zone de stockage" du tableau récapitulatif — plus adapté qu'une pop-up par commande quand
+  un import en crée plusieurs d'un coup.
 
 ## Moteur de planification — `computeSchedule(st)`
 

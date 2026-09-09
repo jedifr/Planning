@@ -964,6 +964,11 @@ let dragCtx = null;
 let continuedDrag = null; // relais du glisser sous forme d'élément flottant, quand on franchit un bord de vue
 let contextMenu = null;
 let excelImportResult = null;
+// Pop-up affichée juste après la création manuelle d'une commande (formulaire "Nouvelle commande"),
+// indiquant la zone de stockage qui vient de lui être attribuée — voir submitNewCommande. L'import
+// (Excel/personnalisé) affiche la même information dans sa propre pop-up de résultat (excelImportResult),
+// commande par commande, plutôt que d'utiliser celle-ci qui ne porte qu'une seule commande à la fois.
+let newCommandeZoneNotice = null; // { nom, zoneStockage } | null
 let fusionCheckedItems = {}; // clé "posteId|matière|épaisseur" -> Set des id de pièces cochées pour fusion
 // État de l'assistant d'import personnalisé (fichier d'un autre logiciel, colonnes à faire
 // correspondre) — null quand l'assistant est fermé.
@@ -3433,6 +3438,7 @@ function submitNewCommande(){
         const createdCmd = { id: uid('c'), nom: nomTrim, refClient: (draft.refClient||'').trim(), dateBesoin: draft.dateBesoin, urgence: draft.urgence || 'normale', pieces: toAdd.slice(), zoneStockage: null };
         targetState.commandes.push(createdCmd);
         assignStorageZone(targetState, createdCmd);
+        newCommandeZoneNotice = { nom: createdCmd.nom, zoneStockage: createdCmd.zoneStockage };
       }
     };
     applyFn(state);
@@ -3474,6 +3480,7 @@ function submitNewCommande(){
     } else if(!already){
       targetState.commandes.push(newCmd);
       assignStorageZone(targetState, newCmd);
+      newCommandeZoneNotice = { nom: newCmd.nom, zoneStockage: newCmd.zoneStockage };
     }
   };
   applyFn(state);
@@ -4287,7 +4294,7 @@ function commitImportGroups(targetState, groups){
     const importedCmd = { id: uid('c'), nom: ref, refClient: g.refClient||'', dateBesoin: g.dateBesoin, urgence: g.urgence, pieces: g.pieces.map(p=>({...p})), zoneStockage: null };
     targetState.commandes.push(importedCmd);
     assignStorageZone(targetState, importedCmd);
-    createdNoms.push({ nom: ref, dateBesoin: g.dateBesoin, urgence: g.urgence, nbPieces: g.pieces.length });
+    createdNoms.push({ nom: ref, dateBesoin: g.dateBesoin, urgence: g.urgence, nbPieces: g.pieces.length, zoneStockage: importedCmd.zoneStockage });
   });
   return { createdNoms, updatedNoms, sansEcheance };
 }
@@ -5795,12 +5802,19 @@ function renderExcelImportModal(){
   if(!excelImportResult) return '';
   const r = excelImportResult;
   const ok = r.imported > 0 || r.updated > 0;
+  const zonesInfoImp = computeStorageZones(state);
+  const zoneCellHtml = (zoneStockage) => {
+    if(!zoneStockage) return `<span class="footer-note" style="margin:0;">Aucune (toutes occupées)</span>`;
+    const allee = zonesInfoImp.byCode[zoneStockage];
+    return `<span style="font-family:'IBM Plex Mono',monospace; font-weight:600; ${allee?`color:${allee.couleur};`:''}">📍 ${escapeHtml(zoneStockage)}</span>`;
+  };
   const rowsHtml = r.refs.map(c => `
     <tr>
       <td>${escapeHtml(c.nom)}</td>
       <td>${c.nbPieces}</td>
       <td>${escapeHtml(c.dateBesoin)}</td>
       <td>${c.urgence==='urgente'?'Urgente':c.urgence==='importante'?'Importante':'Normale'}</td>
+      <td>${zoneCellHtml(c.zoneStockage)}</td>
     </tr>`).join('');
   const updatedHtml = r.updatedRefs.length ? `
     <div class="modal-section-title" style="margin-top:18px;">Commandes déjà existantes, complétées (${r.updatedRefs.length})</div>
@@ -5832,7 +5846,7 @@ function renderExcelImportModal(){
         ${r.sansEcheance ? `<div class="footer-note" style="text-align:left; color:var(--amber); padding-bottom:10px;">⚠ ${r.sansEcheance} commande(s) importée(s) sans date de besoin dans le fichier — échéance provisoire fixée à +2 semaines, à corriger manuellement.</div>` : ''}
         ${r.refs.length ? `
         <table class="ops-table">
-          <thead><tr><th>Commande créée</th><th>Pièces</th><th>Échéance</th><th>Urgence</th></tr></thead>
+          <thead><tr><th>Commande créée</th><th>Pièces</th><th>Échéance</th><th>Urgence</th><th>Zone de stockage</th></tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>` : ''}
         ${updatedHtml}` : `<div class="footer-note" style="text-align:left;">Aucune ligne valide n'a pu être importée depuis ce fichier.</div>`}
@@ -5840,6 +5854,36 @@ function renderExcelImportModal(){
         ${errorsHtml}
         <div class="form-actions" style="justify-content:flex-end; margin-top:16px;">
           <button class="primary" data-action="close-excel-import-result">Fermer</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+// Pop-up affichée juste après la création manuelle d'une commande (voir newCommandeZoneNotice/
+// submitNewCommande) — indique la zone de stockage qui vient d'être attribuée automatiquement,
+// pour que la pièce soit rangée au bon endroit sans avoir à aller consulter la page dédiée.
+function renderNewCommandeZoneNoticeModal(){
+  if(!newCommandeZoneNotice) return '';
+  const { nom, zoneStockage } = newCommandeZoneNotice;
+  const allee = zoneStockage ? computeStorageZones(state).byCode[zoneStockage] : null;
+  const zoneBlock = zoneStockage
+    ? `<div style="text-align:center; padding:18px 0;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:32px; ${allee?`color:${allee.couleur};`:''}">📍 ${escapeHtml(zoneStockage)}</div>
+        ${allee && allee.nom ? `<div class="footer-note" style="margin-top:4px;">${escapeHtml(allee.nom)}</div>` : ''}
+      </div>`
+    : `<div class="footer-note" style="text-align:left; padding:10px 0;">Aucune zone disponible — les emplacements configurés sont tous occupés. Attribuez-en une manuellement (badge "📍 Zone" sur la commande) dès qu'une se libère.</div>`;
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:380px;">
+      <div class="modal-head">
+        <h2>📍 Zone de stockage</h2>
+        <button class="ghost icon-btn" data-action="close-new-commande-zone-notice" title="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="footer-note" style="text-align:left; margin:0;">Commande créée : <strong>${escapeHtml(nom)}</strong></div>
+        ${zoneBlock}
+        <div class="form-actions" style="justify-content:flex-end; margin-top:8px;">
+          <button class="primary" data-action="close-new-commande-zone-notice">Compris</button>
         </div>
       </div>
     </div>
@@ -7482,6 +7526,7 @@ function render(){
     renderExcelImportModal(),
     renderCustomImportModal(),
     renderFusionGroupDetailModal(),
+    renderNewCommandeZoneNoticeModal(),
     renderContextMenu(),
     renderToast()
   ].join('');
@@ -7566,7 +7611,7 @@ function updateHighlightClasses(){
 /* ---------------- délégation d'événements : clics & changements ---------------- */
 document.addEventListener('click', (e) => {
   if(e.target.classList && e.target.classList.contains('modal-overlay')){
-    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; closeSettingsModal(); return;
+    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; closeSettingsModal(); return;
   }
   if(contextMenu && !e.target.closest('.context-menu')){
     contextMenu = null; render();
@@ -7687,6 +7732,7 @@ function dispatchClickAction(action, el){
     }
     case 'close-settings': closeSettingsModal(); break;
     case 'close-excel-import-result': excelImportResult = null; render(); break;
+    case 'close-new-commande-zone-notice': newCommandeZoneNotice = null; render(); break;
     case 'dismiss-toast': if(toastTimer) clearTimeout(toastTimer); toastMessage = null; render(); break;
     case 'show-new-form': toggleNewForm(); break;
     case 'cancel-new-form': showNewForm=false; render(); break;
@@ -8248,6 +8294,7 @@ document.addEventListener('input', (e) => {
 document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && showSettingsModal){ closeSettingsModal(); }
   if(e.key === 'Escape' && excelImportResult){ excelImportResult = null; render(); }
+  if(e.key === 'Escape' && newCommandeZoneNotice){ newCommandeZoneNotice = null; render(); }
   if(e.key === 'Escape' && continuedDrag){ cancelContinuedDrag(); }
 });
 
