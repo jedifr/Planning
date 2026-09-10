@@ -138,7 +138,9 @@ session d'un second opérateur resterait ouverte indéfiniment. La reprise autom
 déjeuner rouvre une session par opérateur qui était en train de travailler (`autoPausedOperators`,
 peuplé à la pause, vidé à la reprise), pas une seule.
 
-## Congés — demi-journée
+## Congés
+
+### Demi-journée
 
 Une demande de congé (`state.leaveRequests[]`) porte `demiJournee` (`null` | `'matin'` |
 `'apres-midi'`). **N'a de sens que pour une demande d'un seul jour** (`debut === fin`) — sur une
@@ -174,6 +176,60 @@ normalisation est la responsabilité de l'appelant, pas de la validation finale.
 - `demiJourneeLabel(demiJournee)` / `leaveDateRangeLabel(r)` — libellé humain (« matin »/« après-
   midi ») utilisé dans les tableaux (Mes demandes, Équipe, À valider) et les e-mails de
   notification. `leaveDureeLabel(jours)` formate un nombre de jours (entier ou `.5`) en français.
+
+### Type sans décompte de solde (apprentis, etc.)
+
+`leaveTypes[]` porte `sansSolde` (bool, `false` par défaut) — un type dont les jours pris ne
+s'imputent sur aucune allocation annuelle (typiquement un type « École » pour un apprenti en
+alternance : ses jours d'école n'ont pas à grignoter un solde de congés payés/RTT).
+
+- `computeLeaveBalance` renvoie `allocated`/`remaining` = `Infinity` pour un tel type — se propage
+  naturellement dans toutes les soustractions (`remaining` reste `Infinity` quel que soit l'usage),
+  et dans toute comparaison `demanded > bal.remaining` (toujours fausse) : **aucun code de blocage
+  ou d'avertissement de solde insuffisant n'a besoin de connaître `sansSolde`**, le seul point qui
+  le lit explicitement est `computeLeaveBalance` lui-même.
+- `formatLeaveBalancePair(remaining, allocated)` — affiche « Illimité » plutôt que « ∞ / ∞ j »
+  (`Infinity.toLocaleString('fr-FR')` fonctionnerait déjà correctement — `leaveDureeLabel(Infinity)`
+  affiche bien `∞` — mais un texte explicite est plus clair sur ce point précis). Utilisé partout où
+  un solde `remaining/allocated` s'affiche ; certains affichages (cartes de solde, tableau
+  d'allocation) gardent leur propre `isFinite(bal.allocated)` pour une mise en page différente
+  (masquer complètement l'input numérique d'allocation d'un type sans solde, par exemple).
+- Paramètres → Congés → Soldes & types : case « Sans décompte de solde (illimité) » par type.
+  `updateLeaveTypeField` reçoit `el.checked` (pas `el.value`) pour ce champ — comme `updateConfig`,
+  le dispatcher (`dispatchChangeAction`, case `'leave-type-field'`) teste `el.type==='checkbox'`.
+
+### Génération en masse d'un rythme d'alternance
+
+Paramètres → Congés → Soldes & types → « Générer un rythme d'alternance » : crée en une fois toutes
+les demandes de congé (déjà approuvées, motif `"Alternance"`) correspondant à un rythme régulier sur
+toute une période — pensé pour un apprenti dont le calendrier école/entreprise ne varie pas d'une
+semaine sur l'autre, pour ne pas les saisir une par une.
+
+- `alternanceDraft` — état du formulaire (`userId`, `typeId`, `debut`, `fin`, `mode`:
+  `'jours'`\|`'semaines'`, `joursSemaine[]`, `semaineRef`), mis à jour en direct
+  (`updateAlternanceField`/`toggleAlternanceJour`, un `render()` à chaque changement) pour que les
+  champs du mode `'jours'` (cases Lundi..Vendredi) et du mode `'semaines'` (date de semaine de
+  référence) s'affichent/masquent conditionnellement — contrairement au reste des formulaires de
+  congé, qui gardent volontairement tous leurs champs visibles en permanence pour éviter la
+  complexité d'un formulaire réactif (voir demi-journée ci-dessus) : ici la bascule entre deux jeux
+  de champs entièrement différents justifie la réactivité.
+- `computeAlternanceDates(debut, fin, mode, opts)` — calcule les jours ouvrés (hors week-end et
+  jours fériés français) correspondant au rythme sur `[debut, fin]`, puis les **fusionne en plages
+  contiguës** (jours ouvrés consécutifs au calendrier). Mode `'jours'` : `joursSemaine` (1=lundi..
+  5=vendredi) coche les mêmes jours chaque semaine. Mode `'semaines'` : `semaineRef` (une date
+  quelconque dans la première semaine « école ») détermine la parité — cette semaine et une sur deux
+  ensuite sont « école », les semaines intermédiaires ne le sont pas (calculé via `startOfWeek`,
+  déjà utilisé ailleurs dans l'appli, et un simple modulo sur l'écart en semaines). Aucun traitement
+  spécial pour les week-ends/jours non concernés : ils ne rejoignent simplement jamais la liste des
+  jours « école », ce qui casse naturellement la contiguïté d'une plage.
+- `submitAlternanceGeneration()` — ignore silencieusement (les compte, mais ne les recrée pas) les
+  jours déjà couverts par un congé existant non refusé de la même personne, pour pouvoir relancer la
+  génération sur une période étendue (ex. rajouter un trimestre) sans créer de doublons ni de
+  chevauchement. Demande confirmation (`confirm()`, nombre de périodes et de jours ouvrés) avant de
+  créer quoi que ce soit.
+- Comme pour la demi-journée, **le blocage automatique de poste et le moteur de planification** ne
+  distinguent pas un congé généré par ce rythme d'un congé posé normalement — mêmes conséquences
+  (bloque le poste si l'apprenti en est le seul opérateur lié ce jour-là).
 
 ## Temps de production vs présence théorique
 

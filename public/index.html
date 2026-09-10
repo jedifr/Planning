@@ -972,6 +972,11 @@ let leaveImpactPreviewId = null; // id de la demande dont on affiche l'aperçu d
 let changeProcessingInFlight = false; // vrai pendant le court battement entre un 'change' et son traitement différé — la synchro en tâche de fond doit patienter
 let pendingLeaveRequestDraft = null; // { userId, typeId, debut, fin, motif, mode: 'salarie'|'admin'|'edit' } — en attente de confirmation avant envoi réel
 let editingLeaveRequestDraft = null; // { id, userId, typeId, debut, fin, motif } — formulaire de correction d'un congé existant, avant l'aperçu de conséquences
+// Formulaire "Générer un rythme d'alternance" (Paramètres → Soldes & types) — génère en masse des
+// congés déjà approuvés suivant un rythme régulier (apprenti à l'école certains jours/semaines).
+// mode 'jours' utilise joursSemaine (1=lundi..5=vendredi) ; mode 'semaines' utilise semaineRef
+// (une date quelconque dans la première semaine "école", alternée ensuite une semaine sur deux).
+let alternanceDraft = { userId:'', typeId:'', debut:'', fin:'', mode:'jours', joursSemaine:[], semaineRef:'' };
 let equipePersonneFilter = ''; // '' = toutes les personnes
 let calendrierYear = new Date().getFullYear();
 let calendrierPersonneFilter = ''; // '' = toutes les personnes
@@ -1091,6 +1096,10 @@ function migrateState(st){
     { id:'lt-cp', nom:'Congés payés', couleur:'#4c8fbd' },
     { id:'lt-rtt', nom:'RTT', couleur:'#a06d1a' }
   ];
+  // sansSolde (ex. "École" pour un apprenti en alternance) : type non décompté d'une allocation
+  // annuelle — computeLeaveBalance renvoie alors allocated/remaining = Infinity pour ce type, jamais
+  // de blocage ni d'avertissement de solde insuffisant à la création d'une demande.
+  st.leaveTypes.forEach(t => { if(t.sansSolde === undefined) t.sansSolde = false; });
   if(!st.userLeaveAllocations) st.userLeaveAllocations = {}; // { [userId]: { [typeId]: joursParAn } }
   if(!st.leaveRequests) st.leaveRequests = []; // [{id, userId, typeId, debut, fin, motif, statut, demandeLe, traiteParUserId, traiteLe, commentaireValidation, demiJournee}]
   // demiJournee : null (journée complète) | 'matin' | 'apres-midi' — n'a de sens que pour une
@@ -3028,11 +3037,20 @@ function roleLabel(role){ return role==='admin' ? 'Administrateur' : role==='sup
 // Solde = allocation annuelle - jours déjà comptabilisés (approuvés) - jours actuellement en attente
 // (pour ne pas laisser quelqu'un demander plus que ce qu'il lui reste, même avant validation).
 function computeLeaveBalance(userId, typeId, year, excludeId){
-  const allocated = (state.userLeaveAllocations[userId] && state.userLeaveAllocations[userId][typeId]) || 0;
+  const type = leaveTypeById(typeId);
+  // sansSolde (ex. "École") : allocation illimitée — Infinity se propage naturellement (remaining
+  // reste Infinity, jamais de blocage/avertissement de solde insuffisant à la création).
+  const allocated = (type && type.sansSolde) ? Infinity : ((state.userLeaveAllocations[userId] && state.userLeaveAllocations[userId][typeId]) || 0);
   const requests = state.leaveRequests.filter(r => r.userId===userId && r.typeId===typeId && r.id!==excludeId && r.debut && r.debut.startsWith(String(year)));
   const used = requests.filter(r=>r.statut==='approuve').reduce((s,r)=>s+leaveRequestDurationDays(r),0);
   const pending = requests.filter(r=>r.statut==='en_attente').reduce((s,r)=>s+leaveRequestDurationDays(r),0);
   return { allocated, used, pending, remaining: allocated - used - pending };
+}
+// Affichage du solde : "Illimité" pour un type sansSolde plutôt que "∞ / ∞ j" — plus clair, même si
+// leaveDureeLabel(Infinity) fonctionnerait déjà correctement (Infinity.toLocaleString() => "∞").
+function formatLeaveBalancePair(remaining, allocated){
+  if(!isFinite(allocated)) return 'Illimité';
+  return `${leaveDureeLabel(remaining)} / ${leaveDureeLabel(allocated)} j`;
 }
 async function notifyAdminsOfRequest(req_){
   const requester = usersList.find(u=>String(u.id)===String(req_.userId));
@@ -3048,7 +3066,9 @@ async function notifyUserOfDecision(req_){
   let text = `Votre demande de "${type?type.nom:'congé'}" ${leaveDateRangeLabel(req_)} a été ${statutLabel}.${req_.commentaireValidation?`\n\nCommentaire : ${req_.commentaireValidation}`:''}`;
   const year = new Date(req_.debut+'T00:00:00').getFullYear();
   const bal = computeLeaveBalance(req_.userId, req_.typeId, year);
-  text += `\n\nSolde restant pour "${type?type.nom:'ce type'}" sur ${year} : ${leaveDureeLabel(bal.remaining)} jour(s) sur ${leaveDureeLabel(bal.allocated)} alloué(s).`;
+  text += isFinite(bal.allocated)
+    ? `\n\nSolde restant pour "${type?type.nom:'ce type'}" sur ${year} : ${leaveDureeLabel(bal.remaining)} jour(s) sur ${leaveDureeLabel(bal.allocated)} alloué(s).`
+    : `\n\nType "${type?type.nom:'ce type'}" : sans décompte de solde.`;
   try{ await fetch('/api/notify-user/'+req_.userId, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subject, text }) }); }catch(e){ /* non bloquant */ }
 }
 // Un administrateur a proposé un congé : la personne concernée doit elle-même l'accepter ou le
@@ -3463,6 +3483,91 @@ function adminAssignLeave(){
   const demiJournee = (debut===fin && (demiVal==='matin' || demiVal==='apres-midi')) ? demiVal : null;
   pendingLeaveRequestDraft = { userId, typeId, debut, fin, demiJournee, motif, mode: 'admin', imposer };
   render();
+}
+function updateAlternanceField(field, value){
+  alternanceDraft[field] = value;
+  render();
+}
+function toggleAlternanceJour(dow){
+  const idx = alternanceDraft.joursSemaine.indexOf(dow);
+  if(idx >= 0) alternanceDraft.joursSemaine.splice(idx, 1);
+  else alternanceDraft.joursSemaine.push(dow);
+  render();
+}
+// Calcule les plages de jours ouvrés "école" sur [debut, fin] (inclus, chaînes AAAA-MM-JJ) suivant
+// le rythme choisi, fusionnées en plages contiguës (des jours ouvrés consécutifs au calendrier —
+// un week-end ou un jour non concerné coupe naturellement la plage, sans traitement particulier :
+// dès qu'un jour ne correspond pas au rythme, ou est un week-end/férié, il n'entre simplement pas
+// dans la liste des jours "école" et casse la contiguïté).
+// mode 'jours' : joursSemaine = jours de la semaine concernés (1=lundi..5=vendredi), chaque semaine.
+// mode 'semaines' : semaineRef = une date quelconque dans la première semaine "école" ; cette
+// semaine et une sur deux ensuite sont "école", les semaines intermédiaires ne le sont pas.
+function computeAlternanceDates(debut, fin, mode, opts){
+  const refWeekStart = mode === 'semaines' ? startOfWeek(new Date(opts.semaineRef+'T00:00:00')) : null;
+  let d = new Date(debut+'T00:00:00');
+  const end = new Date(fin+'T00:00:00');
+  const ranges = [];
+  let guard = 0;
+  while(d <= end && guard++ < 1100){
+    const dow = d.getDay();
+    const isWorkingDay = dow !== 0 && dow !== 6 && !isFrenchPublicHoliday(d);
+    let isSchoolDay = false;
+    if(isWorkingDay){
+      if(mode === 'jours'){
+        isSchoolDay = (opts.joursSemaine||[]).includes(dow);
+      } else {
+        const weekStart = startOfWeek(d);
+        const diffWeeks = Math.round((weekStart.getTime() - refWeekStart.getTime()) / (7*86400000));
+        isSchoolDay = ((diffWeeks % 2) + 2) % 2 === 0;
+      }
+    }
+    if(isSchoolDay){
+      const ds = toDateInputValue(d);
+      const last = ranges[ranges.length-1];
+      const prevDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()-1);
+      if(last && last.fin === toDateInputValue(prevDay)) last.fin = ds;
+      else ranges.push({ debut: ds, fin: ds });
+    }
+    d = new Date(d.getFullYear(), d.getMonth(), d.getDate()+1);
+  }
+  return ranges;
+}
+// Génère en masse des congés déjà approuvés suivant le rythme choisi dans alternanceDraft — un
+// apprenti à l'école certains jours ou certaines semaines, sur toute une période (ex. l'année
+// scolaire). Ignore silencieusement les jours déjà couverts par un congé existant (pas refusé) de
+// la même personne, pour pouvoir relancer la génération sans créer de doublons ni de chevauchement.
+function submitAlternanceGeneration(){
+  const d = alternanceDraft;
+  if(!d.userId){ alert('Merci de choisir la personne concernée.'); return; }
+  if(!d.typeId){ alert('Merci de choisir un type de congé.'); return; }
+  if(!d.debut || !d.fin){ alert('Merci de renseigner le début et la fin de la période à générer.'); return; }
+  if(d.fin < d.debut){ alert('La date de fin doit être postérieure ou égale à la date de début.'); return; }
+  if(d.mode === 'jours' && !(d.joursSemaine||[]).length){ alert('Merci de cocher au moins un jour de la semaine.'); return; }
+  if(d.mode === 'semaines' && !d.semaineRef){ alert('Merci d\'indiquer une semaine "école" de référence.'); return; }
+  const ranges = computeAlternanceDates(d.debut, d.fin, d.mode, { joursSemaine: d.joursSemaine, semaineRef: d.semaineRef });
+  if(!ranges.length){ alert('Aucun jour ne correspond à ce rythme sur la période choisie.'); return; }
+  const existing = (state.leaveRequests||[]).filter(r => r.userId===d.userId && r.statut!=='refuse');
+  const toCreate = [];
+  let skipped = 0;
+  ranges.forEach(r => {
+    const overlap = existing.some(e => e.debut <= r.fin && e.fin >= r.debut);
+    if(overlap) skipped++;
+    else toCreate.push(r);
+  });
+  if(!toCreate.length){ alert('Toutes les dates de ce rythme sont déjà couvertes par un congé existant pour cette personne — rien à générer.'); return; }
+  const nbJours = toCreate.reduce((s,r) => s + countWorkingDaysInRange(r.debut, r.fin), 0);
+  const msg = `Générer ${toCreate.length} période(s) de congé (${leaveDureeLabel(nbJours)} jour(s) ouvré(s) au total)${skipped ? `, ${skipped} déjà couverte(s) ignorée(s)` : ''} ?`;
+  if(!confirm(msg)) return;
+  toCreate.forEach(r => {
+    state.leaveRequests.push({
+      id: uid('leavereq'), userId: d.userId, typeId: d.typeId, debut: r.debut, fin: r.fin, demiJournee: null,
+      motif: 'Alternance', statut: 'approuve', demandeLe: new Date().toISOString(),
+      traiteParUserId: currentUser ? String(currentUser.id) : null, traiteLe: new Date().toISOString(),
+      commentaireValidation: ''
+    });
+  });
+  commit();
+  showToast(`${toCreate.length} période(s) générée(s) (${leaveDureeLabel(nbJours)} jour(s) ouvré(s)).`);
 }
 function addLeaveType(){
   const nom = prompt('Nom du nouveau type de congé (ex. "Congé sans solde") :');
@@ -4982,7 +5087,7 @@ function renderMesDemandesTab(){
     const bal = computeLeaveBalance(uid_, t.id, year);
     return `<div class="leave-balance-card" style="border-left:4px solid ${t.couleur};">
       <div class="leave-balance-type">${escapeHtml(t.nom)}</div>
-      <div class="leave-balance-num">${leaveDureeLabel(bal.remaining)}<span>/ ${leaveDureeLabel(bal.allocated)} j restants</span></div>
+      <div class="leave-balance-num">${isFinite(bal.allocated) ? `${leaveDureeLabel(bal.remaining)}<span>/ ${leaveDureeLabel(bal.allocated)} j restants</span>` : `<span>Illimité</span>`}</div>
       <div class="footer-note" style="margin:2px 0 0;">${leaveDureeLabel(bal.used)} utilisé(s)${bal.pending?` · ${leaveDureeLabel(bal.pending)} en attente`:''} — ${year}</div>
     </div>`;
   }).join('');
@@ -5044,7 +5149,7 @@ function renderEquipeTab(){
       <td><span class="machine-swatch" style="background:${t?t.couleur:'#888'}"></span>${t?escapeHtml(t.nom):'—'}</td>
       <td>${formatDateFr(r.debut)} → ${formatDateFr(r.fin)}${demiLabel?` <span class="footer-note" style="margin:0;">(${demiLabel})</span>`:''}</td>
       <td>${leaveDureeLabel(nbJours)} j</td>
-      <td>${leaveDureeLabel(bal.remaining)} / ${leaveDureeLabel(bal.allocated)} j <span class="footer-note" style="margin:0;">(${year})</span></td>
+      <td>${formatLeaveBalancePair(bal.remaining, bal.allocated)} <span class="footer-note" style="margin:0;">(${year})</span></td>
       <td>${statutBadgeHtml(r.statut)}</td>
       ${admin ? `<td style="white-space:nowrap;">${editBtn} ${revokeBtn}</td>` : ''}
     </tr>`;
@@ -5201,7 +5306,7 @@ function renderAValiderTab(){
       <td><span class="machine-swatch" style="background:${t?t.couleur:'#888'}"></span>${t?escapeHtml(t.nom):'—'}</td>
       <td>${formatDateFr(r.debut)} → ${formatDateFr(r.fin)}${demiLabel?` <span class="footer-note" style="margin:0;">(${demiLabel})</span>`:''}</td>
       <td>${leaveDureeLabel(nbJours)} j</td>
-      <td>${leaveDureeLabel(soldeApres)} j <span class="footer-note" style="margin:0;">restant(s) sur ${year} si approuvée</span></td>
+      <td>${isFinite(soldeApres) ? `${leaveDureeLabel(soldeApres)} j <span class="footer-note" style="margin:0;">restant(s) sur ${year} si approuvée</span>` : `<span class="footer-note" style="margin:0;">Illimité</span>`}</td>
       <td>${escapeHtml(r.motif||'—')}</td>
       <td style="white-space:nowrap;">
         <button class="small" data-action="toggle-leave-impact" data-id="${r.id}">${impactOpen?'▲':'👁'} Impact</button>
@@ -5226,14 +5331,21 @@ function renderSoldesTab(){
         <input value="${escapeHtml(t.nom)}" data-action="leave-type-field" data-type-id="${t.id}" data-field="nom" style="flex:1;">
         <button class="danger-ghost icon-btn" data-action="remove-leave-type" data-type-id="${t.id}">✕</button>
       </div>
+      <label class="statut-chip" style="margin-top:8px;" title="Ex. un type « École » pour un apprenti en alternance : ses jours d'école ne doivent pas s'imputer sur un solde de congés payés/RTT.">
+        <input type="checkbox" ${t.sansSolde?'checked':''} data-action="leave-type-field" data-field="sansSolde" data-type-id="${t.id}">
+        Sans décompte de solde (illimité)
+      </label>
     </div>`).join('');
   const allocTable = `
     <table class="ops-table">
-      <thead><tr><th>Personne</th>${state.leaveTypes.map(t=>`<th>${escapeHtml(t.nom)} (alloués / an)</th>`).join('')}</tr></thead>
+      <thead><tr><th>Personne</th>${state.leaveTypes.map(t=>`<th>${escapeHtml(t.nom)}${t.sansSolde?'':' (alloués / an)'}</th>`).join('')}</tr></thead>
       <tbody>${usersList.map(u => {
         const uid_ = String(u.id);
         return `<tr><td>${escapeHtml(u.username)}</td>${state.leaveTypes.map(t => {
           const bal = computeLeaveBalance(uid_, t.id, year);
+          if(t.sansSolde){
+            return `<td><span class="footer-note" style="margin:0;">Illimité — ${leaveDureeLabel(bal.used)} pris${bal.pending?` · ${leaveDureeLabel(bal.pending)} att.`:''}</span></td>`;
+          }
           return `<td>
             <input type="number" min="0" step="0.5" value="${bal.allocated}" data-action="user-leave-allocation" data-user-id="${uid_}" data-type-id="${t.id}" style="width:70px;">
             <span class="footer-note" style="margin:0;">${leaveDureeLabel(bal.used)} pris${bal.pending?` · ${leaveDureeLabel(bal.pending)} att.`:''} · <strong style="color:${bal.remaining<0?'var(--red)':'var(--text-dim)'};">${leaveDureeLabel(bal.remaining)} restant${Math.abs(bal.remaining)>=2?'s':''}</strong></span>
@@ -5265,6 +5377,42 @@ function renderSoldesTab(){
       Imposer ce congé (enregistré directement comme approuvé, sans demander l'accord de la personne)
     </label>
     <div class="footer-note" style="text-align:left; padding-top:8px;">Par défaut, la personne reçoit une proposition qu'elle doit confirmer avant que le congé ne soit vraiment approuvé. Cochez "Imposer" pour l'enregistrer directement comme approuvé — la personne est alors simplement informée, sans avoir à confirmer.</div>
+
+    <div class="modal-section-title" style="margin-top:22px;">Générer un rythme d'alternance</div>
+    <div class="footer-note" style="text-align:left; padding-bottom:8px;">Crée automatiquement, déjà approuvées, toutes les demandes de congé correspondant à un rythme régulier (ex. un apprenti à l'école certains jours ou certaines semaines) sur toute une période — utile pour ne pas saisir chaque semaine à la main.</div>
+    <div class="commande-top-fields" style="grid-template-columns:1.1fr 1fr 1fr 1fr; align-items:end;">
+      <div><label class="field">Personne</label>
+        <select data-action="alternance-field" data-field="userId">
+          <option value="">—</option>
+          ${usersList.map(u=>`<option value="${u.id}" ${alternanceDraft.userId===String(u.id)?'selected':''}>${escapeHtml(u.username)}</option>`).join('')}
+        </select>
+      </div>
+      <div><label class="field">Type de congé</label>
+        <select data-action="alternance-field" data-field="typeId">
+          <option value="">—</option>
+          ${state.leaveTypes.map(t=>`<option value="${t.id}" ${alternanceDraft.typeId===t.id?'selected':''}>${escapeHtml(t.nom)}</option>`).join('')}
+        </select>
+      </div>
+      <div><label class="field">Du</label><input type="date" value="${alternanceDraft.debut}" data-action="alternance-field" data-field="debut"></div>
+      <div><label class="field">Au</label><input type="date" value="${alternanceDraft.fin}" data-action="alternance-field" data-field="fin"></div>
+    </div>
+    <div style="margin-top:10px; max-width:280px;">
+      <label class="field">Rythme</label>
+      <select data-action="alternance-field" data-field="mode">
+        <option value="jours" ${alternanceDraft.mode==='jours'?'selected':''}>Jours fixes chaque semaine</option>
+        <option value="semaines" ${alternanceDraft.mode==='semaines'?'selected':''}>Semaines alternées</option>
+      </select>
+    </div>
+    ${alternanceDraft.mode==='jours' ? `
+    <div style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap;">
+      ${[1,2,3,4,5].map(dow => `<label class="statut-chip"><input type="checkbox" data-action="alternance-toggle-jour" data-dow="${dow}" ${alternanceDraft.joursSemaine.includes(dow)?'checked':''}> ${['','Lundi','Mardi','Mercredi','Jeudi','Vendredi'][dow]}</label>`).join('')}
+    </div>` : `
+    <div style="margin-top:8px; max-width:280px;">
+      <label class="field">Semaine "école" de référence</label>
+      <input type="date" value="${alternanceDraft.semaineRef}" data-action="alternance-field" data-field="semaineRef">
+      <div class="footer-note" style="text-align:left; padding-top:4px;">Une date quelconque dans la semaine à considérer "école" — cette semaine et une sur deux ensuite seront générées ; les semaines intermédiaires resteront à l'entreprise.</div>
+    </div>`}
+    <button class="primary small" style="margin-top:12px;" data-action="submit-alternance">Générer les congés</button>
   </div></section>`;
 }
 
@@ -7944,6 +8092,7 @@ function dispatchClickAction(action, el){
     case 'reject-leave-request': decideLeaveRequest(el.dataset.id, 'refuse'); break;
     case 'add-leave-type': addLeaveType(); break;
     case 'admin-assign-leave': adminAssignLeave(); break;
+    case 'submit-alternance': submitAlternanceGeneration(); break;
     case 'calyear-nav': calendrierYear += Number(el.dataset.dir); render(); break;
     case 'calyear-today': calendrierYear = new Date().getFullYear(); render(); break;
     case 'remove-leave-type': removeLeaveType(el.dataset.typeId); break;
@@ -8047,8 +8196,10 @@ function dispatchChangeAction(el, action){
     case 'toggle-user-horaire': toggleUserHoraireActive(el.dataset.userId, el.checked); break;
     case 'user-role': changeUserRole(el.dataset.userId, el.value); break;
     case 'user-email': changeUserEmail(el.dataset.userId, el.value); break;
-    case 'leave-type-field': updateLeaveTypeField(el.dataset.typeId, el.dataset.field, el.value); break;
+    case 'leave-type-field': updateLeaveTypeField(el.dataset.typeId, el.dataset.field, el.type==='checkbox' ? el.checked : el.value); break;
     case 'edit-leave-field': updateEditLeaveField(el.dataset.field, el.value); break;
+    case 'alternance-field': updateAlternanceField(el.dataset.field, el.value); break;
+    case 'alternance-toggle-jour': toggleAlternanceJour(Number(el.dataset.dow)); break;
     case 'user-leave-allocation': updateUserLeaveAllocation(el.dataset.userId, el.dataset.typeId, el.value); break;
     case 'equipe-statut-filter': equipeStatutFilter = el.value; render(); break;
     case 'equipe-personne-filter': equipePersonneFilter = el.value; render(); break;
