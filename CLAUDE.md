@@ -222,6 +222,21 @@ par `computeProductionTimeByUser` :
   occupation en grande barre `big`), et deux colonnes numériques supplémentaires (présence en
   heures, occupation en %) dans l'export Excel (feuille Résumé) — l'export garde des nombres bruts,
   pas la barre, qui n'a de sens qu'à l'écran.
+- **Sélecteur de période** (`tempsProdPeriodMode` : `'jour'` | `'semaine'` | `'mois'` | `'annee'` |
+  `'plage'`) — `'semaine'` va du lundi au dimanche inclus (`startOfWeek`, déjà utilisé ailleurs dans
+  l'appli), navigation (`navigateTempsProdPeriod`) par pas de 7 jours dans ce mode. Comme les autres
+  modes (hors `'plage'`), n'affecte que `tempsProdPeriodBounds()` — aucune donnée ni logique de
+  calcul propre à ce mode, juste des bornes `[start, end[` différentes.
+- **Salariés masqués de la vue superviseur** (`state.hiddenTempsProdUserIds[]`, tableau d'ids
+  comme `storageZones`/`inactiveStorageZones`) — case à cocher "Afficher dans le temps de
+  production" par salarié (Paramètres → Utilisateurs), pour ne pas surcharger la page de comptes
+  sans intérêt ici (admin sans activité d'atelier, compte de test...). `isHiddenFromTempsProd(st,
+  userId)` / `toggleTempsProdVisibility(userId)`. Filtré **uniquement** au point d'affichage/export
+  superviseur (`renderTempsProdPage` et `exportTempsProdExcel` sans `onlyUid`) — jamais dans
+  `tempsProdRows` lui-même ni dans `renderTempsProdSelfPage`/l'export personnel (`onlyUid` fourni) :
+  un salarié masqué de la vue d'ensemble garde un accès intact à ses propres données via "Mon temps
+  de production", ce masquage n'étant qu'une question d'encombrement de la liste superviseur, jamais
+  une restriction d'accès.
 
 ## Zones de stockage
 

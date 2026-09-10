@@ -994,7 +994,7 @@ let customImportState = null;
 let toastMessage = null;
 let toastTimer = null;
 // Onglet "Temps de production" (superviseurs/administrateurs) — voir renderTempsProdPage().
-let tempsProdPeriodMode = 'jour'; // 'jour' | 'mois' | 'annee' | 'plage'
+let tempsProdPeriodMode = 'jour'; // 'jour' | 'semaine' | 'mois' | 'annee' | 'plage'
 let tempsProdAnchor = new Date(); // date de référence pour les modes jour/mois/année
 let tempsProdRangeDebut = null; // 'AAAA-MM-JJ', mode 'plage'
 let tempsProdRangeFin = null; // 'AAAA-MM-JJ', mode 'plage'
@@ -1051,6 +1051,7 @@ function migrateState(st){
   if(st.config.archiveAutoActive === undefined) st.config.archiveAutoActive = Number(st.config.archiveApresJours) > 0; // préserve le comportement des états déjà enregistrés
   if(!Array.isArray(st.commandesArchivees)) st.commandesArchivees = []; // commandes entièrement terminées depuis longtemps, écartées du moteur de planification pour garder l'appli réactive — toujours incluses dans l'export complet
   if(!st.userMachines) st.userMachines = {}; // { [userId]: [machineId, ...] } — lien plusieurs-à-plusieurs
+  if(!Array.isArray(st.hiddenTempsProdUserIds)) st.hiddenTempsProdUserIds = []; // salariés exclus de l'onglet Temps de production (superviseur) — voir isHiddenFromTempsProd
   if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
   Object.keys(st.userLunch).forEach(uid_ => {
     const lunch = st.userLunch[uid_];
@@ -5332,6 +5333,12 @@ function renderZonesPage(){
 // (jour/mois/année) ou tempsProdRangeDebut/Fin (plage personnalisée, bornes incluses).
 function tempsProdPeriodBounds(){
   const a = tempsProdAnchor;
+  if(tempsProdPeriodMode === 'semaine'){
+    const start = startOfWeek(a); start.setHours(0,0,0,0);
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate()+7, 0,0,0,0);
+    const finSemaine = new Date(end.getTime()-86400000);
+    return { start, end, label: `Semaine du ${formatDateFr(toDateInputValue(start))} au ${formatDateFr(toDateInputValue(finSemaine))}` };
+  }
   if(tempsProdPeriodMode === 'mois'){
     const start = new Date(a.getFullYear(), a.getMonth(), 1, 0,0,0,0);
     const end = new Date(a.getFullYear(), a.getMonth()+1, 1, 0,0,0,0);
@@ -5359,6 +5366,7 @@ function navigateTempsProdPeriod(dir){
   const delta = dir==='prev' ? -1 : 1;
   if(tempsProdPeriodMode==='mois') tempsProdAnchor = new Date(tempsProdAnchor.getFullYear(), tempsProdAnchor.getMonth()+delta, 1);
   else if(tempsProdPeriodMode==='annee') tempsProdAnchor = new Date(tempsProdAnchor.getFullYear()+delta, 0, 1);
+  else if(tempsProdPeriodMode==='semaine') tempsProdAnchor = new Date(tempsProdAnchor.getFullYear(), tempsProdAnchor.getMonth(), tempsProdAnchor.getDate()+delta*7);
   else tempsProdAnchor = new Date(tempsProdAnchor.getFullYear(), tempsProdAnchor.getMonth(), tempsProdAnchor.getDate()+delta);
   render();
 }
@@ -5430,6 +5438,23 @@ function computeProductionTimeByUser(st, periodStart, periodEnd){
   (st.commandes||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
   (st.commandesArchivees||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
   return byUser;
+}
+// Salarié exclu de la vue superviseur de l'onglet Temps de production (Paramètres → Utilisateurs
+// → "Afficher dans le temps de production" décochée) — pour ne pas surcharger la page de comptes
+// qui n'ont pas leur place ici (admin sans activité d'atelier, compte de test...). N'affecte QUE la
+// liste superviseur (`tempsProdRows` appelé depuis renderTempsProdPage/exportTempsProdExcel) —
+// jamais la vue "Mon temps de production" d'un opérateur, qui reste sa propre donnée quoi qu'il
+// arrive : voir toggleTempsProdVisibility.
+function isHiddenFromTempsProd(st, userId){
+  return (st.hiddenTempsProdUserIds||[]).includes(String(userId));
+}
+function toggleTempsProdVisibility(userId){
+  const uid_ = String(userId);
+  if(!Array.isArray(state.hiddenTempsProdUserIds)) state.hiddenTempsProdUserIds = [];
+  const idx = state.hiddenTempsProdUserIds.indexOf(uid_);
+  if(idx >= 0) state.hiddenTempsProdUserIds.splice(idx, 1);
+  else state.hiddenTempsProdUserIds.push(uid_);
+  commit();
 }
 function formatHeures(h){
   return (Math.round(h*10)/10).toLocaleString('fr-FR', { minimumFractionDigits:0, maximumFractionDigits:1 }) + ' h';
@@ -5692,7 +5717,7 @@ function renderTempsProdSessionModal(){
 }
 // Bornes et sélecteur de période, communs aux deux vues (superviseur et opérateur).
 function renderTempsProdPeriodControls(label){
-  const modes = [{key:'jour',label:'Jour'},{key:'mois',label:'Mois'},{key:'annee',label:'Année'},{key:'plage',label:'Période personnalisée'}];
+  const modes = [{key:'jour',label:'Jour'},{key:'semaine',label:'Semaine'},{key:'mois',label:'Mois'},{key:'annee',label:'Année'},{key:'plage',label:'Période personnalisée'}];
   const modesHtml = modes.map(m => `<button class="${tempsProdPeriodMode===m.key?'active':''}" data-action="temps-prod-mode" data-mode="${m.key}">${m.label}</button>`).join('');
   const navHtml = tempsProdPeriodMode==='plage' ? `
     <div class="search-bar" style="margin-top:10px;">
@@ -5750,7 +5775,7 @@ function renderTempsProdPage(){
   const { start, end, label } = tempsProdPeriodBounds();
   if(!canSupervise()) return renderTempsProdSelfPage(start, end, label);
   const byUser = computeProductionTimeByUser(state, start, end);
-  const rows = tempsProdRows(byUser, start, end);
+  const rows = tempsProdRows(byUser, start, end).filter(r => !isHiddenFromTempsProd(state, r.uid));
   const th = (key, label) => `<th data-action="temps-prod-sort" data-key="${key}" style="cursor:pointer; white-space:nowrap;">${label}${sortIndicatorHtml(key, tempsProdSort)}</th>`;
   const rowsHtml = rows.map(r => {
     const expanded = !!tempsProdExpanded[r.uid];
@@ -5794,7 +5819,11 @@ function exportTempsProdExcel(onlyUid){
   const { start, end, label } = tempsProdPeriodBounds();
   const byUser = computeProductionTimeByUser(state, start, end);
   let rows = tempsProdRows(byUser, start, end).slice().sort((a,b) => a.username.localeCompare(b.username));
+  // onlyUid (export personnel d'un opérateur depuis "Mon temps de production") passe toujours,
+  // même si ce salarié est par ailleurs masqué de la vue superviseur — ce masquage ne concerne que
+  // la liste superviseur, jamais l'accès de la personne à ses propres données.
   if(onlyUid) rows = rows.filter(r => r.uid === onlyUid);
+  else rows = rows.filter(r => !isHiddenFromTempsProd(state, r.uid));
   const round2 = (h) => Math.round(h*100)/100;
 
   const resumeHeaders = ['Salarié','Temps prévu (h)','Temps passé (h)','Écart (h)','Nb tâches','Dépassements notables','Présence théorique (h)',"Taux d'occupation (%)"];
@@ -6289,6 +6318,10 @@ function renderSettingsModal(){
             <label class="field">Adresse e-mail (pour les notifications de congés)</label>
             <input type="email" value="${escapeHtml(u.email||'')}" placeholder="exemple@entreprise.fr" data-action="user-email" data-user-id="${u.id}" style="margin-bottom:8px;">
             <button class="ghost small" style="width:100%; margin-bottom:10px;" data-action="change-user-password" data-id="${u.id}" data-username="${escapeHtml(u.username)}">Changer le mot de passe</button>
+            <label class="statut-chip" style="margin-bottom:10px;">
+              <input type="checkbox" ${isHiddenFromTempsProd(state, uid_)?'':'checked'} data-action="toggle-temps-prod-visibility" data-user-id="${uid_}">
+              Afficher dans le temps de production
+            </label>
 
             <div class="modal-section-title" style="font-size:10px;">Postes liés</div>
             <select multiple class="deps-select" data-action="user-machines" data-user-id="${uid_}" title="Ctrl/Cmd+clic pour ajouter ou retirer un poste">
@@ -8009,6 +8042,7 @@ function dispatchChangeAction(el, action){
     case 'toggle-machine-fusionnable': toggleMachineFusionnable(el.dataset.id, el.checked); break;
     case 'toggle-fusion-item': toggleFusionItem(el.dataset.key, el.dataset.oid, el.checked); break;
     case 'toggle-module-conges': toggleModuleConges(el.checked); break;
+    case 'toggle-temps-prod-visibility': toggleTempsProdVisibility(el.dataset.userId); break;
     case 'toggle-user-lunch': toggleUserLunchActive(el.dataset.userId, el.checked); break;
     case 'toggle-user-horaire': toggleUserHoraireActive(el.dataset.userId, el.checked); break;
     case 'user-role': changeUserRole(el.dataset.userId, el.value); break;
