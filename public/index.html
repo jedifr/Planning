@@ -1091,7 +1091,10 @@ function migrateState(st){
     { id:'lt-rtt', nom:'RTT', couleur:'#a06d1a' }
   ];
   if(!st.userLeaveAllocations) st.userLeaveAllocations = {}; // { [userId]: { [typeId]: joursParAn } }
-  if(!st.leaveRequests) st.leaveRequests = []; // [{id, userId, typeId, debut, fin, motif, statut, demandeLe, traiteParUserId, traiteLe, commentaireValidation}]
+  if(!st.leaveRequests) st.leaveRequests = []; // [{id, userId, typeId, debut, fin, motif, statut, demandeLe, traiteParUserId, traiteLe, commentaireValidation, demiJournee}]
+  // demiJournee : null (journée complète) | 'matin' | 'apres-midi' — n'a de sens que pour une
+  // demande d'un seul jour (debut===fin) ; voir leaveRequestDurationDays.
+  st.leaveRequests.forEach(r => { if(r.demiJournee === undefined) r.demiJournee = null; });
   // Migration ponctuelle : l'ancienne liste de congés (purement informative) devient des demandes
   // déjà approuvées, pour ne perdre aucune donnée déjà saisie et ne rien changer au comportement
   // du blocage automatique des postes qui en dépendait déjà.
@@ -1965,8 +1968,19 @@ function theoreticalPresenceHoursForUser(userId, st, periodStart, periodEnd){
     const dow = d.getDay();
     if(dow!==0 && dow!==6 && !isFrenchPublicHoliday(d)){
       const ds = toDateInputValue(d);
-      const onLeave = leaves.some(r => r.debut && r.fin && ds>=r.debut && ds<=r.fin);
-      if(!onLeave) total += dayHoursFor(dow, cfg);
+      const dayLeaves = leaves.filter(r => r.debut && r.fin && ds>=r.debut && ds<=r.fin);
+      // Fraction du jour couverte par un congé : un congé journée complète (ou une plage de
+      // plusieurs jours, demiJournee toujours null dans ce cas) couvre tout ; deux demi-journées
+      // distinctes (matin + après-midi, éventuellement de types différents) couvrent tout aussi ;
+      // sinon une seule demi-journée ne couvre que la moitié.
+      let offFraction = 0;
+      if(dayLeaves.some(r => !r.demiJournee)) offFraction = 1;
+      else {
+        const hasMatin = dayLeaves.some(r => r.demiJournee==='matin');
+        const hasApresMidi = dayLeaves.some(r => r.demiJournee==='apres-midi');
+        offFraction = (hasMatin && hasApresMidi) ? 1 : (hasMatin || hasApresMidi) ? 0.5 : 0;
+      }
+      total += dayHoursFor(dow, cfg) * (1 - offFraction);
     }
     d = new Date(d.getFullYear(), d.getMonth(), d.getDate()+1);
   }
@@ -2974,6 +2988,35 @@ function countWorkingDaysInRange(debut, fin){
   }
   return count;
 }
+// Durée en jours d'une demande de congé, demi-journée comprise. `demiJournee` n'a de sens que pour
+// une demande d'un seul jour (debut===fin) — ignoré sur une plage de plusieurs jours (toujours
+// comptée en jours pleins). Si ce jour unique n'est de toute façon pas ouvré (week-end/férié saisi
+// par erreur), le résultat reste 0, pas 0.5 : countWorkingDaysInRange fait déjà foi.
+function leaveRequestDurationDays(r){
+  const full = countWorkingDaysInRange(r.debut, r.fin);
+  if(r.demiJournee && r.debut === r.fin) return full > 0 ? 0.5 : 0;
+  return full;
+}
+function leaveDureeLabel(jours){
+  return (Math.round(jours*10)/10).toLocaleString('fr-FR', { minimumFractionDigits:0, maximumFractionDigits:1 });
+}
+function demiJourneeLabel(demiJournee){
+  return demiJournee==='matin' ? 'matin' : demiJournee==='apres-midi' ? 'après-midi' : '';
+}
+function leaveDateRangeLabel(r){
+  const label = demiJourneeLabel(r.demiJournee);
+  return `du ${formatDateFr(r.debut)} au ${formatDateFr(r.fin)}${label?` (${label})`:''}`;
+}
+// attrsHtml : attributs bruts à poser sur le <select> (ex. `id="leavereq-demi"` ou
+// `data-action="edit-leave-field" data-field="demiJournee"`) — mutualise le balisage entre les
+// différents formulaires (nouvelle demande, attribution admin, édition).
+function demiJourneeSelectHtml(attrsHtml, value){
+  return `<select ${attrsHtml}>
+    <option value="" ${!value?'selected':''}>Journée complète</option>
+    <option value="matin" ${value==='matin'?'selected':''}>Matin</option>
+    <option value="apres-midi" ${value==='apres-midi'?'selected':''}>Après-midi</option>
+  </select>`;
+}
 function leaveTypeById(typeId){ return state.leaveTypes.find(t=>t.id===typeId); }
 function currentUserRole(){ return currentUser && currentUser.role; }
 function isAdmin(){ return currentUserRole() === 'admin'; }
@@ -2986,25 +3029,25 @@ function roleLabel(role){ return role==='admin' ? 'Administrateur' : role==='sup
 function computeLeaveBalance(userId, typeId, year, excludeId){
   const allocated = (state.userLeaveAllocations[userId] && state.userLeaveAllocations[userId][typeId]) || 0;
   const requests = state.leaveRequests.filter(r => r.userId===userId && r.typeId===typeId && r.id!==excludeId && r.debut && r.debut.startsWith(String(year)));
-  const used = requests.filter(r=>r.statut==='approuve').reduce((s,r)=>s+countWorkingDaysInRange(r.debut,r.fin),0);
-  const pending = requests.filter(r=>r.statut==='en_attente').reduce((s,r)=>s+countWorkingDaysInRange(r.debut,r.fin),0);
+  const used = requests.filter(r=>r.statut==='approuve').reduce((s,r)=>s+leaveRequestDurationDays(r),0);
+  const pending = requests.filter(r=>r.statut==='en_attente').reduce((s,r)=>s+leaveRequestDurationDays(r),0);
   return { allocated, used, pending, remaining: allocated - used - pending };
 }
 async function notifyAdminsOfRequest(req_){
   const requester = usersList.find(u=>String(u.id)===String(req_.userId));
   const type = leaveTypeById(req_.typeId);
   const subject = `Nouvelle demande de congé — ${requester?requester.username:'Inconnu'}`;
-  const text = `${requester?requester.username:'Un utilisateur'} a soumis une demande de "${type?type.nom:'congé'}" du ${formatDateFr(req_.debut)} au ${formatDateFr(req_.fin)}${req_.motif?` (motif : ${req_.motif})`:''}.\n\nÀ valider dans Planning Atelier > 🏖 Congés > À valider.`;
+  const text = `${requester?requester.username:'Un utilisateur'} a soumis une demande de "${type?type.nom:'congé'}" ${leaveDateRangeLabel(req_)}${req_.motif?` (motif : ${req_.motif})`:''}.\n\nÀ valider dans Planning Atelier > 🏖 Congés > À valider.`;
   try{ await fetch('/api/notify-admins', { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subject, text }) }); }catch(e){ /* non bloquant */ }
 }
 async function notifyUserOfDecision(req_){
   const type = leaveTypeById(req_.typeId);
   const statutLabel = req_.statut==='approuve' ? 'approuvée' : 'refusée';
   const subject = `Votre demande de congé a été ${statutLabel}`;
-  let text = `Votre demande de "${type?type.nom:'congé'}" du ${formatDateFr(req_.debut)} au ${formatDateFr(req_.fin)} a été ${statutLabel}.${req_.commentaireValidation?`\n\nCommentaire : ${req_.commentaireValidation}`:''}`;
+  let text = `Votre demande de "${type?type.nom:'congé'}" ${leaveDateRangeLabel(req_)} a été ${statutLabel}.${req_.commentaireValidation?`\n\nCommentaire : ${req_.commentaireValidation}`:''}`;
   const year = new Date(req_.debut+'T00:00:00').getFullYear();
   const bal = computeLeaveBalance(req_.userId, req_.typeId, year);
-  text += `\n\nSolde restant pour "${type?type.nom:'ce type'}" sur ${year} : ${bal.remaining} jour(s) sur ${bal.allocated} alloué(s).`;
+  text += `\n\nSolde restant pour "${type?type.nom:'ce type'}" sur ${year} : ${leaveDureeLabel(bal.remaining)} jour(s) sur ${leaveDureeLabel(bal.allocated)} alloué(s).`;
   try{ await fetch('/api/notify-user/'+req_.userId, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subject, text }) }); }catch(e){ /* non bloquant */ }
 }
 // Un administrateur a proposé un congé : la personne concernée doit elle-même l'accepter ou le
@@ -3014,7 +3057,7 @@ async function notifyUserOfAssignmentProposal(req_){
   const type = leaveTypeById(req_.typeId);
   const link = `${window.location.origin}${window.location.pathname}?leave-confirm=${req_.confirmToken}`;
   const subject = `Un congé vous est proposé — confirmation nécessaire`;
-  const text = `Un administrateur souhaite vous attribuer un congé de "${type?type.nom:'congé'}" du ${formatDateFr(req_.debut)} au ${formatDateFr(req_.fin)}${req_.motif?` (motif : ${req_.motif})`:''}.\n\nMerci de confirmer votre accord en cliquant sur ce lien :\n${link}\n\nVous pourrez y accepter ou refuser en un clic, sans avoir besoin de vous connecter.`;
+  const text = `Un administrateur souhaite vous attribuer un congé de "${type?type.nom:'congé'}" ${leaveDateRangeLabel(req_)}${req_.motif?` (motif : ${req_.motif})`:''}.\n\nMerci de confirmer votre accord en cliquant sur ce lien :\n${link}\n\nVous pourrez y accepter ou refuser en un clic, sans avoir besoin de vous connecter.`;
   try{ await fetch('/api/notify-user/'+req_.userId, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subject, text }) }); }catch(e){ /* non bloquant */ }
 }
 // Congé imposé (case "Imposer" cochée) : simple information, rien à confirmer — contrairement à
@@ -3022,7 +3065,7 @@ async function notifyUserOfAssignmentProposal(req_){
 async function notifyUserOfImposedLeave(req_){
   const type = leaveTypeById(req_.typeId);
   const subject = `Un congé a été enregistré sur votre planning`;
-  const text = `Un administrateur a enregistré un congé de "${type?type.nom:'congé'}" du ${formatDateFr(req_.debut)} au ${formatDateFr(req_.fin)}${req_.motif?` (motif : ${req_.motif})`:''}.\n\nCe congé est déjà approuvé, aucune action de votre part n'est nécessaire.`;
+  const text = `Un administrateur a enregistré un congé de "${type?type.nom:'congé'}" ${leaveDateRangeLabel(req_)}${req_.motif?` (motif : ${req_.motif})`:''}.\n\nCe congé est déjà approuvé, aucune action de votre part n'est nécessaire.`;
   try{ await fetch('/api/notify-user/'+req_.userId, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subject, text }) }); }catch(e){ /* non bloquant */ }
 }
 // Confirmation depuis l'appli (personne déjà connectée) — équivalent du clic sur le lien de l'e-mail.
@@ -3036,32 +3079,35 @@ function confirmMyLeaveAssignment(reqId, decision){
   commit();
   showToast(decision==='accept' ? 'Congé accepté.' : 'Congé refusé.');
 }
-function startLeaveRequestSubmission(userId, typeId, debut, fin, motif){
+// demiJournee (optionnel) : 'matin' | 'apres-midi' — silencieusement ignoré (ramené à null) si la
+// demande couvre plusieurs jours, une demi-journée n'ayant de sens que pour un seul jour.
+function startLeaveRequestSubmission(userId, typeId, debut, fin, motif, demiJournee){
   if(!typeId){ alert('Merci de choisir un type de congé.'); return; }
   if(!debut || !fin){ alert('Merci de renseigner une date de début et une date de fin.'); return; }
   if(fin < debut){ alert('La date de fin doit être postérieure ou égale à la date de début.'); return; }
-  pendingLeaveRequestDraft = { userId, typeId, debut, fin, motif: (motif||'').trim(), mode: 'salarie' };
+  const demi = (debut===fin && (demiJournee==='matin' || demiJournee==='apres-midi')) ? demiJournee : null;
+  pendingLeaveRequestDraft = { userId, typeId, debut, fin, demiJournee: demi, motif: (motif||'').trim(), mode: 'salarie' };
   render();
 }
 function confirmLeaveRequestSubmission(){
   if(!pendingLeaveRequestDraft) return;
-  const { id, userId, typeId, debut, fin, motif, mode } = pendingLeaveRequestDraft;
+  const { id, userId, typeId, debut, fin, demiJournee, motif, mode } = pendingLeaveRequestDraft;
   const year = new Date(debut+'T00:00:00').getFullYear();
   const bal = computeLeaveBalance(userId, typeId, year, id); // exclut le congé lui-même en mode édition, sinon il se compterait deux fois
-  const demanded = countWorkingDaysInRange(debut, fin);
+  const demanded = leaveRequestDurationDays({ debut, fin, demiJournee });
   if(demanded > bal.remaining){
     const msg = mode==='edit'
-      ? `Attention : il ne reste que ${bal.remaining} jour(s) disponible(s) pour ce type de congé sur ${year} (cette période en compte ${demanded}). Enregistrer quand même ?`
+      ? `Attention : il ne reste que ${leaveDureeLabel(bal.remaining)} jour(s) disponible(s) pour ce type de congé sur ${year} (cette période en compte ${leaveDureeLabel(demanded)}). Enregistrer quand même ?`
       : mode==='admin'
-      ? `Attention : il ne reste que ${bal.remaining} jour(s) disponible(s) pour ce type de congé sur ${year} (cette période en compte ${demanded}). Attribuer quand même ?`
-      : `Attention : il ne reste que ${bal.remaining} jour(s) disponible(s) pour ce type de congé sur ${year} (cette demande en compte ${demanded}). Soumettre quand même ?`;
+      ? `Attention : il ne reste que ${leaveDureeLabel(bal.remaining)} jour(s) disponible(s) pour ce type de congé sur ${year} (cette période en compte ${leaveDureeLabel(demanded)}). Attribuer quand même ?`
+      : `Attention : il ne reste que ${leaveDureeLabel(bal.remaining)} jour(s) disponible(s) pour ce type de congé sur ${year} (cette demande en compte ${leaveDureeLabel(demanded)}). Soumettre quand même ?`;
     if(!confirm(msg)) return;
   }
   if(mode === 'edit'){
     const req_ = state.leaveRequests.find(r=>r.id===id);
     if(!req_){ pendingLeaveRequestDraft = null; render(); return; }
     const oldReq = { ...req_ };
-    req_.typeId = typeId; req_.debut = debut; req_.fin = fin; req_.motif = motif;
+    req_.typeId = typeId; req_.debut = debut; req_.fin = fin; req_.demiJournee = demiJournee; req_.motif = motif;
     pendingLeaveRequestDraft = null;
     commit();
     notifyUserOfModification(oldReq, req_);
@@ -3071,7 +3117,7 @@ function confirmLeaveRequestSubmission(){
   if(mode === 'admin'){
     const imposed = !!pendingLeaveRequestDraft.imposer;
     const req_ = {
-      id: uid('leavereq'), userId, typeId, debut, fin, motif,
+      id: uid('leavereq'), userId, typeId, debut, fin, demiJournee, motif,
       statut: imposed ? 'approuve' : 'a_confirmer', demandeLe: new Date().toISOString(),
       traiteParUserId: currentUser ? String(currentUser.id) : null,
       traiteLe: imposed ? new Date().toISOString() : null,
@@ -3087,14 +3133,14 @@ function confirmLeaveRequestSubmission(){
       notifyUserOfAssignmentProposal(req_);
       showToast('Proposition envoyée — en attente de confirmation par la personne concernée.');
     }
-    ['assign-leave-user','assign-leave-debut','assign-leave-fin','assign-leave-motif'].forEach(id => {
+    ['assign-leave-user','assign-leave-debut','assign-leave-fin','assign-leave-demi','assign-leave-motif'].forEach(id => {
       const el = document.getElementById(id); if(el) el.value = '';
     });
     const imposerEl = document.getElementById('assign-leave-imposer'); if(imposerEl) imposerEl.checked = false;
     return;
   }
   const req_ = {
-    id: uid('leavereq'), userId, typeId, debut, fin, motif,
+    id: uid('leavereq'), userId, typeId, debut, fin, demiJournee, motif,
     statut: 'en_attente', demandeLe: new Date().toISOString(),
     traiteParUserId: null, traiteLe: null, commentaireValidation: ''
   };
@@ -3159,7 +3205,8 @@ function renderLeaveRequestPreviewModal(){
   const isEditMode = d.mode === 'edit';
   const isAdminLike = isAdminMode || isEditMode; // affichage "Pour X" et tolérance aux chevauchements : mêmes règles pour une attribution ou une correction admin
   const t = leaveTypeById(d.typeId);
-  const nbJours = countWorkingDaysInRange(d.debut, d.fin);
+  const nbJours = leaveRequestDurationDays(d);
+  const demiLabel = demiJourneeLabel(d.demiJournee);
   const affected = simulateLeaveImpactForRequest(d);
   const personne = isAdminLike ? usersList.find(u=>String(u.id)===d.userId) : null;
   return `
@@ -3171,7 +3218,7 @@ function renderLeaveRequestPreviewModal(){
       </div>
       <div class="modal-body">
         <div class="leave-confirm-banner">
-          ${isAdminLike ? `Pour <strong>${personne?escapeHtml(personne.username):'cette personne'}</strong> — ` : ''}<strong>${t?escapeHtml(t.nom):'Congé'}</strong> du <strong>${formatDateFr(d.debut)}</strong> au <strong>${formatDateFr(d.fin)}</strong> (${nbJours} jour(s) ouvré(s))${d.motif?` — ${escapeHtml(d.motif)}`:''}
+          ${isAdminLike ? `Pour <strong>${personne?escapeHtml(personne.username):'cette personne'}</strong> — ` : ''}<strong>${t?escapeHtml(t.nom):'Congé'}</strong> du <strong>${formatDateFr(d.debut)}</strong> au <strong>${formatDateFr(d.fin)}</strong>${demiLabel?` (${demiLabel})`:''} (${leaveDureeLabel(nbJours)} jour(s) ouvré(s))${d.motif?` — ${escapeHtml(d.motif)}`:''}
           ${isAdminMode && d.imposer ? `<br><strong style="color:var(--amber);">⚠ Congé imposé — sera enregistré directement comme approuvé, sans confirmation de la personne.</strong>` : ''}
         </div>
         ${renderImpactSummaryHtml(affected)}
@@ -3328,7 +3375,7 @@ function revokeLeaveRequest(reqId){
 async function notifyUserOfModification(oldReq, newReq){
   const oldType = leaveTypeById(oldReq.typeId), newType = leaveTypeById(newReq.typeId);
   const subject = `Votre congé a été modifié`;
-  const text = `Un administrateur a corrigé votre congé de "${oldType?oldType.nom:'congé'}" du ${formatDateFr(oldReq.debut)} au ${formatDateFr(oldReq.fin)}.\n\nIl est désormais enregistré comme "${newType?newType.nom:'congé'}" du ${formatDateFr(newReq.debut)} au ${formatDateFr(newReq.fin)}${newReq.motif?` (motif : ${newReq.motif})`:''}.`;
+  const text = `Un administrateur a corrigé votre congé de "${oldType?oldType.nom:'congé'}" ${leaveDateRangeLabel(oldReq)}.\n\nIl est désormais enregistré comme "${newType?newType.nom:'congé'}" ${leaveDateRangeLabel(newReq)}${newReq.motif?` (motif : ${newReq.motif})`:''}.`;
   try{ await fetch('/api/notify-user/'+newReq.userId, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subject, text }) }); }catch(e){ /* non bloquant */ }
 }
 // Ouvre un petit formulaire de correction pour un congé déjà existant — permet à un administrateur
@@ -3339,12 +3386,12 @@ async function notifyUserOfModification(oldReq, newReq){
 function startEditLeaveRequest(reqId){
   const req_ = state.leaveRequests.find(r=>r.id===reqId);
   if(!req_) return;
-  editingLeaveRequestDraft = { id: req_.id, userId: req_.userId, typeId: req_.typeId, debut: req_.debut, fin: req_.fin, motif: req_.motif||'' };
+  editingLeaveRequestDraft = { id: req_.id, userId: req_.userId, typeId: req_.typeId, debut: req_.debut, fin: req_.fin, demiJournee: req_.demiJournee||null, motif: req_.motif||'' };
   render();
 }
 function updateEditLeaveField(field, value){
   if(!editingLeaveRequestDraft) return;
-  editingLeaveRequestDraft[field] = value;
+  editingLeaveRequestDraft[field] = field==='demiJournee' ? (value||null) : value;
   render();
 }
 function cancelEditLeaveRequest(){
@@ -3356,7 +3403,8 @@ function previewEditLeaveRequest(){
   if(!d.typeId){ alert('Merci de choisir un type de congé.'); return; }
   if(!d.debut || !d.fin){ alert('Merci de renseigner une date de début et une date de fin.'); return; }
   if(d.fin < d.debut){ alert('La date de fin doit être postérieure ou égale à la date de début.'); return; }
-  pendingLeaveRequestDraft = { id: d.id, userId: d.userId, typeId: d.typeId, debut: d.debut, fin: d.fin, motif: (d.motif||'').trim(), mode: 'edit' };
+  const demi = (d.debut===d.fin && (d.demiJournee==='matin' || d.demiJournee==='apres-midi')) ? d.demiJournee : null;
+  pendingLeaveRequestDraft = { id: d.id, userId: d.userId, typeId: d.typeId, debut: d.debut, fin: d.fin, demiJournee: demi, motif: (d.motif||'').trim(), mode: 'edit' };
   editingLeaveRequestDraft = null;
   render();
 }
@@ -3372,7 +3420,7 @@ function renderEditLeaveRequestModal(){
         <button class="ghost icon-btn" data-action="cancel-edit-leave-request" title="Fermer">✕</button>
       </div>
       <div class="modal-body">
-        <div class="commande-top-fields" style="grid-template-columns:1.2fr 1fr 1fr;">
+        <div class="commande-top-fields" style="grid-template-columns:1.2fr 1fr 1fr 1fr;">
           <div><label class="field">Type</label>
             <select data-action="edit-leave-field" data-field="typeId">
               ${state.leaveTypes.map(t=>`<option value="${t.id}" ${d.typeId===t.id?'selected':''}>${escapeHtml(t.nom)}</option>`).join('')}
@@ -3380,9 +3428,10 @@ function renderEditLeaveRequestModal(){
           </div>
           <div><label class="field">Début</label><input type="date" value="${d.debut}" data-action="edit-leave-field" data-field="debut"></div>
           <div><label class="field">Fin</label><input type="date" value="${d.fin}" data-action="edit-leave-field" data-field="fin"></div>
+          <div><label class="field">Demi-journée</label>${demiJourneeSelectHtml('data-action="edit-leave-field" data-field="demiJournee"', d.demiJournee)}</div>
         </div>
         <div style="margin-top:10px;"><label class="field">Motif (optionnel)</label><input value="${escapeHtml(d.motif||'')}" data-action="edit-leave-field" data-field="motif"></div>
-        <div class="footer-note" style="text-align:left; padding-top:10px;">Le statut actuel n'est pas modifié ici — utilisez Approuver / Refuser / Révoquer pour ça. La personne concernée est prévenue par e-mail du changement.</div>
+        <div class="footer-note" style="text-align:left; padding-top:10px;">La demi-journée ne s'applique qu'à une correction sur un seul jour (début = fin). Le statut actuel n'est pas modifié ici — utilisez Approuver / Refuser / Révoquer pour ça. La personne concernée est prévenue par e-mail du changement.</div>
         <div class="form-actions" style="margin-top:16px;">
           <button class="ghost" data-action="cancel-edit-leave-request">Annuler</button>
           <button class="primary" data-action="preview-edit-leave-request">Voir les conséquences →</button>
@@ -3399,6 +3448,7 @@ function adminAssignLeave(){
   const tEl = document.getElementById('assign-leave-type');
   const dEl = document.getElementById('assign-leave-debut');
   const fEl = document.getElementById('assign-leave-fin');
+  const demiEl = document.getElementById('assign-leave-demi');
   const mEl = document.getElementById('assign-leave-motif');
   const iEl = document.getElementById('assign-leave-imposer');
   if(!uEl || !tEl || !dEl || !fEl) return;
@@ -3408,7 +3458,9 @@ function adminAssignLeave(){
   if(!typeId){ alert('Merci de choisir un type de congé.'); return; }
   if(!debut || !fin){ alert('Merci de renseigner une date de début et une date de fin.'); return; }
   if(fin < debut){ alert('La date de fin doit être postérieure ou égale à la date de début.'); return; }
-  pendingLeaveRequestDraft = { userId, typeId, debut, fin, motif, mode: 'admin', imposer };
+  const demiVal = demiEl ? demiEl.value : '';
+  const demiJournee = (debut===fin && (demiVal==='matin' || demiVal==='apres-midi')) ? demiVal : null;
+  pendingLeaveRequestDraft = { userId, typeId, debut, fin, demiJournee, motif, mode: 'admin', imposer };
   render();
 }
 function addLeaveType(){
@@ -4929,18 +4981,19 @@ function renderMesDemandesTab(){
     const bal = computeLeaveBalance(uid_, t.id, year);
     return `<div class="leave-balance-card" style="border-left:4px solid ${t.couleur};">
       <div class="leave-balance-type">${escapeHtml(t.nom)}</div>
-      <div class="leave-balance-num">${bal.remaining}<span>/ ${bal.allocated} j restants</span></div>
-      <div class="footer-note" style="margin:2px 0 0;">${bal.used} utilisé(s)${bal.pending?` · ${bal.pending} en attente`:''} — ${year}</div>
+      <div class="leave-balance-num">${leaveDureeLabel(bal.remaining)}<span>/ ${leaveDureeLabel(bal.allocated)} j restants</span></div>
+      <div class="footer-note" style="margin:2px 0 0;">${leaveDureeLabel(bal.used)} utilisé(s)${bal.pending?` · ${leaveDureeLabel(bal.pending)} en attente`:''} — ${year}</div>
     </div>`;
   }).join('');
   const myRequests = state.leaveRequests.filter(r=>r.userId===uid_).sort((a,b)=>b.demandeLe.localeCompare(a.demandeLe));
   const rows = myRequests.map(r => {
     const t = leaveTypeById(r.typeId);
-    const nbJours = countWorkingDaysInRange(r.debut, r.fin);
+    const nbJours = leaveRequestDurationDays(r);
+    const demiLabel = demiJourneeLabel(r.demiJournee);
     return `<tr>
       <td><span class="machine-swatch" style="background:${t?t.couleur:'#888'}"></span>${t?escapeHtml(t.nom):'(type supprimé)'}</td>
-      <td>${formatDateFr(r.debut)} → ${formatDateFr(r.fin)}</td>
-      <td>${nbJours} j</td>
+      <td>${formatDateFr(r.debut)} → ${formatDateFr(r.fin)}${demiLabel?` <span class="footer-note" style="margin:0;">(${demiLabel})</span>`:''}</td>
+      <td>${leaveDureeLabel(nbJours)} j</td>
       <td>${escapeHtml(r.motif||'—')}</td>
       <td>${statutBadgeHtml(r.statut)}${r.statut==='refuse'&&r.commentaireValidation?`<div class="footer-note" style="margin:2px 0 0; text-align:left;">${escapeHtml(r.commentaireValidation)}</div>`:''}</td>
       <td>${r.statut==='en_attente' ? `<button class="danger-ghost small" data-action="withdraw-leave-request" data-id="${r.id}">Retirer</button>` : ''}</td>
@@ -4951,13 +5004,15 @@ function renderMesDemandesTab(){
     <div class="leave-balance-row">${balanceCards || `<div class="footer-note">Aucun type de congé configuré — un administrateur peut en ajouter dans l'onglet "Soldes &amp; types".</div>`}</div>
 
     <div class="modal-section-title" style="margin-top:20px;">Nouvelle demande</div>
-    <div class="commande-top-fields" style="grid-template-columns:1fr 1fr 1fr 1.4fr auto; align-items:end;">
+    <div class="commande-top-fields" style="grid-template-columns:1fr 1fr 1fr 1fr 1.2fr auto; align-items:end;">
       <div><label class="field">Type</label><select id="leavereq-type">${state.leaveTypes.map(t=>`<option value="${t.id}">${escapeHtml(t.nom)}</option>`).join('')}</select></div>
       <div><label class="field">Début</label><input type="date" id="leavereq-debut"></div>
       <div><label class="field">Fin</label><input type="date" id="leavereq-fin"></div>
+      <div><label class="field">Demi-journée</label>${demiJourneeSelectHtml('id="leavereq-demi"')}</div>
       <div><label class="field">Motif (optionnel)</label><input type="text" id="leavereq-motif"></div>
       <button class="primary" data-action="submit-leave-request">Envoyer</button>
     </div>
+    <div class="footer-note" style="text-align:left; padding-top:6px;">La demi-journée ne s'applique qu'à une demande d'un seul jour (même date de début et de fin) — ignorée sur une plage de plusieurs jours.</div>
 
     <div class="modal-section-title" style="margin-top:22px;">Mes demandes</div>
     <table class="ops-table">
@@ -4976,7 +5031,8 @@ function renderEquipeTab(){
   const rows = list.map(r => {
     const t = leaveTypeById(r.typeId);
     const requester = usersList.find(u=>String(u.id)===r.userId);
-    const nbJours = countWorkingDaysInRange(r.debut, r.fin);
+    const nbJours = leaveRequestDurationDays(r);
+    const demiLabel = demiJourneeLabel(r.demiJournee);
     const past = r.fin < today;
     const year = new Date(r.debut+'T00:00:00').getFullYear();
     const bal = computeLeaveBalance(r.userId, r.typeId, year);
@@ -4985,9 +5041,9 @@ function renderEquipeTab(){
     return `<tr class="${past?'leave-row-past':''}">
       <td>${requester?escapeHtml(requester.username):'(compte supprimé)'}</td>
       <td><span class="machine-swatch" style="background:${t?t.couleur:'#888'}"></span>${t?escapeHtml(t.nom):'—'}</td>
-      <td>${formatDateFr(r.debut)} → ${formatDateFr(r.fin)}</td>
-      <td>${nbJours} j</td>
-      <td>${bal.remaining} / ${bal.allocated} j <span class="footer-note" style="margin:0;">(${year})</span></td>
+      <td>${formatDateFr(r.debut)} → ${formatDateFr(r.fin)}${demiLabel?` <span class="footer-note" style="margin:0;">(${demiLabel})</span>`:''}</td>
+      <td>${leaveDureeLabel(nbJours)} j</td>
+      <td>${leaveDureeLabel(bal.remaining)} / ${leaveDureeLabel(bal.allocated)} j <span class="footer-note" style="margin:0;">(${year})</span></td>
       <td>${statutBadgeHtml(r.statut)}</td>
       ${admin ? `<td style="white-space:nowrap;">${editBtn} ${revokeBtn}</td>` : ''}
     </tr>`;
@@ -5132,7 +5188,8 @@ function renderAValiderTab(){
   const rows = pending.map(r => {
     const t = leaveTypeById(r.typeId);
     const requester = usersList.find(u=>String(u.id)===r.userId);
-    const nbJours = countWorkingDaysInRange(r.debut, r.fin);
+    const nbJours = leaveRequestDurationDays(r);
+    const demiLabel = demiJourneeLabel(r.demiJournee);
     const year = new Date(r.debut+'T00:00:00').getFullYear();
     const bal = computeLeaveBalance(r.userId, r.typeId, year);
     const soldeApres = bal.remaining; // remaining tient déjà compte de cette demande (comptée dans "pending")
@@ -5141,9 +5198,9 @@ function renderAValiderTab(){
     return `<tr>
       <td>${requester?escapeHtml(requester.username):'(compte supprimé)'}</td>
       <td><span class="machine-swatch" style="background:${t?t.couleur:'#888'}"></span>${t?escapeHtml(t.nom):'—'}</td>
-      <td>${formatDateFr(r.debut)} → ${formatDateFr(r.fin)}</td>
-      <td>${nbJours} j</td>
-      <td>${soldeApres} j <span class="footer-note" style="margin:0;">restant(s) sur ${year} si approuvée</span></td>
+      <td>${formatDateFr(r.debut)} → ${formatDateFr(r.fin)}${demiLabel?` <span class="footer-note" style="margin:0;">(${demiLabel})</span>`:''}</td>
+      <td>${leaveDureeLabel(nbJours)} j</td>
+      <td>${leaveDureeLabel(soldeApres)} j <span class="footer-note" style="margin:0;">restant(s) sur ${year} si approuvée</span></td>
       <td>${escapeHtml(r.motif||'—')}</td>
       <td style="white-space:nowrap;">
         <button class="small" data-action="toggle-leave-impact" data-id="${r.id}">${impactOpen?'▲':'👁'} Impact</button>
@@ -5178,7 +5235,7 @@ function renderSoldesTab(){
           const bal = computeLeaveBalance(uid_, t.id, year);
           return `<td>
             <input type="number" min="0" step="0.5" value="${bal.allocated}" data-action="user-leave-allocation" data-user-id="${uid_}" data-type-id="${t.id}" style="width:70px;">
-            <span class="footer-note" style="margin:0;">${bal.used} pris${bal.pending?` · ${bal.pending} att.`:''} · <strong style="color:${bal.remaining<0?'var(--red)':'var(--text-dim)'};">${bal.remaining} restant${Math.abs(bal.remaining)>=2?'s':''}</strong></span>
+            <span class="footer-note" style="margin:0;">${leaveDureeLabel(bal.used)} pris${bal.pending?` · ${leaveDureeLabel(bal.pending)} att.`:''} · <strong style="color:${bal.remaining<0?'var(--red)':'var(--text-dim)'};">${leaveDureeLabel(bal.remaining)} restant${Math.abs(bal.remaining)>=2?'s':''}</strong></span>
           </td>`;
         }).join('')}</tr>`;
       }).join('')}</tbody>
@@ -5193,11 +5250,12 @@ function renderSoldesTab(){
     <div class="footer-note" style="text-align:left; padding-top:10px;">Modifier une allocation prend effet immédiatement — les demandes déjà soumises ne changent pas rétroactivement.</div>
 
     <div class="modal-section-title" style="margin-top:22px;">Attribuer un congé directement</div>
-    <div class="commande-top-fields" style="grid-template-columns:1.2fr 1fr 1fr 1fr 1.4fr auto; align-items:end;">
+    <div class="commande-top-fields" style="grid-template-columns:1.1fr 1fr 1fr 1fr 1fr 1.2fr auto; align-items:end;">
       <div><label class="field">Personne</label><select id="assign-leave-user"><option value="">—</option>${usersList.map(u=>`<option value="${u.id}">${escapeHtml(u.username)}</option>`).join('')}</select></div>
       <div><label class="field">Type</label><select id="assign-leave-type">${state.leaveTypes.map(t=>`<option value="${t.id}">${escapeHtml(t.nom)}</option>`).join('')}</select></div>
       <div><label class="field">Début</label><input type="date" id="assign-leave-debut"></div>
       <div><label class="field">Fin</label><input type="date" id="assign-leave-fin"></div>
+      <div><label class="field">Demi-journée</label>${demiJourneeSelectHtml('id="assign-leave-demi"')}</div>
       <div><label class="field">Motif (optionnel)</label><input type="text" id="assign-leave-motif"></div>
       <button class="primary" data-action="admin-assign-leave">Attribuer</button>
     </div>
@@ -5404,8 +5462,12 @@ function renderOccupationBar(taux, big){
   const fillPct = Math.max(0, Math.min(taux, 1)) * 100;
   const color = occupationBarColor(taux);
   const label = `${pct.toLocaleString('fr-FR',{minimumFractionDigits:0,maximumFractionDigits:1})} %`;
+  // Sous 50%, le remplissage réel est petit (ex. 10% de largeur) et passerait presque inaperçu sur
+  // un fond neutre — on teinte alors tout le fond de la piste en rouge pâle pour que l'alerte saute
+  // aux yeux même quand la barre elle-même est quasi vide, pas seulement son maigre remplissage.
+  const trackStyle = taux < 0.5 ? 'background:rgba(178,58,48,0.18);' : '';
   return `<div class="occ-bar-wrap${big?' big':''}" title="Taux d'occupation : ${label}">
-    <div class="occ-bar-track"><div class="occ-bar-fill" style="width:${fillPct}%; background:${color};"></div></div>
+    <div class="occ-bar-track" style="${trackStyle}"><div class="occ-bar-fill" style="width:${fillPct}%; background:${color};"></div></div>
     <span class="occ-bar-pct" style="color:${color};">${label}</span>
   </div>`;
 }
@@ -7830,8 +7892,9 @@ function dispatchClickAction(action, el){
       const typeEl = document.getElementById('leavereq-type');
       const debutEl = document.getElementById('leavereq-debut');
       const finEl = document.getElementById('leavereq-fin');
+      const demiEl = document.getElementById('leavereq-demi');
       const motifEl = document.getElementById('leavereq-motif');
-      startLeaveRequestSubmission(String(currentUser.id), typeEl?typeEl.value:'', debutEl?debutEl.value:'', finEl?finEl.value:'', motifEl?motifEl.value:'');
+      startLeaveRequestSubmission(String(currentUser.id), typeEl?typeEl.value:'', debutEl?debutEl.value:'', finEl?finEl.value:'', motifEl?motifEl.value:'', demiEl?demiEl.value:'');
       break;
     }
     case 'cancel-leave-preview': cancelLeaveRequestPreview(); break;

@@ -138,6 +138,43 @@ session d'un second opérateur resterait ouverte indéfiniment. La reprise autom
 déjeuner rouvre une session par opérateur qui était en train de travailler (`autoPausedOperators`,
 peuplé à la pause, vidé à la reprise), pas une seule.
 
+## Congés — demi-journée
+
+Une demande de congé (`state.leaveRequests[]`) porte `demiJournee` (`null` | `'matin'` |
+`'apres-midi'`). **N'a de sens que pour une demande d'un seul jour** (`debut === fin`) — sur une
+plage de plusieurs jours, toujours ramené à `null` (silencieusement, pas d'erreur) par le code qui
+construit la demande (`startLeaveRequestSubmission`, `adminAssignLeave`, `previewEditLeaveRequest`),
+jamais par `confirmLeaveRequestSubmission` lui-même qui persiste tel quel ce qu'on lui donne — la
+normalisation est la responsabilité de l'appelant, pas de la validation finale.
+
+- `leaveRequestDurationDays(r)` — durée réelle d'une demande : 0.5 jour si `demiJournee` posé sur
+  un seul jour ouvré, sinon la valeur pleine de `countWorkingDaysInRange(r.debut, r.fin)`. Si ce
+  jour unique n'est de toute façon pas ouvré (week-end/férié saisi par erreur), le résultat reste 0,
+  pas 0.5. **Remplace `countWorkingDaysInRange` partout où on dispose d'un objet demande** (soldes,
+  tableaux, pop-up de conséquences) — `countWorkingDaysInRange` reste utilisé tel quel là où il n'y
+  a pas de demande concrète (recherche de plage libre dans `suggestFreeRange`, comptage générique).
+- `computeLeaveBalance` (utilisé/en attente) et le formulaire d'allocation annuelle
+  (`step="0.5"`, déjà en place avant cette fonctionnalité) acceptent nativement les demi-jours.
+- Trois surfaces de saisie/édition partagent le même sélecteur (`demiJourneeSelectHtml`) :
+  formulaire salarié « Nouvelle demande », formulaire admin « Attribuer un congé directement », et
+  la pop-up d'édition d'une demande existante (`renderEditLeaveRequestModal`) — toutes les trois
+  laissent le sélecteur visible en permanence (pas de masquage conditionnel réactif selon que
+  début=fin) et se contentent d'ignorer la valeur à la validation si la plage dépasse un jour, pour
+  éviter la complexité d'un formulaire réactif (voir le piège sur les champs qui s'effacent en
+  cours de frappe).
+- `theoreticalPresenceHoursForUser` (voir plus bas) traite la fraction du jour couverte : une seule
+  demi-journée retire la moitié des heures nominales de ce jour, deux demi-journées qui se
+  complètent (matin + après-midi, éventuellement de deux demandes/types différents) retirent la
+  journée entière — jamais un double-retrait de la même moitié.
+- **Le blocage automatique de poste reste à la journée entière**, volontairement inchangé :
+  `operatorLeaveIntersection`/`isDateBlocked` (moteur de planification) ignorent `demiJournee` — un
+  congé d'une demi-journée continue de rendre tout le poste indisponible ce jour-là dans
+  `computeSchedule` si c'est le seul opérateur lié. Granularité demi-journée dans le moteur de
+  planification lui-même = hors périmètre de cette fonctionnalité (RH/présence), pas fait.
+- `demiJourneeLabel(demiJournee)` / `leaveDateRangeLabel(r)` — libellé humain (« matin »/« après-
+  midi ») utilisé dans les tableaux (Mes demandes, Équipe, À valider) et les e-mails de
+  notification. `leaveDureeLabel(jours)` formate un nombre de jours (entier ou `.5`) en français.
+
 ## Temps de production vs présence théorique
 
 **L'application n'a aucun système de pointage réel** (pas d'entrée/sortie physique). La seule
@@ -176,7 +213,10 @@ par `computeProductionTimeByUser` :
   120% (heures sup/travail à plusieurs, volontairement distingué d'une anomalie). Le remplissage
   visuel est plafonné à 100% de largeur (au-delà, seule la couleur change) pour ne jamais donner
   l'impression que la barre déborde de son cadre. `big=true` pour la variante plus grande utilisée
-  dans la tuile de stat de « Mon temps de production ».
+  dans la tuile de stat de « Mon temps de production ». Sous 50%, le fond de la piste (pas
+  seulement le remplissage) est teinté en rouge pâle (`rgba(178,58,48,0.18)`) : un remplissage réel
+  de 10% de largeur serait sinon presque invisible sur un fond neutre — l'alerte doit sauter aux
+  yeux même quand la barre elle-même est quasi vide, pas seulement son maigre remplissage.
 - Colonne « Présence théo. » (texte) et « Taux d'occupation » (barre `renderOccupationBar`) dans
   le tableau superviseur, équivalents dans la vue « Mon temps de production » (présence en texte,
   occupation en grande barre `big`), et deux colonnes numériques supplémentaires (présence en
