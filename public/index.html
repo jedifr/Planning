@@ -1897,9 +1897,12 @@ function configForMachineId(machineId, st){
 // Comme configForMachineId, mais si la pièce a un opérateur assigné avec une pause déjeuner et/ou
 // des horaires de poste qui lui sont propres, ils remplacent ceux du poste — le reste (indisponibilités...)
 // continue de venir du poste.
-function configForPiece(op, st){
-  const cfg = configForMachineId(op.machineId, st);
-  const userLunch = op.operatorUserId && st.userLunch ? st.userLunch[op.operatorUserId] : null;
+// Applique la pause/l'horaire propre à une personne (userLunch) par-dessus un horaire de base —
+// factorisé pour être utilisé aussi bien pour planifier une pièce (configForPiece, horaire du
+// poste en base) que pour estimer sa présence théorique (baseConfigForUser, horaire d'atelier en
+// base) : même logique de surcharge dans les deux cas.
+function applyUserLunchOverride(cfg, userId, st){
+  const userLunch = userId && st.userLunch ? st.userLunch[userId] : null;
   if(!userLunch) return cfg;
   let result = cfg;
   if(userLunch.pauseActive){
@@ -1924,6 +1927,39 @@ function configForPiece(op, st){
     }
   }
   return result;
+}
+function configForPiece(op, st){
+  const cfg = configForMachineId(op.machineId, st);
+  return applyUserLunchOverride(cfg, op.operatorUserId, st);
+}
+// Horaire théorique d'une personne indépendamment de tout poste — base horaire d'atelier
+// (st.config), surchargée par son userLunch le cas échéant. Sert à estimer sa présence théorique
+// (voir theoreticalPresenceHoursForUser) : une personne n'est pas rattachée à UN poste en
+// particulier pour ce calcul, contrairement à une pièce planifiée.
+function baseConfigForUser(userId, st){
+  return applyUserLunchOverride({ ...st.config }, userId, st);
+}
+// Présence théorique d'un salarié sur [periodStart, periodEnd[ : somme des horaires nominaux de
+// ses jours ouvrés (lun-ven, hors jours fériés français), moins ses congés approuvés couvrant ce
+// jour. Purement théorique — l'application n'a aucun système de pointage réel (voir CLAUDE.md,
+// section "Temps de production vs présence") : ne prétend pas mesurer qui était physiquement là,
+// seulement ce que son planning attendait d'elle.
+function theoreticalPresenceHoursForUser(userId, st, periodStart, periodEnd){
+  const cfg = baseConfigForUser(userId, st);
+  const leaves = (st.leaveRequests||[]).filter(r => r.userId===userId && r.statut==='approuve');
+  let total = 0;
+  let d = new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate());
+  let guard = 0;
+  while(d < periodEnd && guard++ < 3660){
+    const dow = d.getDay();
+    if(dow!==0 && dow!==6 && !isFrenchPublicHoliday(d)){
+      const ds = toDateInputValue(d);
+      const onLeave = leaves.some(r => r.debut && r.fin && ds>=r.debut && ds<=r.fin);
+      if(!onLeave) total += dayHoursFor(dow, cfg);
+    }
+    d = new Date(d.getFullYear(), d.getMonth(), d.getDate()+1);
+  }
+  return total;
 }
 
 function findOverlap(start, end, intervals, ignoreFusionGroupId){
@@ -5336,6 +5372,16 @@ function formatEcart(h){
   const color = h > 0.05 ? 'var(--red)' : (h < -0.05 ? 'var(--green)' : 'var(--text-dim)');
   return `<span style="color:${color};">${sign}${formatHeures(h)}</span>`;
 }
+// Taux d'occupation (production réelle ÷ présence théorique) : rouge sous 50% (temps largement
+// inoccupé sur les tâches suivies par l'appli), vert au-delà de 80%, neutre entre les deux. Peut
+// dépasser 100% (heures supplémentaires, ou travail à plusieurs sur une même pièce qui additionne
+// le temps de chaque opérateur — voir CLAUDE.md) : pas traité comme une anomalie en soi.
+function formatTauxOccupation(taux){
+  if(taux == null) return '<span style="color:var(--text-faint);">—</span>';
+  const pct = Math.round(taux*1000)/10;
+  const color = taux < 0.5 ? 'var(--red)' : (taux >= 0.8 ? 'var(--green)' : 'var(--text-dim)');
+  return `<span style="color:${color}; font-weight:600;">${pct.toLocaleString('fr-FR',{minimumFractionDigits:0,maximumFractionDigits:1})} %</span>`;
+}
 // Dépassement "notable" : +50% ET au moins 15 minutes d'écart absolu — le double seuil évite de
 // signaler une tâche de 2 minutes prévue à 1 minute (100% de dépassement, mais insignifiant).
 function isOverrunTask(prevuH, h){
@@ -5357,12 +5403,17 @@ function sortIndicatorHtml(key, sortState){
   if(!sortState || sortState.key !== key) return '';
   return sortState.dir==='asc' ? ' ▲' : ' ▼';
 }
-function tempsProdRows(byUser){
+// periodStart/periodEnd : optionnels, mais nécessaires pour renseigner la présence théorique et le
+// taux d'occupation de chaque ligne (voir theoreticalPresenceHoursForUser) — omis, ces deux champs
+// restent à null (utilisé par du code appelant qui n'affiche pas ces colonnes).
+function tempsProdRows(byUser, periodStart, periodEnd){
   let rows = Object.keys(byUser).map(uid => {
     const u = usersList.find(uu=>String(uu.id)===uid);
     const rec = byUser[uid];
     const nbOverrun = rec.details.filter(d => isOverrunTask(d.prevuH, d.h)).length;
-    return { uid, username: u?u.username:'(compte supprimé)', totalH: rec.totalH, totalPrevuH: rec.totalPrevuH, ecartH: rec.totalH-rec.totalPrevuH, nbTaches: rec.details.length, nbOverrun, details: rec.details };
+    const presenceH = (periodStart && periodEnd) ? theoreticalPresenceHoursForUser(uid, state, periodStart, periodEnd) : null;
+    const tauxOccupation = (presenceH!=null && presenceH>1e-6) ? rec.totalH/presenceH : null;
+    return { uid, username: u?u.username:'(compte supprimé)', totalH: rec.totalH, totalPrevuH: rec.totalPrevuH, ecartH: rec.totalH-rec.totalPrevuH, nbTaches: rec.details.length, nbOverrun, presenceH, tauxOccupation, details: rec.details };
   });
   const { key, dir } = tempsProdSort;
   const mult = dir==='asc' ? 1 : -1;
@@ -5372,6 +5423,8 @@ function tempsProdRows(byUser){
     if(key==='prevu') return mult * (a.totalPrevuH - b.totalPrevuH);
     if(key==='ecart') return mult * (a.ecartH - b.ecartH);
     if(key==='overrun') return mult * (a.nbOverrun - b.nbOverrun);
+    if(key==='presence') return mult * ((a.presenceH||0) - (b.presenceH||0));
+    if(key==='taux') return mult * ((a.tauxOccupation==null?-1:a.tauxOccupation) - (b.tauxOccupation==null?-1:b.tauxOccupation));
     return mult * (a.totalH - b.totalH); // 'total' par défaut
   });
   return rows;
@@ -5568,7 +5621,9 @@ function renderTempsProdSelfPage(start, end, label){
   const byUser = computeProductionTimeByUser(state, start, end);
   const rec = byUser[uid] || { totalH:0, totalPrevuH:0, details:[] };
   const nbOverrun = rec.details.filter(d => isOverrunTask(d.prevuH, d.h)).length;
-  const row = { uid, username: activeIdentityUsername(), totalH: rec.totalH, totalPrevuH: rec.totalPrevuH, ecartH: rec.totalH-rec.totalPrevuH, nbTaches: rec.details.length, nbOverrun, details: rec.details };
+  const presenceH = theoreticalPresenceHoursForUser(uid, state, start, end);
+  const tauxOccupation = presenceH>1e-6 ? rec.totalH/presenceH : null;
+  const row = { uid, username: activeIdentityUsername(), totalH: rec.totalH, totalPrevuH: rec.totalPrevuH, ecartH: rec.totalH-rec.totalPrevuH, nbTaches: rec.details.length, nbOverrun, presenceH, tauxOccupation, details: rec.details };
   const title = activeIdentityUserId ? `⏱ Temps de production — ${escapeHtml(row.username)}` : '⏱ Mon temps de production';
   return `
   <section class="panel">
@@ -5585,18 +5640,20 @@ function renderTempsProdSelfPage(start, end, label){
       <div class="stat"><div class="num mono">${formatEcart(row.ecartH)}</div><div class="lbl">Écart</div></div>
       <div class="stat"><div class="num mono">${row.nbTaches}</div><div class="lbl">Tâches</div></div>
       <div class="stat ${row.nbOverrun>0?'alert':''}"><div class="num mono">${row.nbOverrun}</div><div class="lbl">Dépassements notables</div></div>
+      <div class="stat"><div class="num mono">${formatHeures(row.presenceH)}</div><div class="lbl">Présence théorique</div></div>
+      <div class="stat"><div class="num mono">${formatTauxOccupation(row.tauxOccupation)}</div><div class="lbl">Taux d'occupation</div></div>
     </div>
   </div></section>
   <section class="panel"><div class="panel-body">
     ${renderTempsProdDetail(row, false)}
-    <div class="footer-note" style="text-align:left; padding-top:10px;">Le temps prévu vient de la durée théorique de chaque ligne (temps unitaire × quantité, ou durée d'un groupe fusionné) ; le temps passé du temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses. Un ⚠️ signale une tâche ayant dépassé son temps prévu de plus de 50% (et d'au moins 15 minutes).</div>
+    <div class="footer-note" style="text-align:left; padding-top:10px;">Le temps prévu vient de la durée théorique de chaque ligne (temps unitaire × quantité, ou durée d'un groupe fusionné) ; le temps passé du temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses. Un ⚠️ signale une tâche ayant dépassé son temps prévu de plus de 50% (et d'au moins 15 minutes). La présence théorique est celle attendue par l'horaire (jours ouvrés hors fériés, moins les congés approuvés) — l'application ne fait pas de pointage réel ; le taux d'occupation compare le temps passé sur des tâches suivies à cette présence théorique (peut dépasser 100% en cas d'heures supplémentaires ou de travail à plusieurs sur une même pièce).</div>
   </div></section>`;
 }
 function renderTempsProdPage(){
   const { start, end, label } = tempsProdPeriodBounds();
   if(!canSupervise()) return renderTempsProdSelfPage(start, end, label);
   const byUser = computeProductionTimeByUser(state, start, end);
-  const rows = tempsProdRows(byUser);
+  const rows = tempsProdRows(byUser, start, end);
   const th = (key, label) => `<th data-action="temps-prod-sort" data-key="${key}" style="cursor:pointer; white-space:nowrap;">${label}${sortIndicatorHtml(key, tempsProdSort)}</th>`;
   const rowsHtml = rows.map(r => {
     const expanded = !!tempsProdExpanded[r.uid];
@@ -5607,8 +5664,10 @@ function renderTempsProdPage(){
         <td>${formatEcart(r.ecartH)}</td>
         <td>${r.nbTaches}</td>
         <td>${r.nbOverrun>0 ? `<span title="${r.nbOverrun} tâche(s) avec un dépassement notable (+50% et plus de 15 min)" style="color:var(--red); font-weight:600;">⚠️ ${r.nbOverrun}</span>` : '—'}</td>
+        <td>${formatHeures(r.presenceH)}</td>
+        <td>${formatTauxOccupation(r.tauxOccupation)}</td>
       </tr>
-      ${expanded ? `<tr><td colspan="6" style="padding:8px 0;">${renderTempsProdDetail(r)}</td></tr>` : ''}`;
+      ${expanded ? `<tr><td colspan="8" style="padding:8px 0;">${renderTempsProdDetail(r)}</td></tr>` : ''}`;
   }).join('');
   return `
   <section class="panel">
@@ -5620,11 +5679,11 @@ function renderTempsProdPage(){
   </section>
   <section class="panel"><div class="panel-body">
     <table class="ops-table temps-prod-fixed">
-      <colgroup><col style="width:28%"><col style="width:16%"><col style="width:16%"><col style="width:14%"><col style="width:12%"><col style="width:14%"></colgroup>
-      <thead><tr>${th('username','Salarié')}${th('prevu','Temps prévu')}${th('total','Temps passé')}${th('ecart','Écart')}${th('nbTaches','Nb tâches')}${th('overrun','⚠️ Dépassements')}</tr></thead>
-      <tbody>${rowsHtml || `<tr><td colspan="6" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
+      <colgroup><col style="width:22%"><col style="width:12%"><col style="width:12%"><col style="width:11%"><col style="width:9%"><col style="width:12%"><col style="width:11%"><col style="width:11%"></colgroup>
+      <thead><tr>${th('username','Salarié')}${th('prevu','Temps prévu')}${th('total','Temps passé')}${th('ecart','Écart')}${th('nbTaches','Nb tâches')}${th('overrun','⚠️ Dépassements')}${th('presence','Présence théo.')}${th('taux',"Taux d'occupation")}</tr></thead>
+      <tbody>${rowsHtml || `<tr><td colspan="8" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
     </table>
-    <div class="footer-note" style="text-align:left; padding-top:10px;">Le temps prévu vient de la durée théorique de chaque ligne (temps unitaire × quantité, ou durée d'un groupe fusionné) ; le temps passé du temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses. L'écart compare les deux sur les tâches déjà comptées dans la période, y compris en cours (le prévu couvre alors toute la quantité). Un ⚠️ signale une tâche ayant dépassé son temps prévu de plus de 50% (et d'au moins 15 minutes).</div>
+    <div class="footer-note" style="text-align:left; padding-top:10px;">Le temps prévu vient de la durée théorique de chaque ligne (temps unitaire × quantité, ou durée d'un groupe fusionné) ; le temps passé du temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses. L'écart compare les deux sur les tâches déjà comptées dans la période, y compris en cours (le prévu couvre alors toute la quantité). Un ⚠️ signale une tâche ayant dépassé son temps prévu de plus de 50% (et d'au moins 15 minutes). La présence théorique est celle attendue par l'horaire de la personne (jours ouvrés hors fériés, moins ses congés approuvés) — l'application ne fait pas de pointage réel ; le taux d'occupation compare le temps passé sur des tâches suivies à cette présence théorique (peut dépasser 100% en cas d'heures supplémentaires ou de travail à plusieurs sur une même pièce).</div>
   </div></section>`;
 }
 // Classeur à 2 feuilles (Résumé / Détail) pour la période actuellement affichée dans l'onglet
@@ -5637,12 +5696,12 @@ function exportTempsProdExcel(onlyUid){
   if(typeof XLSX === 'undefined'){ alert("La bibliothèque Excel n'a pas pu se charger (connexion internet requise pour cette fonction)."); return; }
   const { start, end, label } = tempsProdPeriodBounds();
   const byUser = computeProductionTimeByUser(state, start, end);
-  let rows = tempsProdRows(byUser).slice().sort((a,b) => a.username.localeCompare(b.username));
+  let rows = tempsProdRows(byUser, start, end).slice().sort((a,b) => a.username.localeCompare(b.username));
   if(onlyUid) rows = rows.filter(r => r.uid === onlyUid);
   const round2 = (h) => Math.round(h*100)/100;
 
-  const resumeHeaders = ['Salarié','Temps prévu (h)','Temps passé (h)','Écart (h)','Nb tâches','Dépassements notables'];
-  const resumeRows = rows.map(r => [r.username, round2(r.totalPrevuH), round2(r.totalH), round2(r.ecartH), r.nbTaches, r.nbOverrun]);
+  const resumeHeaders = ['Salarié','Temps prévu (h)','Temps passé (h)','Écart (h)','Nb tâches','Dépassements notables','Présence théorique (h)',"Taux d'occupation (%)"];
+  const resumeRows = rows.map(r => [r.username, round2(r.totalPrevuH), round2(r.totalH), round2(r.ecartH), r.nbTaches, r.nbOverrun, round2(r.presenceH), r.tauxOccupation!=null ? round2(r.tauxOccupation*100) : '']);
 
   const detailHeaders = ['Salarié','Commande','Réf. client','Pièce','Étape','Poste','Date','Temps prévu (h)','Temps passé (h)','Écart (h)','Dépassement notable'];
   const detailRows = [];

@@ -138,6 +138,37 @@ session d'un second opérateur resterait ouverte indéfiniment. La reprise autom
 déjeuner rouvre une session par opérateur qui était en train de travailler (`autoPausedOperators`,
 peuplé à la pause, vidé à la reprise), pas une seule.
 
+## Temps de production vs présence théorique
+
+**L'application n'a aucun système de pointage réel** (pas d'entrée/sortie physique). La seule
+notion de « présence » disponible est donc **théorique** : ce que l'horaire attendait de la
+personne, pas une mesure de qui était physiquement là. Onglet « Temps de production »
+(`renderTempsProdPage`/`renderTempsProdSelfPage`), superposé au temps de production déjà mesuré
+par `computeProductionTimeByUser` :
+
+- `applyUserLunchOverride(cfg, userId, st)` — factorise la logique de surcharge horaire propre à
+  une personne (`st.userLunch[userId]` : pause(s) propre(s) et/ou horaire de début/fin), utilisée à
+  la fois par `configForPiece` (poste en base, pour planifier une pièce) et `baseConfigForUser`
+  (horaire d'atelier `st.config` en base, pour estimer la présence théorique) — même règle de
+  surcharge dans les deux cas, ne jamais la dupliquer une troisième fois.
+- `theoreticalPresenceHoursForUser(userId, st, periodStart, periodEnd)` — somme les horaires
+  nominaux (`dayHoursFor`) de chaque jour ouvré (lun-ven, hors jours fériés français via
+  `isFrenchPublicHoliday`) de la période, moins les jours couverts par un congé **approuvé**
+  (`leaveRequests` avec `statut==='approuve'` ; une demande encore `en_attente` ne compte pas).
+  Ignore volontairement les indisponibilités de poste (`machine.indisponibilites`) : une machine en
+  maintenance n'implique pas que la personne est absente.
+- `tempsProdRows(byUser, periodStart, periodEnd)` — `periodStart`/`periodEnd` sont optionnels
+  (compatibilité) ; fournis, chaque ligne gagne `presenceH` (présence théorique) et
+  `tauxOccupation` (`totalH / presenceH`, `null` si présence nulle sur la période). Le taux peut
+  dépasser 100% (heures supplémentaires, ou travail à plusieurs sur une même pièce qui additionne
+  le temps de chaque opérateur — voir plus haut) : ce n'est pas traité comme une anomalie en soi.
+  Nouvelles clés de tri : `'presence'` et `'taux'`.
+- `formatTauxOccupation(taux)` — rouge sous 50%, vert au-delà de 80%, neutre entre les deux ;
+  `'—'` si `null`.
+- Colonnes « Présence théo. » / « Taux d'occupation » dans le tableau superviseur, stats
+  équivalentes dans la vue « Mon temps de production », et deux colonnes supplémentaires dans
+  l'export Excel (feuille Résumé).
+
 ## Zones de stockage
 
 Emplacements physiques où sont entreposées les pièces d'une commande pendant sa production.
