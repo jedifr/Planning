@@ -500,6 +500,17 @@
      contenu (qui passe à la ligne au besoin plutôt que d'élargir la colonne). */
   table.temps-prod-fixed{table-layout:fixed;}
   table.temps-prod-fixed td{word-break:break-word;}
+  /* Barre de taux d'occupation (temps de production ÷ présence théorique) — voir renderOccupationBar.
+     Le remplissage est plafonné visuellement à 100% ; au-delà, seule la couleur change (accent),
+     pour ne pas donner l'impression que la barre "déborde" de son cadre. */
+  .occ-bar-wrap{display:flex; align-items:center; gap:7px;}
+  .occ-bar-track{position:relative; flex:1; min-width:40px; height:12px; background:#e7e9ec; border-radius:6px; overflow:hidden;}
+  .occ-bar-fill{position:absolute; top:0; left:0; bottom:0; border-radius:6px; transition:width .25s ease;}
+  .occ-bar-pct{font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; white-space:nowrap; min-width:40px; text-align:right;}
+  .occ-bar-wrap.big .occ-bar-track{height:20px; border-radius:10px; min-width:90px;}
+  .occ-bar-wrap.big .occ-bar-fill{border-radius:10px;}
+  .occ-bar-wrap.big .occ-bar-pct{font-size:16px;}
+  .occ-bar-wrap.big{min-width:150px;}
   .ops-subhead{
     font-family:'Oswald',sans-serif; font-size:10.5px; font-weight:600; letter-spacing:0.7px; text-transform:uppercase;
     color:var(--text-faint); padding:9px 12px 5px; border-top:1px solid var(--line-soft);
@@ -5373,14 +5384,30 @@ function formatEcart(h){
   return `<span style="color:${color};">${sign}${formatHeures(h)}</span>`;
 }
 // Taux d'occupation (production réelle ÷ présence théorique) : rouge sous 50% (temps largement
-// inoccupé sur les tâches suivies par l'appli), vert au-delà de 80%, neutre entre les deux. Peut
-// dépasser 100% (heures supplémentaires, ou travail à plusieurs sur une même pièce qui additionne
-// le temps de chaque opérateur — voir CLAUDE.md) : pas traité comme une anomalie en soi.
-function formatTauxOccupation(taux){
-  if(taux == null) return '<span style="color:var(--text-faint);">—</span>';
+// inoccupé sur les tâches suivies par l'appli), ambre entre 50 et 80%, vert au-delà de 80%. Peut
+// dépasser 120% (heures supplémentaires, ou travail à plusieurs sur une même pièce qui additionne
+// le temps de chaque opérateur — voir CLAUDE.md) : signalé en accent plutôt que comme une anomalie.
+function occupationBarColor(taux){
+  if(taux > 1.2) return 'var(--accent)';
+  if(taux < 0.5) return 'var(--red)';
+  if(taux >= 0.8) return 'var(--green)';
+  return '#c9a227';
+}
+// Barre de progression très visuelle du taux d'occupation, plafonnée à 100% de largeur remplie
+// (au-delà, seule la couleur change — voir occupationBarColor) — plus parlante d'un coup d'œil
+// qu'un simple pourcentage. big=true pour la variante plus grande de "Mon temps de production".
+function renderOccupationBar(taux, big){
+  if(taux == null){
+    return `<div class="occ-bar-wrap${big?' big':''}"><span style="color:var(--text-faint);">— (pas de présence attendue)</span></div>`;
+  }
   const pct = Math.round(taux*1000)/10;
-  const color = taux < 0.5 ? 'var(--red)' : (taux >= 0.8 ? 'var(--green)' : 'var(--text-dim)');
-  return `<span style="color:${color}; font-weight:600;">${pct.toLocaleString('fr-FR',{minimumFractionDigits:0,maximumFractionDigits:1})} %</span>`;
+  const fillPct = Math.max(0, Math.min(taux, 1)) * 100;
+  const color = occupationBarColor(taux);
+  const label = `${pct.toLocaleString('fr-FR',{minimumFractionDigits:0,maximumFractionDigits:1})} %`;
+  return `<div class="occ-bar-wrap${big?' big':''}" title="Taux d'occupation : ${label}">
+    <div class="occ-bar-track"><div class="occ-bar-fill" style="width:${fillPct}%; background:${color};"></div></div>
+    <span class="occ-bar-pct" style="color:${color};">${label}</span>
+  </div>`;
 }
 // Dépassement "notable" : +50% ET au moins 15 minutes d'écart absolu — le double seuil évite de
 // signaler une tâche de 2 minutes prévue à 1 minute (100% de dépassement, mais insignifiant).
@@ -5405,16 +5432,24 @@ function sortIndicatorHtml(key, sortState){
 }
 // periodStart/periodEnd : optionnels, mais nécessaires pour renseigner la présence théorique et le
 // taux d'occupation de chaque ligne (voir theoreticalPresenceHoursForUser) — omis, ces deux champs
-// restent à null (utilisé par du code appelant qui n'affiche pas ces colonnes).
+// restent à null (utilisé par du code appelant qui n'affiche pas ces colonnes), et la liste se
+// limite alors à `byUser` (comportement d'avant cette fonctionnalité).
+// Avec une période fournie, la liste s'étend en plus à tout salarié de usersList ayant une présence
+// théorique non nulle sur la période mais AUCUNE production suivie (0h, 0 tâche) — sinon quelqu'un
+// de censé travailler mais totalement absent des données de production (jamais démarré/repris une
+// tâche via l'appli) resterait invisible du tableau plutôt que d'y apparaître à 0% d'occupation.
 function tempsProdRows(byUser, periodStart, periodEnd){
-  let rows = Object.keys(byUser).map(uid => {
+  const hasPeriod = !!(periodStart && periodEnd);
+  const uids = new Set(Object.keys(byUser));
+  if(hasPeriod) usersList.forEach(u => uids.add(String(u.id)));
+  let rows = Array.from(uids).map(uid => {
     const u = usersList.find(uu=>String(uu.id)===uid);
-    const rec = byUser[uid];
+    const rec = byUser[uid] || { totalH:0, totalPrevuH:0, details:[] };
     const nbOverrun = rec.details.filter(d => isOverrunTask(d.prevuH, d.h)).length;
-    const presenceH = (periodStart && periodEnd) ? theoreticalPresenceHoursForUser(uid, state, periodStart, periodEnd) : null;
+    const presenceH = hasPeriod ? theoreticalPresenceHoursForUser(uid, state, periodStart, periodEnd) : null;
     const tauxOccupation = (presenceH!=null && presenceH>1e-6) ? rec.totalH/presenceH : null;
     return { uid, username: u?u.username:'(compte supprimé)', totalH: rec.totalH, totalPrevuH: rec.totalPrevuH, ecartH: rec.totalH-rec.totalPrevuH, nbTaches: rec.details.length, nbOverrun, presenceH, tauxOccupation, details: rec.details };
-  });
+  }).filter(r => r.nbTaches>0 || (r.presenceH!=null && r.presenceH>1e-6)); // ni tâche ni présence attendue : rien à montrer (ex. congé sur toute la période)
   const { key, dir } = tempsProdSort;
   const mult = dir==='asc' ? 1 : -1;
   rows.sort((a,b) => {
@@ -5641,7 +5676,7 @@ function renderTempsProdSelfPage(start, end, label){
       <div class="stat"><div class="num mono">${row.nbTaches}</div><div class="lbl">Tâches</div></div>
       <div class="stat ${row.nbOverrun>0?'alert':''}"><div class="num mono">${row.nbOverrun}</div><div class="lbl">Dépassements notables</div></div>
       <div class="stat"><div class="num mono">${formatHeures(row.presenceH)}</div><div class="lbl">Présence théorique</div></div>
-      <div class="stat"><div class="num mono">${formatTauxOccupation(row.tauxOccupation)}</div><div class="lbl">Taux d'occupation</div></div>
+      <div class="stat" style="flex-direction:column; align-items:flex-start; gap:5px;"><div class="lbl">Taux d'occupation</div>${renderOccupationBar(row.tauxOccupation, true)}</div>
     </div>
   </div></section>
   <section class="panel"><div class="panel-body">
@@ -5665,7 +5700,7 @@ function renderTempsProdPage(){
         <td>${r.nbTaches}</td>
         <td>${r.nbOverrun>0 ? `<span title="${r.nbOverrun} tâche(s) avec un dépassement notable (+50% et plus de 15 min)" style="color:var(--red); font-weight:600;">⚠️ ${r.nbOverrun}</span>` : '—'}</td>
         <td>${formatHeures(r.presenceH)}</td>
-        <td>${formatTauxOccupation(r.tauxOccupation)}</td>
+        <td>${renderOccupationBar(r.tauxOccupation)}</td>
       </tr>
       ${expanded ? `<tr><td colspan="8" style="padding:8px 0;">${renderTempsProdDetail(r)}</td></tr>` : ''}`;
   }).join('');
@@ -5681,9 +5716,9 @@ function renderTempsProdPage(){
     <table class="ops-table temps-prod-fixed">
       <colgroup><col style="width:22%"><col style="width:12%"><col style="width:12%"><col style="width:11%"><col style="width:9%"><col style="width:12%"><col style="width:11%"><col style="width:11%"></colgroup>
       <thead><tr>${th('username','Salarié')}${th('prevu','Temps prévu')}${th('total','Temps passé')}${th('ecart','Écart')}${th('nbTaches','Nb tâches')}${th('overrun','⚠️ Dépassements')}${th('presence','Présence théo.')}${th('taux',"Taux d'occupation")}</tr></thead>
-      <tbody>${rowsHtml || `<tr><td colspan="8" style="text-align:center; color:var(--text-faint);">Aucune tâche sur cette période</td></tr>`}</tbody>
+      <tbody>${rowsHtml || `<tr><td colspan="8" style="text-align:center; color:var(--text-faint);">Aucun salarié attendu ni aucune tâche sur cette période</td></tr>`}</tbody>
     </table>
-    <div class="footer-note" style="text-align:left; padding-top:10px;">Le temps prévu vient de la durée théorique de chaque ligne (temps unitaire × quantité, ou durée d'un groupe fusionné) ; le temps passé du temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses. L'écart compare les deux sur les tâches déjà comptées dans la période, y compris en cours (le prévu couvre alors toute la quantité). Un ⚠️ signale une tâche ayant dépassé son temps prévu de plus de 50% (et d'au moins 15 minutes). La présence théorique est celle attendue par l'horaire de la personne (jours ouvrés hors fériés, moins ses congés approuvés) — l'application ne fait pas de pointage réel ; le taux d'occupation compare le temps passé sur des tâches suivies à cette présence théorique (peut dépasser 100% en cas d'heures supplémentaires ou de travail à plusieurs sur une même pièce).</div>
+    <div class="footer-note" style="text-align:left; padding-top:10px;">Le temps prévu vient de la durée théorique de chaque ligne (temps unitaire × quantité, ou durée d'un groupe fusionné) ; le temps passé du temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses. L'écart compare les deux sur les tâches déjà comptées dans la période, y compris en cours (le prévu couvre alors toute la quantité). Un ⚠️ signale une tâche ayant dépassé son temps prévu de plus de 50% (et d'au moins 15 minutes). La présence théorique est celle attendue par l'horaire de la personne (jours ouvrés hors fériés, moins ses congés approuvés) — l'application ne fait pas de pointage réel ; le taux d'occupation compare le temps passé sur des tâches suivies à cette présence théorique (peut dépasser 100% en cas d'heures supplémentaires ou de travail à plusieurs sur une même pièce). Un salarié attendu sur la période mais sans aucune tâche suivie apparaît quand même, à 0% — pour le repérer, pas parce que l'application sait s'il était réellement absent.</div>
   </div></section>`;
 }
 // Classeur à 2 feuilles (Résumé / Détail) pour la période actuellement affichée dans l'onglet

@@ -163,11 +163,25 @@ par `computeProductionTimeByUser` :
   dépasser 100% (heures supplémentaires, ou travail à plusieurs sur une même pièce qui additionne
   le temps de chaque opérateur — voir plus haut) : ce n'est pas traité comme une anomalie en soi.
   Nouvelles clés de tri : `'presence'` et `'taux'`.
-- `formatTauxOccupation(taux)` — rouge sous 50%, vert au-delà de 80%, neutre entre les deux ;
-  `'—'` si `null`.
-- Colonnes « Présence théo. » / « Taux d'occupation » dans le tableau superviseur, stats
-  équivalentes dans la vue « Mon temps de production », et deux colonnes supplémentaires dans
-  l'export Excel (feuille Résumé).
+  - **Salariés attendus mais sans aucune tâche suivie.** Avec une période fournie, la liste ne se
+    limite plus aux clés de `byUser` (qui n'a une entrée que pour un salarié ayant au moins une
+    session/tâche mesurable) : elle s'étend à tout `usersList` ayant une présence théorique non
+    nulle sur la période, même à 0 tâche — pour repérer quelqu'un censé travailler mais totalement
+    absent des données de production (jamais démarré/repris une tâche via l'appli), pas seulement
+    ceux qui ont un temps de production à comparer. Un salarié ni attendu ni actif (ex. congé
+    couvrant toute la période, sans tâche) est en revanche filtré — rien à montrer. Ne change rien
+    sans période fournie (comportement identique à avant cette fonctionnalité).
+- `occupationBarColor(taux)` / `renderOccupationBar(taux, big)` — barre de progression (pas un
+  simple texte coloré) : rouge sous 50%, ambre entre 50 et 80%, vert au-delà, accent au-delà de
+  120% (heures sup/travail à plusieurs, volontairement distingué d'une anomalie). Le remplissage
+  visuel est plafonné à 100% de largeur (au-delà, seule la couleur change) pour ne jamais donner
+  l'impression que la barre déborde de son cadre. `big=true` pour la variante plus grande utilisée
+  dans la tuile de stat de « Mon temps de production ».
+- Colonne « Présence théo. » (texte) et « Taux d'occupation » (barre `renderOccupationBar`) dans
+  le tableau superviseur, équivalents dans la vue « Mon temps de production » (présence en texte,
+  occupation en grande barre `big`), et deux colonnes numériques supplémentaires (présence en
+  heures, occupation en %) dans l'export Excel (feuille Résumé) — l'export garde des nombres bruts,
+  pas la barre, qui n'a de sens qu'à l'écran.
 
 ## Zones de stockage
 
