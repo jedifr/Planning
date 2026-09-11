@@ -118,6 +118,15 @@ Louca, pas Simon, pour cette session.
 quelqu'un — on conserve l'`operatorUserId` de la session qu'on referme, jamais l'identité active du
 poste qui déclenche la reprise (qui peut être n'importe quel navigateur en train de sonder l'état).
 
+**Bannière « tâches en pause depuis la veille ou avant »** (vue superviseur/admin,
+`renderPausedTasksBanner`/`pausedSinceEarlierTasks`) affiche qui travaillait au moment de la mise en
+pause (`pausedByUserIds` : toutes les sessions fermées exactement à `pausedAt`, réparties si travail
+à plusieurs — voir ci-dessous — repli sur `o.operatorUserId` pour une session sans son propre
+`operatorUserId`). C'est qui **travaillait**, pas forcément qui a cliqué « Pause » (une mise en
+pause manuelle ne re-tague rien, contrairement à l'ouverture d'une session) — un superviseur peut
+mettre en pause le poste de quelqu'un d'autre ; l'affichage reste correct dans ce cas au sens où il
+répond quand même à « qui était sur cette tâche », l'info concrètement utile ici.
+
 ### Travail à plusieurs sur une même pièce
 
 Cas volontairement géré, distinct du split en plusieurs lignes utilisé pour deux **machines**
