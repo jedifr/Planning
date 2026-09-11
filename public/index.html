@@ -4059,7 +4059,7 @@ function renderPausedTasksBanner(){
       label = `${escapeHtml(pieceLabel)} <span class="footer-note" style="display:inline; margin:0;">(${escapeHtml(c.nom)})</span>`;
     }
     const pausedByNames = pausedByUserIds.map(uid_ => { const u = usersList.find(uu=>String(uu.id)===String(uid_)); return u ? u.username : null; }).filter(Boolean);
-    const pausedByLabel = pausedByNames.length ? ` par <strong>${escapeHtml(pausedByNames.join(', '))}</strong>` : '';
+    const pausedByLabel = pausedByNames.length ? ` · 👤 <strong>${escapeHtml(pausedByNames.join(', '))}</strong>` : '';
     return `<div class="paused-banner-row">
       <span>${label} — ${m?escapeHtml(m.nom):'poste supprimé'}, en pause depuis ${formatDT(new Date(pausedAt))}${pausedByLabel}</span>
       <button class="small" data-action="resume-paused-task" data-cid="${c.id}" data-oid="${o.id}">▶ Continuer ce travail</button>
