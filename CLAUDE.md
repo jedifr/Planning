@@ -7,8 +7,16 @@ Ordonnancement automatique, suivi des délais, gestion des congés.
 
 Le projet tourne en Docker sur un NAS Synology DS1817+.
 
+**Mise à jour** : `bash deploy.sh` depuis le dossier du projet — récupère la dernière version
+(en gérant proprement d'éventuelles modifications locales sur le NAS, ex. Cfg_admin.yml) puis
+reconstruit et redémarre le conteneur. Corrige aussi au passage un piège connu du NAS : son
+système de fichiers modifie parfois le bit exécutable des fichiers, ce qui fait apparaître à tort
+*tout* le dépôt comme modifié pour git (`git config core.fileMode false` — déjà dans le script).
+
+Sans le script, l'équivalent manuel :
 ```bash
 cd /volume1/TRAVAIL/PLANNING_ATELIER/planning-atelier-serveur
+git pull
 sudo docker compose down
 sudo docker compose up -d --build
 ```
@@ -26,9 +34,10 @@ cache a déjà provoqué de fausses pistes de débogage.
 | `server.js` | Express + better-sqlite3. Sert le statique, expose l'API d'état, gère les congés. |
 | `auth.js` | Sessions (express-session), bcryptjs, rôles, réinitialisation de mot de passe. |
 | `backup.js` | Sauvegarde automatique par e-mail (nodemailer). |
+| `sessionHistory.js` | Historique des sessions de travail archivées (voir plus bas). |
 
-Base SQLite, deux tables : `app_state` (l'état entier en JSON + numéro de version) et
-`users`. Volume Docker nommé `planning-data`.
+Base SQLite, trois tables : `app_state` (l'état entier en JSON + numéro de version), `users`,
+et `session_history` (voir ci-dessous). Volume Docker nommé `planning-data`.
 
 **Il n'y a pas d'étape de compilation.** On édite `public/index.html` directement.
 
@@ -37,21 +46,349 @@ Base SQLite, deux tables : `app_state` (l'état entier en JSON + numéro de vers
 Tout l'état applicatif est un seul objet JSON (`state`) :
 
 - `config` — horaires, pause déjeuner, couleurs, titre, logo, `copyright`,
-  `matiereFusionActive`, `modules.conges`
+  `matiereFusionActive`, `modules.conges`, `storageZones[]` (allées de zones de stockage —
+  voir section dédiée plus bas)
 - `machines[]` — postes : `nom`, `dispo` (disponible à partir de), `couleur`,
   `horairesActifs`/`horaires` (horaires spécifiques), `indisponibilites[]`,
   `fusionnable`, `transfertFixeMin`, `transfertParPieceMin`
-- `commandes[]` — `nom` (référence), `dateBesoin`, `urgence`, `pieces[]`
+- `commandes[]` — `nom` (référence), `dateBesoin`, `urgence`, `zoneStockage`, `pieces[]`
 - `pieces[]` (dans une commande) — `piece`, `etape`, `machineId`, `tempsUnitaire`
   (minutes), `quantite`, `statut`, `phase`, `manualStart`, `dureeOverrideH`,
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
-  `fusionGroupId`, `sousTraitance`, `dateDebutPossible`
+  `fusionGroupId`, `fusionPinned`, `sousTraitance`, `dateDebutPossible`,
+  `autoPausedOperators`
+  - `sousTraitance` se coche **automatiquement** (jamais décoché automatiquement) dès que le poste
+    choisi pour la ligne a un nom contenant "sous-traitance"/"sous traitance"
+    (`machineNameLooksLikeSousTraitance`) — dans `updateOpField` (ligne d'une commande existante) et
+    dans `applyImportProfile` (correspondance de poste de l'import personnalisé). Reste modifiable à
+    la main ensuite dans les deux cas.
+  - `operatorUserId` de la pièce = **opérateur assigné** (intention de planification, jamais
+    écrasé automatiquement). Chaque élément de `sessions[]` porte son propre `operatorUserId`
+    = qui a **réellement** ouvert cette session (identité active au moment du clic — voir
+    plus bas) : les deux peuvent diverger sur un poste partagé (tâche assignée à Simon,
+    démarrée/reprise par Louca). Repli sur l'opérateur assigné pour une session qui n'a pas ce
+    champ (données antérieures à ce suivi).
+  - `sessions[]` peut contenir **plusieurs entrées ouvertes en même temps** (`fin: null`) sur
+    une même pièce : voir « Travail à plusieurs sur une même pièce » ci-dessous. Toujours
+    fermer (`.filter(s=>!s.fin).forEach(...)`), jamais une seule (`.find`), en pause/clôture.
 - `leaveTypes[]`, `leaveRequests[]`, `userLeaveAllocations`, `userMachines`, `userLunch`
-- `importProfiles[]` — profils de correspondance de l'import personnalisé
+- `importProfiles[]` — profils de correspondance de l'import personnalisé. Le dernier profil
+  réellement utilisé (confirmé, pas juste survolé) est proposé par défaut au prochain import via
+  `localStorage` (`LAST_IMPORT_PROFILE_KEY`), pas dans `state` — préférence de navigateur, pas
+  donnée d'atelier à synchroniser.
 
 `migrateState()` initialise tout nouveau champ sur les sauvegardes existantes.
 **Toujours y ajouter les nouveaux champs**, sinon les états anciens plantent ou se
 comportent mal.
+
+## Historique des sessions (`session_history`)
+
+Une pièce `termine` voit ses `sessions[]` (détail Démarrer/Pause/Reprendre) archivées puis vidées
+de l'état — sans ça, l'état synchronisé à chaque poll grossirait indéfiniment. L'archivage vit dans
+une table SQLite **séparée**, jamais incluse dans `app_state` ni dans la synchro habituelle :
+
+- `backfillDureeReelle(st)` fige `dureeReelleH` si besoin — purement local, ne touche jamais
+  `sessions[]`.
+- `archiveOldSessions(st)` (async) envoie les sessions à `POST /api/session-history`, et **ne vide
+  `sessions[]` qu'une fois le serveur confirmé (`res.ok`)**. Un échec réseau laisse les sessions en
+  place, retentées au prochain démarrage — jamais de perte de données. Idempotent côté serveur
+  (`INSERT OR IGNORE` sur un index unique `piece_id, debut, fin`) : un même lot renvoyé deux fois
+  (deux onglets, une retentative) ne crée jamais de doublon.
+- La pop-up « Détail des horaires » (`renderTempsProdSessionModal`, onglet Temps de production)
+  interroge `GET /api/session-history/:cid/:oid` **à la demande** (jamais au chargement de la page)
+  quand `sessions[]` est vide localement, via `tempsProdHistoryCache` (clé `"cid|oid"`). Sans
+  historique disponible (tâche terminée avant l'introduction de cette table), elle retombe sur
+  `debutReel`/`finReel`/`dureeReelleH` — voir le piège plus bas sur l'affichage du jour dans ce cas.
+- Les sauvegardes (`/api/backup/test` et le planificateur) ajoutent `sessionHistory` à la copie en
+  mémoire de `app_state` juste avant l'envoi — jamais réenregistré dans `app_state` lui-même.
+- Chaque ligne de `session_history` porte l'`operator_user_id` **de la session** (qui l'a
+  réellement ouverte), pas celui de la pièce — voir `computeProductionTimeByUser` et la note sur
+  `operatorUserId` dans le modèle de données.
+
+### Qui a réellement produit, vs qui est assigné
+
+`applySingleStatusChange` tague chaque session ouverte (`en_cours`) avec `activeIdentityId()` au
+moment précis du clic — **jamais** l'opérateur assigné de la pièce, qu'on ne touche que s'il était
+vide (auto-remplissage au tout premier démarrage, jamais d'écrasement ensuite). Sur un poste
+partagé, une tâche assignée à Simon peut donc être réellement réalisée par Louca : le Kanban
+affiche alors « 👤 Simon (assigné) → Louca (réalise) », et `computeProductionTimeByUser` crédite
+Louca, pas Simon, pour cette session.
+
+**Reprise automatique après pause déjeuner** (`applyAutoPauseResume`) : ce n'est PAS un clic de
+quelqu'un — on conserve l'`operatorUserId` de la session qu'on referme, jamais l'identité active du
+poste qui déclenche la reprise (qui peut être n'importe quel navigateur en train de sonder l'état).
+
+**Bannière « tâches en pause depuis la veille ou avant »** (vue superviseur/admin,
+`renderPausedTasksBanner`/`pausedSinceEarlierTasks`) affiche qui travaillait au moment de la mise en
+pause (`pausedByUserIds` : toutes les sessions fermées exactement à `pausedAt`, réparties si travail
+à plusieurs — voir ci-dessous — repli sur `o.operatorUserId` pour une session sans son propre
+`operatorUserId`). C'est qui **travaillait**, pas forcément qui a cliqué « Pause » (une mise en
+pause manuelle ne re-tague rien, contrairement à l'ouverture d'une session) — un superviseur peut
+mettre en pause le poste de quelqu'un d'autre ; l'affichage reste correct dans ce cas au sens où il
+répond quand même à « qui était sur cette tâche », l'info concrètement utile ici.
+
+### Travail à plusieurs sur une même pièce
+
+Cas volontairement géré, distinct du split en plusieurs lignes utilisé pour deux **machines**
+différentes (une ligne par poste) : deux personnes peuvent physiquement travailler **en même
+temps sur la même ligne**. `joinOpSession(cid, oid)` (menu contextuel « ➕ Travailler aussi sur
+cette tâche », visible seulement si `statut==='en_cours'`) ouvre une session supplémentaire sans
+toucher au statut — la pièce peut donc avoir **plusieurs sessions ouvertes simultanément**
+(`fin: null`). Avertissement `confirm()` avant de rejoindre : les heures de chacun sont comptées
+séparément et **s'additionnent** (2h à deux personnes = 4h cumulées), assumé volontairement — ce
+n'est pas un bug de double-comptage, c'est la mesure du travail (main-d'œuvre) réellement investi,
+pas du temps d'horloge. `opElapsedHours`/`dureePasseeH` et `computeProductionTimeByUser` n'ont rien
+de spécial à faire : ils somment déjà chaque session indépendamment par son propre `operatorUserId`.
+
+Conséquence sur tout code qui ferme une session : `applySingleStatusChange` (pause/clôture) et
+`applyAutoPauseResume` (pause déjeuner automatique) doivent fermer **toutes** les sessions
+ouvertes (`.filter(s=>!s.fin).forEach(...)`), jamais une seule (`.find(s=>!s.fin)`) — sinon la
+session d'un second opérateur resterait ouverte indéfiniment. La reprise automatique après pause
+déjeuner rouvre une session par opérateur qui était en train de travailler (`autoPausedOperators`,
+peuplé à la pause, vidé à la reprise), pas une seule.
+
+## Congés
+
+### Demi-journée
+
+Une demande de congé (`state.leaveRequests[]`) porte `demiJournee` (`null` | `'matin'` |
+`'apres-midi'`). **N'a de sens que pour une demande d'un seul jour** (`debut === fin`) — sur une
+plage de plusieurs jours, toujours ramené à `null` (silencieusement, pas d'erreur) par le code qui
+construit la demande (`startLeaveRequestSubmission`, `adminAssignLeave`, `previewEditLeaveRequest`),
+jamais par `confirmLeaveRequestSubmission` lui-même qui persiste tel quel ce qu'on lui donne — la
+normalisation est la responsabilité de l'appelant, pas de la validation finale.
+
+- `leaveRequestDurationDays(r)` — durée réelle d'une demande : 0.5 jour si `demiJournee` posé sur
+  un seul jour ouvré, sinon la valeur pleine de `countWorkingDaysInRange(r.debut, r.fin)`. Si ce
+  jour unique n'est de toute façon pas ouvré (week-end/férié saisi par erreur), le résultat reste 0,
+  pas 0.5. **Remplace `countWorkingDaysInRange` partout où on dispose d'un objet demande** (soldes,
+  tableaux, pop-up de conséquences) — `countWorkingDaysInRange` reste utilisé tel quel là où il n'y
+  a pas de demande concrète (recherche de plage libre dans `suggestFreeRange`, comptage générique).
+- `computeLeaveBalance` (utilisé/en attente) et le formulaire d'allocation annuelle
+  (`step="0.5"`, déjà en place avant cette fonctionnalité) acceptent nativement les demi-jours.
+- Trois surfaces de saisie/édition partagent le même sélecteur (`demiJourneeSelectHtml`) :
+  formulaire salarié « Nouvelle demande », formulaire admin « Attribuer un congé directement », et
+  la pop-up d'édition d'une demande existante (`renderEditLeaveRequestModal`) — toutes les trois
+  laissent le sélecteur visible en permanence (pas de masquage conditionnel réactif selon que
+  début=fin) et se contentent d'ignorer la valeur à la validation si la plage dépasse un jour, pour
+  éviter la complexité d'un formulaire réactif (voir le piège sur les champs qui s'effacent en
+  cours de frappe).
+- `theoreticalPresenceHoursForUser` (voir plus bas) traite la fraction du jour couverte : une seule
+  demi-journée retire la moitié des heures nominales de ce jour, deux demi-journées qui se
+  complètent (matin + après-midi, éventuellement de deux demandes/types différents) retirent la
+  journée entière — jamais un double-retrait de la même moitié.
+- **Le blocage automatique de poste reste à la journée entière**, volontairement inchangé :
+  `operatorLeaveIntersection`/`isDateBlocked` (moteur de planification) ignorent `demiJournee` — un
+  congé d'une demi-journée continue de rendre tout le poste indisponible ce jour-là dans
+  `computeSchedule` si c'est le seul opérateur lié. Granularité demi-journée dans le moteur de
+  planification lui-même = hors périmètre de cette fonctionnalité (RH/présence), pas fait.
+- `demiJourneeLabel(demiJournee)` / `leaveDateRangeLabel(r)` — libellé humain (« matin »/« après-
+  midi ») utilisé dans les tableaux (Mes demandes, Équipe, À valider) et les e-mails de
+  notification. `leaveDureeLabel(jours)` formate un nombre de jours (entier ou `.5`) en français.
+
+### Type sans décompte de solde (apprentis, etc.)
+
+`leaveTypes[]` porte `sansSolde` (bool, `false` par défaut) — un type dont les jours pris ne
+s'imputent sur aucune allocation annuelle (typiquement un type « École » pour un apprenti en
+alternance : ses jours d'école n'ont pas à grignoter un solde de congés payés/RTT).
+
+- `computeLeaveBalance` renvoie `allocated`/`remaining` = `Infinity` pour un tel type — se propage
+  naturellement dans toutes les soustractions (`remaining` reste `Infinity` quel que soit l'usage),
+  et dans toute comparaison `demanded > bal.remaining` (toujours fausse) : **aucun code de blocage
+  ou d'avertissement de solde insuffisant n'a besoin de connaître `sansSolde`**, le seul point qui
+  le lit explicitement est `computeLeaveBalance` lui-même.
+- `formatLeaveBalancePair(remaining, allocated)` — affiche « Illimité » plutôt que « ∞ / ∞ j »
+  (`Infinity.toLocaleString('fr-FR')` fonctionnerait déjà correctement — `leaveDureeLabel(Infinity)`
+  affiche bien `∞` — mais un texte explicite est plus clair sur ce point précis). Utilisé partout où
+  un solde `remaining/allocated` s'affiche ; certains affichages (cartes de solde, tableau
+  d'allocation) gardent leur propre `isFinite(bal.allocated)` pour une mise en page différente
+  (masquer complètement l'input numérique d'allocation d'un type sans solde, par exemple).
+- Paramètres → Congés → Soldes & types : case « Sans décompte de solde (illimité) » par type.
+  `updateLeaveTypeField` reçoit `el.checked` (pas `el.value`) pour ce champ — comme `updateConfig`,
+  le dispatcher (`dispatchChangeAction`, case `'leave-type-field'`) teste `el.type==='checkbox'`.
+
+### Génération en masse d'un rythme d'alternance
+
+Paramètres → Congés → Soldes & types → « Générer un rythme d'alternance » : crée en une fois toutes
+les demandes de congé (déjà approuvées, motif `"Alternance"`) correspondant à un rythme régulier sur
+toute une période — pensé pour un apprenti dont le calendrier école/entreprise ne varie pas d'une
+semaine sur l'autre, pour ne pas les saisir une par une.
+
+- `alternanceDraft` — état du formulaire (`userId`, `typeId`, `debut`, `fin`, `mode`:
+  `'jours'`\|`'semaines'`, `joursSemaine[]`, `semaineRef`), mis à jour en direct
+  (`updateAlternanceField`/`toggleAlternanceJour`, un `render()` à chaque changement) pour que les
+  champs du mode `'jours'` (cases Lundi..Vendredi) et du mode `'semaines'` (date de semaine de
+  référence) s'affichent/masquent conditionnellement — contrairement au reste des formulaires de
+  congé, qui gardent volontairement tous leurs champs visibles en permanence pour éviter la
+  complexité d'un formulaire réactif (voir demi-journée ci-dessus) : ici la bascule entre deux jeux
+  de champs entièrement différents justifie la réactivité.
+- `computeAlternanceDates(debut, fin, mode, opts)` — calcule les jours ouvrés (hors week-end et
+  jours fériés français) correspondant au rythme sur `[debut, fin]`, puis les **fusionne en plages
+  contiguës** (jours ouvrés consécutifs au calendrier). Mode `'jours'` : `joursSemaine` (1=lundi..
+  5=vendredi) coche les mêmes jours chaque semaine. Mode `'semaines'` : `semaineRef` (une date
+  quelconque dans la première semaine « école ») détermine la parité — cette semaine et une sur deux
+  ensuite sont « école », les semaines intermédiaires ne le sont pas (calculé via `startOfWeek`,
+  déjà utilisé ailleurs dans l'appli, et un simple modulo sur l'écart en semaines). Aucun traitement
+  spécial pour les week-ends/jours non concernés : ils ne rejoignent simplement jamais la liste des
+  jours « école », ce qui casse naturellement la contiguïté d'une plage.
+- `submitAlternanceGeneration()` — ignore silencieusement (les compte, mais ne les recrée pas) les
+  jours déjà couverts par un congé existant non refusé de la même personne, pour pouvoir relancer la
+  génération sur une période étendue (ex. rajouter un trimestre) sans créer de doublons ni de
+  chevauchement. Demande confirmation (`confirm()`, nombre de périodes et de jours ouvrés) avant de
+  créer quoi que ce soit.
+- Comme pour la demi-journée, **le blocage automatique de poste et le moteur de planification** ne
+  distinguent pas un congé généré par ce rythme d'un congé posé normalement — mêmes conséquences
+  (bloque le poste si l'apprenti en est le seul opérateur lié ce jour-là).
+
+## Temps de production vs présence théorique
+
+**L'application n'a aucun système de pointage réel** (pas d'entrée/sortie physique). La seule
+notion de « présence » disponible est donc **théorique** : ce que l'horaire attendait de la
+personne, pas une mesure de qui était physiquement là. Onglet « Temps de production »
+(`renderTempsProdPage`/`renderTempsProdSelfPage`), superposé au temps de production déjà mesuré
+par `computeProductionTimeByUser` :
+
+- `applyUserLunchOverride(cfg, userId, st)` — factorise la logique de surcharge horaire propre à
+  une personne (`st.userLunch[userId]` : pause(s) propre(s) et/ou horaire de début/fin), utilisée à
+  la fois par `configForPiece` (poste en base, pour planifier une pièce) et `baseConfigForUser`
+  (horaire d'atelier `st.config` en base, pour estimer la présence théorique) — même règle de
+  surcharge dans les deux cas, ne jamais la dupliquer une troisième fois.
+- `theoreticalPresenceHoursForUser(userId, st, periodStart, periodEnd)` — somme les horaires
+  nominaux (`dayHoursFor`) de chaque jour ouvré (lun-ven, hors jours fériés français via
+  `isFrenchPublicHoliday`) de la période, moins les jours couverts par un congé **approuvé**
+  (`leaveRequests` avec `statut==='approuve'` ; une demande encore `en_attente` ne compte pas).
+  Ignore volontairement les indisponibilités de poste (`machine.indisponibilites`) : une machine en
+  maintenance n'implique pas que la personne est absente.
+- `tempsProdRows(byUser, periodStart, periodEnd)` — `periodStart`/`periodEnd` sont optionnels
+  (compatibilité) ; fournis, chaque ligne gagne `presenceH` (présence théorique) et
+  `tauxOccupation` (`totalH / presenceH`, `null` si présence nulle sur la période). Le taux peut
+  dépasser 100% (heures supplémentaires, ou travail à plusieurs sur une même pièce qui additionne
+  le temps de chaque opérateur — voir plus haut) : ce n'est pas traité comme une anomalie en soi.
+  Nouvelles clés de tri : `'presence'` et `'taux'`.
+  - **Salariés attendus mais sans aucune tâche suivie.** Avec une période fournie, la liste ne se
+    limite plus aux clés de `byUser` (qui n'a une entrée que pour un salarié ayant au moins une
+    session/tâche mesurable) : elle s'étend à tout `usersList` ayant une présence théorique non
+    nulle sur la période, même à 0 tâche — pour repérer quelqu'un censé travailler mais totalement
+    absent des données de production (jamais démarré/repris une tâche via l'appli), pas seulement
+    ceux qui ont un temps de production à comparer. Un salarié ni attendu ni actif (ex. congé
+    couvrant toute la période, sans tâche) est en revanche filtré — rien à montrer. Ne change rien
+    sans période fournie (comportement identique à avant cette fonctionnalité).
+- `occupationBarColor(taux)` / `renderOccupationBar(taux, big)` — barre de progression (pas un
+  simple texte coloré) : rouge sous 50%, ambre entre 50 et 80%, vert au-delà, accent au-delà de
+  120% (heures sup/travail à plusieurs, volontairement distingué d'une anomalie). Le remplissage
+  visuel est plafonné à 100% de largeur (au-delà, seule la couleur change) pour ne jamais donner
+  l'impression que la barre déborde de son cadre. `big=true` pour la variante plus grande utilisée
+  dans la tuile de stat de « Mon temps de production ». Sous 50%, le fond de la piste (pas
+  seulement le remplissage) est teinté en rouge pâle (`rgba(178,58,48,0.18)`) : un remplissage réel
+  de 10% de largeur serait sinon presque invisible sur un fond neutre — l'alerte doit sauter aux
+  yeux même quand la barre elle-même est quasi vide, pas seulement son maigre remplissage.
+- Colonne « Présence théo. » (texte) et « Taux d'occupation » (barre `renderOccupationBar`) dans
+  le tableau superviseur, équivalents dans la vue « Mon temps de production » (présence en texte,
+  occupation en grande barre `big`), et deux colonnes numériques supplémentaires (présence en
+  heures, occupation en %) dans l'export Excel (feuille Résumé) — l'export garde des nombres bruts,
+  pas la barre, qui n'a de sens qu'à l'écran.
+- **Sélecteur de période** (`tempsProdPeriodMode` : `'jour'` | `'semaine'` | `'mois'` | `'annee'` |
+  `'plage'`) — `'semaine'` va du lundi au dimanche inclus (`startOfWeek`, déjà utilisé ailleurs dans
+  l'appli), navigation (`navigateTempsProdPeriod`) par pas de 7 jours dans ce mode. Comme les autres
+  modes (hors `'plage'`), n'affecte que `tempsProdPeriodBounds()` — aucune donnée ni logique de
+  calcul propre à ce mode, juste des bornes `[start, end[` différentes.
+- **Salariés masqués de la vue superviseur** (`state.hiddenTempsProdUserIds[]`, tableau d'ids
+  comme `storageZones`/`inactiveStorageZones`) — case à cocher "Afficher dans le temps de
+  production" par salarié (Paramètres → Utilisateurs), pour ne pas surcharger la page de comptes
+  sans intérêt ici (admin sans activité d'atelier, compte de test...). `isHiddenFromTempsProd(st,
+  userId)` / `toggleTempsProdVisibility(userId)`. Filtré **uniquement** au point d'affichage/export
+  superviseur (`renderTempsProdPage` et `exportTempsProdExcel` sans `onlyUid`) — jamais dans
+  `tempsProdRows` lui-même ni dans `renderTempsProdSelfPage`/l'export personnel (`onlyUid` fourni) :
+  un salarié masqué de la vue d'ensemble garde un accès intact à ses propres données via "Mon temps
+  de production", ce masquage n'étant qu'une question d'encombrement de la liste superviseur, jamais
+  une restriction d'accès.
+
+## Zones de stockage
+
+Emplacements physiques où sont entreposées les pièces d'une commande pendant sa production.
+**Paramétrable** (Paramètres → Zones de stockage) : `state.config.storageZones[]` est la liste des
+**allées** — `{ id, code, nom, nbEmplacements, couleur }`. Une allée de code `"B"` et
+`nbEmplacements:16` produit les emplacements `B1`…`B16`. `DEFAULT_STORAGE_ZONES` (3 allées A/B/C de
+16, sans nom, couleurs de `MACHINE_COLORS`) est la valeur de migration — reprise telle quelle par
+`migrateState` sur une installation existante pour ne rien changer aux zones déjà attribuées.
+Attribut de la **commande** (`zoneStockage`, une chaîne comme `"B7"`), pas de la pièce : toutes les
+pièces d'une commande partagent une seule zone. Plusieurs commandes peuvent aussi partager
+volontairement la même zone (regroupement manuel de petites affaires dans un même casier) — voir
+`setCommandeZone` ci-dessous.
+
+- `computeStorageZones(st)` — reconstruit `{ list, byCode }` à partir de `st.config.storageZones` :
+  `list` est la liste à plat de tous les codes de zone dans l'ordre des allées, `byCode` associe
+  chaque code à son allée (pour la couleur/le nom). Remplace l'ancienne constante figée
+  `STORAGE_ZONES` — **toujours** passer par cette fonction plutôt que de reconstruire la liste
+  ailleurs, sinon un changement de configuration (allée ajoutée/redimensionnée) ne serait pas pris
+  en compte partout.
+- `isCommandeFullyDone(c)` — même condition que le badge "Terminée" de `renderCommandeCard`
+  (`pieces.length>0 && pieces.every(termine)`) — une commande dans cet état n'occupe plus rien,
+  **même si `zoneStockage` n'est pas effacé** (trace historique volontairement conservée).
+- `occupiedStorageZones(st, excludeCommandeId)` — l'ENSEMBLE des zones occupées par au moins une
+  commande active (donc pas totalement terminée) autre que `excludeCommandeId`. Sert uniquement à
+  `assignStorageZone` pour trouver une zone **entièrement vide** — ne dit pas combien ni qui.
+- `commandesInZone(st, zone, excludeCommandeId)` — la LISTE des commandes actives occupant
+  précisément une zone donnée (hors `excludeCommandeId`), potentiellement plusieurs si regroupées
+  manuellement. Sert au badge (`renderCommandeCard`) et à la page "Zones de stockage" pour afficher
+  qui est déjà là.
+- `assignStorageZone(st, c)` — attribue la première zone de `computeStorageZones(st).list`
+  **entièrement vide** à une commande qui n'en a pas encore ; ne fait rien si elle en a déjà une, si
+  elle est déjà totalement terminée, ou si toutes les zones sont occupées (reste alors `null` jusqu'à
+  une attribution manuelle). Ne rejoint jamais automatiquement une zone déjà partagée — le
+  regroupement reste un choix humain délibéré. Appelée à chaque création de commande (les trois
+  `targetState.commandes.push(...)`, dont celui de l'import personnalisé) et une seule fois au
+  chargement pour les commandes déjà en cours au moment de l'introduction de cette fonctionnalité
+  (`migrateState`, garde `_zonesStockageMigrated` — ne retente jamais après coup, y compris si une
+  zone se libère : seules la création d'une commande ou l'action manuelle réattribuent).
+- `setCommandeZone(cid, zone)` — changement manuel depuis le badge "📍 Zone" (`renderCommandeCard`).
+  Contrairement à `assignStorageZone`, autorise le regroupement dans une zone déjà occupée par
+  d'autres commandes actives, mais demande confirmation (`confirm()`, listant qui est déjà là) avant
+  de le faire — jamais silencieux. Réattribuer à une commande sa PROPRE zone déjà occupée ne redemande
+  rien (pas de faux-positif, `commandesInZone` exclut `cid`).
+- **Zone "hors configuration actuelle"** : si une allée est supprimée ou réduite (Paramètres) après
+  qu'une commande y a été assignée, cette commande garde sa valeur de `zoneStockage` **telle quelle**
+  (jamais effacée automatiquement) mais le code n'apparaît plus dans `computeStorageZones(...).list` —
+  `renderCommandeCard` l'ajoute alors comme option supplémentaire du menu déroulant (étiquetée "hors
+  configuration actuelle") pour ne jamais la perdre silencieusement du `<select>`, et `renderZonesPage`
+  la signale dans une note dédiée plutôt que dans la grille (qui n'affiche que les emplacements
+  encore configurés). `removeStorageAllee` avertit explicitement (via `confirm()`, en les nommant) si
+  des commandes actives seraient concernées avant de supprimer une allée.
+- Page "📍 Zones de stockage" (`renderZonesPage`, `currentPage==='zones'`) — vue d'ensemble en
+  lecture, une ligne par allée dans l'ordre de `state.config.storageZones`, colorée avec la couleur
+  de l'allée ; hauteur de ligne homogène entre toutes les allées (`grid-auto-rows` sur
+  `.zone-row-cells` + `min-height` sur `.zone-cell`), qu'une case contienne 0, 1 ou plusieurs
+  commandes regroupées. Cliquer le nom d'une commande occupante l'isole dans le planning
+  (`selectedCommandeId` + retour à `currentPage='planning'`).
+- Paramètres → Zones de stockage (`sectionDefs.storageZones`) — une carte par allée (réutilise les
+  classes `.machine-card`/`.machines-grid`/`.add-machine-row` des postes, par cohérence visuelle) :
+  couleur, code (préfixe, unique — `updateStorageAllee` refuse un doublon), nom optionnel, nombre
+  d'emplacements. `addStorageAllee` propose automatiquement la prochaine lettre A-Z libre.
+- Kanban (`renderKanbanView`) — chaque carte affiche « 📍 {zone} », coloré selon l'allée
+  (`computeStorageZones` calculé une fois par rendu, pas par carte), quand sa commande en a une, sauf
+  sur une carte fusionnée multi-commandes (`o._fusionMembers`) : `o.zoneStockage` n'y porterait que
+  la zone du premier membre du groupe, ce qui serait trompeur pour les autres — volontairement omis
+  dans ce cas plutôt que d'afficher une info fausse.
+- **Notification de la zone à la création** : `newCommandeZoneNotice` (`{ nom, zoneStockage } | null`)
+  déclenche une pop-up dédiée (`renderNewCommandeZoneNoticeModal`) juste après la création manuelle
+  d'une commande (`submitNewCommande`, uniquement dans les branches qui créent VRAIMENT une nouvelle
+  commande — pas quand des lignes s'ajoutent à une commande déjà existante du même nom, où aucune
+  zone n'est réattribuée). L'import (Excel ou personnalisé) n'utilise pas cette pop-up à une seule
+  commande : `commitImportGroups` porte `zoneStockage` sur chaque entrée de `createdNoms`, et
+  `renderExcelImportModal` (déjà partagée par les deux flux d'import) l'affiche directement dans sa
+  colonne "Zone de stockage" du tableau récapitulatif — plus adapté qu'une pop-up par commande quand
+  un import en crée plusieurs d'un coup.
+- **Casiers désactivés** (`state.config.inactiveStorageZones`, simple tableau de codes comme `"A13"`)
+  — un casier cassé/réservé, à sortir de la rotation. `isZoneInactive(st, zone)` : jamais proposé par
+  `assignStorageZone` (exclu de la sélection automatique) ni acceptable par `setCommandeZone`
+  (refusé avec message). `toggleStorageZoneActive(zone)`, déclenché en cliquant une case **libre**
+  de `renderZonesPage`, bascule l'état — refuse de désactiver une zone actuellement occupée
+  (`commandesInZone` non vide : il faut d'abord la libérer). Rendu : case hachurée rouge avec
+  « 🚫 Désactivée » dans la grille, option `disabled` (avec la mention "désactivée") dans le menu
+  déroulant `renderCommandeCard` — sauf si c'est déjà la zone en cours de cette commande, jamais
+  masquée pour ne pas la faire disparaître du `<select>` sans explication. Comme pour un allée
+  réduite/supprimée, un code désactivé n'est jamais nettoyé automatiquement des données existantes
+  (mêmes conséquences inoffensives qu'une zone "hors configuration actuelle").
 
 ## Moteur de planification — `computeSchedule(st)`
 
@@ -66,6 +403,11 @@ Le cœur du produit. Trois phases :
 3. **Tâches volantes**, par priorité : urgence, puis échéance, puis phase.
    `findNextFreeSlot()` cherche un vrai créneau libre (remplissage des trous).
    `machineDispoFloor` est un plancher fixe, jamais modifié en phase 3.
+   Un groupe fusionné **non figé** (`fusionPinned=false`) n'est pas éclaté en pièces
+   indépendantes : ses membres sont regroupés en **un seul candidat** (même poste, durée
+   totale, priorité = celle de son membre le plus prioritaire) qui concourt comme
+   n'importe quelle tâche volante — voir le regroupement juste avant la boucle de phase 3
+   dans `computeSchedule`.
 
 ### Dépendances de phase
 
@@ -92,14 +434,30 @@ Trois mécanismes **indépendants** produisent un `fusionGroupId` :
    uniquement si `config.matiereFusionActive` est activé (Paramètres → Postes).
 3. **Bouton manuel** « Regrouper les lignes du même poste » en création de commande.
 
-Les membres d'un groupe partagent `manualStart` et `dureeOverrideH` (somme des durées).
-Toute modification (glisser, redimensionner, changer de statut, libérer) doit se
-propager à tout le groupe — voir `propagateFusionGroupFields()`.
+Les membres d'un groupe partagent `dureeOverrideH` (somme des durées) et, s'il est figé,
+`manualStart`. Toute modification (glisser, redimensionner, changer de statut, figer,
+libérer) doit se propager à tout le groupe — voir `propagateFusionGroupFields()`.
+
+**Deux modes, portés par `fusionPinned`** :
+- **Automatique (`fusionPinned=false`, par défaut à la création)** — pas de `manualStart` :
+  le groupe est traité en phase 3 comme un candidat unique qui concourt par priorité
+  avec les autres tâches volantes (voir plus haut). C'est la position qui s'affiche et se
+  recalcule à chaque changement de planning — jamais figée dans le temps.
+- **Figé (`fusionPinned=true`)** — `manualStart` posé sur tous les membres, activé par un
+  glisser-déposer, une saisie de date (`setManualStartValue`, `updateFusionGroupStart`,
+  `pinOpAtCurrentTime`) ou le contexte-menu « Figer à cet horaire ». Comportement inchangé
+  depuis toujours : jamais concerné par le remplissage des trous, position toujours
+  respectée.
 
 **Sémantique à respecter** :
-- Double-clic / « Libérer » = revenir au calcul automatique **en gardant le groupe**
-  (il est libéré puis refusionné à sa nouvelle position).
-- « Dissocier » (pop-up de regroupement) = seul moyen de casser réellement un groupe.
+- « Libérer » (double-clic, bouton ↺, ou panneau des groupes) = repasser tout le groupe en
+  mode automatique (`fusionPinned=false`, `manualStart=null`) — plus jamais besoin de
+  recalculer une position ici, la phase 3 s'en charge à chaque appel de `computeSchedule`.
+- « Dissocier » (pop-up de regroupement) = seul moyen de casser réellement un groupe
+  (`fusionGroupId=null`, redevient indépendant).
+- `isPositionPinned(o)` est le point unique qui décide si une pièce affiche le badge
+  « 📌 Figée » — pour une pièce fusionnée, il regarde `fusionPinned`, jamais la simple
+  présence de `dureeOverrideH` (toujours posé sur un groupe, figé ou non).
 
 ## Tests
 
@@ -138,10 +496,22 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
 - **Casse et espaces des valeurs d'import.** « Laser 2D » et « laser 2d » créaient deux
   entrées distinctes. Tout est normalisé via `normPosteKey()`. Les clés de
   `posteMapping`, `groupByValue`, `sousTraitanceByValue` sont **toujours normalisées**.
-- **Repli sur « maintenant » dans la fusion.** Quand aucune pièce du groupe n'a d'horaire
-  calculé, `performFusion` retombait sur `new Date()` et figeait le groupe dans le passé,
-  avant ses prédécesseurs. Il calcule désormais un plancher sûr (fin des phases
-  antérieures + disponibilité du poste), arrondi à la minute supérieure.
+- **Mutation du planning sans invalider le cache avant de le relire.** `scheduleCache`
+  n'est recalculé que par `invalidateSchedule()` (par défaut dans `commit()`). Deux bugs
+  distincts en ont découlé : la reprise automatique de pause déjeuner (`setInterval` dans
+  `startApp`) mutait `state` puis appelait `render()` sans invalider — l'affichage
+  réutilisait l'ancien planning, les tâches suivantes ne se décalaient qu'au F5 suivant.
+  Et `resetOpOverride()` (« Libérer » un groupe fusionné) détachait les membres puis
+  appelait `performFusion()`, qui relisait aussitôt `getSchedule()` — encore le planning
+  d'AVANT la libération — et retrouvait donc quasiment la même position : « Libérer »
+  semblait n'avoir aucun effet. Réflexe : après toute mutation directe de `state` hors de
+  `commit()`, invalider explicitement avant de relire `getSchedule()`/`computeSchedule()`.
+- **Dépendance de phase à travers un groupe fusionné non lié.** `resolveEffectiveDeps()`
+  faisait dépendre une étape d'une pièce (ex. son Laser, phase basse) d'un groupe fusionné
+  auquel cette même pièce participe via une AUTRE étape plus tardive (ex. sa Chaudronnerie,
+  fusionnée avec d'autres pièces à phase basse) — sans vérifier que MA propre participation
+  à ce groupe se situe bien avant l'étape évaluée. Corrigé en comparant la phase de ma
+  propre ligne dans ce groupe à la phase courante, pas seulement la phase des autres membres.
 - **Doubles enregistrements concurrents.** Enchaîner deux `commit()` déclenche un conflit
   de version (« Quelqu'un d'autre vient de modifier le planning ») et **perd la
   modification**. `performFusion(items, skipCommit)` existe pour ça. Vérifier qu'une
@@ -156,6 +526,33 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   du HTML (`<br>`) affiche les balises littéralement.
 - **Champs de configuration texte.** `updateConfig` convertit par défaut en nombre ;
   un nouveau champ texte a besoin de son cas explicite, sinon il est silencieusement ignoré.
+- **Restauration du focus sur une ligne répétée sans identifiant unique reconnu.**
+  `captureFocusRef()`/`restoreFocusRef()` retrouvent le champ actif après un `render()` via un
+  sélecteur CSS construit à partir d'une liste fixe d'attributs (`data-action`, `data-field`,
+  `data-cid`, `data-oid`, `data-idx`...). Les lignes du formulaire "Nouvelle commande"
+  (`renderDraftOpRow`) n'utilisent QUE `data-idx` pour distinguer une ligne d'une autre (pas de
+  `data-cid`/`data-oid`, ces pièces n'existent pas encore) — `data-idx` manquait de cette liste, donc
+  le sélecteur reconstruit après le `render()` déclenché par `updateDraftOpField`/`updateDraftOpDuree`
+  ne contenait que `data-action`+`data-field`, communs à toutes les lignes : `document.querySelector`
+  renvoyait toujours le premier élément correspondant, ramenant le focus sur la ligne 1 quel que soit
+  la ligne modifiée (bug rapporté : taper le temps unitaire/la quantité/la durée sur une ligne 2+ fait
+  sauter le curseur sur ce même champ, mais ligne 1). Réflexe : tout nouvel attribut `data-*` servant
+  à distinguer des lignes répétées d'un même formulaire doit être ajouté à la liste `attrs` de
+  `captureFocusRef`, pas seulement utilisé dans le marquage HTML.
+- **Vider une donnée avant confirmation de son archivage.** `archiveOldSessions()` ne met
+  `o.sessions = []` qu'après un `POST /api/session-history` réussi — vider d'abord et archiver
+  ensuite perdrait ces horaires pour toujours au moindre problème réseau.
+- **Fermer une seule session avec `.find` alors que plusieurs peuvent être ouvertes.** Depuis
+  l'ajout du travail à plusieurs sur une même pièce (`joinOpSession`), `o.sessions` peut avoir
+  2+ entrées avec `fin: null` en même temps. Un `.find(s=>!s.fin)` (comme l'ancien code de pause/
+  clôture) n'en ferme qu'une seule et laisse les autres ouvertes pour toujours, gonflant
+  indéfiniment `opElapsedHours`. Toujours `.filter(s=>!s.fin).forEach(...)`.
+- **N'afficher que le jour du début sur une plage début/fin.** Une pièce `termine` sans
+  `sessions[]` (déjà archivées, ou terminée avant l'introduction de `session_history`) n'a plus que
+  `debutReel`/`finReel`, qui peuvent tomber des jours différents (nuit, week-end, pause entre deux
+  reprises). Un rendu du type "Jour : {jour du début}" fait croire à tort que tout s'est joué ce
+  jour-là (bug réel : une tâche commencée un vendredi et terminée le lundi suivant affichait
+  seulement "vendredi"). Toujours comparer les deux dates et afficher la plage si elles diffèrent.
 
 ## Conventions
 

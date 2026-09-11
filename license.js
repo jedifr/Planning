@@ -66,6 +66,28 @@ function verifyLicenseString(licenseStr){
   return { ok:true, expired: expiresAt.getTime() < Date.now(), payload, expiresAt };
 }
 
+// Installe une licence de départ fournie par l'éditeur via la variable d'environnement
+// INITIAL_LICENSE_KEY (typiquement une clé d'essai de 15 jours, générée avec
+// tools/generate-license.js et injectée dans docker-compose.yml pour un nouveau client).
+// Ne s'exécute que si aucune licence n'est déjà enregistrée en base, pour ne jamais écraser
+// une licence installée depuis (essai prolongé, licence définitive) — un redémarrage du
+// conteneur ne doit jamais revenir en arrière.
+function bootstrapInitialLicense(db){
+  if(getStoredLicenseString(db)) return; // une licence existe déjà, ne rien faire
+  const initial = process.env.INITIAL_LICENSE_KEY;
+  if(!initial || !initial.trim()) return;
+  const result = verifyLicenseString(initial.trim());
+  if(!result.ok){
+    console.log(`INITIAL_LICENSE_KEY fournie mais invalide (${result.error}) — ignorée.`);
+    return;
+  }
+  setStoredLicenseString(db, initial.trim());
+  console.log('========================================================');
+  console.log(` Licence initiale installée depuis INITIAL_LICENSE_KEY : ${result.payload.client || '(client non précisé)'}`);
+  console.log(` Valable jusqu'au ${new Date(result.payload.expiresAt).toLocaleDateString('fr-FR')}.`);
+  console.log('========================================================');
+}
+
 // État complet à afficher/exploiter côté appli — jamais d'exception, toujours un objet exploitable.
 function getLicenseStatus(db){
   const stored = getStoredLicenseString(db);
@@ -98,5 +120,5 @@ function requireLicense(db){
 
 module.exports = {
   initLicenseTable, getStoredLicenseString, setStoredLicenseString,
-  verifyLicenseString, getLicenseStatus, requireLicense
+  verifyLicenseString, getLicenseStatus, requireLicense, bootstrapInitialLicense
 };

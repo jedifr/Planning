@@ -18,6 +18,12 @@ services:
       # sur internet — voir le README, section Sécurité). Laissez "false" tant que vous
       # n'accédez qu'en HTTP sur le réseau local, sinon la connexion ne fonctionnera pas.
       COOKIE_SECURE: "false"
+      # Optionnel : clé de licence installée automatiquement au tout premier démarrage
+      # (ex: une clé d'essai de 15 jours pour un nouveau client). Générée hors ligne avec
+      # tools/generate-license.js et collée ici. Sans effet si une licence est déjà
+      # enregistrée en base — un redémarrage du conteneur n'écrase jamais une licence
+      # déjà installée (essai prolongé, licence définitive achetée entre-temps).
+      INITIAL_LICENSE_KEY: ""
     restart: unless-stopped
 
 volumes:
