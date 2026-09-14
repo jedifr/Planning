@@ -389,6 +389,25 @@ volontairement la même zone (regroupement manuel de petites affaires dans un m�
   masquée pour ne pas la faire disparaître du `<select>` sans explication. Comme pour un allée
   réduite/supprimée, un code désactivé n'est jamais nettoyé automatiquement des données existantes
   (mêmes conséquences inoffensives qu'une zone "hors configuration actuelle").
+- **Libération manuelle du casier** (`state.config.modules.expedition`, désactivé par défaut —
+  Paramètres → Zones de stockage) — pour le cas où une pièce a en réalité une étape de
+  nettoyage/conditionnement volontairement absente de la gamme (pas envie de la modéliser comme
+  poste) : sans ce module, le casier se libère dès que `isCommandeFullyDone` est vrai, comme avant
+  cette fonctionnalité ; avec, il reste occupé jusqu'à confirmation manuelle.
+  - `isCommandeReadyToFreeZone(st, c)` — remplace `isCommandeFullyDone(c)` **uniquement** aux trois
+    points qui décident si une commande occupe encore sa zone (`occupiedStorageZones`,
+    `commandesInZone`, l'avertissement d'occupants de `removeStorageAllee`) : module désactivé ⇒
+    identique à `isCommandeFullyDone` ; module actif ⇒ en plus vrai que `c.pretExpedition`.
+    **N'affecte jamais** le badge "Terminée" (`renderCommandeCard`) ni le décompte des commandes
+    actives, qui continuent de lire `isCommandeFullyDone` directement — une pièce réellement
+    terminée reste "Terminée" à l'affichage, seule l'occupation du casier est retardée.
+  - `markCommandePretExpedition(cid)` — bascule `commande.pretExpedition` à `true` (jamais remis à
+    `false` automatiquement) ; no-op si la commande n'est pas encore `isCommandeFullyDone`. Déclenché
+    par le bouton "✓ Prêt à expédier — libérer le casier" du bandeau `.commande-expedition-pending`
+    (`renderCommandeCard`), affiché seulement quand le module est actif, la commande terminée, et
+    `pretExpedition` encore `false`.
+  - `assignStorageZone`/`setCommandeZone` n'ont pas besoin d'être modifiés : ils lisent déjà
+    `occupiedStorageZones`/`commandesInZone`, qui portent maintenant la nouvelle règle.
 
 ## Moteur de planification — `computeSchedule(st)`
 

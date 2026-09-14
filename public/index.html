@@ -469,6 +469,11 @@
     display:flex; align-items:center; justify-content:space-between; gap:14px;
     padding:7px 0 0; margin-top:7px; border-top:1px solid rgba(160,109,26,0.25); font-size:12px; color:var(--text-dim);
   }
+  .commande-expedition-pending{
+    display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
+    margin:0 0 8px; padding:6px 10px; background:var(--amber-dim); border:1px solid var(--amber);
+    border-radius:2px; font-size:12px; color:var(--text-dim);
+  }
   .commandes-columns{display:grid; grid-template-columns:1fr 9px 1fr; gap:10px; align-items:start;}
   .columns-resize-handle{
     align-self:stretch; display:flex; align-items:center; justify-content:center;
@@ -1090,6 +1095,7 @@ function migrateState(st){
   // inoffensives qu'une zoneStockage "hors configuration actuelle", voir plus bas).
   if(!Array.isArray(st.config.inactiveStorageZones)) st.config.inactiveStorageZones = [];
   if(!st.config.modules) st.config.modules = { conges: true }; // interrupteur du module Congés
+  if(st.config.modules.expedition === undefined) st.config.modules.expedition = false; // libération manuelle du casier — désactivé par défaut, comportement inchangé pour une installation existante
   if(st.config.matiereFusionActive === undefined) st.config.matiereFusionActive = false; // détection par matière/épaisseur désactivée par défaut
   if(st.config.copyright === undefined) st.config.copyright = ''; // mention de l'écran de connexion
   if(!st.leaveTypes) st.leaveTypes = [
@@ -1124,6 +1130,11 @@ function migrateState(st){
   }
   if(!st.commandes) st.commandes = [];
   st.commandes.forEach(c => { if(c.zoneStockage === undefined) c.zoneStockage = null; });
+  // Libération manuelle du casier (module config.modules.expedition) : pretExpedition reste false
+  // tant que personne n'a cliqué "Prêt à expédier" sur une commande entièrement terminée — voir
+  // isCommandeReadyToFreeZone/CLAUDE.md. Sans effet tant que le module est désactivé.
+  st.commandes.forEach(c => { if(c.pretExpedition === undefined) c.pretExpedition = false; });
+  (st.commandesArchivees||[]).forEach(c => { if(c.pretExpedition === undefined) c.pretExpedition = false; });
   // Migration ponctuelle (une seule fois) : attribue automatiquement une zone de stockage aux
   // commandes déjà en cours au moment de l'introduction de cette fonctionnalité (voir CLAUDE.md).
   // Sans garde, ça retenterait une assignation à chaque chargement — inutile (assignStorageZone est
@@ -1676,6 +1687,20 @@ function commandeRiskDaysLate(c){
 function isCommandeFullyDone(c){
   return c.pieces.length > 0 && c.pieces.every(o => o.statut === 'termine');
 }
+// Une commande libère réellement son casier dès que ses pièces sont terminées — SAUF si le module
+// "Libération manuelle du casier" (Paramètres → Zones de stockage, config.modules.expedition) est
+// actif : elle reste alors comptée comme occupante tant que personne n'a cliqué "Prêt à expédier"
+// (nettoyage/conditionnement volontairement non modélisé dans la gamme) — voir
+// markCommandePretExpedition/CLAUDE.md. Module désactivé (par défaut) : comportement identique à
+// isCommandeFullyDone, comme avant cette fonctionnalité. N'a aucun effet sur le badge "Terminée"
+// (renderCommandeCard) ni sur le décompte des commandes actives, qui continuent de suivre
+// isCommandeFullyDone directement — une pièce réellement terminée reste "Terminée" à l'affichage,
+// seule l'occupation de la zone de stockage est concernée par ce délai.
+function isCommandeReadyToFreeZone(st, c){
+  if(!isCommandeFullyDone(c)) return false;
+  if(!(st.config.modules && st.config.modules.expedition)) return true;
+  return !!c.pretExpedition;
+}
 // Zones occupées par une commande active à cet instant (hors excludeCommandeId, pour pouvoir
 // vérifier la disponibilité en gardant la zone déjà posée sur la commande qu'on modifie). Une
 // commande totalement terminée n'occupe plus rien, même si zoneStockage n'a pas été effacé (trace
@@ -1684,7 +1709,7 @@ function occupiedStorageZones(st, excludeCommandeId){
   const occupied = new Set();
   (st.commandes||[]).forEach(c => {
     if(c.id === excludeCommandeId) return;
-    if(c.zoneStockage && !isCommandeFullyDone(c)) occupied.add(c.zoneStockage);
+    if(c.zoneStockage && !isCommandeReadyToFreeZone(st, c)) occupied.add(c.zoneStockage);
   });
   return occupied;
 }
@@ -1725,7 +1750,7 @@ function assignStorageZone(st, c){
 // commandes peuvent partager la même zone depuis qu'on autorise le regroupement manuel (voir
 // setCommandeZone). Sert à afficher qui est déjà là, dans le badge comme dans renderZonesPage.
 function commandesInZone(st, zone, excludeCommandeId){
-  return (st.commandes||[]).filter(c => c.id!==excludeCommandeId && c.zoneStockage===zone && !isCommandeFullyDone(c));
+  return (st.commandes||[]).filter(c => c.id!==excludeCommandeId && c.zoneStockage===zone && !isCommandeReadyToFreeZone(st, c));
 }
 function urgencyColorFor(u){
   const uc = (state.config && state.config.urgencyColors) || {};
@@ -2503,7 +2528,7 @@ function removeStorageAllee(id){
   const cfg = state.config;
   const allee = (cfg.storageZones||[]).find(a=>a.id===id); if(!allee) return;
   const zones = new Set(zonesForAllee(allee));
-  const occupantes = state.commandes.filter(c => !isCommandeFullyDone(c) && zones.has(c.zoneStockage));
+  const occupantes = state.commandes.filter(c => !isCommandeReadyToFreeZone(state, c) && zones.has(c.zoneStockage));
   const msg = occupantes.length > 0
     ? `Supprimer l'allée "${allee.code}" ? ${occupantes.length} commande(s) y sont actuellement stockées (${occupantes.map(c=>c.nom).join(', ')}) — elles garderont leur zone affichée à titre d'historique, mais elle sera signalée comme "hors configuration" jusqu'à réattribution manuelle.`
     : `Supprimer l'allée "${allee.code}" ?`;
@@ -3595,6 +3620,10 @@ function toggleModuleConges(active){
   state.config.modules.conges = !!active;
   commit();
 }
+function toggleModuleExpedition(active){
+  state.config.modules.expedition = !!active;
+  commit();
+}
 
 function submitNewCommande(){
   if(!draft.nom || !draft.nom.trim()){ alert("Merci d'indiquer une référence ou un nom de commande."); return; }
@@ -3760,6 +3789,16 @@ function setCommandeZone(cid, zone){
     if(!confirm(`La zone ${zone} est déjà utilisée par : ${noms}.\n\nRegrouper "${c.nom}" dans la même zone ?`)) return;
   }
   c.zoneStockage = zone; commit();
+}
+// Marque une commande entièrement terminée comme réellement prête à expédier — libère alors son
+// casier (voir isCommandeReadyToFreeZone), une fois le nettoyage/conditionnement réel effectué (non
+// modélisé dans la gamme, voir CLAUDE.md). N'a de sens que si le module est actif et la commande
+// déjà totalement terminée ; no-op silencieux sinon (bouton non affiché dans ce cas de toute façon).
+function markCommandePretExpedition(cid){
+  const c = state.commandes.find(c=>c.id===cid); if(!c) return;
+  if(!isCommandeFullyDone(c)) return;
+  c.pretExpedition = true;
+  commit();
 }
 // Active/désactive un casier (cassé, réservé...) depuis la page "Zones de stockage" — un clic sur
 // une case libre. Une zone occupée ne peut pas être désactivée directement : il faut d'abord la
@@ -6555,6 +6594,11 @@ function renderSettingsModal(){
       <div class="add-machine-row"><button data-action="add-machine">+ Ajouter un poste</button></div>` },
     storageZones: { title: `Zones de stockage (${(cfg.storageZones||[]).reduce((s,a)=>s+(Number(a.nbEmplacements)||0),0)} emplacements)`, body: `
       <div class="footer-note" style="text-align:left; padding-bottom:10px;">Chaque allée devient un ensemble d'emplacements numérotés à partir de son code (ex. code "A", 16 emplacements → A1 à A16). La couleur sert à reconnaître l'allée d'un coup d'œil dans le planning, le Kanban et la page "Zones de stockage".</div>
+      <label class="statut-chip" style="margin-bottom:10px;">
+        <input type="checkbox" ${(state.config.modules&&state.config.modules.expedition)?'checked':''} data-action="toggle-module-expedition">
+        Libération manuelle du casier (nettoyage/conditionnement)
+      </label>
+      <div class="footer-note" style="text-align:left; padding-bottom:14px;">Une fois activé, une commande dont toutes les pièces sont terminées n'occupe plus la gamme de production, mais garde son casier tant que personne n'a cliqué "Prêt à expédier" (ex. nettoyage ou conditionnement non modélisé dans la gamme) — voir le badge et le bouton dédiés sur sa carte. Désactivé (par défaut), le casier se libère automatiquement dès la dernière pièce terminée, comme avant cette fonctionnalité.</div>
       <div class="machines-grid">${alleeCards}</div>
       <div class="add-machine-row"><button data-action="add-allee">+ Ajouter une allée</button></div>` },
     importProfiles: { title: `Profils d'import personnalisé (${(state.importProfiles||[]).length})`, body: `
@@ -7614,6 +7658,12 @@ function renderCommandeCard(c, idx, total){
   const allDone = c.pieces.length>0 && c.pieces.every(o=>o.statut==='termine');
   if(allDone) badge = `<span class="badge done">Terminée</span>`;
 
+  // Libération manuelle du casier (Paramètres → Zones de stockage, config.modules.expedition) —
+  // voir isCommandeReadyToFreeZone/CLAUDE.md. N'affecte jamais le badge "Terminée" ci-dessus, qui
+  // reste vrai dès que les pièces le sont : seule l'occupation de la zone est retardée.
+  const expeditionGateActive = !!(state.config.modules && state.config.modules.expedition);
+  const needsExpeditionAction = expeditionGateActive && allDone && !c.pretExpedition;
+
   // Zone de stockage physique (voir CLAUDE.md) : une zone déjà occupée par une AUTRE commande
   // active reste sélectionnable — regrouper plusieurs commandes dans le même casier est un choix
   // manuel volontaire (confirmation demandée par setCommandeZone) — mais son occupant est indiqué
@@ -7639,7 +7689,10 @@ function renderCommandeCard(c, idx, total){
     zoneOptions.push(`<option value="${c.zoneStockage}" selected>${escapeHtml(c.zoneStockage)} — hors configuration actuelle</option>`);
   }
   const zoneColorStyle = currentAllee ? `border-color:${currentAllee.couleur}; color:${currentAllee.couleur}; background:${hexToRgba(currentAllee.couleur,0.12)};` : '';
-  const zoneSelect = `<select class="zone-select ${c.zoneStockage?'zone-set':''}" style="${zoneColorStyle}" data-action="set-commande-zone" data-cid="${c.id}" title="Zone de stockage — se libère automatiquement une fois la commande totalement terminée">${zoneOptions.join('')}</select>`;
+  const zoneReleaseTitle = expeditionGateActive
+    ? 'Zone de stockage — se libère une fois la commande terminée ET marquée « Prêt à expédier »'
+    : 'Zone de stockage — se libère automatiquement une fois la commande totalement terminée';
+  const zoneSelect = `<select class="zone-select ${c.zoneStockage?'zone-set':''}" style="${zoneColorStyle}" data-action="set-commande-zone" data-cid="${c.id}" title="${zoneReleaseTitle}">${zoneOptions.join('')}</select>`;
 
   // Une recherche par référence de PIÈCE ne doit faire ressortir que les lignes concernées, pas
   // toutes celles de la commande — sauf si c'est la commande elle-même (par son nom ou sa réf.
@@ -7665,6 +7718,13 @@ function renderCommandeCard(c, idx, total){
   const cardBorderStyle = cardUCol ? `border-left-color:${cardUCol};` : '';
   const selectUCol = urgencyColorFor(c.urgence);
   const selectStyle = selectUCol ? `background:${hexToRgba(selectUCol,0.12)};color:${selectUCol};border-color:${selectUCol};` : '';
+  // Bandeau "nettoyage/conditionnement en cours" — uniquement quand le module est actif, la commande
+  // entièrement terminée, et pas encore marquée prête (voir isCommandeReadyToFreeZone/CLAUDE.md).
+  const expeditionBlock = needsExpeditionAction ? `
+    <div class="commande-expedition-pending">
+      <span>🧹 Nettoyage/conditionnement en cours${c.zoneStockage?` — le casier ${escapeHtml(c.zoneStockage)} reste occupé`:''}</span>
+      <button class="small" data-action="mark-pret-expedition" data-cid="${c.id}">✓ Prêt à expédier — libérer le casier</button>
+    </div>` : '';
   return `
   <div class="commande-card ${selectedCommandeId===c.id?'commande-selected':''}" style="${cardBorderStyle}">
     <div class="chead">
@@ -7685,6 +7745,7 @@ function renderCommandeCard(c, idx, total){
       ${zoneSelect}
       ${badge}
     </div>
+    ${expeditionBlock}
     ${activeBlock}
     ${doneBlock}
     <div class="commande-footer">
@@ -8144,6 +8205,7 @@ function dispatchClickAction(action, el){
     case 'submit-new-commande': submitNewCommande(); break;
     case 'move-commande': moveCommande(el.dataset.id, Number(el.dataset.dir)); break;
     case 'delete-commande': deleteCommande(el.dataset.id); break;
+    case 'mark-pret-expedition': markCommandePretExpedition(el.dataset.cid); break;
     case 'add-op': addOpToCommande(el.dataset.cid); break;
     case 'remove-op': removeOpFromCommande(el.dataset.cid, el.dataset.oid); break;
     case 'reset-op-override': resetOpOverride(el.dataset.cid, el.dataset.oid); break;
@@ -8201,6 +8263,7 @@ function dispatchChangeAction(el, action){
     case 'toggle-machine-fusionnable': toggleMachineFusionnable(el.dataset.id, el.checked); break;
     case 'toggle-fusion-item': toggleFusionItem(el.dataset.key, el.dataset.oid, el.checked); break;
     case 'toggle-module-conges': toggleModuleConges(el.checked); break;
+    case 'toggle-module-expedition': toggleModuleExpedition(el.checked); break;
     case 'toggle-temps-prod-visibility': toggleTempsProdVisibility(el.dataset.userId); break;
     case 'toggle-user-lunch': toggleUserLunchActive(el.dataset.userId, el.checked); break;
     case 'toggle-user-horaire': toggleUserHoraireActive(el.dataset.userId, el.checked); break;
