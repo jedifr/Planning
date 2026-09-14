@@ -35,6 +35,7 @@ cache a déjà provoqué de fausses pistes de débogage.
 | `auth.js` | Sessions (express-session), bcryptjs, rôles, réinitialisation de mot de passe. |
 | `backup.js` | Sauvegarde automatique par e-mail (nodemailer). |
 | `sessionHistory.js` | Historique des sessions de travail archivées (voir plus bas). |
+| `previsionHistory.js` | Historique des prévisions du moteur avant clôture d'une tâche (voir plus bas). |
 
 Base SQLite, trois tables : `app_state` (l'état entier en JSON + numéro de version), `users`,
 et `session_history` (voir ci-dessous). Volume Docker nommé `planning-data`.
@@ -56,7 +57,7 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
   (minutes), `quantite`, `statut`, `phase`, `manualStart`, `dureeOverrideH`,
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
   `fusionGroupId`, `fusionPinned`, `sousTraitance`, `dateDebutPossible`,
-  `autoPausedOperators`, `numeroLigne` (voir section dédiée plus bas)
+  `autoPausedOperators`, `numeroLigne`, `previsionAvantCloture` (voir sections dédiées plus bas)
   - `sousTraitance` se coche **automatiquement** (jamais décoché automatiquement) dès que le poste
     choisi pour la ligne a un nom contenant "sous-traitance"/"sous traitance"
     (`machineNameLooksLikeSousTraitance`) — dans `updateOpField` (ligne d'une commande existante) et
@@ -146,6 +147,41 @@ ouvertes (`.filter(s=>!s.fin).forEach(...)`), jamais une seule (`.find(s=>!s.fin
 session d'un second opérateur resterait ouverte indéfiniment. La reprise automatique après pause
 déjeuner rouvre une session par opérateur qui était en train de travailler (`autoPausedOperators`,
 peuplé à la pause, vidé à la reprise), pas une seule.
+
+## Historique des prévisions avant clôture (`prevision_history`)
+
+Une fois une pièce marquée `termine`, `computeSchedule` ancre définitivement `start`/`end` sur ses
+horaires réels (`debutReel`/`finReel`, voir « Moteur de planification » plus bas) — **la dernière
+estimation que le moteur avait calculée juste avant** (ce qu'il "prévoyait" avant que ce soit fini)
+n'est alors conservée nulle part : une fois la pièce clôturée, il n'y a plus rien à comparer au réel
+(constaté en simplifiant l'affichage de la page « ⚠️ Risques de retard » à 2 colonnes Début/Fin,
+voir plus bas). Cette table, sur le même principe que `session_history` (table SQLite **séparée**,
+jamais incluse dans `app_state` ni dans la synchro habituelle), corrige ça.
+
+- `pieces[].previsionAvantCloture` (`{ debut, fin } | null`) — posé par `applySingleStatusChange`
+  **au moment précis** de la transition vers `termine`, à partir du planning d'AVANT cette mutation
+  (`getSchedule()` appelé par `setOpStatut` avant de rien modifier, comme `plannedEndsBefore` déjà
+  utilisé pour le toast "terminée en avance" — mêmes données de départ, portée plus large : calculé
+  quel que soit le statut précédent, pas seulement `en_cours`/`en_pause`). Ce champ est purement
+  transitoire côté client, jamais affiché directement : uniquement lu par `archivePrevisionHistory`.
+  `migrateState` l'initialise à `null` sur les pièces existantes.
+- `archivePrevisionHistory(st)` (async) — même robustesse que `archiveOldSessions` : balaie les
+  pièces `termine` avec un `previsionAvantCloture` posé, les envoie à `POST /api/prevision-history`,
+  et **ne vide `previsionAvantCloture` qu'une fois le serveur confirmé (`res.ok`)** — un échec réseau
+  laisse le champ en place, retenté au prochain démarrage (appelée juste après `archiveOldSessions`
+  dans `startApp`). Idempotent côté serveur (`INSERT OR IGNORE` sur un index unique
+  `piece_id, COALESCE(fin_reel,'')`) : une pièce rouverte (`↺ Rouvrir`) puis re-clôturée produit une
+  nouvelle ligne (nouveau `fin_reel`), jamais un doublon de la même clôture renvoyée deux fois.
+- Chaque ligne porte `prevu_debut`/`prevu_fin` (la prévision archivée) **et** `debut_reel`/`fin_reel`
+  (recopiés au moment de l'archivage) côte à côte, pour comparer sans avoir à recouper avec l'état
+  applicatif au moment de la lecture.
+- `GET /api/prevision-history/:cid/:oid` existe (même forme que son équivalent `session_history`)
+  mais n'est consommé par aucune page pour l'instant — l'archivage seul répondait à la demande
+  initiale ("ne pas casser le suivi" en simplifiant l'affichage) ; une future page pourrait afficher
+  prévu vs réel même sur une tâche déjà terminée, mais reste à faire.
+- Comme pour `session_history`, ajoutée à la copie en mémoire de `app_state` juste avant l'envoi des
+  sauvegardes (`/api/backup/test` et le planificateur) — jamais réenregistrée dans `app_state`
+  lui-même.
 
 ## Congés
 
@@ -610,7 +646,9 @@ onglet (`currentPage==='risques'`, bouton dans `renderHeader`) qui réunit ça d
     `computeSchedule` ancre déjà `start`/`end` sur `debutReel`/`finReel` (voir plus haut) : les deux
     colonnes affichent alors « réalisé », ce qui explique pourquoi une ancienne version affichant
     séparément « prévu » et « réel » les montrait toujours identiques sur une ligne terminée — pas un
-    bug, un artefact du moteur qu'il valait mieux ne plus afficher en double.
+    bug, un artefact du moteur qu'il valait mieux ne plus afficher en double. Ce même artefact est
+    ce qui a motivé l'archivage `prevision_history` (voir plus haut) : sans lui, la dernière
+    estimation avant clôture serait perdue pour toujours, pas seulement plus affichée en double ici.
   - **Blocage inter-commandes** (`buildMachineTimelines(schedule)`/`machineNeighbors(byMachine,
     machineId, pieceId)`) — dimension différente de la chaîne de phases ci-dessus (qui ne regarde que
     la même pièce dans la même commande) : sur le poste de l'étape bloquante, identifie, TOUTES

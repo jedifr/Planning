@@ -746,7 +746,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1222,6 +1222,7 @@ function migrateState(st){
       if(o.matiere === undefined) o.matiere = '';
       if(o.epaisseur === undefined) o.epaisseur = '';
       if(o.numeroLigne === undefined) o.numeroLigne = null;
+      if(o.previsionAvantCloture === undefined) o.previsionAvantCloture = null;
       if(o.fusionGroupId === undefined) o.fusionGroupId = null;
       if(o.fusionPinned === undefined){
         // Migration unique : jusqu'ici, un groupe fusionné était TOUJOURS figé (manualStart) une
@@ -4021,6 +4022,42 @@ async function archiveOldSessions(st){
   candidates.forEach(({ o }) => { o.sessions = []; });
   return true;
 }
+// Historise, dans une table serveur séparée (jamais synchronisée dans app_state, même principe que
+// session_history), la dernière estimation du moteur juste avant qu'une pièce passe Terminée
+// (o.previsionAvantCloture, posé par applySingleStatusChange à partir du planning d'AVANT la
+// clôture). Sans cet archivage, cette estimation serait perdue pour toujours dès la clôture : le
+// moteur ancre alors start/end sur les horaires réels, il n'y a plus de "prévu" à lire nulle part
+// (voir CLAUDE.md, page Risques de retard). Même robustesse que archiveOldSessions : n'efface
+// previsionAvantCloture qu'une fois l'archivage confirmé par le serveur, retenté au prochain
+// démarrage sinon.
+async function archivePrevisionHistory(st){
+  const candidates = []; // { o, entry }
+  const sweep = (commandes) => {
+    (commandes||[]).forEach(c => c.pieces.forEach(o => {
+      if(o.statut === 'termine' && o.previsionAvantCloture){
+        const m = st.machines.find(mm=>mm.id===o.machineId);
+        candidates.push({ o, entry: {
+          commandeId: c.id, pieceId: o.id, commandeNom: c.nom, refClient: c.refClient||'',
+          piece: o.piece, etape: o.etape, machineNom: m?m.nom:'',
+          prevuDebut: o.previsionAvantCloture.debut, prevuFin: o.previsionAvantCloture.fin,
+          debutReel: o.debutReel, finReel: o.finReel
+        }});
+      }
+    }));
+  };
+  sweep(st.commandes);
+  sweep(st.commandesArchivees);
+  if(!candidates.length) return false;
+  try{
+    const res = await fetch('/api/prevision-history', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries: candidates.map(cand => cand.entry) })
+    });
+    if(!res.ok) return false;
+  }catch(e){ return false; }
+  candidates.forEach(({ o }) => { o.previsionAvantCloture = null; });
+  return true;
+}
 function isInPauseWindow(op, now, st){
   const cfg = configForPiece(op, st);
   const pause = pauseWindowFor(now, cfg);
@@ -4150,8 +4187,12 @@ function renderPausedTasksBanner(){
 }
 // Applique un changement de statut à UNE pièce précise (logique inchangée, extraite pour pouvoir
 // être rejouée sur chaque pièce d'un groupe fusionné). `plannedEndBefore` sert uniquement à détecter
-// une fin en avance ; passé pré-calculé par l'appelant.
-function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore){
+// une fin en avance ; `previsionAvant` (dernière position calculée par le moteur juste avant cette
+// clôture, quel que soit le statut précédent) sert à historiser prévu vs réel (voir CLAUDE.md,
+// archivePrevisionHistory) — sans elle, cette estimation serait perdue dès que le moteur ancre
+// start/end sur les horaires réels. Les deux sont pré-calculés par l'appelant, sur le planning
+// d'AVANT la mutation.
+function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, previsionAvant){
   const prev = o.statut;
   if(!o.sessions) o.sessions = [];
 
@@ -4219,6 +4260,11 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore){
       o.debutReel = passedH > 0 ? toInputValue(new Date(new Date(nowStr).getTime() - passedH*3600000)) : nowStr;
     }
     o.finReel = nowStr;
+    if(previsionAvant && previsionAvant.start && previsionAvant.end){
+      // Balayé et envoyé au serveur par archivePrevisionHistory (jamais synchronisé dans app_state
+      // au-delà de ce sweep, comme sessions[] pour session_history) : purement transitoire ici.
+      o.previsionAvantCloture = { debut: toInputValue(previsionAvant.start), fin: toInputValue(previsionAvant.end) };
+    }
     if(m){
       const now = new Date();
       const currentDispo = new Date(m.dispo);
@@ -4292,21 +4338,25 @@ function setOpStatut(cid, oid, newStatut){
   }
 
   const plannedEndsBefore = {};
+  // Dernière position calculée par le moteur avant la clôture, quel que soit le statut précédent
+  // (contrairement à plannedEndsBefore ci-dessus, réservé à la détection "terminée en avance" pour
+  // une tâche déjà en_cours) — sert uniquement à l'historisation prévu/réel, voir
+  // applySingleStatusChange/archivePrevisionHistory.
+  const previsionsAvant = {};
   if(newStatut === 'termine'){
     const scheduleBefore = getSchedule();
     group.forEach(({cc, oo}) => {
-      if(oo.statut === 'en_cours' || oo.statut === 'en_pause'){
-        const cBefore = scheduleBefore.find(x=>x.id===cc.id);
-        const opBefore = cBefore && cBefore.pieces.find(p=>p.id===oo.id);
-        if(opBefore && opBefore.end) plannedEndsBefore[oo.id] = opBefore.end;
-      }
+      const cBefore = scheduleBefore.find(x=>x.id===cc.id);
+      const opBefore = cBefore && cBefore.pieces.find(p=>p.id===oo.id);
+      if(opBefore && opBefore.start && opBefore.end) previsionsAvant[oo.id] = { start: opBefore.start, end: opBefore.end };
+      if((oo.statut === 'en_cours' || oo.statut === 'en_pause') && opBefore && opBefore.end) plannedEndsBefore[oo.id] = opBefore.end;
     });
   }
 
   const nowStr = toInputValue(new Date());
   let maxAdvanceH = 0;
   group.forEach(({cc, oo}) => {
-    const diffH = applySingleStatusChange(cc, oo, newStatut, nowStr, plannedEndsBefore[oo.id]);
+    const diffH = applySingleStatusChange(cc, oo, newStatut, nowStr, plannedEndsBefore[oo.id], previsionsAvant[oo.id]);
     if(diffH && diffH > maxAdvanceH) maxAdvanceH = diffH;
   });
   if(maxAdvanceH > 0){
@@ -9379,6 +9429,7 @@ async function startApp(){
   if(applyAutoPauseResume(state)) queueSilentSave(); // rattrape le cas où la page est ouverte en pleine pause déjeuner
   if(backfillDureeReelle(state)) queueSilentSave(); // fige le temps réellement passé sur les pièces déjà terminées
   if(await archiveOldSessions(state)) queueSilentSave(); // archive puis vide sessions[], seulement une fois l'archivage confirmé par le serveur
+  if(await archivePrevisionHistory(state)) queueSilentSave(); // idem pour la dernière prévision du moteur avant clôture (voir CLAUDE.md)
   if(state.config.archiveAutoActive && archiveOldCommandes(state)) queueSilentSave(); // écarte les commandes terminées depuis longtemps du moteur de planification
   if(justRanImplicitDepsMigration) queueSilentSave(); // fige la migration des dépendances implicites côté serveur, pour tous les postes
   render();
