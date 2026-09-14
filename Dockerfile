@@ -12,6 +12,7 @@ COPY backup.js ./
 COPY auth.js ./
 COPY license.js ./
 COPY sessionHistory.js ./
+COPY previsionHistory.js ./
 COPY Cfg_backup.yml ./
 COPY Cfg_admin.yml ./
 COPY public ./public

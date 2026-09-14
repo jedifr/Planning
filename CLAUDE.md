@@ -780,6 +780,17 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   position de chaque colonne autour de `render()`. Réflexe : tout nouveau conteneur à défilement
   indépendant qui survit visuellement à un `render()` (et pas seulement les pop-up/modales, déjà
   couvertes) a besoin du même traitement capture-avant/restaure-après.
+- **Nouveau module serveur oublié dans le `Dockerfile`.** Contrairement à `public/` (copié en bloc,
+  `COPY public ./public`), les fichiers serveur sont copiés **un par un** (`COPY sessionHistory.js
+  ./`, etc.) — pas de `COPY . .`. Ajouter un `require('./monModule')` dans `server.js` sans ajouter
+  la ligne `COPY monModule.js ./` correspondante passe la vérification syntaxique locale
+  (`node --check`) et tous les tests, mais fait planter le conteneur au démarrage une fois déployé
+  (`Error: Cannot find module './monModule'`) — le fichier n'existe simplement pas dans l'image,
+  aucun moyen de le détecter sans reconstruire l'image (bug réel : `previsionHistory.js`, requis par
+  `server.js` mais absent du `Dockerfile`, a cassé le conteneur en production). Réflexe : tout
+  nouveau fichier `.js` à la racine requis par `server.js` doit être ajouté au `Dockerfile` dans le
+  même commit — vérifier après coup avec `grep -oE "require\('\./[a-zA-Z]+'\)" server.js` comparé à
+  `grep "^COPY" Dockerfile`, les deux listes doivent se correspondre.
 
 ## Conventions
 
