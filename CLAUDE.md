@@ -175,10 +175,16 @@ jamais incluse dans `app_state` ni dans la synchro habituelle), corrige ça.
 - Chaque ligne porte `prevu_debut`/`prevu_fin` (la prévision archivée) **et** `debut_reel`/`fin_reel`
   (recopiés au moment de l'archivage) côte à côte, pour comparer sans avoir à recouper avec l'état
   applicatif au moment de la lecture.
-- `GET /api/prevision-history/:cid/:oid` existe (même forme que son équivalent `session_history`)
-  mais n'est consommé par aucune page pour l'instant — l'archivage seul répondait à la demande
-  initiale ("ne pas casser le suivi" en simplifiant l'affichage) ; une future page pourrait afficher
-  prévu vs réel même sur une tâche déjà terminée, mais reste à faire.
+- `GET /api/prevision-history/:cid/:oid` (même forme que son équivalent `session_history`) est
+  consommé par la pop-up « Détail des horaires » (`renderTempsProdSessionModal`, onglet Temps de
+  production) : section « Prévu vs réalisé » affichée pour une pièce `termine`, sur le même schéma
+  de chargement à la demande que `session_history` (`tempsProdPrevisionCache`, clé `"cid|oid"`,
+  `loadTempsProdPrevision`). `previsionForCurrentClosure(o, cid, oid)` retrouve l'entrée pertinente :
+  `o.previsionAvantCloture` local (pas encore archivé) prime sur l'historique serveur ; sinon
+  recherche, dans l'historique, l'entrée dont `finReel` correspond exactement à la clôture
+  **actuelle** de la pièce (`o.finReel`) — une pièce rouverte (`↺ Rouvrir`) puis re-clôturée plusieurs
+  fois a plusieurs entrées, seule celle de la clôture en cours est affichée. Sans correspondance
+  (tâche terminée avant l'introduction de ce suivi) : message explicite plutôt qu'une section vide.
 - Comme pour `session_history`, ajoutée à la copie en mémoire de `app_state` juste avant l'envoi des
   sauvegardes (`/api/backup/test` et le planificateur) — jamais réenregistrée dans `app_state`
   lui-même.
@@ -289,6 +295,17 @@ par `computeProductionTimeByUser` :
   la fois par `configForPiece` (poste en base, pour planifier une pièce) et `baseConfigForUser`
   (horaire d'atelier `st.config` en base, pour estimer la présence théorique) — même règle de
   surcharge dans les deux cas, ne jamais la dupliquer une troisième fois.
+  - **Horaire personnalisé (`horaireActif`) et vendredi.** Un seul couple `heureDebut`/`heureFin`
+    dans ce réglage (pas de variante « vendredi » dédiée). Appliquer `workingHours` (calculé à
+    partir de ce couple) tel quel à `friHours` était un bug réel (présence théorique de 8-9h
+    affichée un vendredi pour une personne avec horaire personnalisé, alors que l'atelier n'ouvre
+    que 4h ce jour-là pour tout le monde) : `friHours` doit suivre le **même ratio** que celui de
+    l'atelier entre un jour normal et le vendredi (`friHours/monThuHours` d'origine, calculé
+    **avant** d'écraser ces deux champs), jamais un report identique ni une simple conservation de
+    la valeur atelier telle quelle. Si l'atelier ne raccourcit pas le vendredi (`friHours ===
+    monThuHours`, ratio 1), l'horaire personnalisé continue de s'appliquer identiquement les 5
+    jours — cas réel couvert par ailleurs (une personne à temps partiel travaillant les mêmes
+    heures réduites toute la semaine, y compris le vendredi).
 - `theoreticalPresenceHoursForUser(userId, st, periodStart, periodEnd)` — somme les horaires
   nominaux (`dayHoursFor`) de chaque jour ouvré (lun-ven, hors jours fériés français via
   `isFrenchPublicHoliday`) de la période, moins les jours couverts par un congé **approuvé**
@@ -791,6 +808,21 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   nouveau fichier `.js` à la racine requis par `server.js` doit être ajouté au `Dockerfile` dans le
   même commit — vérifier après coup avec `grep -oE "require\('\./[a-zA-Z]+'\)" server.js` comparé à
   `grep "^COPY" Dockerfile`, les deux listes doivent se correspondre.
+- **Surcharge horaire personnalisée appliquée à l'identique un jour particulier.**
+  `applyUserLunchOverride` (horaire propre à une personne, un seul couple `heureDebut`/`heureFin`,
+  pas de variante par jour) écrasait `friHours` avec la même valeur que `monThuHours` — une personne
+  avec un horaire personnalisé affichait alors la même présence théorique un vendredi qu'un jour
+  normal, alors que l'atelier peut fermer bien plus tôt ce jour-là pour tout le monde (bug réel,
+  signalé par une présence théorique de 8-9h un vendredi au lieu des ~4h attendues). Corrigé en
+  reportant sur `friHours` le même **ratio** que celui de l'atelier entre un jour normal et le
+  vendredi (`friHours/monThuHours` d'origine), jamais une simple copie ni un report identique — une
+  correction plus naïve (ex. laisser `friHours` intact, non modifié par la surcharge) casserait à son
+  tour le cas où l'atelier ne distingue PAS le vendredi (`friHours===monThuHours` à la base) : une
+  personne à temps partiel travaillant les mêmes heures réduites toute la semaine doit alors garder
+  ce même horaire le vendredi aussi. Réflexe : toute nouvelle surcharge horaire (personne, poste...)
+  qui touche à un champ décliné par jour de la semaine (`monThuHours`/`friHours`) doit préserver le
+  ratio entre les jours plutôt que d'en écraser un avec la valeur d'un autre, ou de le laisser
+  totalement intact en ignorant la surcharge.
 
 ## Conventions
 

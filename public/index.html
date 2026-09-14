@@ -746,7 +746,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.5.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -2007,7 +2007,17 @@ function applyUserLunchOverride(cfg, userId, st){
       const totalMin = (eh*60 + (em||0)) - (sh*60 + (sm||0));
       const pauseMin = pauseWindowsFor(new Date(2000,0,3), result).reduce((s,w) => s + (w.end.getTime()-w.start.getTime())/60000, 0);
       const workingHours = Math.max(0, (totalMin - pauseMin) / 60);
-      result = { ...result, startHour: sh, startMinute: sm||0, monThuHours: workingHours, friHours: workingHours };
+      // Un seul couple heureDebut/heureFin dans ce réglage (pas de variante "vendredi" dédiée) :
+      // appliqué tel quel à friHours, une personne avec un horaire personnalisé se retrouvait avec
+      // le MÊME nombre d'heures un vendredi qu'un jour normal, même quand l'atelier ferme plus tôt
+      // ce jour-là pour tout le monde (bug réel : présence théorique de 8-9h affichée un vendredi,
+      // au lieu des heures vendredi configurées). Corrigé en reportant sur friHours le même RATIO
+      // que celui de l'atelier entre un jour normal et le vendredi (friHours/monThuHours d'origine)
+      // — jamais un simple report de friHours tel quel : si l'atelier ne raccourcit PAS le vendredi
+      // (friHours===monThuHours, ratio 1), l'horaire personnalisé doit s'appliquer identiquement les
+      // 5 jours, comme avant cette correction.
+      const friRatio = result.monThuHours > 0 ? (result.friHours / result.monThuHours) : 1;
+      result = { ...result, startHour: sh, startMinute: sm||0, monThuHours: workingHours, friHours: workingHours * friRatio };
     }
   }
   return result;
@@ -6096,6 +6106,11 @@ let tempsProdSessionModal = null; // { cid, oid }
 // Clé "cid|oid" -> tableau de sessions archivées ({debut,fin}), ou null pendant le chargement.
 // Absent tant qu'aucune demande n'a été faite pour cette pièce.
 let tempsProdHistoryCache = {};
+// Idem pour l'historique des prévisions avant clôture (voir CLAUDE.md, prevision_history) — tableau
+// d'entrées ({prevuDebut,prevuFin,debutReel,finReel}), une par clôture réelle de la pièce (une pièce
+// rouverte puis re-clôturée en a plusieurs). Seule celle dont finReel correspond à la clôture
+// ACTUELLE de la pièce (o.finReel) est affichée, voir previsionForCurrentClosure.
+let tempsProdPrevisionCache = {};
 function showTempsProdSessions(cid, oid){
   tempsProdSessionModal = { cid, oid };
   render();
@@ -6105,6 +6120,12 @@ function showTempsProdSessions(cid, oid){
   // Pas la peine d'interroger le serveur si les sessions sont encore là localement, ou si on les a déjà.
   if(o && (!o.sessions || !o.sessions.length) && tempsProdHistoryCache[key] === undefined){
     loadTempsProdHistory(cid, oid);
+  }
+  // Idem pour le prévu/réalisé : uniquement pertinent pour une pièce Terminée, et seulement si sa
+  // dernière prévision n'est plus disponible localement (déjà archivée et purgée par
+  // archivePrevisionHistory — voir CLAUDE.md).
+  if(o && o.statut==='termine' && !o.previsionAvantCloture && tempsProdPrevisionCache[key] === undefined){
+    loadTempsProdPrevision(cid, oid);
   }
 }
 function closeTempsProdSessions(){ tempsProdSessionModal = null; render(); }
@@ -6119,6 +6140,29 @@ async function loadTempsProdHistory(cid, oid){
   }catch(e){ /* silencieux : la pop-up retombera sur le bilan global (debutReel/finReel) */ }
   tempsProdHistoryCache[key] = entries;
   if(tempsProdSessionModal && tempsProdSessionModal.cid===cid && tempsProdSessionModal.oid===oid) render();
+}
+async function loadTempsProdPrevision(cid, oid){
+  const key = cid+'|'+oid;
+  tempsProdPrevisionCache[key] = null; // en cours de chargement
+  if(tempsProdSessionModal && tempsProdSessionModal.cid===cid && tempsProdSessionModal.oid===oid) render();
+  let entries = [];
+  try{
+    const res = await fetch(`/api/prevision-history/${encodeURIComponent(cid)}/${encodeURIComponent(oid)}`, { credentials:'include' });
+    if(res.ok){ const json = await res.json(); entries = json.entries || []; }
+  }catch(e){ /* silencieux : la pop-up affichera simplement "non disponible" */ }
+  tempsProdPrevisionCache[key] = entries;
+  if(tempsProdSessionModal && tempsProdSessionModal.cid===cid && tempsProdSessionModal.oid===oid) render();
+}
+// La pièce peut avoir été rouverte puis re-clôturée plusieurs fois : seule l'entrée dont finReel
+// correspond à la clôture ACTUELLE (o.finReel) est pertinente, pas la première ni la dernière au
+// hasard. previsionAvantCloture (encore présent localement, pas encore balayé par
+// archivePrevisionHistory) prime sur l'historique serveur — mêmes données, pas la peine d'attendre
+// la requête réseau si on les a déjà sous la main.
+function previsionForCurrentClosure(o, cid, oid){
+  if(o.previsionAvantCloture) return { prevuDebut: o.previsionAvantCloture.debut, prevuFin: o.previsionAvantCloture.fin };
+  const history = tempsProdPrevisionCache[cid+'|'+oid];
+  if(!Array.isArray(history)) return null;
+  return history.find(h => h.finReel === o.finReel) || null;
 }
 // Rendu commun à une liste de sessions {debut,fin,operatorUserId} — qu'elles viennent de
 // sessions[] (tâche encore en cours/en pause) ou de l'historique archivé côté serveur (tâche déjà
@@ -6199,6 +6243,37 @@ function renderTempsProdSessionModal(){
   const purgedNote = (!o.sessions || !o.sessions.length) && !historyUsed
     ? `<div class="footer-note" style="text-align:left; margin-top:10px;">Détail des reprises/pauses non disponible pour cette tâche (terminée avant la mise en place de l'historique) : seul le bilan global a été conservé. Le début et la fin peuvent être à plusieurs jours d'écart (nuits, week-end, pauses) — seule la durée indiquée correspond au temps de travail réellement compté.</div>`
     : '';
+  // Prévu (dernière estimation du moteur avant clôture) vs réalisé — voir CLAUDE.md,
+  // prevision_history. Uniquement pertinent pour une pièce Terminée ; une tâche encore en cours
+  // n'a par définition pas encore de "réalisé" à comparer.
+  let previsionBlock = '';
+  if(o.statut === 'termine'){
+    const prevision = previsionForCurrentClosure(o, cid, oid);
+    if(prevision){
+      const prevuDebut = new Date(prevision.prevuDebut);
+      const prevuFin = new Date(prevision.prevuFin);
+      const finReelD = o.finReel ? new Date(o.finReel) : null;
+      const ecartH = finReelD ? (finReelD - prevuFin) / 3600000 : null;
+      const ecartLabel = ecartH == null ? ''
+        : ecartH > 0.05 ? `Terminée avec ${durationLabel(ecartH)} de retard sur la dernière estimation.`
+        : ecartH < -0.05 ? `Terminée avec ${durationLabel(-ecartH)} d'avance sur la dernière estimation.`
+        : 'Terminée pile à l\'heure estimée.';
+      previsionBlock = `
+        <div class="modal-section-title" style="margin-top:14px;">Prévu vs réalisé</div>
+        <table class="ops-table">
+          <thead><tr><th></th><th>Début</th><th>Fin</th></tr></thead>
+          <tbody>
+            <tr><td>Dernière estimation avant clôture</td><td>${formatDT(prevuDebut)}</td><td>${formatDT(prevuFin)}</td></tr>
+            <tr><td>Réalisé</td><td>${o.debutReel?formatDT(new Date(o.debutReel)):'—'}</td><td>${o.finReel?formatDT(new Date(o.finReel)):'—'}</td></tr>
+          </tbody>
+        </table>
+        ${ecartLabel ? `<div class="footer-note" style="text-align:left; margin-top:4px;">${ecartLabel}</div>` : ''}`;
+    } else if(tempsProdPrevisionCache[cid+'|'+oid] === null){
+      previsionBlock = `<div class="footer-note" style="text-align:left; margin-top:14px;">Chargement de la comparaison prévu/réalisé…</div>`;
+    } else if(Array.isArray(tempsProdPrevisionCache[cid+'|'+oid])){
+      previsionBlock = `<div class="footer-note" style="text-align:left; margin-top:14px;">Comparaison prévu/réalisé non disponible pour cette tâche (terminée avant l'introduction de ce suivi).</div>`;
+    }
+  }
   return `<div class="modal-overlay">
     <div class="modal-box" role="dialog" aria-modal="true">
       <div class="modal-head">
@@ -6213,6 +6288,7 @@ function renderTempsProdSessionModal(){
           <tbody>${rows || `<tr><td colspan="5" style="text-align:center; color:var(--text-faint);">Aucun horaire enregistré</td></tr>`}</tbody>
         </table>
         ${purgedNote}
+        ${previsionBlock}
       </div>
     </div>
   </div>`;
