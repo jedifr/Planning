@@ -56,7 +56,7 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
   (minutes), `quantite`, `statut`, `phase`, `manualStart`, `dureeOverrideH`,
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
   `fusionGroupId`, `fusionPinned`, `sousTraitance`, `dateDebutPossible`,
-  `autoPausedOperators`
+  `autoPausedOperators`, `numeroLigne` (voir section dédiée plus bas)
   - `sousTraitance` se coche **automatiquement** (jamais décoché automatiquement) dès que le poste
     choisi pour la ligne a un nom contenant "sous-traitance"/"sous traitance"
     (`machineNameLooksLikeSousTraitance`) — dans `updateOpField` (ligne d'une commande existante) et
@@ -408,6 +408,59 @@ volontairement la même zone (regroupement manuel de petites affaires dans un m�
     `pretExpedition` encore `false`.
   - `assignStorageZone`/`setCommandeZone` n'ont pas besoin d'être modifiés : ils lisent déjà
     `occupiedStorageZones`/`commandesInZone`, qui portent maintenant la nouvelle règle.
+
+## Numéro de ligne et doublons d'import
+
+Certains GPAO clients (ex. export "CodeOF" du type `C026-0721/001`) numérotent chaque ligne d'une
+commande, et peuvent légitimement demander la **même** pièce/étape deux fois sous deux numéros
+différents — typiquement deux lots de la même référence à livrer à des dates distinctes. Sans le
+savoir, ce n'est indiscernable d'un doublon accidentel.
+
+- `pieces[].numeroLigne` (chaîne ou `null`) — le numéro de ligne d'origine (ex. `"001"`), purement
+  informatif : n'entre dans aucun calcul du moteur de planification (pas de tri, pas de dépendance),
+  seulement dans la détection de doublon (voir ci-dessous) et l'affichage.
+- **Import personnalisé** : quand la case « Découper sur le dernier "/" » est cochée sur la colonne
+  Référence (`map.referenceSplitSlash`), le suffixe qui était jusqu'ici simplement jeté (`"001"` dans
+  `"C026-0721/001"`) est désormais conservé comme `numeroLigne` (`transformCustomRow`, colonne
+  canonique `'NumeroLigne'`) plutôt que perdu.
+- **Import standard (Excel)** : colonne optionnelle reconnue par `normalizeHeaderKey` sous les noms
+  « Numéro de ligne »/« N° ligne »/etc. — absente, `numeroLigne` reste `null`, comportement inchangé.
+- `buildImportGroups` — la détection de doublon (`pieceKey`) inclut désormais `numeroLigne` en plus
+  de pièce/étape : **deux lignes identiques mais de numéros de ligne différents ne sont plus
+  traitées comme un doublon** (bug réel corrigé : la seconde occurrence, avec sa propre échéance,
+  était auparavant silencieusement ignorée — `duplicateLines`). Un vrai doublon (même numéro de
+  ligne aussi) reste détecté et ignoré comme avant.
+- `pieceDupKey(piece, etape, machineId, numeroLigne)` — même correctif appliqué à la détection de
+  doublon **manuelle** (création de commande `submitNewCommande`, toast d'avertissement
+  `updateOpField`) : sans `numeroLigne` dans la clé, saisir à la main deux lignes identiques à
+  l'exception du numéro de ligne aurait silencieusement perdu la seconde à la validation du
+  formulaire — même bug que côté import, corrigé au même endroit.
+- Affiché et éditable (`data-field="numeroLigne"`, via `updateOpField`/`updateDraftOpField` comme
+  n'importe quel autre champ texte) : petit champ sous "Pièce" dans le tableau des tâches
+  (`renderOpsRow`) et dans le formulaire "Nouvelle commande" ; suffixe `(n°XXX)` sur le titre d'une
+  carte Kanban non fusionnée (jamais sur une carte fusionnée multi-pièces, même raison que pour la
+  zone de stockage : afficher un seul numéro serait trompeur pour les autres membres) ; colonne
+  dédiée dans les trois tableaux de détail d'un regroupement fusionné (groupes déjà fusionnés,
+  regroupements possibles par matière/épaisseur, pop-up de détail d'un groupe) — **une pièce
+  fusionnée garde son propre numéro de ligne**, jamais écrasé par la fusion, exactement ce qui
+  permet de fusionner deux lots de numéros différents (ex. pour les découper ensemble) tout en
+  distinguant encore lequel est lequel.
+- **Limite connue, non traitée** : `dateBesoin` reste un champ de la **commande**, pas de la pièce
+  (voir modèle de données) — si deux lignes de numéros différents ont des échéances distinctes dans
+  le fichier source, seule celle de la première ligne rencontrée pour cette référence est retenue
+  comme échéance de la commande entière. Aller plus loin (échéance par numéro de ligne) demanderait
+  de faire éclater ces numéros en commandes distinctes plutôt que de les regrouper sous une seule
+  référence — changement de modèle de données plus large, pas fait ici.
+
+## Dates flexibles à l'import
+
+`parseFlexibleDate(raw)` accepte, en plus d'un objet `Date` déjä résolu (cellule Excel réellement
+typée date) et du format ISO `AAAA-MM-JJ` : `JJ/MM/AAAA` **et** `JJ/MM/AA` (année sur 2 chiffres,
+ex. `"03/12/26"`) indifféremment — un même fichier ou des exports successifs du même GPAO client
+peuvent changer de format de date sans prévenir. L'année sur 2 chiffres est **toujours** interprétée
+comme `20XX` (jamais `19XX`) : l'application ne planifie jamais dans le siècle précédent, pas besoin
+d'une logique de pivot plus fine. Une date invalide (ex. 31 février) est rejetée dans les deux
+formats, comme avant.
 
 ## Moteur de planification — `computeSchedule(st)`
 

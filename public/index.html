@@ -382,7 +382,7 @@
   .year-legend .sw{width:10px;height:10px;border-radius:1px;}
 
   .draft-op-row{
-    display:grid; grid-template-columns: 1.1fr 1fr 1.1fr 1fr 0.7fr 0.55fr 0.65fr 0.55fr 0.95fr auto; gap:8px; align-items:end;
+    display:grid; grid-template-columns: 1.1fr 0.5fr 1fr 1.1fr 1fr 0.7fr 0.55fr 0.65fr 0.55fr 0.95fr auto; gap:8px; align-items:end;
     padding:9px 0; border-bottom:1px dashed var(--line-soft);
   }
   .draft-op-row:last-child{border-bottom:none;}
@@ -1204,6 +1204,7 @@ function migrateState(st){
       if(o.sousTraitance === undefined) o.sousTraitance = false;
       if(o.matiere === undefined) o.matiere = '';
       if(o.epaisseur === undefined) o.epaisseur = '';
+      if(o.numeroLigne === undefined) o.numeroLigne = null;
       if(o.fusionGroupId === undefined) o.fusionGroupId = null;
       if(o.fusionPinned === undefined){
         // Migration unique : jusqu'ici, un groupe fusionné était TOUJOURS figé (manualStart) une
@@ -2875,7 +2876,7 @@ async function testBackupNow(){
 
 function newDraft(){
   return { nom: '', refClient: '', dateBesoin: '', urgence: 'normale', _fusionGroups: [],
-    pieces: [ { id: uid('op'), piece: '', etape: '', machineId: state.machines[0] ? state.machines[0].id : '', tempsUnitaire: '', quantite: '1', phase: 1, dureeOverrideH: null, dateDebutPossible: null, operatorUserId: activeIdentityId() } ] };
+    pieces: [ { id: uid('op'), piece: '', etape: '', numeroLigne: '', machineId: state.machines[0] ? state.machines[0].id : '', tempsUnitaire: '', quantite: '1', phase: 1, dureeOverrideH: null, dateDebutPossible: null, operatorUserId: activeIdentityId() } ] };
 }
 // Regroupe, dans le formulaire de nouvelle commande, toutes les lignes déjà saisies qui visent le
 // même poste marqué "fusionnable" — la fusion réelle (mêmes id que ces lignes) n'est appliquée
@@ -2900,7 +2901,7 @@ function groupDraftRowsByPoste(){
 function toggleNewForm(){ showNewForm = !showNewForm; if(showNewForm && !draft) draft = newDraft(); render(); }
 function addDraftOp(){
   const prev = draft.pieces[draft.pieces.length-1];
-  draft.pieces.push({ id: uid('op'), piece:'', etape:'', machineId: state.machines[0]?state.machines[0].id:'', tempsUnitaire:'', quantite:'1', phase: prev ? (Number(prev.phase)||1)+1 : 1, dureeOverrideH: null, dateDebutPossible: null, operatorUserId: activeIdentityId() });
+  draft.pieces.push({ id: uid('op'), piece:'', etape:'', numeroLigne:'', machineId: state.machines[0]?state.machines[0].id:'', tempsUnitaire:'', quantite:'1', phase: prev ? (Number(prev.phase)||1)+1 : 1, dureeOverrideH: null, dateDebutPossible: null, operatorUserId: activeIdentityId() });
   render();
 }
 function removeDraftOp(idx){
@@ -2940,8 +2941,10 @@ function updateDraftOpDureeMin(idx, value){
 
 // Le poste fait partie de la clé : une même pièce/étape sur deux postes différents est une vraie
 // ligne distincte (ex. la même référence à découper ET à plier), pas un doublon accidentel — sans
-// ça, il fallait inventer une étape différente juste pour pouvoir saisir la seconde ligne.
-function pieceDupKey(piece, etape, machineId){ return (piece||'').trim().toLowerCase() + '|' + (etape||'').trim().toLowerCase() + '|' + (machineId||''); }
+// ça, il fallait inventer une étape différente juste pour pouvoir saisir la seconde ligne. Le numéro
+// de ligne (voir CLAUDE.md) en fait aussi partie, pour la même raison : deux lots de la même pièce/
+// étape/poste à produire à des dates différentes ne sont pas un doublon.
+function pieceDupKey(piece, etape, machineId, numeroLigne){ return (piece||'').trim().toLowerCase() + '|' + (etape||'').trim().toLowerCase() + '|' + (machineId||'') + '|' + (numeroLigne||'').trim().toLowerCase(); }
 function isTempsModified(o){
   if(o.tempsUnitaireTheorique==null) return false;
   return Math.abs(Number(o.tempsUnitaire) - Number(o.tempsUnitaireTheorique)) > 0.01;
@@ -3641,7 +3644,7 @@ function submitNewCommande(){
   const dedupedOps = [];
   let skippedInDraft = 0;
   validOps.forEach(o => {
-    const key = pieceDupKey(o.piece, o.etape, o.machineId);
+    const key = pieceDupKey(o.piece, o.etape, o.machineId, o.numeroLigne);
     if(seenInDraft.has(key)){ skippedInDraft++; return; }
     seenInDraft.add(key);
     dedupedOps.push(o);
@@ -3651,12 +3654,12 @@ function submitNewCommande(){
   const existing = state.commandes.find(c => c.nom.trim().toLowerCase() === nomTrim.toLowerCase());
 
   if(existing){
-    const seenExisting = new Set(existing.pieces.map(p => pieceDupKey(p.piece, p.etape, p.machineId)));
+    const seenExisting = new Set(existing.pieces.map(p => pieceDupKey(p.piece, p.etape, p.machineId, p.numeroLigne)));
     const existingMaxPhase = existing.pieces.reduce((mx,p) => Math.max(mx, Number(p.phase)||1), 1);
     const toAdd = [];
     const skippedNames = [];
     dedupedOps.forEach(o => {
-      const key = pieceDupKey(o.piece, o.etape, o.machineId);
+      const key = pieceDupKey(o.piece, o.etape, o.machineId, o.numeroLigne);
       if(seenExisting.has(key)){ skippedNames.push([o.piece.trim(), o.etape.trim()].filter(Boolean).join(' / ')); return; }
       seenExisting.add(key);
       toAdd.push({
@@ -3665,7 +3668,7 @@ function submitNewCommande(){
         manualStart: null, dureeOverrideH: null, debutReel: null, finReel: null, sessions: [], autoPaused: false,
         dependances: [], phase: (Number(o.phase)||1) + existingMaxPhase, // s'ajoute strictement après les phases déjà en place
         operatorUserId: o.operatorUserId || null, tempsUnitaireTheorique: Number(o.tempsUnitaire),
-        dateDebutPossible: o.dateDebutPossible || null, dureeReelleH: null
+        dateDebutPossible: o.dateDebutPossible || null, dureeReelleH: null, numeroLigne: o.numeroLigne || null
       });
     });
     if(toAdd.length === 0){
@@ -3710,7 +3713,7 @@ function submitNewCommande(){
       manualStart: null, dureeOverrideH: null, debutReel: null, finReel: null, sessions: [], autoPaused: false,
       dependances: [], phase: Number(o.phase) || 1, operatorUserId: o.operatorUserId || null,
       tempsUnitaireTheorique: Number(o.tempsUnitaire), dateDebutPossible: o.dateDebutPossible || null,
-      dureeReelleH: null
+      dureeReelleH: null, numeroLigne: o.numeroLigne || null
     }))
   };
   // Rejouable telle quelle sur une version fraîche en cas de conflit. Si, entre-temps, quelqu'un
@@ -3719,10 +3722,10 @@ function submitNewCommande(){
   const applyFn = (targetState) => {
     const already = targetState.commandes.find(c => c.id===newCmd.id || c.nom.trim().toLowerCase()===nomTrim.toLowerCase());
     if(already && already.id !== newCmd.id){
-      const seenNow = new Set(already.pieces.map(p=>pieceDupKey(p.piece,p.etape,p.machineId)));
+      const seenNow = new Set(already.pieces.map(p=>pieceDupKey(p.piece,p.etape,p.machineId,p.numeroLigne)));
       const maxPhaseNow = already.pieces.reduce((mx,p)=>Math.max(mx,Number(p.phase)||1),1);
       newCmd.pieces.forEach(p => {
-        const key = pieceDupKey(p.piece, p.etape, p.machineId);
+        const key = pieceDupKey(p.piece, p.etape, p.machineId, p.numeroLigne);
         if(seenNow.has(key)) return;
         seenNow.add(key);
         already.pieces.push({ ...p, phase: (Number(p.phase)||1) + maxPhaseNow });
@@ -3845,9 +3848,9 @@ function updateOpField(cid, oid, field, value){
     // ce n'est pas encore une "modification".
     o.tempsUnitaireTheorique = Number(value);
   }
-  if(field==='piece' || field==='etape' || field==='machineId'){
-    const key = pieceDupKey(o.piece, o.etape, o.machineId);
-    const dup = c.pieces.some(other => other.id!==o.id && pieceDupKey(other.piece, other.etape, other.machineId)===key);
+  if(field==='piece' || field==='etape' || field==='machineId' || field==='numeroLigne'){
+    const key = pieceDupKey(o.piece, o.etape, o.machineId, o.numeroLigne);
+    const dup = c.pieces.some(other => other.id!==o.id && pieceDupKey(other.piece, other.etape, other.machineId, other.numeroLigne)===key);
     if(dup) showToast(`⚠ "${o.piece}"${o.etape?' / '+o.etape:''} existe déjà sur cette commande — vérifiez qu'il ne s'agit pas d'un doublon.`);
   }
   if(field==='machineId'){
@@ -4441,6 +4444,13 @@ function parseFlexibleDate(raw){
     if(!isNaN(d) && d.getMonth()===mm-1 && d.getDate()===dd) return toDateInputValue(d); // rejette un 32/13 par ex.
     return '';
   }
+  m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/); // JJ/MM/AA ou JJ-MM-AA (année sur 2 chiffres)
+  if(m){
+    const dd = Number(m[1]), mm = Number(m[2]), yyyy = 2000 + Number(m[3]); // toujours 20XX : l'appli ne planifie jamais dans le siècle précédent
+    const d = new Date(yyyy, mm-1, dd);
+    if(!isNaN(d) && d.getMonth()===mm-1 && d.getDate()===dd) return toDateInputValue(d);
+    return '';
+  }
   m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/); // AAAA-MM-JJ (ISO)
   if(m){
     const parsed = new Date(s+'T00:00:00');
@@ -4478,9 +4488,13 @@ function handleExcelImportFile(e){
 // (kRef etc. sont les noms de colonnes réels à utiliser) — ne modifie rien dans state, se contente
 // de calculer. Réutilisée par l'import standard ET par l'import personnalisé (qui l'appelle après
 // avoir traduit ses propres colonnes vers ces mêmes clés), pour ne jamais dupliquer cette logique.
-function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU, kQte, kPhase, kOperateur, kMatiere, kEpaisseur, kGroupTag, kSousTraitance, kRefClient){
+// kNumeroLigne (optionnel) : colonne portant le numéro de ligne d'origine (ex. le "/001" d'un CodeOF
+// "C026-0721/001") — voir CLAUDE.md, section "Numéro de ligne". Inclus dans la clé de doublon : deux
+// lignes de la même pièce/étape mais de numéros de ligne différents sont deux besoins RÉELLEMENT
+// distincts (ex. deux lots de la même référence à livrer à des dates différentes), pas un doublon.
+function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU, kQte, kPhase, kOperateur, kMatiere, kEpaisseur, kGroupTag, kSousTraitance, kRefClient, kNumeroLigne){
   const errors = [];
-  const duplicateLines = []; // doublons pièce/étape (dans le fichier ou déjà présents sur la commande)
+  const duplicateLines = []; // doublons pièce/étape/numéro de ligne (dans le fichier ou déjà présents sur la commande)
   const groups = {}; // référence commande -> { dateBesoin, urgence, pieces: [], seen: Set }
   const machineByName = {};
   state.machines.forEach(m => { machineByName[m.nom.trim().toLowerCase()] = m; });
@@ -4489,7 +4503,7 @@ function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU,
   const existingByNom = {};
   state.commandes.forEach(c => { existingByNom[c.nom.trim().toLowerCase()] = c; });
 
-  const pieceKey = (piece, etape) => piece.trim().toLowerCase() + '|' + etape.trim().toLowerCase();
+  const pieceKey = (piece, etape, numeroLigne) => piece.trim().toLowerCase() + '|' + etape.trim().toLowerCase() + '|' + String(numeroLigne||'').trim().toLowerCase();
 
   rows.forEach((row, idx) => {
     const lineNo = idx + 2; // ligne 1 = en-têtes
@@ -4515,6 +4529,8 @@ function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU,
       errors.push(`Ligne ${lineNo} : temps unitaire ou quantité invalide — ligne ignorée.`); return;
     }
 
+    const numeroLigne = kNumeroLigne ? String(row[kNumeroLigne]||'').trim() : '';
+
     if(!groups[ref]){
       let dateBesoin = parseFlexibleDate(row[kDate]);
       let urgence = String(row[kUrg]||'normale').trim().toLowerCase();
@@ -4522,13 +4538,13 @@ function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU,
       const refClient = kRefClient ? String(row[kRefClient]||'').trim() : '';
       const existing = existingByNom[ref.toLowerCase()];
       const seen = new Set();
-      if(existing) existing.pieces.forEach(p => seen.add(pieceKey(p.piece||'', p.etape||'')));
+      if(existing) existing.pieces.forEach(p => seen.add(pieceKey(p.piece||'', p.etape||'', p.numeroLigne||'')));
       groups[ref] = { dateBesoin, urgence, refClient, pieces: [], seen, existing };
     }
 
-    const key = pieceKey(piece, etape);
+    const key = pieceKey(piece, etape, numeroLigne);
     if(groups[ref].seen.has(key)){
-      duplicateLines.push(`Ligne ${lineNo} : "${piece}"${etape?' / '+etape:''} existe déjà sur "${ref}" — ligne ignorée.`);
+      duplicateLines.push(`Ligne ${lineNo} : "${piece}"${etape?' / '+etape:''}${numeroLigne?` (n°${numeroLigne})`:''} existe déjà sur "${ref}" — ligne ignorée.`);
       return;
     }
     groups[ref].seen.add(key);
@@ -4545,6 +4561,7 @@ function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU,
       debutReel:null, finReel:null, sessions:[], autoPaused:false, dependances:[], phase,
       operatorUserId: operateur ? String(operateur.id) : null, tempsUnitaireTheorique: tu, dureeReelleH: null,
       matiere, epaisseur, dateDebutPossible: null, sousTraitance: isSousTraitance, fusionGroupId: null,
+      numeroLigne: numeroLigne || null,
       _importGroupTag: groupTag || null // étiquette temporaire, jamais conservée après l'import (voir confirmCustomImport)
     });
   });
@@ -4603,13 +4620,14 @@ function processExcelImportRows(rows){
   const kMatiere = normalizeHeaderKey(sample, ['Matière','Matiere']);
   const kEpaisseur = normalizeHeaderKey(sample, ['Épaisseur','Epaisseur']);
   const kSousTraitance = normalizeHeaderKey(sample, ['Sous-traitance','Sous traitance','Sous-traité','Sous traite']);
+  const kNumeroLigne = normalizeHeaderKey(sample, ['Numéro de ligne','Numero de ligne','N° ligne','No ligne']);
 
   if(!kRef || !kPiece || !kPoste || !kTU || !kQte){
     alert("Colonnes obligatoires manquantes dans le fichier. Il faut au minimum : Référence commande, Poste, Pièce, Temps unitaire (min), Quantité.\n\nTéléchargez le modèle si besoin (bouton « 📋 Modèle Excel »).");
     return;
   }
 
-  const { groups, errors, duplicateLines } = buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU, kQte, kPhase, kOperateur, kMatiere, kEpaisseur, null, kSousTraitance, kRefClient);
+  const { groups, errors, duplicateLines } = buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU, kQte, kPhase, kOperateur, kMatiere, kEpaisseur, null, kSousTraitance, kRefClient, kNumeroLigne);
 
   const refs = Object.keys(groups);
   if(refs.length===0){
@@ -4782,7 +4800,12 @@ function backToMappingStep(){
 function normPosteKey(v){ return String(v||'').trim().toLowerCase(); }
 function transformCustomRow(row, map, posteMapping, groupByValue, sousTraitanceByValue){
   let ref = String(row[map.reference]||'').trim();
+  // Le suffixe découpé (ex. "001" dans "C026-0721/001") est conservé comme numéro de ligne plutôt
+  // que simplement jeté — voir CLAUDE.md, section "Numéro de ligne" : deux lignes de la même pièce/
+  // étape mais de numéros différents sont deux besoins réellement distincts, pas un doublon.
+  let numeroLigne = '';
   if(map.referenceSplitSlash && ref.lastIndexOf('/') > 0){
+    numeroLigne = ref.slice(ref.lastIndexOf('/')+1).trim();
     ref = ref.slice(0, ref.lastIndexOf('/'));
   }
   // Référence composée de deux colonnes (ex. "Code OF" + "Client" → "C026-0669 BH2M"). Le découpage
@@ -4813,6 +4836,7 @@ function transformCustomRow(row, map, posteMapping, groupByValue, sousTraitanceB
   }
   return {
     'Référence commande': ref,
+    'NumeroLigne': numeroLigne,
     'Réf commande client': map.refClient ? row[map.refClient] : '',
     'Date de besoin (JJ/MM/AAAA)': map.dateBesoin ? row[map.dateBesoin] : '',
     'Urgence': map.urgence ? row[map.urgence] : '',
@@ -4839,7 +4863,7 @@ function proceedFromPostes(){
   const transformedRows = cs.rows.map(r => transformCustomRow(r, cs.map, cs.posteMapping, cs.groupByValue, cs.sousTraitanceByValue));
   const { groups, errors, duplicateLines } = buildImportGroups(
     transformedRows, 'Référence commande', 'Date de besoin (JJ/MM/AAAA)', 'Urgence', 'Poste',
-    'Pièce', 'Étape', 'Temps unitaire (min)', 'Quantité', 'Phase', 'Opérateur', 'Matière', 'Épaisseur', 'GroupTag', 'SousTraitance', 'Réf commande client'
+    'Pièce', 'Étape', 'Temps unitaire (min)', 'Quantité', 'Phase', 'Opérateur', 'Matière', 'Épaisseur', 'GroupTag', 'SousTraitance', 'Réf commande client', 'NumeroLigne'
   );
   const refs = Object.keys(groups);
   const nbNouvelles = refs.filter(r=>!groups[r].existing && groups[r].pieces.length>0).length;
@@ -7022,7 +7046,7 @@ function detectFusionOpportunities(){
       const key = `${o.machineId}|${matiere.toLowerCase()}|${epaisseur.toLowerCase()}`;
       if(!groups[key]) groups[key] = { key, machineId: o.machineId, matiere, epaisseur, items: [] };
       const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (o.tempsUnitaire*o.quantite)/60;
-      groups[key].items.push({ cid: c.id, cnom: c.nom, oid: o.id, piece: o.piece, etape: o.etape, dureeH });
+      groups[key].items.push({ cid: c.id, cnom: c.nom, oid: o.id, piece: o.piece, etape: o.etape, numeroLigne: o.numeroLigne, dureeH });
     });
   });
   return Object.values(groups).filter(g => g.items.length >= 2);
@@ -7109,7 +7133,10 @@ function renderFusionGroupDetailModal(){
   if(!g) return '';
   const first = g.items[0];
   const m = state.machines.find(mm=>mm.id===first.machineId);
-  const rows = g.items.map(it => `<tr><td>${escapeHtml(it.cnom)}</td><td>${escapeHtml([it.piece,it.etape].filter(Boolean).join(' / ')||'—')}</td><td>${opStatutPillHtml(it.statut)}</td><td><button class="ghost small" data-action="open-commande-from-fusion-detail" data-cid="${it.cid}">→ Voir la commande</button></td></tr>`).join('');
+  // Le numéro de ligne (voir CLAUDE.md) reste visible pièce par pièce dans un groupe fusionné —
+  // deux membres peuvent porter des numéros différents (ex. deux lots de la même référence à
+  // livrer à des dates différentes, regroupés ici pour être découpés ensemble).
+  const rows = g.items.map(it => `<tr><td>${escapeHtml(it.cnom)}</td><td>${escapeHtml([it.piece,it.etape].filter(Boolean).join(' / ')||'—')}</td><td>${it.numeroLigne?escapeHtml(it.numeroLigne):'<span class="footer-note">—</span>'}</td><td>${opStatutPillHtml(it.statut)}</td><td><button class="ghost small" data-action="open-commande-from-fusion-detail" data-cid="${it.cid}">→ Voir la commande</button></td></tr>`).join('');
   return `<div class="modal-overlay">
     <div class="modal-box" role="dialog" aria-modal="true">
       <div class="modal-head">
@@ -7119,7 +7146,7 @@ function renderFusionGroupDetailModal(){
       <div class="modal-body">
         <div class="footer-note" style="text-align:left; margin-bottom:10px;">${escapeHtml(first.matiere||'—')} / ${escapeHtml(first.epaisseur||'—')} — ${g.items.length} pièce(s), découpées ensemble en un seul passage.</div>
         <table class="ops-table">
-          <thead><tr><th>Commande</th><th>Pièce / Étape</th><th>Statut</th><th></th></tr></thead>
+          <thead><tr><th>Commande</th><th>Pièce / Étape</th><th>N° ligne</th><th>Statut</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
         <div class="form-actions" style="margin-top:12px;">
@@ -7140,7 +7167,7 @@ function getActiveFusionGroups(includeDone){
       if(!groups[o.fusionGroupId]) groups[o.fusionGroupId] = { id: o.fusionGroupId, items: [] };
       groups[o.fusionGroupId].items.push({
         cid: c.id, cnom: c.nom, oid: o.id, piece: o.piece, etape: o.etape, statut: o.statut,
-        matiere: o.matiere, epaisseur: o.epaisseur, machineId: o.machineId,
+        matiere: o.matiere, epaisseur: o.epaisseur, machineId: o.machineId, numeroLigne: o.numeroLigne,
         manualStart: o.manualStart, dureeOverrideH: o.dureeOverrideH, fusionPinned: !!o.fusionPinned
       });
     });
@@ -7201,7 +7228,7 @@ function renderActiveFusionGroupsPanel(){
       ? `<span class="pin-badge pinned">📌 Figé</span>`
       : `<span class="pin-badge floating">〰️ Automatique — concourt par priorité avec les autres tâches</span>`;
     const unpinBtn = pinned ? `<button class="ghost small" data-action="unpin-fusion-group" data-group="${g.id}" style="margin-left:8px;">↺ Repasser en automatique</button>` : '';
-    const rows = g.items.map(it => `<tr><td>${escapeHtml(it.cnom)}</td><td>${escapeHtml([it.piece,it.etape].filter(Boolean).join(' / ')||'—')}</td><td>${opStatutPillHtml(it.statut)}</td></tr>`).join('');
+    const rows = g.items.map(it => `<tr><td>${escapeHtml(it.cnom)}</td><td>${escapeHtml([it.piece,it.etape].filter(Boolean).join(' / ')||'—')}</td><td>${it.numeroLigne?escapeHtml(it.numeroLigne):'<span class="footer-note">—</span>'}</td><td>${opStatutPillHtml(it.statut)}</td></tr>`).join('');
     return `<div class="fusion-group">
       <div class="fusion-group-head"><strong>${escapeHtml(m?m.nom:'')}</strong> — ${escapeHtml(first.matiere||'—')} / ${escapeHtml(first.epaisseur||'—')} — ${g.items.length} pièce(s) — ${statusBadge}${unpinBtn}</div>
       <div class="commande-top-fields" style="grid-template-columns:1fr 1fr; margin-bottom:8px;">
@@ -7209,7 +7236,7 @@ function renderActiveFusionGroupsPanel(){
         <div><label class="field">Durée totale (h, partagée)</label><input type="number" min="0.25" step="0.25" value="${dureeH}" data-action="update-fusion-group-duree" data-group="${g.id}"></div>
       </div>
       <table class="ops-table">
-        <thead><tr><th>Commande</th><th>Pièce / Étape</th><th>Statut</th></tr></thead>
+        <thead><tr><th>Commande</th><th>Pièce / Étape</th><th>N° ligne</th><th>Statut</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -7237,6 +7264,7 @@ function renderFusionPanel(){
         <td><input type="checkbox" data-action="toggle-fusion-item" data-key="${key}" data-oid="${it.oid}" ${checked.has(it.oid)?'checked':''}></td>
         <td>${escapeHtml(it.cnom)}</td>
         <td>${escapeHtml([it.piece,it.etape].filter(Boolean).join(' / ')||'—')}</td>
+        <td>${it.numeroLigne?escapeHtml(it.numeroLigne):'<span class="footer-note">—</span>'}</td>
         <td>${durationLabel(it.dureeH)}</td>
       </tr>`).join('');
     return `<div class="fusion-group">
@@ -7244,7 +7272,7 @@ function renderFusionPanel(){
         <button class="ghost small" data-action="toggle-fusion-group-details" data-key="${key}" style="margin-left:8px;">${detailsOpen?'▾ Masquer le détail':'▸ Voir le détail'}</button>
       </div>
       ${detailsOpen ? `<table class="ops-table">
-        <thead><tr><th></th><th>Commande</th><th>Pièce / Étape</th><th>Durée</th></tr></thead>
+        <thead><tr><th></th><th>Commande</th><th>Pièce / Étape</th><th>N° ligne</th><th>Durée</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>` : ''}
       <div class="form-actions" style="margin-top:8px;">
@@ -7338,7 +7366,7 @@ function renderKanbanView(schedule){
             const refLabel = distinctCmd.length===1 ? distinctCmd[0] : `${distinctCmd.length} commandes`;
             return `🔗 ${o._fusionMembers.length} pièces — ${refLabel}`;
           })()
-        : [o.commandeNom, o.piece, o.etape].filter(Boolean).join(' · ');
+        : [o.commandeNom, o.piece, o.etape].filter(Boolean).join(' · ') + (o.numeroLigne ? ` (n°${o.numeroLigne})` : '');
       const fusionListLineK = o._fusionMembers
         ? `<div class="kanban-card-fusion-list">${o._fusionMembers.map(mb=>escapeHtml([mb.piece,mb.etape].filter(Boolean).join(' / ')||'—')).join(', ')}</div>` : '';
       const hlOnK = highlightActive();
@@ -7517,6 +7545,7 @@ function renderNewForm(){
     return `
     <div class="draft-op-row">
       <div><label class="field">Pièce</label><input placeholder="ex : Flasque 12" value="${escapeHtml(o.piece)}" data-action="draft-op" data-idx="${idx}" data-field="piece"></div>
+      <div><label class="field">N° ligne</label><input placeholder="ex : 001" value="${escapeHtml(o.numeroLigne||'')}" data-action="draft-op" data-idx="${idx}" data-field="numeroLigne" title="Numéro de ligne d'origine (ex. le « 001 » de « C026-0721/001 »), optionnel — distingue deux lots de la même pièce à produire à des dates différentes"></div>
       <div><label class="field">Étape</label><input placeholder="ex : Ébauche" value="${escapeHtml(o.etape)}" data-action="draft-op" data-idx="${idx}" data-field="etape"></div>
       <div><label class="field">Poste</label><select data-action="draft-op" data-idx="${idx}" data-field="machineId">${machineOptions(o.machineId)}</select></div>
       <div><label class="field">Opérateur</label><select data-action="draft-op" data-idx="${idx}" data-field="operatorUserId" title="Sa pause déjeuner (si réglée) remplace celle du poste">${operatorOptions(o.operatorUserId)}</select></div>
@@ -7618,7 +7647,8 @@ function renderOpsRow(o, c){
   const fusionRowIcon = (!showMatiereColumn && o.fusionGroupId) ? `<span title="Pièce fusionnée avec d'autres" style="margin-right:3px;">🔗</span>` : '';
   return `
   <tr ${fusionRowTint ? `style="background-color:${fusionRowTint};"` : ''}>
-    <td class="col-piece">${fusionRowIcon}<input value="${escapeHtml(o.piece)}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="piece" placeholder="Pièce"></td>
+    <td class="col-piece">${fusionRowIcon}<input value="${escapeHtml(o.piece)}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="piece" placeholder="Pièce">
+      <input value="${escapeHtml(o.numeroLigne||'')}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="numeroLigne" placeholder="N° ligne" title="Numéro de ligne d'origine (ex. le « 001 » de « C026-0721/001 ») — distingue deux lots de la même pièce à produire à des dates différentes, pas un doublon" style="margin-top:2px; font-size:10px; color:var(--text-dim);"></td>
     <td class="col-etape"><input value="${escapeHtml(o.etape)}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="etape" placeholder="Étape"></td>
     <td class="col-machine"><select data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="machineId">${machineOptions(o.machineId)}</select>
       <select class="op-operator-select" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="operatorUserId" title="Opérateur assigné — sa pause déjeuner (si réglée) remplace celle du poste">${operatorOptions(o.operatorUserId)}</select>
