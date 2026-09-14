@@ -1097,6 +1097,7 @@ function migrateState(st){
   if(!st.config.modules) st.config.modules = { conges: true }; // interrupteur du module Congés
   if(st.config.modules.expedition === undefined) st.config.modules.expedition = false; // libération manuelle du casier — désactivé par défaut, comportement inchangé pour une installation existante
   if(st.config.matiereFusionActive === undefined) st.config.matiereFusionActive = false; // détection par matière/épaisseur désactivée par défaut
+  if(st.config.importDateGroupingToleranceDays === undefined) st.config.importDateGroupingToleranceDays = 0; // 0 = aucun regroupement de campagnes à l'import (voir clusterImportDates)
   if(st.config.copyright === undefined) st.config.copyright = ''; // mention de l'écran de connexion
   if(!st.leaveTypes) st.leaveTypes = [
     { id:'lt-cp', nom:'Congés payés', couleur:'#4c8fbd' },
@@ -4458,6 +4459,28 @@ function parseFlexibleDate(raw){
   }
   return '';
 }
+// Regroupe des dates de livraison (AAAA-MM-JJ) « proches » en campagnes — voir CLAUDE.md, section
+// "Éclatement d'une référence en plusieurs commandes". Glouton, ancré sur la date la plus ancienne
+// de chaque campagne (pas sur la date précédente) : la distance qui compte est toujours "à combien
+// de jours du début de LA campagne", jamais un effet de chaîne où des dates proches deux à deux
+// mais espacées globalement finiraient regroupées. toleranceDays=0 : chaque date distincte reste sa
+// propre campagne (comportement le plus strict, pas de fusion).
+// Retourne { [date]: dateAncre } — dateAncre = date la plus ancienne de la campagne à laquelle
+// cette date appartient (peut être elle-même).
+function clusterImportDates(dateStrs, toleranceDays){
+  const uniqueSorted = Array.from(new Set(dateStrs.filter(Boolean))).sort();
+  const anchorByDate = {};
+  let currentAnchor = null;
+  uniqueSorted.forEach(ds => {
+    if(currentAnchor){
+      const diffDays = Math.round((new Date(ds+'T00:00:00') - new Date(currentAnchor+'T00:00:00')) / 86400000);
+      if(diffDays <= toleranceDays){ anchorByDate[ds] = currentAnchor; return; }
+    }
+    currentAnchor = ds;
+    anchorByDate[ds] = ds;
+  });
+  return anchorByDate;
+}
 function normalizeHeaderKey(row, candidates){
   const keys = Object.keys(row);
   for(const cand of candidates){
@@ -4492,10 +4515,18 @@ function handleExcelImportFile(e){
 // "C026-0721/001") — voir CLAUDE.md, section "Numéro de ligne". Inclus dans la clé de doublon : deux
 // lignes de la même pièce/étape mais de numéros de ligne différents sont deux besoins RÉELLEMENT
 // distincts (ex. deux lots de la même référence à livrer à des dates différentes), pas un doublon.
+//
+// Éclatement d'une référence en plusieurs commandes (voir CLAUDE.md) : une même référence peut
+// porter plusieurs dates de livraison réellement différentes selon les lignes (ex. deux numéros de
+// ligne d'une même référence, chacun avec son propre "Délai OF"). Ces dates sont d'abord regroupées
+// en « campagnes » par proximité (`clusterImportDates`, tolérance réglable dans les Paramètres,
+// `config.importDateGroupingToleranceDays`, 0 = aucune fusion) ; une référence à une seule campagne
+// garde son nom tel quel (comportement historique, inchangé) ; à plusieurs campagnes, elle éclate en
+// autant de commandes que de campagnes, nommées "RÉF (date de la campagne)" pour rester traçables.
 function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU, kQte, kPhase, kOperateur, kMatiere, kEpaisseur, kGroupTag, kSousTraitance, kRefClient, kNumeroLigne){
   const errors = [];
   const duplicateLines = []; // doublons pièce/étape/numéro de ligne (dans le fichier ou déjà présents sur la commande)
-  const groups = {}; // référence commande -> { dateBesoin, urgence, pieces: [], seen: Set }
+  const groups = {}; // clé de groupe (référence, éventuellement suffixée d'une date de campagne) -> { dateBesoin, urgence, pieces: [], seen: Set }
   const machineByName = {};
   state.machines.forEach(m => { machineByName[m.nom.trim().toLowerCase()] = m; });
   const userByName = {};
@@ -4504,6 +4535,27 @@ function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU,
   state.commandes.forEach(c => { existingByNom[c.nom.trim().toLowerCase()] = c; });
 
   const pieceKey = (piece, etape, numeroLigne) => piece.trim().toLowerCase() + '|' + etape.trim().toLowerCase() + '|' + String(numeroLigne||'').trim().toLowerCase();
+
+  // Pré-passe : une campagne (date d'ancrage) par référence et par date de livraison rencontrée.
+  const datesByRef = {};
+  rows.forEach(row => {
+    const ref = String(row[kRef]||'').trim();
+    if(!ref) return;
+    const d = parseFlexibleDate(row[kDate]);
+    if(!d) return;
+    (datesByRef[ref] || (datesByRef[ref] = [])).push(d);
+  });
+  const toleranceDays = Math.max(0, Number(state.config.importDateGroupingToleranceDays) || 0);
+  const anchorByRefDate = {}; // ref -> { date: dateAncre }
+  const campaignCountByRef = {}; // ref -> nombre de campagnes distinctes détectées
+  const earliestAnchorByRef = {}; // ref -> date d'ancre la plus ancienne (repli pour une ligne sans date)
+  Object.keys(datesByRef).forEach(ref => {
+    const anchorByDate = clusterImportDates(datesByRef[ref], toleranceDays);
+    anchorByRefDate[ref] = anchorByDate;
+    const anchors = Array.from(new Set(Object.values(anchorByDate))).sort();
+    campaignCountByRef[ref] = anchors.length;
+    earliestAnchorByRef[ref] = anchors[0] || null;
+  });
 
   rows.forEach((row, idx) => {
     const lineNo = idx + 2; // ligne 1 = en-têtes
@@ -4531,23 +4583,31 @@ function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU,
 
     const numeroLigne = kNumeroLigne ? String(row[kNumeroLigne]||'').trim() : '';
 
-    if(!groups[ref]){
-      let dateBesoin = parseFlexibleDate(row[kDate]);
+    // Résout la campagne (date d'ancrage) de cette ligne, puis la clé de groupe qui en découle —
+    // une seule campagne pour cette référence : clé = référence, inchangée. Plusieurs campagnes :
+    // clé suffixée par la date de la campagne, pour créer autant de commandes distinctes.
+    const parsedDate = parseFlexibleDate(row[kDate]);
+    const anchorMap = anchorByRefDate[ref] || {};
+    const resolvedDate = parsedDate ? (anchorMap[parsedDate] || parsedDate) : (earliestAnchorByRef[ref] || '');
+    const multiCampagne = (campaignCountByRef[ref] || 0) > 1;
+    const groupKey = multiCampagne ? `${ref} (${formatDateFr(resolvedDate)})` : ref;
+
+    if(!groups[groupKey]){
       let urgence = String(row[kUrg]||'normale').trim().toLowerCase();
       if(!['normale','importante','urgente'].includes(urgence)) urgence = 'normale';
       const refClient = kRefClient ? String(row[kRefClient]||'').trim() : '';
-      const existing = existingByNom[ref.toLowerCase()];
+      const existing = existingByNom[groupKey.toLowerCase()];
       const seen = new Set();
       if(existing) existing.pieces.forEach(p => seen.add(pieceKey(p.piece||'', p.etape||'', p.numeroLigne||'')));
-      groups[ref] = { dateBesoin, urgence, refClient, pieces: [], seen, existing };
+      groups[groupKey] = { dateBesoin: resolvedDate, urgence, refClient, pieces: [], seen, existing };
     }
 
     const key = pieceKey(piece, etape, numeroLigne);
-    if(groups[ref].seen.has(key)){
-      duplicateLines.push(`Ligne ${lineNo} : "${piece}"${etape?' / '+etape:''}${numeroLigne?` (n°${numeroLigne})`:''} existe déjà sur "${ref}" — ligne ignorée.`);
+    if(groups[groupKey].seen.has(key)){
+      duplicateLines.push(`Ligne ${lineNo} : "${piece}"${etape?' / '+etape:''}${numeroLigne?` (n°${numeroLigne})`:''} existe déjà sur "${groupKey}" — ligne ignorée.`);
       return;
     }
-    groups[ref].seen.add(key);
+    groups[groupKey].seen.add(key);
     let phase = kPhase ? Number(row[kPhase]) : 1;
     if(!phase || phase < 1) phase = 1;
     const operateurNom = kOperateur ? String(row[kOperateur]||'').trim() : '';
@@ -4555,7 +4615,7 @@ function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU,
     const matiere = kMatiere ? String(row[kMatiere]||'').trim() : '';
     const epaisseur = kEpaisseur ? String(row[kEpaisseur]||'').trim() : '';
     const groupTag = kGroupTag ? String(row[kGroupTag]||'').trim() : '';
-    groups[ref].pieces.push({
+    groups[groupKey].pieces.push({
       id: uid('op'), piece, etape, machineId: machine ? machine.id : null,
       tempsUnitaire: tu, quantite: qte, statut:'a_faire', manualStart:null, dureeOverrideH:null,
       debutReel:null, finReel:null, sessions:[], autoPaused:false, dependances:[], phase,
@@ -6626,6 +6686,12 @@ function renderSettingsModal(){
       <div class="machines-grid">${alleeCards}</div>
       <div class="add-machine-row"><button data-action="add-allee">+ Ajouter une allée</button></div>` },
     importProfiles: { title: `Profils d'import personnalisé (${(state.importProfiles||[]).length})`, body: `
+      <div class="modal-section-title" style="margin-top:0;">Regroupement des dates de livraison proches</div>
+      <div class="machines-grid" style="margin-bottom:6px;">
+        <div><label class="field">Tolérance (jours)</label><input type="number" min="0" step="1" value="${cfg.importDateGroupingToleranceDays||0}" data-action="update-config" data-field="importDateGroupingToleranceDays" style="max-width:100px;"></div>
+      </div>
+      <div class="footer-note" style="text-align:left; padding-bottom:14px;">Quand une même référence porte plusieurs dates de livraison réellement différentes (ex. deux numéros de ligne de la même référence à livrer à des dates distinctes), l'import éclate désormais la référence en plusieurs commandes — une par date. Deux dates séparées d'au plus cette tolérance sont regroupées dans une seule commande (une seule mise en campagne), avec l'échéance la plus proche des deux comme date retenue. 0 (par défaut) = aucun regroupement, une commande par date exacte.</div>
+      <hr style="border:none; border-top:1px solid var(--line-soft); margin:0 0 16px;">
       ${(state.importProfiles||[]).length===0 ? `<div class="footer-note" style="text-align:left;">Aucun profil enregistré pour l'instant — ils se créent depuis "Import personnalisé" au moment de faire correspondre les colonnes d'un fichier.</div>` : (state.importProfiles||[]).map(p => `
       <div class="fusion-group">
         <div class="commande-top-fields" style="grid-template-columns:2fr auto; align-items:end; margin-bottom:8px;">

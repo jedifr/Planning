@@ -409,7 +409,7 @@ volontairement la même zone (regroupement manuel de petites affaires dans un m�
   - `assignStorageZone`/`setCommandeZone` n'ont pas besoin d'être modifiés : ils lisent déjà
     `occupiedStorageZones`/`commandesInZone`, qui portent maintenant la nouvelle règle.
 
-## Numéro de ligne et doublons d'import
+## Numéro de ligne, doublons et éclatement en campagnes à l'import
 
 Certains GPAO clients (ex. export "CodeOF" du type `C026-0721/001`) numérotent chaque ligne d'une
 commande, et peuvent légitimement demander la **même** pièce/étape deux fois sous deux numéros
@@ -445,12 +445,33 @@ savoir, ce n'est indiscernable d'un doublon accidentel.
   fusionnée garde son propre numéro de ligne**, jamais écrasé par la fusion, exactement ce qui
   permet de fusionner deux lots de numéros différents (ex. pour les découper ensemble) tout en
   distinguant encore lequel est lequel.
-- **Limite connue, non traitée** : `dateBesoin` reste un champ de la **commande**, pas de la pièce
-  (voir modèle de données) — si deux lignes de numéros différents ont des échéances distinctes dans
-  le fichier source, seule celle de la première ligne rencontrée pour cette référence est retenue
-  comme échéance de la commande entière. Aller plus loin (échéance par numéro de ligne) demanderait
-  de faire éclater ces numéros en commandes distinctes plutôt que de les regrouper sous une seule
-  référence — changement de modèle de données plus large, pas fait ici.
+- **Éclatement d'une référence en plusieurs commandes.** `dateBesoin` reste un champ de la
+  **commande**, pas de la pièce (voir modèle de données) — une référence dont les lignes portent
+  plusieurs échéances réellement différentes ne peut donc pas rester une seule commande avec une
+  échéance juste. Plutôt que de n'en retenir qu'une arbitrairement (ancien comportement, corrigé),
+  `buildImportGroups` regroupe d'abord les dates en **campagnes** par proximité
+  (`clusterImportDates(dateStrs, toleranceDays)`, glouton, ancré sur la date la plus ancienne de
+  chaque campagne — pas d'effet de chaîne : la distance qui compte est toujours par rapport au début
+  de la campagne, jamais à la date précédente) puis éclate la référence en autant de commandes que de
+  campagnes détectées :
+  - Une seule campagne pour la référence ⇒ un seul groupe, nommé comme la référence elle-même
+    (`ref`) — comportement strictement identique à avant cette fonctionnalité.
+  - Plusieurs campagnes ⇒ une commande par campagne, nommée `"RÉF (date de la campagne)"` (ex.
+    `"C026-0721 (03/12/2026)"`), pour rester traçable à sa référence d'origine tout en étant
+    distinguable dans la liste des commandes. `commitImportGroups`/l'aperçu d'import n'ont pas eu
+    besoin d'être modifiés : ils utilisent déjà la clé du groupe comme nom de commande, quelle
+    qu'elle soit.
+  - L'échéance retenue pour une commande de campagne est la date d'ancrage de sa campagne (la plus
+    ancienne du lot fusionné), jamais une date arbitraire selon l'ordre des lignes dans le fichier.
+  - Une ligne sans date parsable, sur une référence qui éclate par ailleurs, rejoint la campagne la
+    plus ancienne (repli prudent — impossible de savoir à laquelle elle appartient réellement).
+  - `state.config.importDateGroupingToleranceDays` (nombre de jours, `0` par défaut = aucune fusion,
+    une commande par date exacte) — réglable dans Paramètres → « Profils d'import personnalisé » →
+    « Regroupement des dates de livraison proches », pour ne faire qu'**une seule mise en campagne**
+    quand deux dates sont en réalité proches (ex. à quelques jours d'écart) plutôt que de multiplier
+    inutilement les commandes. S'applique aux deux imports (standard et personnalisé), qui partagent
+    tous deux `buildImportGroups`. `updateConfig` le convertit en nombre par défaut (pas de cas
+    spécial nécessaire, contrairement à un champ texte ou booléen).
 
 ## Dates flexibles à l'import
 
