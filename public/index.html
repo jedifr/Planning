@@ -474,6 +474,16 @@
     margin:0 0 8px; padding:6px 10px; background:var(--amber-dim); border:1px solid var(--amber);
     border-radius:2px; font-size:12px; color:var(--text-dim);
   }
+  .risque-card{
+    margin-bottom:16px; padding:12px 14px; background:var(--panel); border:1px solid var(--line);
+    border-left:3px solid var(--red); border-radius:2px;
+  }
+  .risque-card-head{display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:8px;}
+  .risque-days-late{font-size:12px; font-weight:600; color:var(--red); white-space:nowrap;}
+  .risque-chain{margin-top:10px;}
+  .risque-chain-title{font-size:12px; font-weight:600; color:var(--text-dim); margin-bottom:4px;}
+  .risque-row-blocking{background:var(--amber-dim);}
+  .risque-blocking-tag{font-size:11px; color:var(--amber-strong,#a06d1a); font-weight:600;}
   .commandes-columns{display:grid; grid-template-columns:1fr 9px 1fr; gap:10px; align-items:start;}
   .columns-resize-handle{
     align-self:stretch; display:flex; align-items:center; justify-content:center;
@@ -734,7 +744,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -5149,6 +5159,7 @@ function renderHeader(){
       ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
       <button class="page-switch-btn ${currentPage==='tempsProd'?'active':''}" data-action="goto-temps-prod">⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}</button>
       <button class="page-switch-btn ${currentPage==='zones'?'active':''}" data-action="goto-zones">📍 Zones de stockage</button>
+      ${(() => { const n = getSchedule().filter(c => (c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine')) && isCommandeAtRisk(c)).length; return `<button class="page-switch-btn ${currentPage==='risques'?'active':''}" data-action="goto-risques">⚠️ Risques de retard${n>0?` <span class="pending-count-badge">${n}</span>`:''}</button>`; })()}
     </div>`;
   return `
   <header class="top">
@@ -5590,7 +5601,7 @@ function renderZonesPage(){
         const labelTxt = inactive ? '🚫 Désactivée' : 'Libre';
         return `<button class="${cls}" data-action="toggle-zone-active" data-zone="${z}" title="${title}"><div class="zone-cell-code">${z}</div><div class="zone-cell-label">${labelTxt}</div></button>`;
       }
-      const namesHtml = occupants.map(o => `<button class="zone-cell-occupant" data-action="isolate-from-zone" data-cid="${o.id}" title="Isoler « ${escapeHtml(o.nom)} » dans le planning">${escapeHtml(o.nom)}</button>`).join('');
+      const namesHtml = occupants.map(o => `<button class="zone-cell-occupant" data-action="isolate-commande-goto-planning" data-cid="${o.id}" title="Isoler « ${escapeHtml(o.nom)} » dans le planning">${escapeHtml(o.nom)}</button>`).join('');
       return `<div class="zone-cell zone-cell-occupied" style="border-color:${allee.couleur}; background:${hexToRgba(allee.couleur,0.14)};">
         <div class="zone-cell-code" style="color:${allee.couleur};">${z}</div><div class="zone-cell-label">${namesHtml}</div>
       </div>`;
@@ -5618,6 +5629,92 @@ function renderZonesPage(){
       ${rowsHtml || `<div class="footer-note" style="text-align:left;">Aucune allée configurée — définissez-en dans Paramètres → Zones de stockage.</div>`}
       ${orphanNote}
       <div class="footer-note" style="text-align:left; padding-top:10px;">Une zone est attribuée automatiquement à la création d'une commande (première libre disponible) et se libère automatiquement dès que toutes ses pièces sont Terminées — pas besoin de la vider à la main. Pour changer la zone d'une commande, utilisez son badge "📍 Zone" dans le planning ; plusieurs commandes peuvent volontairement partager le même casier. Cliquez une case libre pour désactiver un casier indisponible (cassé, réservé...), recliquez pour le réactiver. Les allées se règlent dans Paramètres → Zones de stockage.</div>
+    </div>
+  </section>`;
+}
+
+/* ---------------- Risques de retard ----------------
+   Avant cette page, retrouver pourquoi une commande à risque (isCommandeAtRisk) est en retard
+   demandait de chercher à la main, poste par poste, les étapes précédentes de la même pièce
+   (celles dont dépend la phase actuelle — voir resolveEffectiveDeps/CLAUDE.md). Cette page réunit
+   directement, pour chaque commande à risque, la chaîne complète de chaque pièce dans l'ordre des
+   phases, avec l'étape qui bloque encore les suivantes mise en évidence. */
+// Regroupe les pièces d'une commande par nom de pièce et les trie par phase — même critère que les
+// dépendances de phase du moteur de planification (par pièce, pas par commande). Réutilise
+// sortPiecesByPieceThenPhase (déjà utilisée pour l'affichage des tâches d'une commande) plutôt que
+// de redéfinir un tri équivalent. La chaîne "bloque" à sa première étape pas encore Terminée :
+// c'est elle qui retient les phases suivantes, quel que soit leur propre statut.
+function pieceChainsForCommande(c){
+  const sorted = sortPiecesByPieceThenPhase(c.pieces);
+  const chains = [];
+  let currentKey = null, current = null;
+  sorted.forEach(o => {
+    const key = String(o.piece||'').trim().toLowerCase();
+    if(key !== currentKey){
+      current = { nom: o.piece || '—', rows: [] };
+      chains.push(current);
+      currentKey = key;
+    }
+    current.rows.push(o);
+  });
+  chains.forEach(chain => {
+    const blocking = chain.rows.find(o => o.statut !== 'termine');
+    chain.blockingId = blocking ? blocking.id : null;
+  });
+  return chains;
+}
+function renderRisquesPage(){
+  const schedule = getSchedule();
+  // Même filtre "commande active" que la liste principale (renderCommandes) : une commande
+  // totalement terminée peut apparaître en retard sur sa toute dernière étape sans que ce soit
+  // pertinent à afficher ici — elle est déjà finie.
+  const active = schedule.filter(c => c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine'));
+  const atRisk = active.filter(isCommandeAtRisk).sort((a,b) => commandeRiskDaysLate(b) - commandeRiskDaysLate(a));
+  const body = atRisk.length ? atRisk.map(c => {
+    const joursRetard = Math.ceil(commandeRiskDaysLate(c));
+    const urgenceTxt = c.urgence==='urgente' ? 'Urgente' : c.urgence==='importante' ? 'Importante' : 'Normale';
+    const chainsHtml = pieceChainsForCommande(c).map(chain => {
+      const rowsHtml = chain.rows.map(o => {
+        const isBlocking = o.id === chain.blockingId;
+        const m = state.machines.find(mm=>mm.id===o.machineId);
+        return `<tr class="${isBlocking?'risque-row-blocking':''}">
+          <td>${escapeHtml(o.etape||'—')}${o.numeroLigne?` <span class="footer-note" style="margin:0;">(n°${escapeHtml(o.numeroLigne)})</span>`:''}</td>
+          <td>${escapeHtml(m?m.nom:'—')}</td>
+          <td>${opStatutPillHtml(o.statut)}${isBlocking?' <span class="risque-blocking-tag">⛔ bloque la suite</span>':''}</td>
+          <td>${o.start ? formatDT(o.start) : '—'}</td>
+          <td>${o.end ? formatDT(o.end) : '—'}</td>
+          <td>${o.debutReel ? formatDT(new Date(o.debutReel)) : '—'}</td>
+          <td>${o.finReel ? formatDT(new Date(o.finReel)) : '—'}</td>
+        </tr>`;
+      }).join('');
+      return `<div class="risque-chain">
+        <div class="risque-chain-title">${escapeHtml(chain.nom)}</div>
+        <table class="ops-table">
+          <thead><tr><th>Étape</th><th>Poste</th><th>Statut</th><th>Début prévu</th><th>Fin prévue</th><th>Début réel</th><th>Fin réel</th></tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>`;
+    }).join('');
+    return `<div class="risque-card">
+      <div class="risque-card-head">
+        <div>
+          <button class="temps-prod-commande-link" data-action="isolate-commande-goto-planning" data-cid="${c.id}" style="font-weight:600; font-size:14px; background:none; border:none; padding:0; color:var(--text);">${escapeHtml(c.nom)}</button>${c.refClient?` <span class="footer-note" style="margin:0;">(${escapeHtml(c.refClient)})</span>`:''}
+          <div class="footer-note" style="margin:2px 0 0;">Échéance : ${formatDateFr(c.dateBesoin)} · Urgence : ${urgenceTxt}</div>
+        </div>
+        <div class="risque-days-late">+${joursRetard} j de dépassement estimé</div>
+      </div>
+      ${chainsHtml}
+    </div>`;
+  }).join('') : `<div class="empty-state"><strong>Aucune commande à risque</strong>Toutes les commandes en cours respectent leur échéance estimée.</div>`;
+  return `
+  <section class="panel">
+    <div class="panel-head">
+      <h2>⚠️ Risques de retard</h2>
+      <span class="footer-note" style="margin:0;">${atRisk.length} commande(s) à risque</span>
+    </div>
+    <div class="panel-body">
+      ${atRisk.length ? `<div class="footer-note" style="text-align:left; padding-bottom:10px;">Triées de la plus en retard à la moins en retard. Pour chaque pièce, la chaîne de ses étapes dans l'ordre des phases — l'étape surlignée est la première pas encore terminée : c'est elle qui retient les suivantes. Cliquez le nom d'une commande pour l'isoler dans le planning.</div>` : ''}
+      ${body}
     </div>
   </section>`;
 }
@@ -8098,6 +8195,17 @@ function render(){
     restoreFocusRef(focusRef);
     return;
   }
+  if(currentPage === 'risques'){
+    appEl.innerHTML = [
+      renderHeader(),
+      renderRisquesPage(),
+      renderSettingsModal(),
+      renderToast()
+    ].join('');
+    restoreModalScroll(modalScrollTop);
+    restoreFocusRef(focusRef);
+    return;
+  }
   const schedule = getSchedule();
   const html = [
     renderHeader(),
@@ -8279,6 +8387,7 @@ function dispatchClickAction(action, el){
     case 'goto-planning': currentPage = 'planning'; render(); break;
     case 'goto-temps-prod': currentPage = 'tempsProd'; render(); break;
     case 'goto-zones': currentPage = 'zones'; render(); break;
+    case 'goto-risques': currentPage = 'risques'; render(); break;
     case 'conges-tab': congesTab = el.dataset.tab; render(); break;
     case 'temps-prod-mode': tempsProdPeriodMode = el.dataset.mode; render(); break;
     case 'temps-prod-nav': navigateTempsProdPeriod(el.dataset.dir); break;
@@ -8372,7 +8481,7 @@ function dispatchClickAction(action, el){
     case 'unarchive-commande': unarchiveCommande(el.dataset.cid); break;
     case 'archive-now': manualArchiveNow(); break;
     case 'clear-isolate': selectedCommandeId = null; render(); break;
-    case 'isolate-from-zone': selectedCommandeId = el.dataset.cid; currentPage = 'planning'; render(); break;
+    case 'isolate-commande-goto-planning': selectedCommandeId = el.dataset.cid; currentPage = 'planning'; render(); break;
     case 'toggle-zone-active': toggleStorageZoneActive(el.dataset.zone); break;
     case 'toggle-select-commande': toggleIsolateCommande(el.dataset.id); if(selectedCommandeId) maybeJumpToHighlight(); render(); break;
     case 'toggle-panel-collapse': togglePanelCollapse(el.dataset.key); break;

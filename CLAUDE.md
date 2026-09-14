@@ -573,6 +573,34 @@ libérer) doit se propager à tout le groupe — voir `propagateFusionGroupField
   « 📌 Figée » — pour une pièce fusionnée, il regarde `fusionPinned`, jamais la simple
   présence de `dureeOverrideH` (toujours posé sur un groupe, figé ou non).
 
+## Page « ⚠️ Risques de retard »
+
+Avant cette page, comprendre pourquoi une commande à risque (`isCommandeAtRisk`) est en retard
+demandait de rechercher à la main, poste par poste, les étapes précédentes de la même pièce dont
+dépend la phase actuelle (voir « Dépendances de phase » ci-dessus) — long et fastidieux. Nouvel
+onglet (`currentPage==='risques'`, bouton dans `renderHeader`) qui réunit ça directement.
+
+- `renderRisquesPage()` — liste les commandes **actives** (même filtre que `renderCommandes` :
+  `c.pieces.length===0 || !c.pieces.every(termine)`) et **à risque** (`isCommandeAtRisk`), triées de
+  la plus en retard à la moins en retard (`commandeRiskDaysLate`). Une commande dont la toute
+  dernière étape a dépassé l'échéance mais qui est déjà totalement terminée (`isCommandeFullyDone`)
+  n'a aucun intérêt à apparaître ici — exclue par le filtre "actif", même si `isCommandeAtRisk`
+  resterait techniquement vrai pour elle.
+- `pieceChainsForCommande(c)` — regroupe les pièces de la commande par nom de pièce et les trie par
+  phase, en réutilisant `sortPiecesByPieceThenPhase` (déjà utilisée par `renderCommandeCard`) plutôt
+  que de redéfinir un tri équivalent — **même critère que les dépendances de phase du moteur**
+  (par pièce, pas par commande, voir plus haut). L'étape bloquante d'une chaîne est sa première ligne
+  (dans l'ordre des phases, pas l'ordre brut de `pieces[]`) dont le statut n'est pas `termine` : c'est
+  elle qui retient toutes les suivantes, quel que soit leur propre statut.
+- Affichage : une carte par commande à risque (nom cliquable → isole la commande dans le planning,
+  action `isolate-commande-goto-planning`, partagée avec le même lien depuis la page Zones de
+  stockage — renommée à cette occasion, elle ne servait plus seulement aux zones), avec pour chaque
+  pièce distincte un tableau Étape / Poste / Statut / Début prévu / Fin prévue / Début réel / Fin réel
+  ; la ligne bloquante est surlignée et porte la mention « ⛔ bloque la suite ».
+- Bouton de l'onglet (`renderHeader`) : badge avec le nombre de commandes à risque, sur le même
+  modèle que le badge de congés en attente — recalculé à chaque rendu via `getSchedule()`, jamais
+  mis en cache séparément.
+
 ## Tests
 
 Il n'y a pas de framework de test. La méthode utilisée, efficace sur ce projet :
