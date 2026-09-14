@@ -594,12 +594,49 @@ onglet (`currentPage==='risques'`, bouton dans `renderHeader`) qui réunit ça d
   elle qui retient toutes les suivantes, quel que soit leur propre statut.
 - Affichage : une carte par commande à risque (nom cliquable → isole la commande dans le planning,
   action `isolate-commande-goto-planning`, partagée avec le même lien depuis la page Zones de
-  stockage — renommée à cette occasion, elle ne servait plus seulement aux zones), avec pour chaque
-  pièce distincte un tableau Étape / Poste / Statut / Début prévu / Fin prévue / Début réel / Fin réel
-  ; la ligne bloquante est surlignée et porte la mention « ⛔ bloque la suite ».
+  stockage — renommée à cette occasion, elle ne servait plus seulement aux zones). **Un seul
+  `<table>` par commande**, avec une ligne de titre (`.risque-piece-row`, `colspan`) par pièce
+  distincte plutôt qu'un `<table>` séparé par pièce — même principe que les tableaux de détail de
+  regroupement ailleurs dans l'appli. Colonnes : Étape / Poste / Statut / Début / Fin ; la ligne
+  bloquante est surlignée et porte la mention « ⛔ bloque la suite ».
+  - **Un seul `<table>`, pas un par pièce.** Chaque pièce recalculait sinon indépendamment ses
+    largeurs de colonnes (bug réel signalé : « toutes les colonnes sont désalignées ») — un tableau
+    séparé par pièce n'a par nature aucune raison de s'aligner sur le suivant.
+  - **Début/Fin : « réalisé »/« prévu » par CELLULE, pas par ligne.** Deux colonnes seulement (pas
+    quatre) : `debutVal = o.debutReel || o.start`, `finVal = o.finReel || o.end`, chacune étiquetée
+    séparément. Piège corrigé : une tâche `en_cours` a un début réel (`debutReel` posé au démarrage)
+    mais une fin encore *projetée* (`o.end`, calculée par `computeSchedule` à partir de la durée
+    restante) — les deux ne basculent jamais ensemble d'un même statut. Pour une tâche `termine`,
+    `computeSchedule` ancre déjà `start`/`end` sur `debutReel`/`finReel` (voir plus haut) : les deux
+    colonnes affichent alors « réalisé », ce qui explique pourquoi une ancienne version affichant
+    séparément « prévu » et « réel » les montrait toujours identiques sur une ligne terminée — pas un
+    bug, un artefact du moteur qu'il valait mieux ne plus afficher en double.
+  - **Blocage inter-commandes** (`buildMachineTimelines(schedule)`/`machineNeighbors(byMachine,
+    machineId, pieceId)`) — dimension différente de la chaîne de phases ci-dessus (qui ne regarde que
+    la même pièce dans la même commande) : sur le poste de l'étape bloquante, identifie, TOUTES
+    commandes confondues, l'occupant programmé juste avant elle (`before`, retenue par lui) et celui
+    programmé juste après (`after`, retenu par elle) sur `o.start` trié. N'affiché que si le voisin
+    appartient à une **autre** commande (`before.cid !== c.id` / `after.cid !== c.id`) — sinon c'est
+    déjà visible dans la chaîne intra-commande. Ligne de contexte dédiée (`.risque-context-row`) sous
+    la ligne bloquante, chaque commande citée cliquable (même action `isolate-commande-goto-planning`
+    que le titre de carte).
 - Bouton de l'onglet (`renderHeader`) : badge avec le nombre de commandes à risque, sur le même
   modèle que le badge de congés en attente — recalculé à chaque rendu via `getSchedule()`, jamais
   mis en cache séparément.
+
+### Lisibilité des couleurs d'allée utilisées comme texte
+
+`readableZoneTextColor(hex)` — les couleurs d'allée (Paramètres → Zones de stockage) sont choisies
+pour une pastille/un fond pâle (Kanban, badges), pas pour du texte de petite taille : une couleur
+claire utilisée telle quelle comme couleur de texte (ex. la puce "B10" sur une commande) devient
+illisible (retour utilisateur réel). Assombrit une couleur dont la luminance perçue dépasse un seuil
+(`0.55`, formule `0.299r+0.587g+0.114b`) à 55% de sa valeur d'origine ; renvoie la couleur **telle
+quelle** (même format hex, pas de conversion en `rgb()`) si elle est déjà assez sombre — pour ne rien
+changer aux couleurs qui fonctionnaient déjà. Appliqué à tous les points qui utilisent une couleur
+d'allée comme `color` de texte (puce `.zone-select` des commandes, ligne de zone sur une carte
+Kanban, code de zone occupée sur la page Zones de stockage, badges de la pop-up de notification de
+zone à la création) — **jamais** aux usages en fond (`background`, déjà à faible opacité via
+`hexToRgba`) ni aux swatches de couleur pure (pas du texte, pas de problème de lisibilité).
 
 ## Tests
 

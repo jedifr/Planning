@@ -418,11 +418,11 @@
   .due-field{display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--text-faint);}
   .due-field input{width:140px;}
   .zone-select{
-    width:76px; max-width:76px; padding:3px 18px 3px 9px; font-size:11px; font-family:'IBM Plex Mono',monospace; font-weight:600;
-    border-radius:20px; border:1px solid var(--line); background:var(--panel-2); color:var(--text-dim); cursor:pointer;
+    width:80px; max-width:80px; padding:4px 18px 4px 10px; font-size:12px; font-family:'IBM Plex Mono',monospace; font-weight:700;
+    border-radius:20px; border:1.5px solid var(--line); background:var(--panel-2); color:var(--text-dim); cursor:pointer;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
-  .zone-select.zone-set{border-color:var(--blue); color:var(--blue); background:rgba(49,111,152,0.1);}
+  .zone-select.zone-set{border-color:var(--blue); color:var(--blue); background:rgba(49,111,152,0.14);}
   /* Hauteur homogène : min-height fixe sur chaque case + grid-auto-rows sur la grille, pour que
      toutes les allées gardent la même hauteur de ligne même si l'une d'elles a plus de monde
      dedans (plusieurs commandes regroupées dans un même casier) qu'une autre. */
@@ -480,10 +480,12 @@
   }
   .risque-card-head{display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:8px;}
   .risque-days-late{font-size:12px; font-weight:600; color:var(--red); white-space:nowrap;}
-  .risque-chain{margin-top:10px;}
-  .risque-chain-title{font-size:12px; font-weight:600; color:var(--text-dim); margin-bottom:4px;}
+  .risque-piece-row td{background:var(--panel-2); font-weight:600; font-size:12px; color:var(--text-dim); padding-top:8px;}
   .risque-row-blocking{background:var(--amber-dim);}
   .risque-blocking-tag{font-size:11px; color:var(--amber-strong,#a06d1a); font-weight:600;}
+  .risque-context-row td{font-size:11.5px; color:var(--text-dim); padding-top:2px; padding-bottom:8px; border-top:none;}
+  .risque-context-row .commande-link-inline{background:none; border:none; padding:0; font-weight:600; color:inherit; cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px;}
+  .risque-context-row .commande-link-inline:hover{color:var(--accent);}
   .commandes-columns{display:grid; grid-template-columns:1fr 9px 1fr; gap:10px; align-items:start;}
   .columns-resize-handle{
     align-self:stretch; display:flex; align-items:center; justify-content:center;
@@ -744,7 +746,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1677,6 +1679,22 @@ function hexToRgba(hex, alpha){
   const r = parseInt(hex.substring(0,2),16), g = parseInt(hex.substring(2,4),16), b = parseInt(hex.substring(4,6),16);
   if(isNaN(r)||isNaN(g)||isNaN(b)) return `rgba(107,113,120,${alpha})`;
   return `rgba(${r},${g},${b},${alpha})`;
+}
+// Les couleurs d'allée (Paramètres → Zones de stockage) sont choisies pour une pastille/un fond
+// pâle (Kanban, badges), pas pour du texte de petite taille — une couleur claire utilisée telle
+// quelle comme couleur de texte (ex. sur la puce "B10" des commandes) devient illisible. Assombrit
+// uniquement les couleurs déjà claires (luminance perçue au-delà du seuil), laisse les couleurs
+// déjà foncées inchangées.
+function readableZoneTextColor(hex){
+  let h = String(hex||'').replace('#','');
+  if(h.length===3) h = h.split('').map(c=>c+c).join('');
+  let r = parseInt(h.substring(0,2),16), g = parseInt(h.substring(2,4),16), b = parseInt(h.substring(4,6),16);
+  if(isNaN(r)||isNaN(g)||isNaN(b)) return hex;
+  const luminance = (0.299*r + 0.587*g + 0.114*b) / 255;
+  if(luminance <= 0.55) return hex; // déjà assez sombre pour du texte : couleur d'origine inchangée
+  const factor = 0.55;
+  r = Math.round(r*factor); g = Math.round(g*factor); b = Math.round(b*factor);
+  return `rgb(${r},${g},${b})`;
 }
 function effectiveDueDate(dateBesoin){
   // Date de besoin réelle, moins la marge configurée — c'est cette date effective qui sert
@@ -5603,7 +5621,7 @@ function renderZonesPage(){
       }
       const namesHtml = occupants.map(o => `<button class="zone-cell-occupant" data-action="isolate-commande-goto-planning" data-cid="${o.id}" title="Isoler « ${escapeHtml(o.nom)} » dans le planning">${escapeHtml(o.nom)}</button>`).join('');
       return `<div class="zone-cell zone-cell-occupied" style="border-color:${allee.couleur}; background:${hexToRgba(allee.couleur,0.14)};">
-        <div class="zone-cell-code" style="color:${allee.couleur};">${z}</div><div class="zone-cell-label">${namesHtml}</div>
+        <div class="zone-cell-code" style="color:${readableZoneTextColor(allee.couleur)};">${z}</div><div class="zone-cell-label">${namesHtml}</div>
       </div>`;
     }).join('');
     const label = allee.nom ? `${escapeHtml(allee.code)} — ${escapeHtml(allee.nom)}` : `Allée ${escapeHtml(allee.code)}`;
@@ -5663,6 +5681,27 @@ function pieceChainsForCommande(c){
   });
   return chains;
 }
+// Toutes les pièces planifiées sur chaque poste, TOUTES commandes confondues, triées par début —
+// sert à identifier ce qui retient une étape bloquante sur son poste (l'occupant programmé juste
+// avant elle) et ce qu'elle retient à son tour (celui programmé juste après). Contention différente
+// de la chaîne de phases ci-dessus : ici entre commandes, via un poste partagé, pas entre étapes
+// d'une même pièce.
+function buildMachineTimelines(schedule){
+  const byMachine = {};
+  schedule.forEach(c => c.pieces.forEach(o => {
+    if(!o.machineId || !o.start || !o.end) return;
+    (byMachine[o.machineId] = byMachine[o.machineId] || []).push({ ...o, commandeNom:c.nom, cid:c.id });
+  }));
+  Object.values(byMachine).forEach(list => list.sort((a,b) => a.start - b.start));
+  return byMachine;
+}
+function machineNeighbors(byMachine, machineId, pieceId){
+  const list = byMachine[machineId];
+  if(!list) return { before:null, after:null };
+  const idx = list.findIndex(o => o.id === pieceId);
+  if(idx < 0) return { before:null, after:null };
+  return { before: idx>0 ? list[idx-1] : null, after: idx<list.length-1 ? list[idx+1] : null };
+}
 function renderRisquesPage(){
   const schedule = getSchedule();
   // Même filtre "commande active" que la liste principale (renderCommandes) : une commande
@@ -5670,30 +5709,49 @@ function renderRisquesPage(){
   // pertinent à afficher ici — elle est déjà finie.
   const active = schedule.filter(c => c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine'));
   const atRisk = active.filter(isCommandeAtRisk).sort((a,b) => commandeRiskDaysLate(b) - commandeRiskDaysLate(a));
+  const machineTimelines = buildMachineTimelines(schedule);
   const body = atRisk.length ? atRisk.map(c => {
     const joursRetard = Math.ceil(commandeRiskDaysLate(c));
     const urgenceTxt = c.urgence==='urgente' ? 'Urgente' : c.urgence==='importante' ? 'Importante' : 'Normale';
-    const chainsHtml = pieceChainsForCommande(c).map(chain => {
-      const rowsHtml = chain.rows.map(o => {
+    // Un seul tableau, un seul en-tête, par commande — chaque pièce distincte n'introduit qu'une
+    // ligne de titre (même principe que les tableaux de détail de fusion ailleurs dans l'appli),
+    // jamais son propre <table> : sinon chaque mini-tableau recalcule ses largeurs de colonnes
+    // indépendamment et rien ne s'aligne d'une pièce à l'autre.
+    const rowsHtml = pieceChainsForCommande(c).map(chain => {
+      const pieceHeaderRow = `<tr class="risque-piece-row"><td colspan="5">${escapeHtml(chain.nom)}</td></tr>`;
+      const chainRowsHtml = chain.rows.map(o => {
         const isBlocking = o.id === chain.blockingId;
         const m = state.machines.find(mm=>mm.id===o.machineId);
-        return `<tr class="${isBlocking?'risque-row-blocking':''}">
+        // "Réalisé" dès que l'horaire réel existe, "prévu" sinon — PAR COLONNE, pas par ligne : une
+        // tâche en_cours a un début réel (debutReel) mais une fin encore prévue (o.end, projetée par
+        // le moteur), les deux ne basculent jamais ensemble. Pour une tâche déjà Terminée, le moteur
+        // ancre justement start/end sur debutReel/finReel (voir CLAUDE.md) : les deux sont "réalisé".
+        const debutVal = o.debutReel ? new Date(o.debutReel) : o.start;
+        const finVal = o.finReel ? new Date(o.finReel) : o.end;
+        const debutCell = debutVal ? `${formatDT(debutVal)}<div class="footer-note" style="margin:0;">${o.debutReel?'réalisé':'prévu'}</div>` : '—';
+        const finCell = finVal ? `${formatDT(finVal)}<div class="footer-note" style="margin:0;">${o.finReel?'réalisé':'prévu'}</div>` : '—';
+        const mainRow = `<tr class="${isBlocking?'risque-row-blocking':''}">
           <td>${escapeHtml(o.etape||'—')}${o.numeroLigne?` <span class="footer-note" style="margin:0;">(n°${escapeHtml(o.numeroLigne)})</span>`:''}</td>
           <td>${escapeHtml(m?m.nom:'—')}</td>
           <td>${opStatutPillHtml(o.statut)}${isBlocking?' <span class="risque-blocking-tag">⛔ bloque la suite</span>':''}</td>
-          <td>${o.start ? formatDT(o.start) : '—'}</td>
-          <td>${o.end ? formatDT(o.end) : '—'}</td>
-          <td>${o.debutReel ? formatDT(new Date(o.debutReel)) : '—'}</td>
-          <td>${o.finReel ? formatDT(new Date(o.finReel)) : '—'}</td>
+          <td>${debutCell}</td>
+          <td>${finCell}</td>
         </tr>`;
+        if(!isBlocking || !o.machineId) return mainRow;
+        // Quelle commande bloque celle-ci, et laquelle elle bloque à son tour, sur ce même poste —
+        // seulement pertinent pour l'étape qui bloque réellement la suite, et seulement si l'occupant
+        // voisin appartient à une AUTRE commande (sinon c'est déjà visible dans la chaîne ci-dessus).
+        const { before, after } = machineNeighbors(machineTimelines, o.machineId, o.id);
+        const beforeOther = before && before.cid !== c.id ? before : null;
+        const afterOther = after && after.cid !== c.id ? after : null;
+        if(!beforeOther && !afterOther) return mainRow;
+        const posteNom = m ? m.nom : 'ce poste';
+        const contextParts = [];
+        if(beforeOther) contextParts.push(`🔒 Retenue par <button class="commande-link-inline" data-action="isolate-commande-goto-planning" data-cid="${beforeOther.cid}">${escapeHtml(beforeOther.commandeNom)}</button> — ${escapeHtml(beforeOther.piece||'—')}${beforeOther.etape?' / '+escapeHtml(beforeOther.etape):''} (occupe ${escapeHtml(posteNom)} jusqu'au ${formatDT(beforeOther.end)})`);
+        if(afterOther) contextParts.push(`➡ Retient à son tour <button class="commande-link-inline" data-action="isolate-commande-goto-planning" data-cid="${afterOther.cid}">${escapeHtml(afterOther.commandeNom)}</button> — ${escapeHtml(afterOther.piece||'—')}${afterOther.etape?' / '+escapeHtml(afterOther.etape):''} (prévue dès le ${formatDT(afterOther.start)})`);
+        return mainRow + `<tr class="risque-context-row"><td colspan="5">${contextParts.join(' · ')}</td></tr>`;
       }).join('');
-      return `<div class="risque-chain">
-        <div class="risque-chain-title">${escapeHtml(chain.nom)}</div>
-        <table class="ops-table">
-          <thead><tr><th>Étape</th><th>Poste</th><th>Statut</th><th>Début prévu</th><th>Fin prévue</th><th>Début réel</th><th>Fin réel</th></tr></thead>
-          <tbody>${rowsHtml}</tbody>
-        </table>
-      </div>`;
+      return pieceHeaderRow + chainRowsHtml;
     }).join('');
     return `<div class="risque-card">
       <div class="risque-card-head">
@@ -5703,7 +5761,10 @@ function renderRisquesPage(){
         </div>
         <div class="risque-days-late">+${joursRetard} j de dépassement estimé</div>
       </div>
-      ${chainsHtml}
+      <table class="ops-table">
+        <thead><tr><th>Étape</th><th>Poste</th><th>Statut</th><th>Début</th><th>Fin</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
     </div>`;
   }).join('') : `<div class="empty-state"><strong>Aucune commande à risque</strong>Toutes les commandes en cours respectent leur échéance estimée.</div>`;
   return `
@@ -5713,7 +5774,7 @@ function renderRisquesPage(){
       <span class="footer-note" style="margin:0;">${atRisk.length} commande(s) à risque</span>
     </div>
     <div class="panel-body">
-      ${atRisk.length ? `<div class="footer-note" style="text-align:left; padding-bottom:10px;">Triées de la plus en retard à la moins en retard. Pour chaque pièce, la chaîne de ses étapes dans l'ordre des phases — l'étape surlignée est la première pas encore terminée : c'est elle qui retient les suivantes. Cliquez le nom d'une commande pour l'isoler dans le planning.</div>` : ''}
+      ${atRisk.length ? `<div class="footer-note" style="text-align:left; padding-bottom:10px;">Triées de la plus en retard à la moins en retard. Pour chaque pièce, la chaîne de ses étapes dans l'ordre des phases — l'étape surlignée est la première pas encore terminée : c'est elle qui retient les suivantes. Quand une autre commande occupe le même poste juste avant ou juste après, elle est indiquée sous la ligne. Cliquez un nom de commande pour l'isoler dans le planning.</div>` : ''}
       ${body}
     </div>
   </section>`;
@@ -6443,7 +6504,7 @@ function renderExcelImportModal(){
   const zoneCellHtml = (zoneStockage) => {
     if(!zoneStockage) return `<span class="footer-note" style="margin:0;">Aucune (toutes occupées)</span>`;
     const allee = zonesInfoImp.byCode[zoneStockage];
-    return `<span style="font-family:'IBM Plex Mono',monospace; font-weight:600; ${allee?`color:${allee.couleur};`:''}">📍 ${escapeHtml(zoneStockage)}</span>`;
+    return `<span style="font-family:'IBM Plex Mono',monospace; font-weight:600; ${allee?`color:${readableZoneTextColor(allee.couleur)};`:''}">📍 ${escapeHtml(zoneStockage)}</span>`;
   };
   const rowsHtml = r.refs.map(c => `
     <tr>
@@ -6505,7 +6566,7 @@ function renderNewCommandeZoneNoticeModal(){
   const allee = zoneStockage ? computeStorageZones(state).byCode[zoneStockage] : null;
   const zoneBlock = zoneStockage
     ? `<div style="text-align:center; padding:18px 0;">
-        <div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:32px; ${allee?`color:${allee.couleur};`:''}">📍 ${escapeHtml(zoneStockage)}</div>
+        <div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:32px; ${allee?`color:${readableZoneTextColor(allee.couleur)};`:''}">📍 ${escapeHtml(zoneStockage)}</div>
         ${allee && allee.nom ? `<div class="footer-note" style="margin-top:4px;">${escapeHtml(allee.nom)}</div>` : ''}
       </div>`
     : `<div class="footer-note" style="text-align:left; padding:10px 0;">Aucune zone disponible — les emplacements configurés sont tous occupés. Attribuez-en une manuellement (badge "📍 Zone" sur la commande) dès qu'une se libère.</div>`;
@@ -7596,7 +7657,7 @@ function renderKanbanView(schedule){
       // Pas affiché sur une carte fusionnée multi-commandes : o.zoneStockage ne porterait alors que
       // la zone de la première commande du groupe, ce qui serait trompeur pour les autres membres.
       const zoneAlleeK = o.zoneStockage ? zonesInfoK.byCode[o.zoneStockage] : null;
-      const zoneLineK = (!o._fusionMembers && o.zoneStockage) ? `<div class="kanban-card-zone" style="${zoneAlleeK?`color:${zoneAlleeK.couleur};`:''}">📍 ${escapeHtml(o.zoneStockage)}</div>` : '';
+      const zoneLineK = (!o._fusionMembers && o.zoneStockage) ? `<div class="kanban-card-zone" style="${zoneAlleeK?`color:${readableZoneTextColor(zoneAlleeK.couleur)};`:''}">📍 ${escapeHtml(o.zoneStockage)}</div>` : '';
       const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (Number(o.tempsUnitaire)*Number(o.quantite))/60;
       const plannedLineK = `<div class="kanban-card-planned">Prévu : ${durationLabel(dureeH)}</div>`;
       const elapsedLineK = (col.key==='en_cours'||col.key==='en_pause'||col.key==='termine') ? (() => {
@@ -7914,7 +7975,7 @@ function renderCommandeCard(c, idx, total){
     // gardée sélectionnée pour ne jamais la perdre silencieusement, mais signalée comme telle.
     zoneOptions.push(`<option value="${c.zoneStockage}" selected>${escapeHtml(c.zoneStockage)} — hors configuration actuelle</option>`);
   }
-  const zoneColorStyle = currentAllee ? `border-color:${currentAllee.couleur}; color:${currentAllee.couleur}; background:${hexToRgba(currentAllee.couleur,0.12)};` : '';
+  const zoneColorStyle = currentAllee ? `border-color:${currentAllee.couleur}; color:${readableZoneTextColor(currentAllee.couleur)}; background:${hexToRgba(currentAllee.couleur,0.14)};` : '';
   const zoneReleaseTitle = expeditionGateActive
     ? 'Zone de stockage — se libère une fois la commande terminée ET marquée « Prêt à expédier »'
     : 'Zone de stockage — se libère automatiquement une fois la commande totalement terminée';
