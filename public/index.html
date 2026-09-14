@@ -734,7 +734,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -4530,6 +4530,11 @@ function handleExcelImportFile(e){
 function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU, kQte, kPhase, kOperateur, kMatiere, kEpaisseur, kGroupTag, kSousTraitance, kRefClient, kNumeroLigne){
   const errors = [];
   const duplicateLines = []; // doublons pièce/étape/numéro de ligne (dans le fichier ou déjà présents sur la commande)
+  // Mêmes lignes ignorées que errors/duplicateLines ci-dessus, mais sous forme structurée (valeurs
+  // brutes du fichier, pas de phrase toute faite) — pour l'aperçu de l'import personnalisé qui les
+  // affiche en tableau plutôt qu'en résumé texte (voir renderCustomImportModal).
+  const errorDetails = [];
+  const duplicateDetails = [];
   const groups = {}; // clé de groupe (référence, éventuellement suffixée d'une date de campagne) -> { dateBesoin, urgence, pieces: [], seen: Set }
   const machineByName = {};
   state.machines.forEach(m => { machineByName[m.nom.trim().toLowerCase()] = m; });
@@ -4563,29 +4568,33 @@ function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU,
 
   rows.forEach((row, idx) => {
     const lineNo = idx + 2; // ligne 1 = en-têtes
+    // Valeurs brutes lues d'emblée (avant toute validation), pour que chaque motif d'ignorance
+    // dispose du détail complet de la ligne — pas seulement de la valeur qui a posé problème.
     const ref = String(row[kRef]||'').trim();
-    if(!ref){ errors.push(`Ligne ${lineNo} : référence commande manquante — ignorée.`); return; }
     const stRaw = kSousTraitance ? String(row[kSousTraitance]||'').trim().toLowerCase() : '';
     const isSousTraitance = ['1','oui','x','true','vrai'].includes(stRaw);
     const posteNom = String(row[kPoste]||'').trim();
     const machine = machineByName[posteNom.toLowerCase()];
-    // Une pièce sous-traitée n'a besoin ni de poste (elle n'en occupe aucun) ni de temps unitaire
-    // (souvent inconnu — le sous-traitant ne le communique pas) : ces deux exigences ne s'appliquent
-    // qu'aux pièces réellement planifiées en interne.
-    if(!machine && !isSousTraitance){ errors.push(`Ligne ${lineNo} : poste "${posteNom}" introuvable — ligne ignorée.`); return; }
     const piece = String(row[kPiece]||'').trim();
-    if(!piece){ errors.push(`Ligne ${lineNo} : nom de pièce manquant — ignorée.`); return; }
     const etape = String(row[kEtape]||'').trim();
     let tu = Number(row[kTU]);
     let qte = Number(row[kQte]);
+    const numeroLigne = kNumeroLigne ? String(row[kNumeroLigne]||'').trim() : '';
+    const operateurNom = kOperateur ? String(row[kOperateur]||'').trim() : '';
+    const rawRowInfo = { lineNo, ref, piece, etape, poste: posteNom, operateur: operateurNom, tempsUnitaireBrut: row[kTU], quantiteBrut: row[kQte], numeroLigne };
+
+    if(!ref){ errors.push(`Ligne ${lineNo} : référence commande manquante — ignorée.`); errorDetails.push({ ...rawRowInfo, motif:'Référence commande manquante' }); return; }
+    // Une pièce sous-traitée n'a besoin ni de poste (elle n'en occupe aucun) ni de temps unitaire
+    // (souvent inconnu — le sous-traitant ne le communique pas) : ces deux exigences ne s'appliquent
+    // qu'aux pièces réellement planifiées en interne.
+    if(!machine && !isSousTraitance){ errors.push(`Ligne ${lineNo} : poste "${posteNom}" introuvable — ligne ignorée.`); errorDetails.push({ ...rawRowInfo, motif:`Poste "${posteNom}" introuvable` }); return; }
+    if(!piece){ errors.push(`Ligne ${lineNo} : nom de pièce manquant — ignorée.`); errorDetails.push({ ...rawRowInfo, motif:'Nom de pièce manquant' }); return; }
     if(isSousTraitance){
       if(!tu || tu<=0) tu = 0;
       if(!qte || qte<=0) qte = 1;
     } else if(!tu || tu<=0 || !qte || qte<=0){
-      errors.push(`Ligne ${lineNo} : temps unitaire ou quantité invalide — ligne ignorée.`); return;
+      errors.push(`Ligne ${lineNo} : temps unitaire ou quantité invalide — ligne ignorée.`); errorDetails.push({ ...rawRowInfo, motif:'Temps unitaire ou quantité invalide' }); return;
     }
-
-    const numeroLigne = kNumeroLigne ? String(row[kNumeroLigne]||'').trim() : '';
 
     // Résout la campagne (date d'ancrage) de cette ligne, puis la clé de groupe qui en découle —
     // une seule campagne pour cette référence : clé = référence, inchangée. Plusieurs campagnes :
@@ -4609,12 +4618,12 @@ function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU,
     const key = pieceKey(piece, etape, numeroLigne);
     if(groups[groupKey].seen.has(key)){
       duplicateLines.push(`Ligne ${lineNo} : "${piece}"${etape?' / '+etape:''}${numeroLigne?` (n°${numeroLigne})`:''} existe déjà sur "${groupKey}" — ligne ignorée.`);
+      duplicateDetails.push({ ...rawRowInfo, motif:`Doublon — existe déjà sur "${groupKey}"` });
       return;
     }
     groups[groupKey].seen.add(key);
     let phase = kPhase ? Number(row[kPhase]) : 1;
     if(!phase || phase < 1) phase = 1;
-    const operateurNom = kOperateur ? String(row[kOperateur]||'').trim() : '';
     const operateur = operateurNom ? userByName[operateurNom.toLowerCase()] : null;
     const matiere = kMatiere ? String(row[kMatiere]||'').trim() : '';
     const epaisseur = kEpaisseur ? String(row[kEpaisseur]||'').trim() : '';
@@ -4629,7 +4638,7 @@ function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU,
       _importGroupTag: groupTag || null // étiquette temporaire, jamais conservée après l'import (voir confirmCustomImport)
     });
   });
-  return { groups, errors, duplicateLines };
+  return { groups, errors, duplicateLines, errorDetails, duplicateDetails };
 }
 // Enregistre réellement les groupes construits par buildImportGroups (création ou fusion des
 // commandes) — ne fait AUCUNE validation, tout doit déjà avoir été vérifié en amont.
@@ -4925,7 +4934,7 @@ function proceedFromPostes(){
   // ignorer les lignes correspondantes (buildImportGroups les rejette proprement, avec un message
   // explicite dans l'aperçu qui suit), plutôt que de bloquer tout l'import.
   const transformedRows = cs.rows.map(r => transformCustomRow(r, cs.map, cs.posteMapping, cs.groupByValue, cs.sousTraitanceByValue));
-  const { groups, errors, duplicateLines } = buildImportGroups(
+  const { groups, errors, duplicateLines, errorDetails, duplicateDetails } = buildImportGroups(
     transformedRows, 'Référence commande', 'Date de besoin (JJ/MM/AAAA)', 'Urgence', 'Poste',
     'Pièce', 'Étape', 'Temps unitaire (min)', 'Quantité', 'Phase', 'Opérateur', 'Matière', 'Épaisseur', 'GroupTag', 'SousTraitance', 'Réf commande client', 'NumeroLigne'
   );
@@ -4933,7 +4942,7 @@ function proceedFromPostes(){
   const nbNouvelles = refs.filter(r=>!groups[r].existing && groups[r].pieces.length>0).length;
   const nbFusions = refs.filter(r=>groups[r].existing && groups[r].pieces.length>0).length;
   const nbPieces = refs.reduce((s,r)=>s+groups[r].pieces.length, 0);
-  cs.preview = { groups, errors, duplicateLines, nbNouvelles, nbFusions, nbPieces };
+  cs.preview = { groups, errors, duplicateLines, errorDetails, duplicateDetails, nbNouvelles, nbFusions, nbPieces };
   cs.step = 'preview';
   render();
 }
@@ -6291,8 +6300,28 @@ function renderCustomImportModal(){
       </div>
       <div class="footer-note" style="text-align:left; margin-bottom:6px;">Poste et opérateur peuvent être corrigés ici avant de valider, ligne par ligne.</div>
       ${refRows ? `<table class="ops-table"><thead><tr><th>Pièce / Étape</th><th>Poste</th><th>Opérateur</th><th>Durée</th></tr></thead><tbody>${refRows}</tbody></table>` : ''}
-      ${p.errors.length ? `<div class="modal-section-title" style="color:var(--red);">${p.errors.length} ligne(s) ignorée(s)</div><div class="footer-note" style="text-align:left;">${p.errors.map(escapeHtml).join('<br>')}</div>` : ''}
-      ${p.duplicateLines.length ? `<div class="modal-section-title" style="color:var(--amber);">${p.duplicateLines.length} doublon(s) ignoré(s)</div><div class="footer-note" style="text-align:left;">${p.duplicateLines.map(escapeHtml).join('<br>')}</div>` : ''}
+      ${(() => {
+        // Détail complet (valeurs du fichier), pas juste un résumé texte par ligne — pour retrouver
+        // à quoi correspondait une ligne ignorée sans devoir rouvrir l'Excel.
+        const ignoredRowHtml = (d) => `
+          <tr>
+            <td>${d.lineNo}</td>
+            <td>${escapeHtml(d.ref || '—')}</td>
+            <td>${escapeHtml([d.piece,d.etape].filter(Boolean).join(' / ')||'—')}${d.numeroLigne?` (n°${escapeHtml(d.numeroLigne)})`:''}</td>
+            <td>${escapeHtml(d.poste || '—')}</td>
+            <td>${escapeHtml(d.operateur || '—')}</td>
+            <td>${escapeHtml([d.quantiteBrut, d.tempsUnitaireBrut].filter(v=>v!==undefined && v!==null && v!=='').join(' × ')||'—')}</td>
+            <td>${escapeHtml(d.motif)}</td>
+          </tr>`;
+        const ignoredTable = (details, colorVar) => `
+          <table class="ops-table">
+            <thead><tr><th>Ligne</th><th>Référence</th><th>Pièce / Étape</th><th>Poste (fichier)</th><th>Opérateur (fichier)</th><th>Qté × T.U.</th><th style="color:${colorVar};">Motif</th></tr></thead>
+            <tbody>${details.map(ignoredRowHtml).join('')}</tbody>
+          </table>`;
+        return `
+          ${p.errorDetails.length ? `<div class="modal-section-title" style="color:var(--red);">${p.errorDetails.length} ligne(s) ignorée(s)</div>${ignoredTable(p.errorDetails, 'var(--red)')}` : ''}
+          ${p.duplicateDetails.length ? `<div class="modal-section-title" style="color:var(--amber);">${p.duplicateDetails.length} doublon(s) ignoré(s)</div>${ignoredTable(p.duplicateDetails, 'var(--amber)')}` : ''}`;
+      })()}
       <div class="form-actions" style="margin-top:16px;">
         <button class="ghost" data-action="custom-import-back-to-mapping">← Recommencer la correspondance</button>
         <button class="primary" data-action="confirm-custom-import">✓ Confirmer l'import</button>

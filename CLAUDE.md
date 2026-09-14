@@ -473,6 +473,27 @@ savoir, ce n'est indiscernable d'un doublon accidentel.
     tous deux `buildImportGroups`. `updateConfig` le convertit en nombre par défaut (pas de cas
     spécial nécessaire, contrairement à un champ texte ou booléen).
 
+### Détail des lignes ignorées (import personnalisé)
+
+`buildImportGroups` renvoie, en plus des messages texte `errors`/`duplicateLines` (phrases toutes
+faites, inchangées — toujours utilisées telles quelles par le résumé de l'import Excel standard,
+`renderExcelImportModal`), deux tableaux **structurés** parallèles : `errorDetails`/`duplicateDetails`
+— une entrée par ligne ignorée, avec les valeurs **brutes du fichier** (`lineNo`, `ref`, `piece`,
+`etape`, `poste`, `operateur`, `tempsUnitaireBrut`, `quantiteBrut`, `numeroLigne`) et un `motif` court
+(ex. `Poste "X" introuvable`). Toutes les valeurs brutes sont lues **avant** les vérifications qui
+peuvent faire sortir de la boucle (référence manquante, poste introuvable, pièce manquante, TU/qté
+invalide) : une ligne ignorée pour une seule raison garde donc le détail complet des autres colonnes,
+pas seulement celle qui a posé problème.
+
+- Utilisé **uniquement** par l'aperçu de l'import personnalisé (`renderCustomImportModal`, étape
+  `'preview'`) : affiché en tableau (Ligne, Référence, Pièce / Étape, Poste (fichier), Opérateur
+  (fichier), Qté × T.U., Motif) plutôt qu'en résumé texte à base de `<br>` — pour retrouver à quoi
+  correspondait une ligne ignorée sans devoir rouvrir l'Excel. `errors`/`duplicateLines` (texte)
+  restent inchangés et continuent de servir à l'import Excel standard (`renderExcelImportModal`),
+  qui n'a pas été modifié par cette fonctionnalité.
+- `proceedFromPostes()` propage `errorDetails`/`duplicateDetails` dans `cs.preview`, au même endroit
+  que `groups`/`errors`/`duplicateLines`.
+
 ## Dates flexibles à l'import
 
 `parseFlexibleDate(raw)` accepte, en plus d'un objet `Date` déjä résolu (cellule Excel réellement
@@ -675,11 +696,11 @@ principal). Aucun suivi de version réel n'existait avant (`package.json` restai
 jamais modifié ; aucun tag git) : `APP_VERSION` est parti de `'1.0.0'` comme premier numéro
 réellement suivi.
 
-- **Incrément manuel, en SemVer** (`MAJEUR.MINEUR.CORRECTIF`) à chaque évolution livrée (commit
-  poussé) : `CORRECTIF` pour un correctif de bug, `MINEUR` pour une nouvelle fonctionnalité,
-  `MAJEUR` réservé à un changement de rupture (pas encore arrivé sur ce projet). Aucune automatisation
-  (pas de build, pas de hook de commit) : à faire à la main, dans la même modification que le reste
-  du changement.
+- **Incrémenté systématiquement à chaque commit livré**, en SemVer (`MAJEUR.MINEUR.CORRECTIF`) :
+  `CORRECTIF` pour un correctif de bug, `MINEUR` pour une nouvelle fonctionnalité, `MAJEUR` réservé à
+  un changement de rupture (pas encore arrivé sur ce projet). Aucune automatisation (pas de build, pas
+  de hook de commit) : fait à la main, dans le même commit que le reste du changement — mais sans
+  attendre qu'on le demande, à chaque livraison.
 - Le champ `"version"` de `package.json` (serveur, jamais lu au runtime par l'application) doit être
   mis à jour en même temps que `APP_VERSION`, pour rester le reflet de la même version du produit,
   côté client comme côté serveur.
