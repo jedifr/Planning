@@ -7495,7 +7495,7 @@ function renderKanbanView(schedule){
       ? `(${ops.length} sur ${totalAvantLimite})` : `(${ops.length})`;
     return `<div class="kanban-col">
       <div class="kanban-col-head">${col.label} <span class="collapse-count">${countLabel}</span></div>
-      <div class="kanban-col-body">${cards || `<div class="kanban-empty">Aucune tâche</div>`}</div>
+      <div class="kanban-col-body" data-col-key="${col.key}">${cards || `<div class="kanban-empty">Aucune tâche</div>`}</div>
     </div>`;
   }).join('');
 
@@ -8019,6 +8019,10 @@ function render(){
   // de changement dès la première partie saisie (heures) sur certains navigateurs — sans cette
   // restauration, le redessin qui s'ensuit fait perdre le focus au milieu de la saisie.
   const focusRef = captureFocusRef();
+  // Idem pour chaque colonne du Kanban (défilement indépendant par colonne) : sans ça, cliquer une
+  // carte en bas d'une colonne pour l'isoler (card-isolate → render() intégral) reconstruit
+  // `.kanban-col-body` et son ascenseur "saute" en haut à chaque clic.
+  const kanbanScroll = captureKanbanScroll();
   if(licenseBlocked){
     appEl.innerHTML = renderLicenseBlockScreen();
     restoreModalScroll(modalScrollTop);
@@ -8084,6 +8088,7 @@ function render(){
   appEl.innerHTML = html;
   restoreModalScroll(modalScrollTop);
   restoreFocusRef(focusRef);
+  restoreKanbanScroll(kanbanScroll);
 }
 function captureFocusRef(){
   const el = document.activeElement;
@@ -8111,6 +8116,20 @@ function restoreModalScroll(scrollTop){
   if(scrollTop === null) return;
   const modal = document.querySelector('.modal-box');
   if(modal) modal.scrollTop = scrollTop;
+}
+function captureKanbanScroll(){
+  const bodies = document.querySelectorAll('.kanban-col-body[data-col-key]');
+  if(!bodies || !bodies.length) return null;
+  const map = {};
+  bodies.forEach(el => { map[el.dataset.colKey] = el.scrollTop; });
+  return map;
+}
+function restoreKanbanScroll(scrollMap){
+  if(!scrollMap) return;
+  Object.keys(scrollMap).forEach(key => {
+    const el = document.querySelector(`.kanban-col-body[data-col-key="${key}"]`);
+    if(el) el.scrollTop = scrollMap[key];
+  });
 }
 
 /* ---------------- redessin ciblé (recherche) ----------------

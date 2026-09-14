@@ -646,6 +646,16 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   reprises). Un rendu du type "Jour : {jour du début}" fait croire à tort que tout s'est joué ce
   jour-là (bug réel : une tâche commencée un vendredi et terminée le lundi suivant affichait
   seulement "vendredi"). Toujours comparer les deux dates et afficher la plage si elles diffèrent.
+- **Ascenseur d'une colonne remonté en haut par un `render()` intégral.** Chaque colonne du Kanban
+  (`.kanban-col-body`) a son propre défilement indépendant. Cliquer une carte pour isoler sa commande
+  (`card-isolate` → `toggleIsolateCommande` → `render()`) reconstruit tout `#app`, donc tous les
+  `.kanban-col-body` d'un coup — un `<div>` neuf démarre toujours à `scrollTop=0` (bug réel : cliquer
+  une carte en bas d'une colonne faisait "sauter" son ascenseur en haut à chaque clic). Corrigé sur le
+  même principe que `modalScrollTop`/`restoreModalScroll` : chaque colonne porte un `data-col-key`
+  (son `col.key`), `captureKanbanScroll()`/`restoreKanbanScroll()` mémorisent puis réappliquent la
+  position de chaque colonne autour de `render()`. Réflexe : tout nouveau conteneur à défilement
+  indépendant qui survit visuellement à un `render()` (et pas seulement les pop-up/modales, déjà
+  couvertes) a besoin du même traitement capture-avant/restaure-après.
 
 ## Conventions
 
