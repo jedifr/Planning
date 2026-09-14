@@ -666,3 +666,20 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   champs sans bordure au repos, révélés au survol et au focus.
 - Ne pas ajouter de dépendance sans nécessité : le client est volontairement sans
   framework ni build.
+
+## Numéro de version
+
+`APP_VERSION` (tout en haut du `<script>` de `public/index.html`) — seule source de vérité pour le
+numéro de version affiché dans l'application (écran de connexion, et pied de page du planning
+principal). Aucun suivi de version réel n'existait avant (`package.json` restait figé à `"1.0.0"`,
+jamais modifié ; aucun tag git) : `APP_VERSION` est parti de `'1.0.0'` comme premier numéro
+réellement suivi.
+
+- **Incrément manuel, en SemVer** (`MAJEUR.MINEUR.CORRECTIF`) à chaque évolution livrée (commit
+  poussé) : `CORRECTIF` pour un correctif de bug, `MINEUR` pour une nouvelle fonctionnalité,
+  `MAJEUR` réservé à un changement de rupture (pas encore arrivé sur ce projet). Aucune automatisation
+  (pas de build, pas de hook de commit) : à faire à la main, dans la même modification que le reste
+  du changement.
+- Le champ `"version"` de `package.json` (serveur, jamais lu au runtime par l'application) doit être
+  mis à jour en même temps que `APP_VERSION`, pour rester le reflet de la même version du produit,
+  côté client comme côté serveur.

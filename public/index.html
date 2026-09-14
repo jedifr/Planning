@@ -731,6 +731,10 @@
    Application locale, sauvegarde persistante (window.storage)
    ========================================================= */
 
+// Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
+// suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
+// livrée, voir CLAUDE.md.
+const APP_VERSION = '1.0.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -8077,6 +8081,7 @@ function render(){
     `<div id="commandes-section">${renderCommandes(schedule)}</div>`,
     `<div id="archives-section">${renderArchivesPanel()}</div>`,
     `<div class="footer-note">Les dates sont recalculées automatiquement à chaque modification — décalez un poste ou une échéance pour voir l'effet en cascade.</div>`,
+    `<div class="footer-note">v${APP_VERSION}</div>`,
     renderSettingsModal(),
     renderExcelImportModal(),
     renderCustomImportModal(),
@@ -8924,6 +8929,7 @@ function renderLoginScreen(errorMsg){
       </form>
       <button class="ghost small" style="width:100%; margin-top:10px;" data-action="show-forgot-password">Mot de passe oublié ?</button>
       ${copyright ? `<div class="login-copyright">${escapeHtml(copyright)}</div>` : ''}
+      <div class="login-copyright">v${APP_VERSION}</div>
     </div>
   </div>`;
   document.getElementById('login-form').addEventListener('submit', async (e) => {
