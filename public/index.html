@@ -763,7 +763,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.9.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -3946,7 +3946,7 @@ function submitNewCommande(){
 function openQuickPointage(){
   quickPointageDraft = {
     cid: '', nouvelleCommandeNom: '', machineId: '', piece: '', etape: '',
-    tempsUnitaire: '', quantite: '', operatorUserId: activeIdentityId() || ''
+    tempsUnitaire: '', quantite: '', dureeTotaleH: '', operatorUserId: activeIdentityId() || ''
   };
   render();
 }
@@ -3963,9 +3963,20 @@ function submitQuickPointage(){
   const d = quickPointageDraft; if(!d) return;
   const piece = (d.piece||'').trim();
   if(!piece){ alert('Merci de décrire la tâche effectuée.'); return; }
-  const tu = Number(d.tempsUnitaire) || 0;
-  const qte = Number(d.quantite) || 0;
-  if((tu>0) !== (qte>0)){ alert('Renseignez à la fois le temps unitaire et la quantité si la durée est connue, ou laissez les deux champs vides si elle ne l\'est pas.'); return; }
+  let tu = Number(d.tempsUnitaire) || 0;
+  let qte = Number(d.quantite) || 0;
+  const dureeTotaleH = Number(d.dureeTotaleH) || 0;
+  if(dureeTotaleH > 0){
+    // Durée totale : autre façon de renseigner la même information (temps unitaire × quantité), plus
+    // naturelle pour une tâche unique déjà pensée en durée globale — même calcul que updateOpDuree
+    // sur une pièce existante (le temps unitaire se déduit de la quantité, 1 par défaut si absente),
+    // jamais dureeOverrideH, réservé aux groupes fusionnés (voir CLAUDE.md).
+    if(qte <= 0) qte = 1;
+    tu = (dureeTotaleH * 60) / qte;
+  } else if((tu>0) !== (qte>0)){
+    alert('Renseignez soit une durée totale, soit le temps unitaire ET la quantité ensemble — ou laissez tout vide si la durée est inconnue.');
+    return;
+  }
   const hasDuration = tu>0 && qte>0;
 
   let c = null, isNewCommande = false, newNom = '';
@@ -6999,7 +7010,7 @@ function renderQuickPointageModal(){
         <button class="ghost icon-btn" data-action="close-quick-pointage" title="Fermer">✕</button>
       </div>
       <div class="modal-body">
-        <div class="footer-note" style="text-align:left; margin-bottom:10px;">Pour une tâche qui n'était pas planifiée : démarre tout de suite une session sur la commande choisie (ou une nouvelle). Si la durée n'est pas connue, laissez Temps unitaire et Quantité vides — la tâche sera marquée "hors planning" (jamais placée sur le planning, mais son temps est bien compté).</div>
+        <div class="footer-note" style="text-align:left; margin-bottom:10px;">Pour une tâche qui n'était pas planifiée : démarre tout de suite une session sur la commande choisie (ou une nouvelle). Si la durée n'est pas connue, laissez ces champs vides — la tâche sera marquée "hors planning" (jamais placée sur le planning, mais son temps est bien compté).</div>
         <label class="field">Commande</label>
         <select data-action="quick-pointage-select" data-field="cid">${commandeOptions}</select>
         ${!d.cid ? `<input type="text" placeholder="Nom de la nouvelle commande" value="${escapeHtml(d.nouvelleCommandeNom)}" data-action="quick-pointage-field" data-field="nouvelleCommandeNom" style="margin-top:6px;">` : ''}
@@ -7014,6 +7025,9 @@ function renderQuickPointageModal(){
           <div><label class="field">Temps unitaire (min, optionnel)</label><input type="number" min="0" step="0.5" value="${escapeHtml(d.tempsUnitaire)}" data-action="quick-pointage-field" data-field="tempsUnitaire"></div>
           <div><label class="field">Quantité (optionnel)</label><input type="number" min="1" step="1" value="${escapeHtml(d.quantite)}" data-action="quick-pointage-field" data-field="quantite"></div>
         </div>
+        <label class="field" style="margin-top:10px;">Ou directement une durée totale (h, optionnel)</label>
+        <input type="number" min="0" step="0.25" placeholder="Ex. 0,75 pour 45 min" value="${escapeHtml(d.dureeTotaleH)}" data-action="quick-pointage-field" data-field="dureeTotaleH">
+        <div class="footer-note" style="text-align:left; padding-top:4px;">Pratique quand la tâche n'a pas vraiment de "quantité" (ex. un dépannage) — remplace le calcul temps unitaire × quantité si renseignée.</div>
         <div class="form-actions" style="justify-content:flex-end; margin-top:14px;">
           <button class="ghost" data-action="close-quick-pointage">Annuler</button>
           <button class="primary" data-action="submit-quick-pointage">▶ Démarrer</button>

@@ -410,12 +410,21 @@ une commande choisie (ou une nouvelle créée à la volée), sans passer par le 
   doubles enregistrements concurrents). Un seul `commit()` pour toute l'action. L'avertissement "poste
   déjà occupé" (même logique que `setOpStatut`) est vérifié **avant** toute mutation de `state`, pour
   ne rien laisser en mémoire si la confirmation est annulée.
-- **Durée connue ou non, décidé au moment de la saisie** : temps unitaire et quantité sont optionnels,
-  mais doivent être renseignés ensemble ou pas du tout (validation explicite — l'un sans l'autre est
-  rejeté comme incohérent). Fournis, la pièce est créée normalement (`horsPlanning:false`) et rejoint
-  la planification comme n'importe quelle tâche démarrée manuellement. Absents, `pieces[].horsPlanning`
-  passe à `true` : la tâche est suivie (temps réel, historique, temps de production) mais **jamais
-  placée sur le planning**, faute de durée fiable à y projeter.
+- **Durée connue ou non, décidé au moment de la saisie** — trois champs optionnels dans le
+  formulaire : Temps unitaire, Quantité, et **Durée totale (h)**, cette dernière pensée pour une
+  tâche qui n'a pas vraiment de "quantité" (ex. un dépannage de 45 min). Temps unitaire et quantité
+  doivent être renseignés ensemble ou pas du tout (validation explicite — l'un sans l'autre est
+  rejeté comme incohérent) ; la durée totale, elle, se suffit à elle-même : quantité posée à `1` par
+  défaut si absente, temps unitaire déduit par le même calcul que `updateOpDuree` sur une pièce
+  existante (`tempsUnitaire = duréeTotale×60 / quantité`) — **jamais** `dureeOverrideH`, un champ
+  réservé aux groupes fusionnés (voir « Regroupement » plus bas : `isPositionPinned` et le
+  redimensionnement d'une barre en Semaine supposent tous deux qu'une pièce seule ne le porte
+  jamais). Une durée totale renseignée prévaut sur un temps unitaire par ailleurs rempli, plutôt que
+  d'obliger à vider ce dernier pour lever l'ambiguïté. Au moins une des deux façons ayant abouti à un
+  temps unitaire et une quantité positifs, la pièce est créée normalement (`horsPlanning:false`) et
+  rejoint la planification comme n'importe quelle tâche démarrée manuellement. Sans aucune des deux,
+  `pieces[].horsPlanning` passe à `true` : la tâche est suivie (temps réel, historique, temps de
+  production) mais **jamais placée sur le planning**, faute de durée fiable à y projeter.
 - `pieces[].horsPlanning` (bool, `false` par défaut) — dans `computeSchedule`, traitée exactement
   comme une pièce sous-traitée (jamais de poste réservé, dates réelles conservées telles quelles,
   contribue aux dépendances des phases suivantes seulement une fois `termine`) mais pour la raison
