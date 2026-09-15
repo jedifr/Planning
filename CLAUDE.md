@@ -57,7 +57,8 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
   (minutes), `quantite`, `statut`, `phase`, `manualStart`, `dureeOverrideH`,
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
   `fusionGroupId`, `fusionPinned`, `sousTraitance`, `dateDebutPossible`,
-  `autoPausedOperators`, `numeroLigne`, `previsionAvantCloture` (voir sections dédiées plus bas)
+  `autoPausedOperators`, `autoPausedUntil`, `numeroLigne`, `previsionAvantCloture` (voir sections
+  dédiées plus bas)
   - `sousTraitance` se coche **automatiquement** (jamais décoché automatiquement) dès que le poste
     choisi pour la ligne a un nom contenant "sous-traitance"/"sous traitance"
     (`machineNameLooksLikeSousTraitance`) — dans `updateOpField` (ligne d'une commande existante) et
@@ -119,6 +120,10 @@ Louca, pas Simon, pour cette session.
 **Reprise automatique après pause déjeuner** (`applyAutoPauseResume`) : ce n'est PAS un clic de
 quelqu'un — on conserve l'`operatorUserId` de la session qu'on referme, jamais l'identité active du
 poste qui déclenche la reprise (qui peut être n'importe quel navigateur en train de sonder l'état).
+Horodatage de la session rouverte : `o.autoPausedUntil` (l'heure à laquelle la pause aurait dû
+réellement se terminer, mémorisée dès l'auto-mise en pause), **jamais** l'instant où ce contrôle
+s'exécute réellement — voir le piège dédié plus bas (« Reprise automatique après pause horodatée au
+moment du contrôle, pas à la vraie fin de pause »).
 
 **Bannière « tâches en pause depuis la veille ou avant »** (vue superviseur/admin,
 `renderPausedTasksBanner`/`pausedSinceEarlierTasks`) affiche qui travaillait au moment de la mise en
@@ -852,6 +857,19 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   qui touche à un champ décliné par jour de la semaine (`monThuHours`/`friHours`) doit préserver le
   ratio entre les jours plutôt que d'en écraser un avec la valeur d'un autre, ou de le laisser
   totalement intact en ignorant la surcharge.
+- **Reprise automatique après pause horodatée au moment du contrôle, pas à la vraie fin de pause.**
+  `applyAutoPauseResume` ne s'exécute que quand un onglet est ouvert (`startApp`, puis sa boucle de
+  60s) — jamais par un déclencheur serveur. Si personne n'a l'appli ouverte entre la fin réelle
+  d'une pause et la prochaine connexion (typiquement une pause programmée en fin de journée, ou un
+  poste resté sans surveillance le soir), la reprise n'est constatée qu'à cette prochaine connexion,
+  potentiellement des heures plus tard. Rouvrir la session à `now` (l'instant du contrôle, comme le
+  faisait l'ancien code) horodatait alors la reprise à ce moment-là — ex. une pause déclenchée la
+  veille au soir affichée comme reprise le lendemain matin (bug réel signalé pour un superviseur).
+  Corrigé en mémorisant `o.autoPausedUntil` (l'heure de fin réelle de la pause, `pause.end`, posée
+  dès l'auto-mise en pause) et en l'utilisant comme horodatage de la session rouverte plutôt que
+  `now` — borné à `now` par sécurité (horloge cliente, config changée entre-temps : ne jamais ouvrir
+  une session dans le futur). Réflexe : toute reprise "automatique" différée dans le temps doit
+  horodater l'événement à quand il aurait dû se produire, jamais à quand il a été CONSTATÉ.
 
 ## Conventions
 

@@ -746,7 +746,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.6.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1214,6 +1214,7 @@ function migrateState(st){
       if(!o.sessions) o.sessions = [];
       if(o.autoPaused === undefined) o.autoPaused = false;
       if(o.autoPausedOperators === undefined) o.autoPausedOperators = null;
+      if(o.autoPausedUntil === undefined) o.autoPausedUntil = null;
       if(!Array.isArray(o.dependances)) o.dependances = [];
       if(o.phase === undefined || o.phase === null || isNaN(Number(o.phase))) o.phase = 1;
       if(o.tempsUnitaireTheorique === undefined || o.tempsUnitaireTheorique === null) o.tempsUnitaireTheorique = o.tempsUnitaire; // référence figée une seule fois (migration : valeur actuelle prise comme référence)
@@ -4100,6 +4101,13 @@ function applyAutoPauseResume(st){
         const openSessions = (o.sessions||[]).filter(s => !s.fin);
         openSessions.forEach(s => { s.fin = toInputValue(pause.start); });
         o.autoPausedOperators = openSessions.map(s => s.operatorUserId || null);
+        // Mémorise l'heure de fin RÉELLE de cette pause (voir plus bas, à la reprise) : cette
+        // fonction n'est rejouée que quand un onglet est ouvert (démarrage ou boucle de 60s dans
+        // startApp), jamais par un déclencheur serveur — un poste resté sans personne devant
+        // l'appli après la pause (fin de journée, ex. une pause programmée juste avant la fermeture)
+        // ne sera constaté "sorti de pause" qu'à la prochaine connexion, potentiellement bien plus
+        // tard (le lendemain matin).
+        o.autoPausedUntil = toInputValue(pause.end);
         o.statut = 'en_pause';
         o.autoPaused = true;
         changed = true;
@@ -4112,8 +4120,18 @@ function applyAutoPauseResume(st){
         const operators = (o.autoPausedOperators && o.autoPausedOperators.length)
           ? o.autoPausedOperators
           : [ (o.sessions[o.sessions.length-1]||{}).operatorUserId || o.operatorUserId || null ];
-        operators.forEach(opId => o.sessions.push({ debut: toInputValue(now), fin: null, operatorUserId: opId }));
+        // Piège corrigé : rouvrir la session à `now` (l'instant où CE contrôle s'exécute) plutôt qu'à
+        // l'heure où la pause aurait réellement dû se terminer (`o.autoPausedUntil`) faisait
+        // apparaître une reprise à l'heure de la prochaine connexion — ex. une pause auto déclenchée
+        // en fin de journée, personne devant l'appli ensuite : reprise constatée seulement le
+        // lendemain matin, avec un horaire de reprise trompeur (« reprise ce matin » au lieu de
+        // l'heure réelle de fin de pause, la veille au soir). On borne à `now` par sécurité (horloge
+        // client, config modifiée entre-temps) : ne jamais ouvrir une session dans le futur.
+        const resumeDate = o.autoPausedUntil ? new Date(o.autoPausedUntil) : now;
+        const resumeStr = toInputValue(resumeDate < now ? resumeDate : now);
+        operators.forEach(opId => o.sessions.push({ debut: resumeStr, fin: null, operatorUserId: opId }));
         o.autoPausedOperators = null;
+        o.autoPausedUntil = null;
         o.statut = 'en_cours';
         o.autoPaused = false;
         changed = true;
@@ -4225,6 +4243,8 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
     }
     if(o.machineId && isInPauseWindow(o, new Date(), state)){
       // on démarre/reprend en pleine pause déjeuner : elle part directement en pause automatique
+      const pause = pauseWindowFor(new Date(), configForPiece(o, state));
+      o.autoPausedUntil = pause ? toInputValue(pause.end) : null; // voir applyAutoPauseResume : sert à horodater correctement la reprise, même si personne ne rouvre l'appli avant longtemps après
       o.statut = 'en_pause';
       o.autoPaused = true;
     } else {
