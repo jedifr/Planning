@@ -563,9 +563,23 @@ volontairement la même zone (regroupement manuel de petites affaires dans un m�
   commande — pas quand des lignes s'ajoutent à une commande déjà existante du même nom, où aucune
   zone n'est réattribuée). L'import (Excel ou personnalisé) n'utilise pas cette pop-up à une seule
   commande : `commitImportGroups` porte `zoneStockage` sur chaque entrée de `createdNoms`, et
-  `renderExcelImportModal` (déjà partagée par les deux flux d'import) l'affiche directement dans sa
-  colonne "Zone de stockage" du tableau récapitulatif — plus adapté qu'une pop-up par commande quand
-  un import en crée plusieurs d'un coup.
+  `renderExcelImportModal` (déjà partagée par les deux flux d'import) l'affiche dans sa colonne
+  "Zone de stockage" du tableau récapitulatif — plus adapté qu'une pop-up par commande quand un
+  import en crée plusieurs d'un coup.
+  - **Bandeau « 📍 Zones à ranger »** — la colonne du tableau seule ne suffisait pas : petit texte
+    coloré dans la dernière colonne d'un tableau par ailleurs chargé (pièces, échéance, urgence),
+    facile à manquer alors que c'est justement l'information qui demande une action physique
+    immédiate (retour utilisateur réel : "j'aimerais que la zone de stockage soit vraiment très
+    visible"). `renderExcelImportModal` affiche en plus, juste sous la ligne de stats (même
+    emplacement que l'avertissement ambre "échéance provisoire"), un badge par commande **créée**
+    ayant réellement reçu une zone (`r.refs.filter(c => c.zoneStockage)`) — gros texte monospace,
+    couleur de l'allée (`readableZoneTextColor`), fond teinté (`hexToRgba(couleur, 0.15)`), trié par
+    code de zone. Repris du même langage visuel que le badge 32px de
+    `renderNewCommandeZoneNoticeModal` (création manuelle), ici pour potentiellement plusieurs
+    commandes d'un coup. Une commande sans zone (toutes occupées) ou simplement **complétée**
+    (`updatedRefs`, pas une nouvelle création — aucune zone n'y est réattribuée) n'apparaît jamais
+    dans ce bandeau, seulement dans le tableau détaillé ; entièrement absent (pas d'encart vide) si
+    aucune commande créée n'a reçu de zone.
 - **Casiers désactivés** (`state.config.inactiveStorageZones`, simple tableau de codes comme `"A13"`)
   — un casier cassé/réservé, à sortir de la rotation. `isZoneInactive(st, zone)` : jamais proposé par
   `assignStorageZone` (exclu de la sélection automatique) ni acceptable par `setCommandeZone`
