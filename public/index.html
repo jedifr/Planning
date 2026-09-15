@@ -255,6 +255,11 @@
     cursor:context-menu;
     background-image:repeating-linear-gradient(45deg, rgba(0,0,0,0.14) 0 6px, transparent 6px 12px) !important;
   }
+  /* Segment "déjà travaillé" d'une tâche en_cours/en_pause fragmentée (voir runningTaskSegments) :
+     juste estompé par rapport au segment "restant", jamais draggable (déjà exclu par la classe
+     running/paused portée en plus) — pas de distinction de forme, seulement d'opacité, pour rester
+     lisible même sur un segment très étroit (quelques minutes de session). */
+  .gantt-bar.gantt-bar-reel{ opacity:0.5; }
   .gantt-bar.dimmed, .month-chip.dimmed, .kanban-card.dimmed{ opacity:0.22; filter:grayscale(55%); }
   .gantt-bar.spotlight, .month-chip.spotlight{
     outline:2px solid #fff; outline-offset:1px;
@@ -764,7 +769,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.12.1';
+const APP_VERSION = '1.13.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1937,6 +1942,55 @@ function barStatusMeta(o, baseColor, overridden){
     draggable: true
   };
 }
+// Découpe une tâche en_cours/en_pause en segments RÉELS (une session déjà travaillée = un segment,
+// à partir de sessions[]) plus un segment final "restant" projeté à partir de maintenant, même
+// ancrage que runningTaskEnd (voir computeSchedule) — pour que le planning visuel montre les vrais
+// allers-retours entre plusieurs tâches sur un même poste (voir CLAUDE.md, « Fragmentation réelle »
+// des tâches en_cours/en_pause), au lieu d'un bloc continu qui les masquait. windowStart/windowEnd
+// bornent la fenêtre visible (jour ou semaine) : un segment entièrement hors de cette fenêtre est
+// écarté plutôt que rendu à largeur nulle — une tâche interrompue depuis plusieurs jours peut ainsi
+// n'avoir AUCUN segment visible un jour donné (rien ne s'y est passé ce jour-là), ce qui est
+// volontaire : plus fidèle qu'un bloc continu qui laissait croire à une occupation ininterrompue.
+function runningTaskSegments(o, st, windowStart, windowEnd){
+  const now = new Date();
+  const cfg = configForPiece(o, st);
+  const segments = [];
+  (o.sessions||[]).forEach(s => {
+    const start = new Date(s.debut);
+    const end = s.fin ? new Date(s.fin) : now;
+    if(end > start) segments.push({ start, end, kind:'reel' });
+  });
+  segments.sort((a,b) => a.start - b.start);
+  const from = nextWorkingInstant(now, cfg);
+  if(o.end > from) segments.push({ start: from, end: o.end, kind:'restant' });
+  if(!segments.length) segments.push({ start:o.start, end:o.end, kind:'restant' });
+  return segments.filter(seg => seg.end > windowStart && seg.start < windowEnd);
+}
+// Construit le(s) bloc(s) HTML d'une tâche sur le Gantt (Jour/Semaine), partagé entre renderDayView
+// et renderWeekView. Pour la plupart des tâches, un seul bloc classique (comportement inchangé).
+// Pour une tâche en_cours/en_pause (jamais une barre fusionnée : statut et sessions y sont ambigus
+// entre plusieurs pièces, volontairement exclue), plusieurs segments distincts — les segments déjà
+// travaillés sont juste estompés (`.gantt-bar-reel`, pas de resize-handle : purement informatifs),
+// le segment final "restant" garde le style plein et le comportement habituels de la tâche (déjà
+// non-draggable pour un statut en_cours/en_pause, voir barStatusMeta/dispatch pointerdown).
+function ganttBarsHtml(o, pos, meta, label, tooltipExtra, hlCls, tempsModCls, minWidthPct, windowStart, windowEnd){
+  const isRunning = !o._fusionMembers && (o.statut==='en_cours' || o.statut==='en_pause');
+  const segments = isRunning ? runningTaskSegments(o, state, windowStart, windowEnd) : [{ start:o.start, end:o.end, kind:'unique' }];
+  const lastIdx = segments.length - 1;
+  return segments.map((seg, idx) => {
+    const leftPct = pos(seg.start)*100;
+    const rightPct = pos(seg.end)*100;
+    const widthPct = Math.max(rightPct-leftPct, minWidthPct);
+    const isReel = seg.kind === 'reel';
+    const segNote = isReel ? ' — période déjà travaillée' : (segments.length>1 ? ' — temps restant (projeté)' : '');
+    return `<div class="gantt-bar ${meta.cls} ${hlCls} ${tempsModCls} ${o._fusionMembers?'fusion-bar':''} ${isReel?'gantt-bar-reel':''} ${leftPct > 55 ? 'tooltip-right' : ''}" style="left:${leftPct}%;width:${widthPct}%;background:${meta.color};border-left:4px solid ${meta.urgBorder}"
+      data-cid="${o.cid}" data-oid="${o.id}" data-start="${o.start.toISOString()}" data-fusion-group="${o._fusionMembers ? o.fusionGroupId : ''}">
+      <div class="gantt-bar-inner">${idx===lastIdx ? `<span>${escapeHtml(label)}</span>` : ''}</div>
+      ${ganttBarTooltipHtml({ ...o, start: seg.start, end: seg.end }, label + meta.note + segNote + (isTempsModified(o) ? ' — ⏱ temps modifié manuellement' : '') + tooltipExtra)}
+      ${isReel ? '' : `<div class="resize-handle" data-cid="${o.cid}" data-oid="${o.id}"></div>`}
+    </div>`;
+  }).join('');
+}
 function matchesSearch(c, query){
   if(!query) return true;
   const q = query.toLowerCase();
@@ -2298,14 +2352,22 @@ function comparePriorityItems(itemA, itemB){
   else if(da !== db) return da.localeCompare(db);
   return (itemA.op.phase||1) - (itemB.op.phase||1); // à égalité stricte, phase la plus basse d'abord
 }
-// Une tâche "en cours" dont le temps théorique est déjà écoulé (dépassement en direct) doit
-// continuer de s'afficher comme active jusqu'à maintenant, plutôt que de sembler figée dans le
-// passé — elle n'est étirée que si elle tourne réellement (pas "en pause"), et seulement jusqu'à
-// l'instant présent, jamais plus loin.
-function stretchIfOverdueRunning(op, end){
-  if(op.statut !== 'en_cours') return end;
-  const now = new Date();
-  return end < now ? now : end;
+// Fin projetée d'une tâche en_cours/en_pause : le temps RESTANT (durée totale − temps déjà
+// réellement passé via opElapsedHours, jamais négatif) projeté à partir de MAINTENANT (prochain
+// instant ouvré) — jamais "début + durée totale", qui ignore les pauses et peut retomber dans le
+// passé pour une tâche interrompue longtemps (bug réel : une pièce en_pause depuis plusieurs jours
+// affichait une fin déjà passée alors qu'il restait du travail réel — invisible sur le planning
+// visuel, ET faussant les dépendances de phase des étapes suivantes qui la croyaient déjà finie).
+// Remplace l'ancien stretchIfOverdueRunning, qui ne corrigeait qu'un dépassement déjà en cours
+// (statut en_cours uniquement, jamais en_pause) sans jamais tenir compte du temps réellement passé —
+// cette version couvre les deux statuts et reste exacte même sans dépassement : sans pause, temps
+// passé ≈ temps écoulé depuis le début, donc "maintenant + restant" ≈ "début + durée totale"
+// (résultat inchangé dans le cas nominal, corrigé seulement quand une pause a réellement eu lieu).
+function runningTaskEnd(op, st, dureeH, cfg){
+  const elapsedH = opElapsedHours(op, st);
+  const remainingH = Math.max(0, dureeH - elapsedH);
+  const from = nextWorkingInstant(new Date(), cfg);
+  return addWorkingDuration(from, remainingH, cfg);
 }
 // Temps de transfert après une opération : fixe (le déplacement lui-même) + proportionnel à la
 // quantité (la manutention). Réglé en MINUTES sur le poste de DÉPART, c'est-à-dire celui qui vient
@@ -2353,7 +2415,7 @@ function computeSchedule(st){
         const cfg = configForPiece(op, st);
         const dureeH = (op.dureeOverrideH!=null && op.dureeOverrideH>0) ? op.dureeOverrideH : (op.tempsUnitaire*op.quantite)/60;
         const start = nextWorkingInstant(new Date(op.manualStart), cfg);
-        const end = stretchIfOverdueRunning(op, addWorkingDuration(start, dureeH, cfg));
+        const end = runningTaskEnd(op, st, dureeH, cfg);
         machineIntervals[op.machineId].push({ start, end, fusionGroupId: op.fusionGroupId || null });
         const cur = machineFree[op.machineId];
         machineFree[op.machineId] = (cur && cur > end) ? cur : end;
@@ -2416,7 +2478,7 @@ function computeSchedule(st){
       const alreadyLocked = isRunning && runningAnchor;
       if(alreadyLocked){
         const start = nextWorkingInstant(new Date(runningAnchor), cfg);
-        const end = stretchIfOverdueRunning(op, addWorkingDuration(start, dureeH, cfg));
+        const end = runningTaskEnd(op, st, dureeH, cfg);
         computedEnd[op.id] = end;
         opsById[op.id] = { ...op, start, end, dureeH };
         return;
@@ -2446,7 +2508,7 @@ function computeSchedule(st){
         // que de la laisser concourir avec les tâches à faire (elle tourne déjà, elle ne peut pas
         // être planifiée dans le futur).
         const start = nextWorkingInstant(new Date(), cfg);
-        const end = stretchIfOverdueRunning(op, addWorkingDuration(start, dureeH, cfg));
+        const end = runningTaskEnd(op, st, dureeH, cfg);
         if(op.machineId){
           machineIntervals[op.machineId].push({ start, end, fusionGroupId: op.fusionGroupId || null });
           const cur = machineFree[op.machineId];
@@ -7779,9 +7841,6 @@ function renderDayView(schedule){
     const machineCfg = effectiveConfig(m, state);
     const ops = mergeFusedOpsForDisplay(visibleOps.filter(o=>o.machineId===m.id).sort((a,b)=>a.start-b.start));
     const bars = ops.map(o => {
-      let leftPct = pos(o.start)*100;
-      let rightPct = pos(o.end)*100;
-      const widthPct = Math.max(rightPct-leftPct, 0.4);
       const overridden = isPositionPinned(o);
       const meta = barStatusMeta(o, machineColor(m, mi), overridden);
       const baseLabel = meta.prefix + [o.commandeNom, o.piece, o.etape].filter(Boolean).join(' · ');
@@ -7790,12 +7849,7 @@ function renderDayView(schedule){
       const hl = isFusionAwareHighlighted(o);
       const hlCls = hlOn ? (hl ? 'spotlight' : 'dimmed') : '';
       const tempsModCls = isTempsModified(o) ? 'time-modified' : '';
-      return `<div class="gantt-bar ${meta.cls} ${hlCls} ${tempsModCls} ${o._fusionMembers?'fusion-bar':''} ${leftPct > 55 ? 'tooltip-right' : ''}" style="left:${leftPct}%;width:${widthPct}%;background:${meta.color};border-left:4px solid ${meta.urgBorder}"
-        data-cid="${o.cid}" data-oid="${o.id}" data-start="${o.start.toISOString()}" data-fusion-group="${o._fusionMembers ? o.fusionGroupId : ''}">
-        <div class="gantt-bar-inner"><span>${escapeHtml(label)}</span></div>
-        ${ganttBarTooltipHtml(o, label + meta.note + (isTempsModified(o) ? ' — ⏱ temps modifié manuellement' : '') + tooltipExtra)}
-        <div class="resize-handle" data-cid="${o.cid}" data-oid="${o.id}"></div>
-      </div>`;
+      return ganttBarsHtml(o, pos, meta, label, tooltipExtra, hlCls, tempsModCls, 0.4, dStart, dEnd);
     }).join('');
     const isToday = toDateInputValue(now)===toDateInputValue(day);
     const showTodayLine = isToday && now>=dStart && now<=dEnd;
@@ -7851,9 +7905,6 @@ function renderWeekView(schedule){
     const machineCfg = effectiveConfig(m, state);
     const ops = mergeFusedOpsForDisplay(visibleOps.filter(o=>o.machineId===m.id).sort((a,b)=>a.start-b.start));
     const bars = ops.map(o => {
-      let leftPct = pos(o.start)*100;
-      let rightPct = pos(o.end)*100;
-      const widthPct = Math.max(rightPct-leftPct, 0.3);
       const overridden = isPositionPinned(o);
       const meta = barStatusMeta(o, machineColor(m, mi), overridden);
       const baseLabel = meta.prefix + [o.commandeNom, o.piece, o.etape].filter(Boolean).join(' · ');
@@ -7862,12 +7913,7 @@ function renderWeekView(schedule){
       const hl = isFusionAwareHighlighted(o);
       const hlCls = hlOn ? (hl ? 'spotlight' : 'dimmed') : '';
       const tempsModCls = isTempsModified(o) ? 'time-modified' : '';
-      return `<div class="gantt-bar ${meta.cls} ${hlCls} ${tempsModCls} ${o._fusionMembers?'fusion-bar':''} ${leftPct > 55 ? 'tooltip-right' : ''}" style="left:${leftPct}%;width:${widthPct}%;background:${meta.color};border-left:4px solid ${meta.urgBorder}"
-        data-cid="${o.cid}" data-oid="${o.id}" data-start="${o.start.toISOString()}" data-fusion-group="${o._fusionMembers ? o.fusionGroupId : ''}">
-        <div class="gantt-bar-inner"><span>${escapeHtml(label)}</span></div>
-        ${ganttBarTooltipHtml(o, label + meta.note + (isTempsModified(o) ? ' — ⏱ temps modifié manuellement' : '') + tooltipExtra)}
-        <div class="resize-handle" data-cid="${o.cid}" data-oid="${o.id}"></div>
-      </div>`;
+      return ganttBarsHtml(o, pos, meta, label, tooltipExtra, hlCls, tempsModCls, 0.3, days[0], weekEndExclusive);
     }).join('');
     const showTodayLine = now>=days[0] && now<weekEndExclusive;
     const todayLeftPct = pos(nextWorkingInstant(now,machineCfg))*100;

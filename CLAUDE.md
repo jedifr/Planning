@@ -726,6 +726,65 @@ Réglé **par poste de départ**, en minutes : `transfertFixeMin + transfertParP
 Appliqué même si la phase suivante reste sur le même poste. S'écoule sur les horaires
 d'atelier via `addWorkingDuration` (un transfert ne court pas la nuit).
 
+### Fin projetée d'une tâche en_cours/en_pause — temps restant, pas « début + durée »
+
+Une tâche `en_cours`/`en_pause` peut être interrompue longtemps (poste partagé, opérateur qui saute
+d'une tâche à l'autre en mettant en pause celles qu'il ne fait pas dans l'instant — voir « Travail à
+plusieurs sur une même pièce » plus haut pour le cas où DEUX personnes travaillent en même temps ;
+ici c'est la MÊME personne qui alterne). Calculer sa fin comme `début + durée totale` ignore
+totalement ces pauses : pour une tâche interrompue plusieurs jours, ça peut placer la fin
+**dans le passé** alors qu'il reste réellement du travail à faire — invisible sur le planning
+visuel, et les phases suivantes de la même pièce la croient déjà finie (dépendances faussées).
+
+- `runningTaskEnd(op, st, dureeH, cfg)` — la fin d'une tâche `en_cours`/`en_pause` est désormais
+  systématiquement `maintenant (prochain instant ouvré) + temps RESTANT`, où temps restant =
+  `dureeH - opElapsedHours(op, st)` (jamais négatif). Remplace l'ancien `stretchIfOverdueRunning`,
+  qui ne corrigeait qu'un dépassement déjà en cours et **uniquement** pour `en_cours` (jamais pour
+  `en_pause` — c'était précisément le bug : une pièce en pause depuis plusieurs jours gardait une
+  fin calculée depuis son ancien début, tombée dans le passé). Sans pause (temps déjà passé ≈ temps
+  écoulé depuis le début), le résultat reste identique à l'ancien calcul — seul le cas avec une
+  vraie pause change de résultat, jamais le cas nominal.
+- Utilisé aux trois points de `computeSchedule` qui calculent la fin d'une tâche verrouillée
+  (phase 1 avec `manualStart`, phase 2 `alreadyLocked`, phase 2 "en cours sans ancrage") — plus
+  jamais `stretchIfOverdueRunning`, supprimée.
+- `computedEnd[op.id]` utilise cette fin corrigée : une étape suivante de la même pièce (dépendance
+  de phase, voir ci-dessus) attend désormais la vraie fin projetée, jamais une fin bogguée tombée
+  dans le passé.
+
+#### Fragmentation visuelle (Jour/Semaine)
+
+Avant ce correctif, une tâche `en_cours`/`en_pause` s'affichait comme un unique bloc continu sur le
+Gantt, masquant les allers-retours réels d'un opérateur entre plusieurs tâches d'un même poste
+(retour utilisateur réel, cas de Simon : plusieurs tâches en_cours/en_pause sur Chaudronnerie,
+alternées au fil de la journée). `renderDayView`/`renderWeekView` découpent maintenant une telle
+tâche en segments distincts au lieu d'un bloc unique.
+
+- `runningTaskSegments(o, st, windowStart, windowEnd)` — un segment par session déjà travaillée
+  (`sessions[]`, réel, y compris la session ouverte en cours le cas échéant) **plus** un segment
+  final "restant" projeté à partir de maintenant jusqu'à `o.end` (même ancrage que
+  `runningTaskEnd`). `windowStart`/`windowEnd` bornent la fenêtre visible (jour ou semaine) : un
+  segment entièrement hors de cette fenêtre est écarté plutôt que rendu à largeur nulle — une tâche
+  interrompue depuis plusieurs jours peut donc n'avoir **aucun** segment visible un jour donné (rien
+  ne s'y est passé ce jour-là), plus fidèle qu'un bloc continu qui laissait croire à une occupation
+  ininterrompue. Sans aucune session (pièce jamais démarrée via Démarrer/Reprendre, legacy) : replie
+  sur un unique segment "restant" couvrant tout `start`→`end`, jamais de plantage.
+- `ganttBarsHtml(o, pos, meta, label, tooltipExtra, hlCls, tempsModCls, minWidthPct, windowStart,
+  windowEnd)` — factorise la construction des blocs `.gantt-bar`, partagée par `renderDayView` et
+  `renderWeekView` (avant cette fonctionnalité, dupliquée à l'identique dans les deux). Pour une
+  tâche `en_cours`/`en_pause` non fusionnée, un bloc par segment de `runningTaskSegments` ; pour
+  toute autre tâche (à faire, figée, terminée, sous-traitée, hors planning) **ou une barre fusionnée**
+  (`o._fusionMembers` — statut et sessions y sont ambigus entre plusieurs pièces, volontairement
+  exclue), un seul bloc classique, comportement strictement inchangé.
+  - Un segment réel (`.gantt-bar-reel`) est juste **estompé** (opacité réduite) par rapport au
+    segment restant — pas de resize-handle (purement informatif : dragger/redimensionner un
+    historique n'a pas de sens). Le segment restant garde le style et le comportement plein
+    habituels de la tâche — déjà non-draggable pour `en_cours`/`en_pause` de toute façon (voir
+    `barStatusMeta`/le garde-fou du `pointerdown` qui exclut `done`/`running`/`paused`), donc aucun
+    changement d'interaction n'était nécessaire pour rendre ce découpage sûr.
+  - Le libellé de la tâche n'est affiché que sur le **dernier** segment (le "restant", ou l'unique
+    segment classique) — pas répété sur chaque segment réel, pour ne pas surcharger visuellement des
+    segments parfois très étroits (quelques minutes de session).
+
 ## Regroupement (fusion)
 
 Trois mécanismes **indépendants** produisent un `fusionGroupId` :
@@ -1098,6 +1157,20 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   `computeSessionsHoursByOperator`. Réflexe : tout ce qui doit survivre à la clôture d'une pièce et
   qui se déduit de `sessions[]` (pas seulement le total déjà couvert par `dureeReelleH`) doit être
   calculé et figé à ce même endroit, jamais après.
+- **Fin d'une tâche `en_cours`/`en_pause` calculée comme « début + durée totale », sans jamais tenir
+  compte des pauses.** L'ancien `stretchIfOverdueRunning` ne corrigeait un dépassement que pour le
+  statut `en_cours`, jamais `en_pause` — une pièce interrompue plusieurs jours (opérateur qui alterne
+  entre plusieurs tâches d'un même poste, la mettant en pause à chaque fois) gardait donc une fin
+  calculée depuis son ancien début, qui pouvait tomber **dans le passé** alors qu'il restait
+  réellement du travail (bug réel signalé : une pièce en_pause depuis une semaine, à moitié faite,
+  affichait une fin déjà passée — invisible sur le planning visuel, et faussant les dépendances de
+  phase des étapes suivantes de la même pièce, qui la croyaient déjà terminée). Corrigé en
+  remplaçant ce calcul par `runningTaskEnd` : la fin est désormais toujours `maintenant + temps
+  RESTANT` (`durée totale - temps réellement passé`, via `opElapsedHours`), jamais `début + durée
+  totale`. Réflexe : toute fin projetée d'une tâche qui peut être interrompue doit se déduire du
+  temps qu'il reste **réellement** à faire, projeté depuis maintenant — jamais d'une durée totale
+  appliquée telle quelle depuis un point de départ ancien, qui ignore silencieusement tout ce qui
+  s'est passé (ou pas) entre-temps.
 
 ## Conventions
 
