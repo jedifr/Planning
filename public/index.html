@@ -763,7 +763,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1033,6 +1033,9 @@ let excelImportResult = null;
 // (Excel/personnalisé) affiche la même information dans sa propre pop-up de résultat (excelImportResult),
 // commande par commande, plutôt que d'utiliser celle-ci qui ne porte qu'une seule commande à la fois.
 let newCommandeZoneNotice = null; // { nom, zoneStockage } | null
+// Formulaire "Pointage rapide" (onglet Temps de production, voir CLAUDE.md) — { cid, nouvelleCommandeNom,
+// machineId, piece, etape, tempsUnitaire, quantite, operatorUserId } | null (fermé).
+let quickPointageDraft = null;
 let fusionCheckedItems = {}; // clé "posteId|matière|épaisseur" -> Set des id de pièces cochées pour fusion
 // État de l'assistant d'import personnalisé (fichier d'un autre logiciel, colonnes à faire
 // correspondre) — null quand l'assistant est fermé.
@@ -1241,6 +1244,7 @@ function migrateState(st){
       if(o.operatorUserId === undefined) o.operatorUserId = null;
       if(o.dateDebutPossible === undefined) o.dateDebutPossible = null;
       if(o.sousTraitance === undefined) o.sousTraitance = false;
+      if(o.horsPlanning === undefined) o.horsPlanning = false;
       if(o.matiere === undefined) o.matiere = '';
       if(o.epaisseur === undefined) o.epaisseur = '';
       if(o.numeroLigne === undefined) o.numeroLigne = null;
@@ -2267,7 +2271,7 @@ function computeSchedule(st){
   // elles occupent le poste pour de vrai et ne doivent jamais être déplacées par la résolution de conflit.
   st.commandes.forEach(cmd => {
     cmd.pieces.forEach(op => {
-      if((op.statut==='en_cours' || op.statut==='en_pause') && op.manualStart && op.machineId && !op.sousTraitance){
+      if((op.statut==='en_cours' || op.statut==='en_pause') && op.manualStart && op.machineId && !op.sousTraitance && !op.horsPlanning){
         const cfg = configForPiece(op, st);
         const dureeH = (op.dureeOverrideH!=null && op.dureeOverrideH>0) ? op.dureeOverrideH : (op.tempsUnitaire*op.quantite)/60;
         const start = nextWorkingInstant(new Date(op.manualStart), cfg);
@@ -2301,6 +2305,18 @@ function computeSchedule(st){
         const s = op.debutReel ? new Date(op.debutReel) : (op.manualStart ? new Date(op.manualStart) : null);
         const e = op.statut === 'termine' ? (op.finReel ? new Date(op.finReel) : null) : null;
         opsById[op.id] = { ...op, start: s, end: e, dureeH: dureeHst };
+        if(e) computedEnd[op.id] = e;
+        return;
+      }
+      if(op.horsPlanning){
+        // Pointage à la volée sans durée estimée (voir CLAUDE.md) : même traitement qu'une pièce
+        // sous-traitée — jamais de poste réservé, dates réelles gardées pour information — mais pour
+        // une raison différente : ici on n'a justement AUCUNE durée fiable à projeter, pas un travail
+        // fait ailleurs. Une fois une durée connue (case décochée après coup), la pièce redevient une
+        // pièce normale au prochain calcul, sans traitement spécial nécessaire.
+        const s = op.debutReel ? new Date(op.debutReel) : (op.manualStart ? new Date(op.manualStart) : null);
+        const e = op.statut === 'termine' ? (op.finReel ? new Date(op.finReel) : null) : null;
+        opsById[op.id] = { ...op, start: s, end: e, dureeH: null };
         if(e) computedEnd[op.id] = e;
         return;
       }
@@ -3921,6 +3937,90 @@ function submitNewCommande(){
   saveStateWithReapply(applyFn, 3);
   if(skippedInDraft) showToast(`${skippedInDraft} ligne(s) en double dans le formulaire ont été ignorée(s).`);
 }
+// Pointage rapide (onglet Temps de production, voir CLAUDE.md) — pour une tâche qui n'était pas
+// planifiée : crée (ou réutilise) une commande, y ajoute une pièce déjà démarrée (session ouverte,
+// debutReel/manualStart = maintenant), sans passer par le formulaire multi-lignes "Nouvelle
+// commande" (bien trop lourd pour ce cas d'usage). Volontairement autonome plutôt que de réutiliser
+// setOpStatut : construire la pièce déjà "en_cours" évite d'avoir à la pousser dans state PUIS la
+// démarrer par un second appel commit()-ant séparément (voir le piège des doubles enregistrements).
+function openQuickPointage(){
+  quickPointageDraft = {
+    cid: '', nouvelleCommandeNom: '', machineId: '', piece: '', etape: '',
+    tempsUnitaire: '', quantite: '', operatorUserId: activeIdentityId() || ''
+  };
+  render();
+}
+function closeQuickPointage(){
+  quickPointageDraft = null;
+  render();
+}
+function updateQuickPointageField(field, value){
+  if(!quickPointageDraft) return;
+  quickPointageDraft[field] = value;
+  render();
+}
+function submitQuickPointage(){
+  const d = quickPointageDraft; if(!d) return;
+  const piece = (d.piece||'').trim();
+  if(!piece){ alert('Merci de décrire la tâche effectuée.'); return; }
+  const tu = Number(d.tempsUnitaire) || 0;
+  const qte = Number(d.quantite) || 0;
+  if((tu>0) !== (qte>0)){ alert('Renseignez à la fois le temps unitaire et la quantité si la durée est connue, ou laissez les deux champs vides si elle ne l\'est pas.'); return; }
+  const hasDuration = tu>0 && qte>0;
+
+  let c = null, isNewCommande = false, newNom = '';
+  if(d.cid){
+    c = state.commandes.find(cc=>cc.id===d.cid);
+    if(!c){ alert('Commande introuvable — réessayez.'); return; }
+  } else {
+    newNom = (d.nouvelleCommandeNom||'').trim();
+    if(!newNom){ alert("Merci de choisir une commande existante ou d'indiquer le nom d'une nouvelle commande."); return; }
+    // Comme submitNewCommande : rejoint une commande de même nom si elle existe déjà, plutôt que
+    // d'en créer une seconde identique par erreur de frappe/inattention.
+    const existingSameName = state.commandes.find(cc => cc.nom.trim().toLowerCase() === newNom.toLowerCase());
+    if(existingSameName) c = existingSameName; else isNewCommande = true;
+  }
+
+  // Même avertissement (non bloquant) que setOpStatut avant de démarrer une pièce sur un poste déjà
+  // occupé — vérifié AVANT toute mutation de state, pour ne rien laisser en mémoire si on annule ici.
+  if(d.machineId){
+    const conflicts = [];
+    state.commandes.forEach(cc => cc.pieces.forEach(oo => {
+      if(oo.machineId === d.machineId && oo.statut === 'en_cours') conflicts.push(`"${[oo.piece,oo.etape].filter(Boolean).join(' / ')}" (${cc.nom})`);
+    }));
+    if(conflicts.length){
+      const m = state.machines.find(mm=>mm.id===d.machineId);
+      const dejaEnCours = conflicts.length > 1 ? 'sont déjà en cours' : 'est déjà en cours';
+      if(!confirm(`Attention : ${conflicts.join(', ')} ${dejaEnCours} sur ${m?m.nom:'ce poste'}.\n\nDémarrer quand même ce pointage ?`)) return;
+    }
+  }
+
+  if(isNewCommande){
+    c = { id: uid('c'), nom: newNom, refClient:'', dateBesoin: toDateInputValue(new Date()), urgence:'normale', zoneStockage:null, pieces:[] };
+    state.commandes.push(c);
+    assignStorageZone(state, c);
+  }
+
+  const maxPhase = c.pieces.reduce((mx,p) => Math.max(mx, Number(p.phase)||1), 0);
+  const nowStr = toInputValue(new Date());
+  const opUserId = d.operatorUserId || activeIdentityId() || null;
+  c.pieces.push({
+    id: uid('op'), piece, etape: (d.etape||'').trim(), machineId: d.machineId || null,
+    tempsUnitaire: hasDuration ? tu : 0, quantite: hasDuration ? qte : 0, statut: 'en_cours',
+    manualStart: nowStr, dureeOverrideH: null, debutReel: nowStr, finReel: null,
+    sessions: [{ debut: nowStr, fin: null, operatorUserId: opUserId }],
+    autoPaused: false, autoPausedOperators: null, autoPausedUntil: null, dependances: [], phase: maxPhase + 1,
+    operatorUserId: opUserId, tempsUnitaireTheorique: hasDuration ? tu : 0,
+    dureeReelleH: null, matiere: '', epaisseur: '', dateDebutPossible: null, sousTraitance: false,
+    fusionGroupId: null, fusionPinned: false, numeroLigne: null, previsionAvantCloture: null,
+    // Sans durée connue, jamais planifiée sur un poste (voir computeSchedule) — juste suivie pour
+    // son temps réel, comme une pièce sous-traitée mais pour la raison inverse (voir CLAUDE.md).
+    horsPlanning: !hasDuration
+  });
+  quickPointageDraft = null;
+  commit();
+  showToast(hasDuration ? `Pointage démarré sur "${c.nom}".` : `Pointage démarré (hors planning) sur "${c.nom}".`);
+}
 // Applique réellement, une fois les pièces créées, les regroupements décidés dans le formulaire de
 // nouvelle commande (bouton "Regrouper les lignes du même poste") — réutilise exactement le même
 // mécanisme de fusion que le reste de l'application.
@@ -4062,6 +4162,15 @@ function toggleOpSousTraitance(cid, oid, checked){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
   const o = c.pieces.find(o=>o.id===oid); if(!o) return;
   o.sousTraitance = !!checked;
+  commit();
+}
+// "Hors planning" (voir CLAUDE.md, pointage rapide) : cochable/décochable à la main comme le
+// sous-traitance, pour rebasculer manuellement une pièce dans la planification une fois sa durée
+// réellement connue (ou l'inverse, si une pièce planifiée se révèle finalement ne pas devoir l'être).
+function toggleOpHorsPlanning(cid, oid, checked){
+  const c = state.commandes.find(c=>c.id===cid); if(!c) return;
+  const o = c.pieces.find(o=>o.id===oid); if(!o) return;
+  o.horsPlanning = !!checked;
   commit();
 }
 function updateOpDuree(cid, oid, value){
@@ -6486,6 +6595,7 @@ function renderTempsProdSelfPage(start, end, label){
   <section class="panel">
     <div class="panel-head">
       <h2>${title}</h2>
+      <button class="small" data-action="open-quick-pointage" title="Démarrer tout de suite une tâche qui n'était pas planifiée">➕ Pointage rapide</button>
       <button class="small" data-action="temps-prod-export" title="Exporter mon détail sur la période affichée">⬇ Exporter (.xlsx)</button>
     </div>
     <div class="panel-body">${renderTempsProdPeriodControls(label)}</div>
@@ -6530,6 +6640,7 @@ function renderTempsProdPage(){
   <section class="panel">
     <div class="panel-head">
       <h2>⏱ Temps de production</h2>
+      <button class="small" data-action="open-quick-pointage" title="Démarrer tout de suite une tâche qui n'était pas planifiée">➕ Pointage rapide</button>
       <button class="small" data-action="temps-prod-export" title="Exporter le résumé et le détail de la période affichée">⬇ Exporter (.xlsx)</button>
     </div>
     <div class="panel-body">${renderTempsProdPeriodControls(label)}</div>
@@ -6865,6 +6976,47 @@ function renderNewCommandeZoneNoticeModal(){
         ${zoneBlock}
         <div class="form-actions" style="justify-content:flex-end; margin-top:8px;">
           <button class="primary" data-action="close-new-commande-zone-notice">Compris</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+// Pointage rapide (voir openQuickPointage/CLAUDE.md) — formulaire compact, volontairement distinct
+// du formulaire "Nouvelle commande" (multi-lignes, bien plus lourd que nécessaire ici).
+function renderQuickPointageModal(){
+  if(!quickPointageDraft) return '';
+  const d = quickPointageDraft;
+  const activeCommandes = state.commandes
+    .filter(c => c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine'))
+    .slice().sort((a,b) => a.nom.localeCompare(b.nom));
+  const commandeOptions = `<option value="">+ Nouvelle commande…</option>` +
+    activeCommandes.map(c => `<option value="${c.id}" ${d.cid===c.id?'selected':''}>${escapeHtml(c.nom)}</option>`).join('');
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:460px;">
+      <div class="modal-head">
+        <h2>➕ Pointage rapide</h2>
+        <button class="ghost icon-btn" data-action="close-quick-pointage" title="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="footer-note" style="text-align:left; margin-bottom:10px;">Pour une tâche qui n'était pas planifiée : démarre tout de suite une session sur la commande choisie (ou une nouvelle). Si la durée n'est pas connue, laissez Temps unitaire et Quantité vides — la tâche sera marquée "hors planning" (jamais placée sur le planning, mais son temps est bien compté).</div>
+        <label class="field">Commande</label>
+        <select data-action="quick-pointage-select" data-field="cid">${commandeOptions}</select>
+        ${!d.cid ? `<input type="text" placeholder="Nom de la nouvelle commande" value="${escapeHtml(d.nouvelleCommandeNom)}" data-action="quick-pointage-field" data-field="nouvelleCommandeNom" style="margin-top:6px;">` : ''}
+        <label class="field" style="margin-top:10px;">Description de la tâche</label>
+        <input type="text" placeholder="Ex. Dépannage machine X" value="${escapeHtml(d.piece)}" data-action="quick-pointage-field" data-field="piece">
+        <input type="text" placeholder="Étape (optionnel)" value="${escapeHtml(d.etape)}" data-action="quick-pointage-field" data-field="etape" style="margin-top:4px;">
+        <label class="field" style="margin-top:10px;">Poste (optionnel)</label>
+        <select data-action="quick-pointage-select" data-field="machineId"><option value="">— aucun poste —</option>${machineOptions(d.machineId)}</select>
+        <label class="field" style="margin-top:10px;">Opérateur</label>
+        <select data-action="quick-pointage-select" data-field="operatorUserId">${operatorOptions(d.operatorUserId)}</select>
+        <div class="commande-top-fields" style="grid-template-columns:1fr 1fr; margin-top:10px;">
+          <div><label class="field">Temps unitaire (min, optionnel)</label><input type="number" min="0" step="0.5" value="${escapeHtml(d.tempsUnitaire)}" data-action="quick-pointage-field" data-field="tempsUnitaire"></div>
+          <div><label class="field">Quantité (optionnel)</label><input type="number" min="1" step="1" value="${escapeHtml(d.quantite)}" data-action="quick-pointage-field" data-field="quantite"></div>
+        </div>
+        <div class="form-actions" style="justify-content:flex-end; margin-top:14px;">
+          <button class="ghost" data-action="close-quick-pointage">Annuler</button>
+          <button class="primary" data-action="submit-quick-pointage">▶ Démarrer</button>
         </div>
       </div>
     </div>
@@ -7906,6 +8058,8 @@ function renderKanbanView(schedule){
       const urgBorder = urgencyBorderColor(o.urgence);
       const timeInfo = o.sousTraitance
         ? (col.key==='termine' ? (o.finReel ? `🏭 Revenue le ${formatDT(new Date(o.finReel))}` : '🏭 Revenue') : '🏭 Sous-traitée — non planifiée')
+        : o.horsPlanning
+        ? (col.key==='termine' ? (o.finReel ? `📋 Terminée le ${formatDT(new Date(o.finReel))}` : '📋 Réalisée') : (o.debutReel ? `📋 Hors planning — depuis ${formatDT(new Date(o.debutReel))}` : '📋 Hors planning'))
         : col.key==='termine'
         ? (o.finReel ? `Terminée le ${formatDT(new Date(o.finReel))}` : 'Réalisée')
         : (o.start ? `${formatDT(o.start)} → ${formatDT(o.end)}` : 'Non planifiée');
@@ -8169,6 +8323,10 @@ function renderOpsRow(o, c){
     ? (done
         ? (o.finReel ? `<span class="dates-val">🏭 <span class="lbl">Revenue le</span> ${formatDT(new Date(o.finReel))}</span>` : `<span class="dates-val" style="color:var(--text-faint)">🏭 Sous-traitée — revenue</span>`)
         : `<span class="dates-val" style="color:var(--text-faint)">🏭 Sous-traitée — ${running?'en cours chez le sous-traitant':'en attente d\'envoi'}</span>`)
+    : o.horsPlanning
+    ? (done
+        ? (o.finReel ? `<span class="dates-val">📋 <span class="lbl">Terminée le</span> ${formatDT(new Date(o.finReel))}</span>` : `<span class="dates-val" style="color:var(--text-faint)">📋 Hors planning — réalisée</span>`)
+        : (o.debutReel ? `<span class="dates-val">📋 <span class="lbl">Hors planning — depuis</span> ${formatDT(new Date(o.debutReel))}</span>` : `<span class="dates-val" style="color:var(--text-faint)">📋 Hors planning</span>`))
     : done
     ? (o.finReel ? `<span class="dates-val"><span class="lbl">Terminée le</span> ${formatDT(new Date(o.finReel))}</span>` : `<span class="dates-val" style="color:var(--text-faint)">Réalisée</span>`)
     : (o.start ? `<span class="dates-val"><span class="lbl">Début</span> ${formatDT(o.start)} <button class="ghost icon-btn date-pin-btn" data-action="open-date-picker" data-target="ms-${o.id}" title="Modifier et figer la date de départ">📅</button><input type="datetime-local" id="ms-${o.id}" class="hidden-date-input" data-action="set-manual-start" data-cid="${c.id}" data-oid="${o.id}" value="${o.manualStart || toInputValue(o.start)}"><br><span class="lbl">Fin</span> ${formatDT(o.end)}<br><span class="pin-badge ${overridden?'pinned':'floating'}">${overridden?'📌 Figée':'〰️ Volante'}</span>${overridden?` <button class="ghost small" data-action="reset-op-override" data-cid="${c.id}" data-oid="${o.id}" style="padding:2px 6px;">↺ Libérer</button>`:''}</span>` : '—');
@@ -8203,6 +8361,9 @@ function renderOpsRow(o, c){
       <select class="op-operator-select" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="operatorUserId" title="Opérateur assigné — sa pause déjeuner (si réglée) remplace celle du poste">${operatorOptions(o.operatorUserId)}</select>
       <label class="statut-chip" style="font-size:10px; margin-top:4px; display:flex; align-items:center; gap:4px;" title="Cette pièce n'est jamais planifiée sur un poste — elle garde son statut normalement, et peut toujours bloquer une phase suivante tant qu'elle n'est pas marquée Terminée.">
         <input type="checkbox" ${o.sousTraitance?'checked':''} data-action="toggle-op-sous-traitance" data-cid="${c.id}" data-oid="${o.id}"> 🏭 Sous-traité
+      </label>
+      <label class="statut-chip" style="font-size:10px; margin-top:4px; display:flex; align-items:center; gap:4px;" title="Tâche sans durée estimée fiable (pointage rapide) : jamais placée sur le planning, mais son temps réel reste suivi normalement.">
+        <input type="checkbox" ${o.horsPlanning?'checked':''} data-action="toggle-op-hors-planning" data-cid="${c.id}" data-oid="${o.id}"> 📋 Hors planning
       </label></td>
     <td class="col-tu"><input type="number" min="0" step="0.5" value="${o.tempsUnitaire}" data-action="op-field" data-cid="${c.id}" data-oid="${o.id}" data-field="tempsUnitaire">
       <button class="ghost small" data-action="corriger-temps-theorique" data-cid="${c.id}" data-oid="${o.id}" title="Corriger une erreur de saisie initiale : remplace directement le temps théorique de référence (et le temps unitaire) par la valeur donnée" style="display:block; width:100%; margin-top:2px; font-size:9px; padding:2px 4px;">✎ Corriger le théorique</button></td>
@@ -8530,6 +8691,7 @@ function render(){
       renderHeader(),
       renderTempsProdPage(),
       renderTempsProdSessionModal(),
+      renderQuickPointageModal(),
       renderSettingsModal(),
       renderToast()
     ].join('');
@@ -8775,6 +8937,9 @@ function dispatchClickAction(action, el){
     case 'add-leave-type': addLeaveType(); break;
     case 'admin-assign-leave': adminAssignLeave(); break;
     case 'submit-alternance': submitAlternanceGeneration(); break;
+    case 'open-quick-pointage': openQuickPointage(); break;
+    case 'close-quick-pointage': closeQuickPointage(); break;
+    case 'submit-quick-pointage': submitQuickPointage(); break;
     case 'alternance-calendar-nav': navigateAlternanceCalendar(Number(el.dataset.dir)); break;
     case 'alternance-calendar-day': handleAlternanceCalendarDayClick(el.dataset.date); break;
     case 'alternance-calendar-cancel-pending': alternanceDraft.calendarPendingStart = null; render(); break;
@@ -8938,6 +9103,8 @@ function dispatchChangeAction(el, action){
     case 'op-phase': updateOpPhase(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'op-date-debut-possible': updateOpDateDebutPossible(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'toggle-op-sous-traitance': toggleOpSousTraitance(el.dataset.cid, el.dataset.oid, el.checked); break;
+    case 'toggle-op-hors-planning': toggleOpHorsPlanning(el.dataset.cid, el.dataset.oid, el.checked); break;
+    case 'quick-pointage-select': updateQuickPointageField(el.dataset.field, el.value); break;
     case 'user-machines': {
       const selected = Array.from(el.selectedOptions).map(o => o.value);
       updateUserMachines(el.dataset.userId, selected);
@@ -9352,6 +9519,12 @@ document.addEventListener('input', (e) => {
     }
     return;
   }
+  // Même principe pour le formulaire "Pointage rapide" : pas de render() par frappe.
+  const qpEl = e.target.closest ? e.target.closest('[data-action="quick-pointage-field"]') : null;
+  if(qpEl && quickPointageDraft){
+    quickPointageDraft[qpEl.dataset.field] = qpEl.value;
+    return;
+  }
   if(e.target.id === 'commande-search-input'){
     searchQuery = e.target.value;
     if(searchQuery) selectedCommandeId = null; // évite de cumuler recherche et sélection manuelle
@@ -9382,6 +9555,7 @@ document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && showSettingsModal){ closeSettingsModal(); }
   if(e.key === 'Escape' && excelImportResult){ excelImportResult = null; render(); }
   if(e.key === 'Escape' && newCommandeZoneNotice){ newCommandeZoneNotice = null; render(); }
+  if(e.key === 'Escape' && quickPointageDraft){ closeQuickPointage(); }
   if(e.key === 'Escape' && continuedDrag){ cancelContinuedDrag(); }
 });
 

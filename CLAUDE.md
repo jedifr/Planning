@@ -57,7 +57,8 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
   (minutes), `quantite`, `statut`, `phase`, `manualStart`, `dureeOverrideH`,
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
   `fusionGroupId`, `fusionPinned`, `sousTraitance`, `dateDebutPossible`,
-  `autoPausedOperators`, `autoPausedUntil`, `numeroLigne`, `previsionAvantCloture` (voir sections
+  `autoPausedOperators`, `autoPausedUntil`, `numeroLigne`, `previsionAvantCloture`, `horsPlanning`
+  (voir sections
   dédiées plus bas)
   - `sousTraitance` se coche **automatiquement** (jamais décoché automatiquement) dès que le poste
     choisi pour la ligne a un nom contenant "sous-traitance"/"sous traitance"
@@ -383,6 +384,53 @@ par `computeProductionTimeByUser` :
   un salarié masqué de la vue d'ensemble garde un accès intact à ses propres données via "Mon temps
   de production", ce masquage n'étant qu'une question d'encombrement de la liste superviseur, jamais
   une restriction d'accès.
+
+### Pointage rapide (tâche non planifiée)
+
+Bouton « ➕ Pointage rapide » (onglet Temps de production, superviseur et « Mon temps de production »)
+— pour un salarié qui fait une tâche qui n'était pas prévue : démarre tout de suite une session sur
+une commande choisie (ou une nouvelle créée à la volée), sans passer par le formulaire multi-lignes
+« Nouvelle commande » (bien trop lourd pour ce cas d'usage — une seule tâche, pas une gamme complète).
+
+- `quickPointageDraft` (`{ cid, nouvelleCommandeNom, machineId, piece, etape, tempsUnitaire, quantite,
+  operatorUserId } | null`) — état du formulaire, purement transitoire côté client (comme `draft`),
+  ouvert/fermé par `openQuickPointage()`/`closeQuickPointage()`. Les champs texte/nombre passent par
+  le même mécanisme que le formulaire « Nouvelle commande » (`data-action="quick-pointage-field"`,
+  mémorisés au fil de la frappe **sans** `render()` — voir le piège sur les champs qui s'effacent en
+  cours de frappe) ; les `<select>` (commande, poste, opérateur) déclenchent un `render()` normal
+  (`data-action="quick-pointage-select"`) pour que le champ "Nom de la nouvelle commande" apparaisse/
+  disparaisse selon qu'une commande existante est choisie ou non.
+- `submitQuickPointage()` — résout la commande (existante par id, existante retrouvée par nom si le
+  nom tapé correspond déjà à une commande — même sécurité anti-doublon que `submitNewCommande` — ou
+  nouvelle, avec `dateBesoin` posée automatiquement à aujourd'hui plutôt que de la demander : pas
+  pertinent de bloquer un pointage "vite fait" sur une échéance à réfléchir), puis pousse directement
+  une pièce déjà `en_cours` (session ouverte, `debutReel`/`manualStart` = maintenant) — **sans**
+  passer par `setOpStatut` : construire la pièce déjà démarrée en un seul passage évite d'avoir à la
+  pousser dans `state` PUIS la démarrer par un second appel commit()-ant séparément (voir le piège des
+  doubles enregistrements concurrents). Un seul `commit()` pour toute l'action. L'avertissement "poste
+  déjà occupé" (même logique que `setOpStatut`) est vérifié **avant** toute mutation de `state`, pour
+  ne rien laisser en mémoire si la confirmation est annulée.
+- **Durée connue ou non, décidé au moment de la saisie** : temps unitaire et quantité sont optionnels,
+  mais doivent être renseignés ensemble ou pas du tout (validation explicite — l'un sans l'autre est
+  rejeté comme incohérent). Fournis, la pièce est créée normalement (`horsPlanning:false`) et rejoint
+  la planification comme n'importe quelle tâche démarrée manuellement. Absents, `pieces[].horsPlanning`
+  passe à `true` : la tâche est suivie (temps réel, historique, temps de production) mais **jamais
+  placée sur le planning**, faute de durée fiable à y projeter.
+- `pieces[].horsPlanning` (bool, `false` par défaut) — dans `computeSchedule`, traitée exactement
+  comme une pièce sous-traitée (jamais de poste réservé, dates réelles conservées telles quelles,
+  contribue aux dépendances des phases suivantes seulement une fois `termine`) mais pour la raison
+  inverse : une pièce sous-traitée n'a pas besoin de poste parce que le travail se fait ailleurs ; une
+  pièce hors planning n'en a pas parce qu'aucune durée fiable n'est connue pour la placer. Manuellement
+  cochable/décochable ensuite sur n'importe quelle pièce (case "📋 Hors planning" à côté de "🏭 Sous-
+  traité" dans le tableau des tâches, `toggleOpHorsPlanning`) — utile pour rebasculer une tâche dans
+  la planification une fois sa durée réellement connue, ou l'inverse.
+- Affichage : Kanban (`timeInfo`) et tableau des tâches (`datesCell`) ont chacun une branche dédiée
+  pour `horsPlanning`, insérée **avant** la branche générique qui affiche `o.start`/`o.end` — une
+  pièce hors planning non terminée a un `start` réel (`debutReel`) mais un `end` toujours `null`
+  (jamais de projection), ce que la branche générique ne gère pas (elle suppose l'un présent
+  implique l'autre). Même piège que celui déjà rencontré sur les colonnes Début/Fin de la page
+  Risques de retard (voir plus bas) — un `end` manquant sur une pièce activement suivie n'est pas
+  une anomalie ici, juste l'état normal d'une tâche sans durée estimée.
 
 ## Zones de stockage
 
