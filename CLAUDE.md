@@ -72,7 +72,8 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
   - `sessions[]` peut contenir **plusieurs entrées ouvertes en même temps** (`fin: null`) sur
     une même pièce : voir « Travail à plusieurs sur une même pièce » ci-dessous. Toujours
     fermer (`.filter(s=>!s.fin).forEach(...)`), jamais une seule (`.find`), en pause/clôture.
-- `leaveTypes[]`, `leaveRequests[]`, `userLeaveAllocations`, `userMachines`, `userLunch`
+- `leaveTypes[]`, `leaveRequests[]`, `userLeaveAllocations`, `userMachines`, `userLunch`,
+  `userDefaultPage` (page d'accueil par défaut de chaque personne — voir section dédiée plus bas)
 - `importProfiles[]` — profils de correspondance de l'import personnalisé. Le dernier profil
   réellement utilisé (confirmé, pas juste survolé) est proposé par défaut au prochain import via
   `localStorage` (`LAST_IMPORT_PROFILE_KEY`), pas dans `state` — préférence de navigateur, pas
@@ -692,6 +693,34 @@ d'allée comme `color` de texte (puce `.zone-select` des commandes, ligne de zon
 Kanban, code de zone occupée sur la page Zones de stockage, badges de la pop-up de notification de
 zone à la création) — **jamais** aux usages en fond (`background`, déjà à faible opacité via
 `hexToRgba`) ni aux swatches de couleur pure (pas du texte, pas de problème de lisibilité).
+
+## Page d'accueil par défaut (par utilisateur)
+
+`state.userDefaultPage` (`{ [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques' }`) — chaque
+personne choisit, dans Paramètres → **Mon compte** (section accessible à tout rôle, pas seulement à
+un administrateur — voir `ADMIN_ONLY_SECTIONS`), la page affichée automatiquement à sa connexion, à
+la place du Planning. Même principe que `userMachines`/`userLunch` : un réglage propre à une
+personne, rangé dans `state` et synchronisé par le mécanisme habituel (`commit()`), **pas** une
+préférence de navigateur comme le dernier profil d'import (`LAST_IMPORT_PROFILE_KEY`) — l'utilisateur
+doit retrouver sa page d'accueil quel que soit le poste depuis lequel il se connecte.
+
+- `updateUserDefaultPage(userId, page)` — enregistre la préférence (`state.userDefaultPage[userId]`),
+  `page` vide (choix "Planning (par défaut)" du sélecteur) stocké comme `null`, jamais comme chaîne
+  vide. `migrateState` initialise `userDefaultPage = {}` sur les états existants qui ne l'ont pas.
+- `applyUserDefaultPageOnStart()` — appliquée **une seule fois par démarrage d'appli** (`startApp`,
+  juste après `state = await loadState()`, avant le premier `render()` — `startApp` est appelée aussi
+  bien à la connexion qu'à la reprise d'une session existante, donc les deux chemins sont couverts) :
+  positionne `currentPage` sur la préférence enregistrée pour `currentUser`. N'a ensuite plus aucun
+  effet sur la navigation manuelle en session (les boutons `goto-*` du sélecteur de pages restent
+  seuls maîtres de `currentPage` une fois l'appli démarrée) — sinon revenir sur "Planning" en cours de
+  session serait immédiatement annulé au prochain redémarrage seulement, pas un problème en soi
+  puisque `applyUserDefaultPageOnStart` ne tourne qu'au chargement, mais autant que ce soit explicite.
+  Garde-fou : une préférence `"conges"` alors que le module Congés a été désactivé depuis (Paramètres
+  → Module Congés) est ignorée plutôt que d'ouvrir une page indisponible — retombe sur Planning,
+  comme l'absence de préférence.
+- Le sélecteur (section "Mon compte") ne propose l'option "🏖 Congés" que si `state.config.modules.
+  conges` est actif — même condition que le bouton correspondant du sélecteur de pages
+  (`renderHeader`) — pour ne jamais laisser choisir une page qui n'existe pas encore à l'écran.
 
 ## Tests
 

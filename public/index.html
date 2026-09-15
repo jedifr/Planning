@@ -746,7 +746,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1078,6 +1078,7 @@ function migrateState(st){
   if(!Array.isArray(st.commandesArchivees)) st.commandesArchivees = []; // commandes entièrement terminées depuis longtemps, écartées du moteur de planification pour garder l'appli réactive — toujours incluses dans l'export complet
   if(!st.userMachines) st.userMachines = {}; // { [userId]: [machineId, ...] } — lien plusieurs-à-plusieurs
   if(!Array.isArray(st.hiddenTempsProdUserIds)) st.hiddenTempsProdUserIds = []; // salariés exclus de l'onglet Temps de production (superviseur) — voir isHiddenFromTempsProd
+  if(!st.userDefaultPage) st.userDefaultPage = {}; // { [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques' } — page affichée à la connexion, voir applyUserDefaultPageOnStart
   if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
   Object.keys(st.userLunch).forEach(uid_ => {
     const lunch = st.userLunch[uid_];
@@ -2856,6 +2857,14 @@ function updateUserMachines(userId, selectedIds){
 }
 function clearUserMachines(userId){
   state.userMachines[userId] = [];
+  commit();
+}
+// Page affichée automatiquement pour cette personne à la connexion (voir applyUserDefaultPageOnStart) —
+// valeur vide = comportement historique (Planning). Rangé dans state.userDefaultPage, sur le même
+// principe que userMachines/userLunch (réglage propre à une personne, synchronisé, pas une préférence
+// de navigateur comme le dernier profil d'import).
+function updateUserDefaultPage(userId, page){
+  state.userDefaultPage[userId] = page || null;
   commit();
 }
 // Garantit l'existence d'une entrée userLunch pour cette personne, avec un gabarit complet — pour
@@ -6891,7 +6900,16 @@ function renderSettingsModal(){
       <div class="footer-note" style="text-align:left; margin-bottom:10px;">Connecté en tant que <strong>${escapeHtml(currentUsername||'')}</strong> (${roleLabel(currentUserRole())}).</div>
       <label class="field">Adresse e-mail (pour les notifications de congés)</label>
       <input type="email" value="${escapeHtml((usersList.find(u=>currentUser&&String(u.id)===String(currentUser.id))||{}).email||'')}" placeholder="exemple@entreprise.fr" data-action="user-email" data-user-id="${currentUser?currentUser.id:''}" style="margin-bottom:12px;">
-      <button class="primary small" data-action="change-my-password">Changer mon mot de passe</button>` },
+      <button class="primary small" data-action="change-my-password" style="margin-bottom:16px;">Changer mon mot de passe</button>
+      <label class="field">Page d'accueil par défaut</label>
+      <select data-action="user-default-page" data-user-id="${currentUser?currentUser.id:''}">
+        <option value="" ${!(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]?'selected':''}>Planning (par défaut)</option>
+        ${(cfg.modules&&cfg.modules.conges) ? `<option value="conges" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='conges'?'selected':''}>🏖 Congés</option>` : ''}
+        <option value="tempsProd" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='tempsProd'?'selected':''}>⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}</option>
+        <option value="zones" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='zones'?'selected':''}>📍 Zones de stockage</option>
+        <option value="risques" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='risques'?'selected':''}>⚠️ Risques de retard</option>
+      </select>
+      <div class="footer-note" style="text-align:left; padding-top:6px;">Page affichée automatiquement à la connexion, à la place du Planning. Propre à ce compte : chacun peut choisir la sienne.</div>` },
     utilisateurs: { title: `Utilisateurs (${usersList.length})`, body: `
       <div class="machines-grid">
         ${usersList.map(u => {
@@ -8714,6 +8732,7 @@ function dispatchChangeAction(el, action){
     case 'toggle-user-horaire': toggleUserHoraireActive(el.dataset.userId, el.checked); break;
     case 'user-role': changeUserRole(el.dataset.userId, el.value); break;
     case 'user-email': changeUserEmail(el.dataset.userId, el.value); break;
+    case 'user-default-page': updateUserDefaultPage(el.dataset.userId, el.value); break;
     case 'leave-type-field': updateLeaveTypeField(el.dataset.typeId, el.dataset.field, el.type==='checkbox' ? el.checked : el.value); break;
     case 'edit-leave-field': updateEditLeaveField(el.dataset.field, el.value); break;
     case 'alternance-field': updateAlternanceField(el.dataset.field, el.value); break;
@@ -9486,6 +9505,17 @@ async function logout(){
   renderLoginScreen();
 }
 
+// Applique, une seule fois par démarrage d'appli (connexion ou reprise de session — les deux
+// appellent startApp), la page d'accueil choisie par l'utilisateur connecté (Paramètres → Mon
+// compte). N'écrase jamais currentPage après ce point : la navigation manuelle en session reste
+// intacte, seul l'état initial au chargement est concerné.
+function applyUserDefaultPageOnStart(){
+  if(!currentUser) return;
+  const pref = (state.userDefaultPage||{})[String(currentUser.id)];
+  if(!pref || pref === 'planning') return;
+  if(pref === 'conges' && !(state.config.modules && state.config.modules.conges)) return; // module désactivé depuis : on garde Planning plutôt que d'ouvrir une page indisponible
+  if(['conges','tempsProd','zones','risques'].includes(pref)) currentPage = pref;
+}
 async function startApp(){
   loadLoginBranding(); // en tâche de fond : alimente l'écran de connexion si la session a expiré
   loadSettingsUIPrefs();
@@ -9500,6 +9530,7 @@ async function startApp(){
   loadPausedBannerDismissDate();
   state = await loadState();
   invalidateSchedule();
+  applyUserDefaultPageOnStart();
   draft = newDraft();
   loadUsersList(); // nécessaire pour le sélecteur d'opérateur, pas seulement pour la pop-up Paramètres
   if(applyAutoPauseResume(state)) queueSilentSave(); // rattrape le cas où la page est ouverte en pleine pause déjeuner
