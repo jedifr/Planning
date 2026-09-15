@@ -763,7 +763,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '1.9.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1261,6 +1261,7 @@ function migrateState(st){
         if(o.fusionGroupId && o.statut === 'a_faire') o.manualStart = null;
       }
       if(o.dureeReelleH === undefined) o.dureeReelleH = null; // temps réellement passé (secours quand aucune session n'existe) — voir applySingleStatusChange
+      if(o.dureeReelleParOperateur === undefined) o.dureeReelleParOperateur = null; // répartition par opérateur, figée juste avant que sessions[] ne soit vidé — voir applySingleStatusChange/CLAUDE.md
     });
   });
   if(!st.importProfiles) st.importProfiles = []; // profils de correspondance de colonnes pour l'import personnalisé (autres logiciels)
@@ -4222,6 +4223,26 @@ function opElapsedHours(o, st){
   });
   return total;
 }
+// Même somme qu'opElapsedHours, mais répartie par opérateur ayant réellement ouvert chaque session
+// (repli sur l'opérateur assigné pour une session qui n'a pas son propre operatorUserId — données
+// antérieures à ce suivi, voir CLAUDE.md) — à calculer et figer AVANT de vider sessions[] à la
+// clôture d'une pièce, sinon ce détail par opérateur est perdu pour toujours (voir
+// pieces[].dureeReelleParOperateur / applySingleStatusChange). Renvoie null si aucune session n'a
+// pu être attribuée à personne (jamais démarrée via Démarrer/Reprendre).
+function computeSessionsHoursByOperator(o, st){
+  if(!o.sessions || o.sessions.length===0) return null;
+  const cfg = configForPiece(o, st);
+  const now = new Date();
+  const byOp = {};
+  o.sessions.forEach(s => {
+    const opUid = s.operatorUserId || o.operatorUserId;
+    if(!opUid) return;
+    const start = new Date(s.debut);
+    const end = s.fin ? new Date(s.fin) : now;
+    if(end > start) byOp[opUid] = (byOp[opUid]||0) + workingHoursBetween(start, end, cfg);
+  });
+  return Object.keys(byOp).length ? byOp : null;
+}
 // Temps réellement passé (heures, pour la quantité totale) : dérivé des sessions quand elles existent
 // (toujours à jour, y compris tant que la tâche est en cours) ; sinon, valeur secours saisie manuellement
 // à la clôture (o.dureeReelleH — cas d'une tâche jamais passée par Démarrer/Reprendre, ex. import déjà
@@ -4241,7 +4262,11 @@ function backfillDureeReelle(st){
     (commandes||[]).forEach(c => c.pieces.forEach(o => {
       if(o.statut === 'termine' && o.sessions && o.sessions.length > 0 && o.dureeReelleH == null){
         const elapsedH = opElapsedHours(o, st);
-        if(elapsedH > 1e-6){ o.dureeReelleH = elapsedH; changed = true; }
+        if(elapsedH > 1e-6){
+          o.dureeReelleH = elapsedH;
+          o.dureeReelleParOperateur = computeSessionsHoursByOperator(o, st);
+          changed = true;
+        }
       }
     }));
   };
@@ -4527,7 +4552,14 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
       // Le temps réellement passé est désormais figé (dureePasseeH le relira depuis dureeReelleH) :
       // le détail des sessions (chaque démarrage/pause/reprise) ne sert plus à rien une fois la
       // pièce terminée, et ne fait qu'accumuler indéfiniment sur une pièce reprise plusieurs fois.
+      // Mais QUI a réellement travaillé (operatorUserId de chaque session, pas forcément l'opérateur
+      // assigné de la pièce — voir CLAUDE.md) doit être figé AVANT de vider sessions[], sinon
+      // computeProductionTimeByUser n'aurait plus que l'opérateur assigné à créditer et lui
+      // attribuerait à tort tout le temps réellement passé par quelqu'un d'autre (bug réel corrigé :
+      // sur un poste partagé, la personne qui réalise vraiment la tâche voyait son temps décompté sur
+      // la personne assignée).
       o.dureeReelleH = elapsedH;
+      o.dureeReelleParOperateur = computeSessionsHoursByOperator(o, state);
       o.sessions = [];
     }
     const m = state.machines.find(m=>m.id===o.machineId);
@@ -4563,6 +4595,7 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
     o.finReel = null;
     o.sessions = [];
     o.dureeReelleH = null; // le temps réellement passé sera reconstitué à la prochaine clôture
+    o.dureeReelleParOperateur = null;
     o.autoPaused = false;
   }
   return null;
@@ -6203,13 +6236,27 @@ function computeProductionTimeByUser(st, periodStart, periodEnd){
           if(!dateByOperator[opUid] || sStart > dateByOperator[opUid]) dateByOperator[opUid] = sStart;
         }
       });
-    } else if(o.statut === 'termine' && o.dureeReelleH != null && o.dureeReelleH > 0 && o.operatorUserId){
+    } else if(o.statut === 'termine' && o.dureeReelleH != null && o.dureeReelleH > 0){
       const refStr = o.finReel || o.debutReel;
       if(refStr){
         const refDate = new Date(refStr);
         if(refDate >= periodStart && refDate < periodEnd){
-          hByOperator[o.operatorUserId] = o.dureeReelleH;
-          dateByOperator[o.operatorUserId] = refDate;
+          if(o.dureeReelleParOperateur && Object.keys(o.dureeReelleParOperateur).length){
+            // Répartition réelle figée juste avant que sessions[] ne soit vidé à la clôture (voir
+            // applySingleStatusChange/CLAUDE.md) — jamais tout créditer à l'opérateur ASSIGNÉ quand on
+            // sait qui a VRAIMENT ouvert chaque session (poste partagé, tâche assignée à quelqu'un
+            // d'autre que celui qui l'a réalisée).
+            Object.keys(o.dureeReelleParOperateur).forEach(opId => {
+              hByOperator[opId] = o.dureeReelleParOperateur[opId];
+              dateByOperator[opId] = refDate;
+            });
+          } else if(o.operatorUserId){
+            // Repli historique : aucune session n'a jamais existé pour cette pièce (import déjà
+            // terminé, ou clôturée avant l'introduction de dureeReelleParOperateur) — l'opérateur
+            // assigné reste la seule information disponible.
+            hByOperator[o.operatorUserId] = o.dureeReelleH;
+            dateByOperator[o.operatorUserId] = refDate;
+          }
         }
       }
     }

@@ -57,8 +57,8 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
   (minutes), `quantite`, `statut`, `phase`, `manualStart`, `dureeOverrideH`,
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
   `fusionGroupId`, `fusionPinned`, `sousTraitance`, `dateDebutPossible`,
-  `autoPausedOperators`, `autoPausedUntil`, `numeroLigne`, `previsionAvantCloture`, `horsPlanning`
-  (voir sections
+  `autoPausedOperators`, `autoPausedUntil`, `numeroLigne`, `previsionAvantCloture`, `horsPlanning`,
+  `dureeReelleH`, `dureeReelleParOperateur` (voir sections
   dédiées plus bas)
   - `sousTraitance` se coche **automatiquement** (jamais décoché automatiquement) dès que le poste
     choisi pour la ligne a un nom contenant "sous-traitance"/"sous traitance"
@@ -117,6 +117,26 @@ vide (auto-remplissage au tout premier démarrage, jamais d'écrasement ensuite)
 partagé, une tâche assignée à Simon peut donc être réellement réalisée par Louca : le Kanban
 affiche alors « 👤 Simon (assigné) → Louca (réalise) », et `computeProductionTimeByUser` crédite
 Louca, pas Simon, pour cette session.
+
+**Répartition par opérateur figée à la clôture (`pieces[].dureeReelleParOperateur`).** À la clôture
+(`applySingleStatusChange`, branche `termine`), `sessions[]` est vidé dans la foulée (pas d'attente
+de l'archivage serveur ici — différent de `archiveOldSessions`/`session_history` plus haut, qui
+lui attend bien la confirmation) : sans précaution, `computeProductionTimeByUser` n'aurait plus que
+l'opérateur ASSIGNÉ (`o.operatorUserId`) à créditer pour tout `dureeReelleH`, **quel que soit qui
+avait réellement ouvert les sessions** — bug réel corrigé (Romain avait réellement produit des
+pièces assignées à Sébastien ; une fois clôturées, tout leur temps était compté sur Sébastien).
+`computeSessionsHoursByOperator(o, st)` calcule la répartition **avant** que `sessions[]` ne soit
+vidé (même endroit, même instant que le calcul de `dureeReelleH` lui-même) et la fige dans
+`dureeReelleParOperateur` (`{ [operatorUserId]: heures } | null`) ; `computeProductionTimeByUser`
+lit ce champ en priorité pour une pièce `termine` sans `sessions[]`, et ne retombe sur l'opérateur
+assigné (comportement historique, inchangé) que si ce champ est absent — pièce jamais démarrée via
+Démarrer/Reprendre (import déjà terminé, temps saisi à la main), ou clôturée avant l'introduction de
+ce champ. `backfillDureeReelle` (rattrapage de pièces déjà terminées avec `sessions[]` encore
+peuplé, legacy) fige la même répartition en même temps que `dureeReelleH`. Remis à `null` en même
+temps que `dureeReelleH` à la réouverture (`↺ Rouvrir`) — la répartition, comme le total, sera
+reconstituée à la prochaine clôture. **Ne recouvre pas rétroactivement les pièces déjà closes avant
+ce correctif** : leur `sessions[]` étant déjà vide, l'opérateur réel n'y est plus récupérable — seuls
+les temps de production comptés à partir de ce correctif sont concernés.
 
 **Reprise automatique après pause déjeuner** (`applyAutoPauseResume`) : ce n'est PAS un clic de
 quelqu'un — on conserve l'`operatorUserId` de la session qu'on referme, jamais l'identité active du
@@ -959,6 +979,18 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   — corrigé en l'étendant aux deux types. Réflexe : tout nouveau champ natif segmenté (date, time,
   et plus généralement tout `<input>` dont la valeur peut être "complète" avant que l'utilisateur ait
   fini d'y saisir quelque chose) doit passer par ce même mécanisme de redessin différé.
+- **Vider `sessions[]` à la clôture avant que l'opérateur réel n'ait été extrait ailleurs.**
+  `applySingleStatusChange` (branche `termine`) vide `sessions[]` immédiatement après avoir figé
+  `dureeReelleH` — sans attendre l'archivage serveur, contrairement à `archiveOldSessions`. Ajouter
+  un nouveau calcul qui a besoin du détail des sessions (qui a réellement travaillé, quand, etc.)
+  APRÈS ce point ne verrait plus qu'un tableau vide : bug réel corrigé (`computeProductionTimeByUser`
+  retombait sur l'opérateur ASSIGNÉ de la pièce pour tout `dureeReelleH`, quel que soit qui avait
+  réellement ouvert les sessions — une tâche assignée à Sébastien mais réalisée par Romain créditait
+  Sébastien une fois clôturée). Corrigé en figeant `pieces[].dureeReelleParOperateur` (répartition par
+  opérateur) au même instant que `dureeReelleH`, **avant** que `sessions[]` ne soit vidé — voir
+  `computeSessionsHoursByOperator`. Réflexe : tout ce qui doit survivre à la clôture d'une pièce et
+  qui se déduit de `sessions[]` (pas seulement le total déjà couvert par `dureeReelleH`) doit être
+  calculé et figé à ce même endroit, jamais après.
 
 ## Conventions
 
