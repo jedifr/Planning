@@ -138,6 +138,18 @@ reconstituée à la prochaine clôture. **Ne recouvre pas rétroactivement les p
 ce correctif** : leur `sessions[]` étant déjà vide, l'opérateur réel n'y est plus récupérable — seuls
 les temps de production comptés à partir de ce correctif sont concernés.
 
+**Correction manuelle (bouton « ✎ Opérateur »).** Pour justement rattraper les pièces déjà closes
+avant le correctif ci-dessus (temps réellement passé mal attribué, sans espoir de le retrouver
+automatiquement), un bouton apparaît à côté de « X h réellement passé » dans le tableau des tâches,
+pour toute pièce `termine` avec un `dureeReelleH` positif — visible uniquement `canSupervise()`
+(superviseur/admin). `openCorrectOperator(cid, oid)`/`renderCorrectOperatorModal` : petit formulaire
+qui préremplit la personne actuellement créditée (celle de `dureeReelleParOperateur` s'il n'y en a
+qu'une, sinon l'opérateur assigné) et laisse en choisir une autre. `submitCorrectOperator()`
+réattribue **l'intégralité** du temps réellement passé à la personne choisie
+(`o.dureeReelleParOperateur = { [id]: o.dureeReelleH }`) — pas de répartition partielle entre
+plusieurs personnes : le cas visé est justement « tout ce temps était en fait celui de quelqu'un
+d'autre », pas un partage à corriger finement.
+
 **Reprise automatique après pause déjeuner** (`applyAutoPauseResume`) : ce n'est PAS un clic de
 quelqu'un — on conserve l'`operatorUserId` de la session qu'on referme, jamais l'identité active du
 poste qui déclenche la reprise (qui peut être n'importe quel navigateur en train de sonder l'état).
@@ -730,6 +742,29 @@ libérer) doit se propager à tout le groupe — voir `propagateFusionGroupField
 - `isPositionPinned(o)` est le point unique qui décide si une pièce affiche le badge
   « 📌 Figée » — pour une pièce fusionnée, il regarde `fusionPinned`, jamais la simple
   présence de `dureeOverrideH` (toujours posé sur un groupe, figé ou non).
+
+## Filtre « Commande à livrer » (liste des tâches en cours)
+
+Sélecteur dans l'en-tête de la section « Tâches en cours » (`renderCommandes`, à côté de "Trier par
+priorité"/"⚠️ À risque") : limite la liste à une fenêtre d'échéance — `dueFilterRange` (`'all'` |
+`'week'` | `'nextWeek'` | `'month'` | `'nextMonth'`), persisté comme les autres préférences
+d'affichage de cette liste (`DUE_FILTER_STORAGE_KEY`, chargé au démarrage).
+
+- `dueFilterBounds(range)` — bornes `[début, fin[` de la fenêtre, `null` pour `'all'` (aucun
+  filtre). Semaine = lundi à dimanche inclus (`startOfWeek`, déjà utilisé ailleurs dans l'appli) ;
+  mois = 1er au dernier jour du mois calendaire — jamais "30 jours glissants" comme le filtre
+  "Terminées" (`doneFilterCutoff`), qui répond à une question différente (récence, pas fenêtre de
+  livraison).
+- `commandeMatchesDueFilter(c, range)` — compare `c.dateBesoin` aux bornes. Une commande sans
+  échéance connue est **exclue** dès qu'une fenêtre précise est choisie (contrairement au filtre
+  "Terminées", qui garde par prudence une date de clôture inconnue) : ici on cherche justement à
+  répondre "à livrer quand", pas juste à trier par récence approximative — `dateBesoin` est de
+  toute façon obligatoire à la création d'une commande (voir modèle de données), ce cas reste
+  théorique.
+- Appliqué dans `renderCommandes` juste après le filtre "commande active" (pieces non toutes
+  `termine`), avant le calcul de `nbAtRisk` et le filtre "⚠️ À risque" — les deux filtres se
+  combinent (le badge "À risque" ne compte alors que les commandes à risque **dans la fenêtre
+  choisie**), comme la recherche texte s'y combine déjà.
 
 ## Page « ⚠️ Risques de retard »
 

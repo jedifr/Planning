@@ -763,7 +763,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.9.1';
+const APP_VERSION = '1.10.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -831,6 +831,12 @@ let searchQuery = '';
 let atRiskFilterActive = false; // filtre "⚠️ À risque" de la liste des commandes actives
 const DONE_FILTER_STORAGE_KEY = 'planning-atelier-done-filter';
 let doneFilterRange = 'all'; // 'all' | 'w1'|'w2'|'w3' (semaines) | 'm1'|'m2'|'m3'|'m6' (mois)
+const DUE_FILTER_STORAGE_KEY = 'planning-atelier-due-filter';
+let dueFilterRange = 'all'; // 'all' | 'week' | 'nextWeek' | 'month' | 'nextMonth' — filtre "Commande à livrer" des tâches en cours
+function loadDueFilterPref(){
+  try{ const v = localStorage.getItem(DUE_FILTER_STORAGE_KEY); if(v) dueFilterRange = v; }
+  catch(e){ /* préférence absente ou indisponible */ }
+}
 const KANBAN_DONE_LIMIT_KEY = 'planning-atelier-kanban-done-limit';
 let kanbanDoneLimit = 10;
 let kanbanMachineFilter = ''; // ancien filtre à poste unique — conservé pour la migration de préférence
@@ -942,6 +948,41 @@ function doneFilterCutoff(range){
   if(range.startsWith('m')) return monthsAgo(Number(range.slice(1)));
   return null;
 }
+// Bornes [début, fin[ de la fenêtre choisie pour le filtre "Commande à livrer" — null pour 'all'
+// (aucun filtre). Semaine = lundi à dimanche inclus (startOfWeek, déjà utilisé ailleurs dans
+// l'appli) ; mois = 1er au dernier jour du mois calendaire.
+function dueFilterBounds(range){
+  if(range === 'all' || !range) return null;
+  const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+  if(range === 'week'){
+    const start = startOfWeek(todayStart);
+    return { start, end: new Date(start.getFullYear(), start.getMonth(), start.getDate()+7) };
+  }
+  if(range === 'nextWeek'){
+    const start = new Date(startOfWeek(todayStart).getTime() + 7*86400000);
+    return { start, end: new Date(start.getFullYear(), start.getMonth(), start.getDate()+7) };
+  }
+  if(range === 'month'){
+    const start = new Date(todayStart.getFullYear(), todayStart.getMonth(), 1);
+    return { start, end: new Date(todayStart.getFullYear(), todayStart.getMonth()+1, 1) };
+  }
+  if(range === 'nextMonth'){
+    const start = new Date(todayStart.getFullYear(), todayStart.getMonth()+1, 1);
+    return { start, end: new Date(todayStart.getFullYear(), todayStart.getMonth()+2, 1) };
+  }
+  return null;
+}
+// dateBesoin est obligatoire à la création d'une commande (voir modèle de données) : une commande
+// sans échéance connue est un cas limite qu'on exclut plutôt que d'inclure par prudence — contraire
+// au filtre "Terminées" (doneFilterCutoff) qui, lui, garde par prudence une date de clôture inconnue,
+// car ici on cherche précisément une fenêtre de livraison, pas juste une récence approximative.
+function commandeMatchesDueFilter(c, range){
+  const bounds = dueFilterBounds(range);
+  if(!bounds) return true;
+  if(!c.dateBesoin) return false;
+  const d = new Date(c.dateBesoin+'T00:00:00');
+  return d >= bounds.start && d < bounds.end;
+}
 function commandeCompletionDate(c){
   let latest = null;
   c.pieces.forEach(o => {
@@ -1036,6 +1077,10 @@ let newCommandeZoneNotice = null; // { nom, zoneStockage } | null
 // Formulaire "Pointage rapide" (onglet Temps de production, voir CLAUDE.md) — { cid, nouvelleCommandeNom,
 // machineId, piece, etape, tempsUnitaire, quantite, operatorUserId } | null (fermé).
 let quickPointageDraft = null;
+// Correction manuelle de l'opérateur réel d'une pièce déjà terminée (bouton "✎ Opérateur" à côté de
+// "X h réellement passé", superviseur/admin uniquement — voir CLAUDE.md) — { cid, oid,
+// operatorUserId } | null (fermé).
+let correctOperatorDraft = null;
 let fusionCheckedItems = {}; // clé "posteId|matière|épaisseur" -> Set des id de pièces cochées pour fusion
 // État de l'assistant d'import personnalisé (fichier d'un autre logiciel, colonnes à faire
 // correspondre) — null quand l'assistant est fermé.
@@ -4023,7 +4068,7 @@ function submitQuickPointage(){
     sessions: [{ debut: nowStr, fin: null, operatorUserId: opUserId }],
     autoPaused: false, autoPausedOperators: null, autoPausedUntil: null, dependances: [], phase: maxPhase + 1,
     operatorUserId: opUserId, tempsUnitaireTheorique: hasDuration ? tu : 0,
-    dureeReelleH: null, matiere: '', epaisseur: '', dateDebutPossible: null, sousTraitance: false,
+    dureeReelleH: null, dureeReelleParOperateur: null, matiere: '', epaisseur: '', dateDebutPossible: null, sousTraitance: false,
     fusionGroupId: null, fusionPinned: false, numeroLigne: null, previsionAvantCloture: null,
     // Sans durée connue, jamais planifiée sur un poste (voir computeSchedule) — juste suivie pour
     // son temps réel, comme une pièce sous-traitée mais pour la raison inverse (voir CLAUDE.md).
@@ -4032,6 +4077,41 @@ function submitQuickPointage(){
   quickPointageDraft = null;
   commit();
   showToast(hasDuration ? `Pointage démarré sur "${c.nom}".` : `Pointage démarré (hors planning) sur "${c.nom}".`);
+}
+// Correction manuelle de l'opérateur réel d'une pièce déjà terminée (bug réel corrigé : le temps
+// réellement passé se retrouvait crédité à l'opérateur ASSIGNÉ plutôt qu'à qui avait réellement
+// ouvert les sessions — voir CLAUDE.md, pieces[].dureeReelleParOperateur). Pour les pièces déjà
+// closes AVANT ce correctif, sessions[] est déjà vide : la répartition réelle n'est plus
+// récupérable, ce bouton permet de la corriger à la main plutôt que de la perdre définitivement.
+// Réattribue l'INTÉGRALITÉ du temps réellement passé à une seule personne (pas de répartition
+// partielle) — le cas visé est justement "tout ce temps était en fait celui de quelqu'un d'autre".
+function openCorrectOperator(cid, oid){
+  const c = state.commandes.find(c=>c.id===cid); if(!c) return;
+  const o = c.pieces.find(o=>o.id===oid); if(!o) return;
+  const currentIds = o.dureeReelleParOperateur ? Object.keys(o.dureeReelleParOperateur) : [];
+  const defaultId = currentIds.length === 1 ? currentIds[0] : (o.operatorUserId || '');
+  correctOperatorDraft = { cid, oid, operatorUserId: defaultId };
+  render();
+}
+function closeCorrectOperator(){
+  correctOperatorDraft = null;
+  render();
+}
+function updateCorrectOperatorField(field, value){
+  if(!correctOperatorDraft) return;
+  correctOperatorDraft[field] = value;
+  render();
+}
+function submitCorrectOperator(){
+  const d = correctOperatorDraft; if(!d) return;
+  const c = state.commandes.find(c=>c.id===d.cid); if(!c) return;
+  const o = c.pieces.find(o=>o.id===d.oid); if(!o) return;
+  if(!d.operatorUserId){ alert('Merci de choisir qui a réellement réalisé cette tâche.'); return; }
+  if(o.dureeReelleH == null || o.dureeReelleH <= 0){ alert('Aucun temps réellement passé à réattribuer pour cette pièce.'); return; }
+  o.dureeReelleParOperateur = { [d.operatorUserId]: o.dureeReelleH };
+  correctOperatorDraft = null;
+  commit();
+  showToast('Opérateur réel corrigé pour cette tâche.');
 }
 // Applique réellement, une fois les pièces créées, les regroupements décidés dans le formulaire de
 // nouvelle commande (bouton "Regrouper les lignes du même poste") — réutilise exactement le même
@@ -7083,6 +7163,36 @@ function renderQuickPointageModal(){
     </div>
   </div>`;
 }
+function renderCorrectOperatorModal(){
+  if(!correctOperatorDraft) return '';
+  const d = correctOperatorDraft;
+  const c = state.commandes.find(c=>c.id===d.cid);
+  const o = c && c.pieces.find(o=>o.id===d.oid);
+  if(!o) return '';
+  const label = [o.piece, o.etape].filter(Boolean).join(' / ') || '(sans nom)';
+  const creditedNow = o.dureeReelleParOperateur
+    ? Object.keys(o.dureeReelleParOperateur).map(id => { const u = usersList.find(uu=>String(uu.id)===String(id)); return u ? u.username : id; }).join(', ')
+    : ((usersList.find(uu=>String(uu.id)===String(o.operatorUserId))||{}).username || '—');
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:400px;">
+      <div class="modal-head">
+        <h2>✎ Corriger l'opérateur réel</h2>
+        <button class="ghost icon-btn" data-action="close-correct-operator" title="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="footer-note" style="text-align:left; margin-bottom:10px;">"${escapeHtml(label)}" (${escapeHtml(c.nom)}) — ${durationLabel(o.dureeReelleH)} réellement passé, actuellement crédité à <strong>${escapeHtml(creditedNow)}</strong>.</div>
+        <label class="field">Qui a réellement réalisé cette tâche ?</label>
+        <select data-action="correct-operator-select" data-field="operatorUserId">${operatorOptions(d.operatorUserId)}</select>
+        <div class="footer-note" style="text-align:left; padding-top:8px;">L'intégralité du temps réellement passé sur cette tâche sera recréditée à cette personne dans le Temps de production, à la place de qui l'était jusqu'ici.</div>
+        <div class="form-actions" style="justify-content:flex-end; margin-top:14px;">
+          <button class="ghost" data-action="close-correct-operator">Annuler</button>
+          <button class="primary" data-action="submit-correct-operator">Corriger</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
 function renderContextMenu(){
   if(!contextMenu) return '';
   const c = state.commandes.find(c=>c.id===contextMenu.cid);
@@ -8379,7 +8489,9 @@ function renderOpsRow(o, c){
   const overridden = isPositionPinned(o);
   const elapsedNote = running
     ? `<div class="elapsed-note">${durationLabel(opElapsedHours(o, state))} écoulé${o.statut==='en_pause'?(o.autoPaused?' (pause déjeuner)':' (en pause)'):''}</div>`
-    : (done && dureePasseeH(o, state) ? `<div class="elapsed-note">${durationLabel(dureePasseeH(o, state))} réellement passé</div>` : '');
+    : (done && dureePasseeH(o, state)
+        ? `<div class="elapsed-note">${durationLabel(dureePasseeH(o, state))} réellement passé${canSupervise() && o.dureeReelleH!=null && o.dureeReelleH>0 ? ` <button class="ghost small" data-action="open-correct-operator" data-cid="${c.id}" data-oid="${o.id}" title="Corriger qui a réellement réalisé cette tâche (ex. temps compté à tort sur l'opérateur assigné plutôt que sur qui a vraiment travaillé)" style="padding:1px 4px; font-size:9px;">✎ Opérateur</button>` : ''}</div>`
+        : '');
   const datesCell = o.sousTraitance
     ? (done
         ? (o.finReel ? `<span class="dates-val">🏭 <span class="lbl">Revenue le</span> ${formatDT(new Date(o.finReel))}</span>` : `<span class="dates-val" style="color:var(--text-faint)">🏭 Sous-traitée — revenue</span>`)
@@ -8559,6 +8671,7 @@ function renderCommandeCard(c, idx, total){
 function renderCommandes(schedule){
   const filtered = schedule.filter(c => matchesSearch(c, searchQuery) && (!selectedCommandeId || c.id===selectedCommandeId));
   let active = filtered.filter(c => c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine'));
+  active = active.filter(c => commandeMatchesDueFilter(c, dueFilterRange));
   const nbAtRisk = active.filter(isCommandeAtRisk).length;
   if(atRiskFilterActive){
     active = active.filter(isCommandeAtRisk).sort((a,b) => commandeRiskDaysLate(b) - commandeRiskDaysLate(a));
@@ -8589,6 +8702,8 @@ function renderCommandes(schedule){
     activeBody = `<div class="empty-state"><strong>Aucune commande en cours</strong>Ajoutez votre première commande ci-dessous pour démarrer le planning.</div>`;
   } else if(atRiskFilterActive){
     activeBody = `<div class="empty-state"><strong>Aucune commande à risque</strong>Toutes les commandes en cours respectent leur échéance estimée.</div>`;
+  } else if(dueFilterRange !== 'all'){
+    activeBody = `<div class="empty-state"><strong>Aucune commande à livrer sur cette période</strong>Essayez "Toutes" pour retrouver l'ensemble des commandes en cours.</div>`;
   } else if(searchQuery){
     activeBody = `<div class="empty-state"><strong>Aucun résultat</strong>Aucune commande en cours ne correspond à votre recherche.</div>`;
   } else {
@@ -8608,6 +8723,14 @@ function renderCommandes(schedule){
     </select>`;
 
   const atRiskBtn = `<button class="small ${atRiskFilterActive?'btn-at-risk-active':''}" data-action="toggle-at-risk-filter" title="N'afficher que les commandes actives dont la fin estimée dépasse l'échéance, triées de la plus en retard à la moins en retard">${atRiskFilterActive?'✕ Afficher tout':`⚠️ À risque${nbAtRisk>0?` (${nbAtRisk})`:''}`}</button>`;
+  const dueFilterControl = `
+    <select class="small done-filter-select" data-action="set-due-filter" title="Commande à livrer — filtre sur la date d'échéance">
+      <option value="all" ${dueFilterRange==='all'?'selected':''}>Toutes</option>
+      <option value="week" ${dueFilterRange==='week'?'selected':''}>Cette semaine</option>
+      <option value="nextWeek" ${dueFilterRange==='nextWeek'?'selected':''}>La semaine prochaine</option>
+      <option value="month" ${dueFilterRange==='month'?'selected':''}>Le mois en cours</option>
+      <option value="nextMonth" ${dueFilterRange==='nextMonth'?'selected':''}>Le mois suivant</option>
+    </select>`;
   const activeSection = `
   <section class="panel">
     <div class="panel-head">
@@ -8615,6 +8738,7 @@ function renderCommandes(schedule){
       <div style="display:flex; align-items:center; gap:8px;">
         <button class="small primary" data-action="sort-by-priority" title="Urgence d'abord (Urgente > Importante > Normale), puis échéance la plus proche">⇕ Trier par priorité</button>
         ${atRiskBtn}
+        ${dueFilterControl}
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
         ${activeLimitControl}
@@ -8800,6 +8924,7 @@ function render(){
     renderCustomImportModal(),
     renderFusionGroupDetailModal(),
     renderNewCommandeZoneNoticeModal(),
+    renderCorrectOperatorModal(),
     renderContextMenu(),
     renderToast()
   ].join('');
@@ -9001,6 +9126,9 @@ function dispatchClickAction(action, el){
     case 'open-quick-pointage': openQuickPointage(); break;
     case 'close-quick-pointage': closeQuickPointage(); break;
     case 'submit-quick-pointage': submitQuickPointage(); break;
+    case 'open-correct-operator': openCorrectOperator(el.dataset.cid, el.dataset.oid); break;
+    case 'close-correct-operator': closeCorrectOperator(); break;
+    case 'submit-correct-operator': submitCorrectOperator(); break;
     case 'alternance-calendar-nav': navigateAlternanceCalendar(Number(el.dataset.dir)); break;
     case 'alternance-calendar-day': handleAlternanceCalendarDayClick(el.dataset.date); break;
     case 'alternance-calendar-cancel-pending': alternanceDraft.calendarPendingStart = null; render(); break;
@@ -9143,6 +9271,7 @@ function dispatchChangeAction(el, action){
     case 'op-statut-select': setOpStatut(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'op-duree-field': updateOpDuree(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'set-done-filter': doneFilterRange = el.value; try{ localStorage.setItem(DONE_FILTER_STORAGE_KEY, doneFilterRange); }catch(e){} render(); break;
+    case 'set-due-filter': dueFilterRange = el.value; try{ localStorage.setItem(DUE_FILTER_STORAGE_KEY, dueFilterRange); }catch(e){} render(); break;
     case 'set-active-limit': {
       const isAllActive = el.value === 'all';
       activeCommandesLimit = isAllActive ? Infinity : Number(el.value);
@@ -9166,6 +9295,7 @@ function dispatchChangeAction(el, action){
     case 'toggle-op-sous-traitance': toggleOpSousTraitance(el.dataset.cid, el.dataset.oid, el.checked); break;
     case 'toggle-op-hors-planning': toggleOpHorsPlanning(el.dataset.cid, el.dataset.oid, el.checked); break;
     case 'quick-pointage-select': updateQuickPointageField(el.dataset.field, el.value); break;
+    case 'correct-operator-select': updateCorrectOperatorField(el.dataset.field, el.value); break;
     case 'user-machines': {
       const selected = Array.from(el.selectedOptions).map(o => o.value);
       updateUserMachines(el.dataset.userId, selected);
@@ -9617,6 +9747,7 @@ document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && excelImportResult){ excelImportResult = null; render(); }
   if(e.key === 'Escape' && newCommandeZoneNotice){ newCommandeZoneNotice = null; render(); }
   if(e.key === 'Escape' && quickPointageDraft){ closeQuickPointage(); }
+  if(e.key === 'Escape' && correctOperatorDraft){ closeCorrectOperator(); }
   if(e.key === 'Escape' && continuedDrag){ cancelContinuedDrag(); }
 });
 
@@ -9915,6 +10046,7 @@ async function startApp(){
   loadLoginBranding(); // en tâche de fond : alimente l'écran de connexion si la session a expiré
   loadSettingsUIPrefs();
   loadDoneFilterPref();
+  loadDueFilterPref();
   loadKanbanDoneLimitPref();
   loadActiveCommandesLimitPref();
   loadActiveIdentityPref();
