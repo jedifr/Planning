@@ -764,7 +764,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.12.0';
+const APP_VERSION = '1.12.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1058,8 +1058,11 @@ let editingLeaveRequestDraft = null; // { id, userId, typeId, debut, fin, motif 
 // (une date quelconque dans la première semaine "école", alternée ensuite une semaine sur deux) ;
 // mode 'manuel' utilise periodes[] (voir renderAlternanceCalendar/handleAlternanceCalendarDayClick),
 // pour un rythme irrégulier qui ne suit ni l'un ni l'autre des deux premiers modes.
-let alternanceDraft = { userId:'', typeId:'', debut:'', fin:'', mode:'jours', joursSemaine:[], semaineRef:'',
-  periodes:[], calendarPendingStart:null, calendarMonth:'' };
+function newAlternanceDraft(){
+  return { userId:'', typeId:'', debut:'', fin:'', mode:'jours', joursSemaine:[], semaineRef:'',
+    periodes:[], calendarPendingStart:null, calendarMonth:'' };
+}
+let alternanceDraft = newAlternanceDraft();
 let equipePersonneFilter = ''; // '' = toutes les personnes
 let calendrierYear = new Date().getFullYear();
 let calendrierPersonneFilter = ''; // '' = toutes les personnes
@@ -3870,6 +3873,11 @@ function submitAlternanceGeneration(){
   });
   commit();
   showToast(`${toCreate.length} période(s) générée(s) (${leaveDureeLabel(nbJours)} jour(s) ouvré(s)).`);
+  // Réinitialise le formulaire après une génération réussie : sans ça, reparamétrer le rythme pour une
+  // SECONDE personne rappelait encore les réglages du premier apprenti (personne, dates, jours cochés,
+  // périodes cliquées sur le calendrier...) — bug réel signalé, ce formulaire reste affiché en
+  // permanence dans Paramètres → Congés (pas de pop-up ouverte/fermée à chaque fois, voir plus haut).
+  alternanceDraft = newAlternanceDraft();
 }
 function addLeaveType(){
   const nom = prompt('Nom du nouveau type de congé (ex. "Congé sans solde") :');

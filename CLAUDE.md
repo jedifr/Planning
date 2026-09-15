@@ -350,6 +350,16 @@ semaine sur l'autre, pour ne pas les saisir une par une.
     `'jours'`/`'semaines'`, aucune duplication de cette partie.
   - `alternanceDraft`/`periodes`/`calendarPendingStart`/`calendarMonth` sont purement transitoires
     côté client (comme `draft`/`customImportState`) — jamais dans `state`, pas de migration requise.
+- **Réinitialisation après génération.** Ce formulaire reste affiché en permanence dans Paramètres →
+  Congés → Soldes & types (pas de pop-up ouverte/fermée à chaque utilisation, contrairement à
+  `quickPointageDraft`/`correctOperatorDraft`) : `alternanceDraft` est un unique objet global jamais
+  recréé entre deux utilisations. Sans réinitialisation, paramétrer le rythme pour une SECONDE
+  personne juste après une première génération réussie rappelait encore tous les réglages du premier
+  apprenti (personne, dates, jours cochés, périodes cliquées sur le calendrier...) — bug réel signalé,
+  contournable seulement en rechargeant la page (F5) entre deux personnes. `submitAlternanceGeneration()`
+  appelle désormais `alternanceDraft = newAlternanceDraft()` juste après le `commit()` d'une génération
+  réussie (jamais avant confirmation ni en cas d'erreur de validation, pour ne pas faire perdre une
+  saisie en cours à la moindre erreur) — même principe que `draft = newDraft()` ailleurs dans l'appli.
 
 ## Temps de production vs présence théorique
 
