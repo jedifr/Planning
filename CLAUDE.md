@@ -1083,17 +1083,21 @@ tag git) : `APP_VERSION` est parti de `'1.0.0'` comme premier numéro réellemen
   mis à jour en même temps que `APP_VERSION`, pour rester le reflet de la même version du produit,
   côté client comme côté serveur.
 
-## Mention de copyright par défaut (écran de connexion)
+## Mention de copyright en dur (écran de connexion)
 
-`config.copyright` (Paramètres → Affichage, « Mention affichée sur l'écran de connexion ») reste
-librement personnalisable, mais ne doit **jamais** aboutir à un écran de connexion sans aucune
-mention si le champ est vidé par erreur.
+`« © {année} Découpe H2O »` s'affiche **toujours** sur l'écran de connexion, en dur — impossible à
+faire disparaître, y compris depuis Paramètres → Affichage. `config.copyright` (« Mention
+additionnelle sur l'écran de connexion ») ne remplace plus cette mention : il ajoute un second
+texte, personnalisable, en plus d'elle — jamais à sa place.
 
 - `defaultCopyrightMention()` — retourne `` `© ${annéeCourante} Découpe H2O` ``, calculée (pas une
   chaîne figée) pour que l'année reste juste sans intervention.
-- `migrateState` pose cette valeur par défaut **uniquement** si `config.copyright` est `undefined`
-  (config fraîche) — ne touche jamais une mention déjà configurée, même vide ou différente.
-- `renderLoginScreen` a en plus un filet de sécurité au runtime :
-  `cfg.copyright || loginBranding.copyright || defaultCopyrightMention()` — une mention
-  explicitement vidée retombe sur la valeur par défaut plutôt que de disparaître, tout en laissant
-  le champ toujours éditable.
+- `renderLoginScreen` affiche systématiquement `defaultMention` (`defaultCopyrightMention()`) dans
+  un premier `.login-copyright`, puis un second **seulement** si `config.copyright` (ou
+  `loginBranding.copyright`) est renseigné et diffère du texte par défaut (`showCustomCopyright`) —
+  évite un doublon visuel pour une ancienne installation dont `config.copyright` valait encore
+  exactement la mention par défaut (posée par une version antérieure de `migrateState`, avant ce
+  changement).
+- `migrateState` initialise `config.copyright` à `''` (pas à la mention par défaut) sur une config
+  fraîche — puisque la mention en dur s'affiche de toute façon, il n'y a plus de raison de
+  pré-remplir ce champ avec elle. Ne touche jamais une valeur déjà configurée.

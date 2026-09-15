@@ -764,7 +764,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.11.0';
+const APP_VERSION = '1.11.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1193,7 +1193,7 @@ function migrateState(st){
   if(st.config.modules.expedition === undefined) st.config.modules.expedition = false; // libération manuelle du casier — désactivé par défaut, comportement inchangé pour une installation existante
   if(st.config.matiereFusionActive === undefined) st.config.matiereFusionActive = false; // détection par matière/épaisseur désactivée par défaut
   if(st.config.importDateGroupingToleranceDays === undefined) st.config.importDateGroupingToleranceDays = 0; // 0 = aucun regroupement de campagnes à l'import (voir clusterImportDates)
-  if(st.config.copyright === undefined) st.config.copyright = defaultCopyrightMention(); // mention de l'écran de connexion
+  if(st.config.copyright === undefined) st.config.copyright = ''; // mention additionnelle facultative — la mention "Découpe H2O" en dur (defaultCopyrightMention) s'affiche de toute façon
   if(!st.leaveTypes) st.leaveTypes = [
     { id:'lt-cp', nom:'Congés payés', couleur:'#4c8fbd' },
     { id:'lt-rtt', nom:'RTT', couleur:'#a06d1a' }
@@ -7370,7 +7370,7 @@ function renderSettingsModal(){
       <div class="machines-grid">
         <div><label class="field">Nom affiché dans l'en-tête</label><input type="text" value="${escapeHtml(cfg.appTitle||'Planning Atelier')}" data-action="update-config" data-field="appTitle" placeholder="Planning Atelier"></div>
         <div><label class="field">Texte sous le nom, dans l'en-tête</label><input type="text" value="${escapeHtml(cfg.appSubtitle||'')}" data-action="update-config" data-field="appSubtitle" placeholder="Fraisage · Tournage — ordonnancement &amp; suivi des délais"></div>
-        <div><label class="field">Mention affichée sur l'écran de connexion</label><input type="text" value="${escapeHtml(cfg.copyright||'')}" data-action="update-config" data-field="copyright" placeholder="© ${new Date().getFullYear()} Votre société"></div>
+        <div><label class="field">Mention additionnelle sur l'écran de connexion (affichée en plus de « © ${new Date().getFullYear()} Découpe H2O »)</label><input type="text" value="${escapeHtml(cfg.copyright||'')}" data-action="update-config" data-field="copyright" placeholder="Optionnel — ex. © ${new Date().getFullYear()} Votre société"></div>
       </div>
       <div class="modal-section-title" style="margin-top:18px;">Logo</div>
       <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px; flex-wrap:wrap;">
@@ -9860,7 +9860,9 @@ function renderLoginScreen(errorMsg){
   const cfg = (state && state.config) ? state.config : {};
   const title = cfg.appTitle || loginBranding.appTitle || 'Planning Atelier';
   const logo = cfg.logoDataUrl || loginBranding.logoDataUrl || '';
-  const copyright = cfg.copyright || loginBranding.copyright || defaultCopyrightMention();
+  const defaultMention = defaultCopyrightMention();
+  const customCopyright = (cfg.copyright || loginBranding.copyright || '').trim();
+  const showCustomCopyright = customCopyright && customCopyright !== defaultMention;
   document.getElementById('app').innerHTML = `
   <div class="login-screen">
     <div class="login-box">
@@ -9876,7 +9878,8 @@ function renderLoginScreen(errorMsg){
         <button type="submit" class="primary" style="width:100%; margin-top:16px; padding:10px;">Se connecter</button>
       </form>
       <button class="ghost small" style="width:100%; margin-top:10px;" data-action="show-forgot-password">Mot de passe oublié ?</button>
-      ${copyright ? `<div class="login-copyright">${escapeHtml(copyright)}</div>` : ''}
+      <div class="login-copyright">${escapeHtml(defaultMention)}</div>
+      ${showCustomCopyright ? `<div class="login-copyright">${escapeHtml(customCopyright)}</div>` : ''}
       <div class="login-copyright">v${APP_VERSION}</div>
     </div>
   </div>`;
