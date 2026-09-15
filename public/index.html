@@ -506,6 +506,7 @@
   .badge{font-family:'IBM Plex Mono',monospace; font-size:11px; padding:3px 9px; border-radius:20px; white-space:nowrap; border:1px solid transparent;}
   .badge.green{color:var(--green); border-color:var(--green); background:rgba(53,117,87,0.1);}
   .badge.red{color:var(--red); border-color:var(--red); background:rgba(178,58,48,0.1);}
+  .badge.red.badge-overdue{color:#fff; background:var(--red); font-weight:700;}
   .badge.neutral{color:var(--blue); border-color:var(--blue); background:rgba(49,111,152,0.1);}
   .badge.done{color:var(--text-faint); border-color:var(--line);}
 
@@ -763,7 +764,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.11.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1111,6 +1112,15 @@ function showToast(msg){
 let syncStatus = 'ok'; // 'ok' | 'saving' | 'error' | 'conflict'
 let lastSyncAt = null;
 
+// Mention par défaut de l'écran de connexion — installation dédiée à Découpe H2O (pas un produit
+// multi-clients), donc en dur plutôt que de dépendre uniquement de la saisie Paramètres → Affichage
+// (retour utilisateur réel : la mention ne doit jamais pouvoir disparaître, y compris sur un champ
+// vidé par erreur ou une réinitialisation). Reste néanmoins modifiable dans Paramètres → Affichage
+// pour un besoin ponctuel (ex. texte différent) — voir migrateState et renderLoginScreen.
+function defaultCopyrightMention(){
+  return `© ${new Date().getFullYear()} Découpe H2O`;
+}
+
 /* ---------------- persistence (API + base de données serveur) ---------------- */
 function migrateState(st){
   if(!st.config) st.config = { ...DEFAULT_CONFIG };
@@ -1183,7 +1193,7 @@ function migrateState(st){
   if(st.config.modules.expedition === undefined) st.config.modules.expedition = false; // libération manuelle du casier — désactivé par défaut, comportement inchangé pour une installation existante
   if(st.config.matiereFusionActive === undefined) st.config.matiereFusionActive = false; // détection par matière/épaisseur désactivée par défaut
   if(st.config.importDateGroupingToleranceDays === undefined) st.config.importDateGroupingToleranceDays = 0; // 0 = aucun regroupement de campagnes à l'import (voir clusterImportDates)
-  if(st.config.copyright === undefined) st.config.copyright = ''; // mention de l'écran de connexion
+  if(st.config.copyright === undefined) st.config.copyright = defaultCopyrightMention(); // mention de l'écran de connexion
   if(!st.leaveTypes) st.leaveTypes = [
     { id:'lt-cp', nom:'Congés payés', couleur:'#4c8fbd' },
     { id:'lt-rtt', nom:'RTT', couleur:'#a06d1a' }
@@ -1788,6 +1798,24 @@ function isCommandeAtRisk(c){
 // retard à la moins en retard. Suppose isCommandeAtRisk(c) déjà vérifié par l'appelant.
 function commandeRiskDaysLate(c){
   return (c.finEstimee.getTime() - effectiveDueDate(c.dateBesoin).getTime()) / 86400000;
+}
+// Statut de délai d'une commande, centralisé pour que le badge de renderCommandeCard et l'export
+// Excel des tâches en cours affichent toujours exactement le même texte, sans dupliquer le calcul :
+// - 'unknown' : pas d'échéance ou pas de fin estimée connue (ex. commande sans pièce encore chiffrée)
+// - 'ontime'  : fin estimée dans les temps (pas à risque)
+// - 'atrisk'  : à risque (voir isCommandeAtRisk) mais l'échéance elle-même n'est pas encore dépassée
+//   aujourd'hui — un signal avancé, pas encore un retard réellement constaté.
+// - 'overdue' : l'échéance est déjà dépassée aujourd'hui (et la commande n'est pas terminée) — un
+//   cran plus grave que 'atrisk', mérite un badge visuellement distinct (retour utilisateur réel :
+//   "Retard estimé" ne distingue pas une échéance future qui glisse d'une échéance déjà passée).
+function commandeDelayStatus(c){
+  if(!c.dateBesoin || !c.finEstimee) return { kind:'unknown' };
+  const due = effectiveDueDate(c.dateBesoin);
+  if(c.finEstimee <= due) return { kind:'ontime' };
+  const deltaDays = Math.ceil((c.finEstimee-due)/86400000);
+  const now = new Date();
+  if(now > due) return { kind:'overdue', deltaDays, overdueDays: Math.ceil((now-due)/86400000) };
+  return { kind:'atrisk', deltaDays };
 }
 // Une commande "totalement terminée" libère sa zone de stockage (voir CLAUDE.md) — même condition
 // que le badge "Terminée" de renderCommandeCard et le filtre actives/terminées de renderCommandes.
@@ -4838,6 +4866,20 @@ function sortByPriority(){
   });
   commit();
 }
+// Comme sortByPriority, mais échéance seule (jamais l'urgence déclarée) — pour les moments où la
+// vraie date de livraison compte plus que le niveau d'urgence affiché (retour utilisateur réel).
+// Même mutation persistée de state.commandes (pas un simple filtre d'affichage), par cohérence avec
+// sortByPriority : les deux sont des tris "one-shot" qu'on redéclenche à la main quand besoin, pas
+// un mode d'affichage permanent.
+function sortByDueDate(){
+  state.commandes.sort((a,b)=>{
+    if(!a.dateBesoin && !b.dateBesoin) return 0;
+    if(!a.dateBesoin) return 1;
+    if(!b.dateBesoin) return -1;
+    return a.dateBesoin.localeCompare(b.dateBesoin);
+  });
+  commit();
+}
 // Filtre d'affichage (ne modifie jamais state.commandes) : isole les commandes actives à risque
 // de retard, triées de la plus en retard à la moins en retard. Activé aussi bien depuis le bouton
 // dédié que depuis le compteur cliquable de renderStats().
@@ -5629,6 +5671,7 @@ function renderHeader(){
       ${logoHtml}
       <h1>${escapeHtml(state.config.appTitle || 'Planning Atelier')}</h1>
       ${state.config.appSubtitle ? `<div class="sub">${escapeHtml(state.config.appSubtitle)}</div>` : ''}
+      <div class="footer-note" style="margin:2px 0 0;">v${APP_VERSION}</div>
       ${pageSwitcher}
     </div>
     <div class="toolbar-mini">
@@ -8561,13 +8604,10 @@ function opsTableHead(){
 
 function renderCommandeCard(c, idx, total){
   let badge = `<span class="badge neutral">Fin est. ${c.finEstimee ? formatDT(c.finEstimee) : '—'}</span>`;
-  if(c.dateBesoin && c.finEstimee){
-    const due = effectiveDueDate(c.dateBesoin);
-    if(c.finEstimee > due){
-      const deltaDays = Math.ceil((c.finEstimee-due)/86400000);
-      badge = `<span class="badge red">Retard estimé ~${deltaDays} j</span>`;
-    } else badge = `<span class="badge green">Dans les temps</span>`;
-  }
+  const delay = commandeDelayStatus(c);
+  if(delay.kind === 'overdue') badge = `<span class="badge red badge-overdue">⏰ Échéance dépassée depuis ${delay.overdueDays} j</span>`;
+  else if(delay.kind === 'atrisk') badge = `<span class="badge red">Retard estimé ~${delay.deltaDays} j</span>`;
+  else if(delay.kind === 'ontime') badge = `<span class="badge green">Dans les temps</span>`;
   const allDone = c.pieces.length>0 && c.pieces.every(o=>o.statut==='termine');
   if(allDone) badge = `<span class="badge done">Terminée</span>`;
 
@@ -8668,6 +8708,40 @@ function renderCommandeCard(c, idx, total){
   </div>`;
 }
 
+// Export rapide (.xlsx) de la liste "Tâches en cours" telle qu'affichée à l'écran — mêmes filtres
+// que renderCommandes (recherche, "Commande à livrer", "⚠️ À risque"), pas seulement toutes les
+// commandes actives, pour qu'un export "vu à l'écran" corresponde vraiment à ce qu'on a sous les
+// yeux au moment de cliquer. Une seule feuille, niveau commande (pas le détail des pièces, déjà
+// consultable dans l'appli) — assez pour un point d'équipe rapide.
+function exportActiveCommandesExcel(){
+  if(typeof XLSX === 'undefined'){ alert("La bibliothèque Excel n'a pas pu se charger (connexion internet requise pour cette fonction)."); return; }
+  const schedule = getSchedule();
+  const filtered = schedule.filter(c => matchesSearch(c, searchQuery) && (!selectedCommandeId || c.id===selectedCommandeId));
+  let active = filtered.filter(c => c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine'));
+  active = active.filter(c => commandeMatchesDueFilter(c, dueFilterRange));
+  if(atRiskFilterActive){
+    active = active.filter(isCommandeAtRisk).sort((a,b) => commandeRiskDaysLate(b) - commandeRiskDaysLate(a));
+  }
+  if(!active.length){ alert('Aucune commande à exporter avec les filtres actuellement appliqués.'); return; }
+  const headers = ['Commande','Réf. client','Urgence','Échéance','Fin estimée','État','Zone de stockage','Nb pièces','Pièces terminées'];
+  const urgenceLabel = { normale:'Normale', importante:'Importante', urgente:'Urgente' };
+  const rows = active.map(c => {
+    const delay = commandeDelayStatus(c);
+    const etat = delay.kind === 'overdue' ? `Échéance dépassée depuis ${delay.overdueDays} j`
+      : delay.kind === 'atrisk' ? `Retard estimé ~${delay.deltaDays} j`
+      : delay.kind === 'ontime' ? 'Dans les temps' : '—';
+    return [
+      c.nom, c.refClient||'', urgenceLabel[c.urgence]||'Normale',
+      c.dateBesoin ? formatDateFr(c.dateBesoin) : '', c.finEstimee ? formatDT(c.finEstimee) : '',
+      etat, c.zoneStockage||'', c.pieces.length, c.pieces.filter(o=>o.statut==='termine').length
+    ];
+  });
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  ws['!cols'] = headers.map(() => ({ wch: 18 }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Commandes en cours');
+  XLSX.writeFile(wb, `commandes-en-cours_${toDateInputValue(new Date())}.xlsx`);
+}
 function renderCommandes(schedule){
   const filtered = schedule.filter(c => matchesSearch(c, searchQuery) && (!selectedCommandeId || c.id===selectedCommandeId));
   let active = filtered.filter(c => c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine'));
@@ -8737,8 +8811,10 @@ function renderCommandes(schedule){
       <h2>${activeCountLabel}</h2>
       <div style="display:flex; align-items:center; gap:8px;">
         <button class="small primary" data-action="sort-by-priority" title="Urgence d'abord (Urgente > Importante > Normale), puis échéance la plus proche">⇕ Trier par priorité</button>
+        <button class="small" data-action="sort-by-due-date" title="Échéance la plus proche d'abord, sans tenir compte de l'urgence déclarée">📅 Trier par échéance</button>
         ${atRiskBtn}
         ${dueFilterControl}
+        <button class="small" data-action="export-active-commandes" title="Exporter (.xlsx) la liste actuellement affichée, avec les filtres en cours">⬇ Exporter (.xlsx)</button>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
         ${activeLimitControl}
@@ -9186,6 +9262,8 @@ function dispatchClickAction(action, el){
       break;
     }
     case 'sort-by-priority': sortByPriority(); break;
+    case 'sort-by-due-date': sortByDueDate(); break;
+    case 'export-active-commandes': exportActiveCommandesExcel(); break;
     case 'toggle-at-risk-filter': toggleAtRiskFilter(); break;
     case 'clear-search': searchQuery = ''; render(); break;
     case 'clear-archive-search': archiveSearchQuery = ''; render(); break;
@@ -9782,7 +9860,7 @@ function renderLoginScreen(errorMsg){
   const cfg = (state && state.config) ? state.config : {};
   const title = cfg.appTitle || loginBranding.appTitle || 'Planning Atelier';
   const logo = cfg.logoDataUrl || loginBranding.logoDataUrl || '';
-  const copyright = cfg.copyright || loginBranding.copyright || '';
+  const copyright = cfg.copyright || loginBranding.copyright || defaultCopyrightMention();
   document.getElementById('app').innerHTML = `
   <div class="login-screen">
     <div class="login-box">

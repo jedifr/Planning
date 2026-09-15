@@ -766,6 +766,35 @@ d'affichage de cette liste (`DUE_FILTER_STORAGE_KEY`, chargé au démarrage).
   combinent (le badge "À risque" ne compte alors que les commandes à risque **dans la fenêtre
   choisie**), comme la recherche texte s'y combine déjà.
 
+### Badge « Échéance dépassée » distinct d'« à risque », tri par échéance, export Excel
+
+Trois ajouts sur la même liste « Tâches en cours », pour distinguer une commande simplement à
+risque (l'échéance n'est pas encore arrivée mais la fin estimée la dépasserait) d'une commande dont
+l'échéance est **déjà** dépassée aujourd'hui — un cran de gravité de plus, jusque-là confondues sous
+le même badge "Retard estimé".
+
+- `commandeDelayStatus(c)` — point unique de calcul du statut de délai d'une commande, utilisé à la
+  fois par le badge de `renderCommandeCard` et par `exportActiveCommandesExcel` (jamais dupliqué) :
+  `{ kind:'unknown', ... }` sans échéance ou sans fin estimée ; `'ontime'` si la fin estimée ne
+  dépasse pas l'échéance ; `'overdue'` (+ `overdueDays`, jours écoulés depuis l'échéance, et
+  `deltaDays`, le retard estimé) si l'échéance est déjà passée **aujourd'hui** ; sinon `'atrisk'`
+  (+ `deltaDays`) si la fin estimée dépasse l'échéance mais que celle-ci n'est pas encore arrivée.
+- `.badge.red.badge-overdue` — fond rouge plein, texte blanc, gras (contraste volontaire avec le
+  contour rouge/fond pâle du badge "Retard estimé" existant) : « ⏰ Échéance dépassée depuis X j ».
+- `sortByDueDate()` — même convention que `sortByPriority()` (mutation persistée de
+  `state.commandes`, `commit()` une seule fois, pas un filtre d'affichage) mais classe uniquement
+  par `dateBesoin`, urgence totalement ignorée — une commande urgente à échéance lointaine passe
+  après une commande normale à échéance proche, contrairement à `sortByPriority`. Bouton "📅 Trier
+  par échéance" à côté de "⇕ Trier par priorité".
+- `exportActiveCommandesExcel()` — export .xlsx (feuille "Commandes en cours") de la liste **telle
+  qu'affichée à l'écran**, en réappliquant exactement les mêmes filtres que `renderCommandes`
+  (recherche, `dueFilterRange`, "⚠️ À risque") plutôt que d'exporter toutes les commandes actives —
+  sinon l'export contredirait ce que l'utilisateur a sous les yeux. Message d'erreur explicite
+  (`alert`) si la bibliothèque `XLSX` n'a pas pu se charger (nécessite une connexion internet),
+  plutôt qu'un plantage silencieux. Colonnes : Commande, Réf. client, Urgence, Échéance, Fin
+  estimée, État (texte dérivé de `commandeDelayStatus`), Zone de stockage, Nb pièces, Pièces
+  terminées. Bouton "⬇ Exporter (.xlsx)" dans le même groupe que les boutons de tri.
+
 ## Page « ⚠️ Risques de retard »
 
 Avant cette page, comprendre pourquoi une commande à risque (`isCommandeAtRisk`) est en retard
@@ -1040,10 +1069,10 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
 ## Numéro de version
 
 `APP_VERSION` (tout en haut du `<script>` de `public/index.html`) — seule source de vérité pour le
-numéro de version affiché dans l'application (écran de connexion, et pied de page du planning
-principal). Aucun suivi de version réel n'existait avant (`package.json` restait figé à `"1.0.0"`,
-jamais modifié ; aucun tag git) : `APP_VERSION` est parti de `'1.0.0'` comme premier numéro
-réellement suivi.
+numéro de version affiché dans l'application (écran de connexion, en-tête visible sur **toutes**
+les pages une fois connecté via `renderHeader`, et pied de page du planning principal). Aucun suivi
+de version réel n'existait avant (`package.json` restait figé à `"1.0.0"`, jamais modifié ; aucun
+tag git) : `APP_VERSION` est parti de `'1.0.0'` comme premier numéro réellement suivi.
 
 - **Incrémenté systématiquement à chaque commit livré**, en SemVer (`MAJEUR.MINEUR.CORRECTIF`) :
   `CORRECTIF` pour un correctif de bug, `MINEUR` pour une nouvelle fonctionnalité, `MAJEUR` réservé à
@@ -1053,3 +1082,18 @@ réellement suivi.
 - Le champ `"version"` de `package.json` (serveur, jamais lu au runtime par l'application) doit être
   mis à jour en même temps que `APP_VERSION`, pour rester le reflet de la même version du produit,
   côté client comme côté serveur.
+
+## Mention de copyright par défaut (écran de connexion)
+
+`config.copyright` (Paramètres → Affichage, « Mention affichée sur l'écran de connexion ») reste
+librement personnalisable, mais ne doit **jamais** aboutir à un écran de connexion sans aucune
+mention si le champ est vidé par erreur.
+
+- `defaultCopyrightMention()` — retourne `` `© ${annéeCourante} Découpe H2O` ``, calculée (pas une
+  chaîne figée) pour que l'année reste juste sans intervention.
+- `migrateState` pose cette valeur par défaut **uniquement** si `config.copyright` est `undefined`
+  (config fraîche) — ne touche jamais une mention déjà configurée, même vide ou différente.
+- `renderLoginScreen` a en plus un filet de sécurité au runtime :
+  `cfg.copyright || loginBranding.copyright || defaultCopyrightMention()` — une mention
+  explicitement vidée retombe sur la valeur par défaut plutôt que de disparaître, tout en laissant
+  le champ toujours éditable.
