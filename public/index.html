@@ -764,7 +764,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.11.1';
+const APP_VERSION = '1.12.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1157,6 +1157,7 @@ function migrateState(st){
   if(!st.userMachines) st.userMachines = {}; // { [userId]: [machineId, ...] } — lien plusieurs-à-plusieurs
   if(!Array.isArray(st.hiddenTempsProdUserIds)) st.hiddenTempsProdUserIds = []; // salariés exclus de l'onglet Temps de production (superviseur) — voir isHiddenFromTempsProd
   if(!st.userDefaultPage) st.userDefaultPage = {}; // { [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques' } — page affichée à la connexion, voir applyUserDefaultPageOnStart
+  if(!st.userDefaultPlanningView) st.userDefaultPlanningView = {}; // { [userId]: 'jour'|'semaine'|'mois'|'annee'|'kanban'|'liste' } — vue du planning appliquée à la connexion quand la page d'accueil est Planning, voir applyUserDefaultPageOnStart
   if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
   Object.keys(st.userLunch).forEach(uid_ => {
     const lunch = st.userLunch[uid_];
@@ -2978,6 +2979,13 @@ function updateUserDefaultPage(userId, page){
   state.userDefaultPage[userId] = page || null;
   commit();
 }
+// Vue du planning (Jour/Semaine/Mois/Année/Kanban/Liste) appliquée à la connexion quand la page
+// d'accueil de cette personne est Planning — n'a de sens que dans ce cas, mais reste rangée même si
+// la page d'accueil change ensuite vers autre chose (pas réaffichée tant qu'on n'y revient pas).
+function updateUserDefaultPlanningView(userId, view){
+  state.userDefaultPlanningView[userId] = view || null;
+  commit();
+}
 // Garantit l'existence d'une entrée userLunch pour cette personne, avec un gabarit complet — pour
 // que les horaires de poste et les pauses puissent chacun être activés indépendamment sans jamais
 // écraser les réglages déjà faits sur l'autre.
@@ -4113,6 +4121,17 @@ function submitQuickPointage(){
 // récupérable, ce bouton permet de la corriger à la main plutôt que de la perdre définitivement.
 // Réattribue l'INTÉGRALITÉ du temps réellement passé à une seule personne (pas de répartition
 // partielle) — le cas visé est justement "tout ce temps était en fait celui de quelqu'un d'autre".
+//
+// Uniquement pertinent sur une pièce TERMINÉE : c'est alors dureeReelleParOperateur (ou son repli sur
+// l'opérateur assigné) qui crédite computeProductionTimeByUser, jamais sessions[] (déjà vidé à la
+// clôture — voir applySingleStatusChange). Sur une pièce encore en_cours/en_pause, sessions[] existe
+// toujours et prime : corriger dureeReelleParOperateur ici n'aurait aucun effet visible, d'où ce
+// garde-fou avant d'afficher le bouton (page Temps de production, renderTempsProdDetail).
+function isCorrectableProductionEntry(cid, oid){
+  const c = (state.commandes||[]).find(cc=>cc.id===cid);
+  const o = c ? c.pieces.find(oo=>oo.id===oid) : null;
+  return !!(o && o.statut==='termine' && o.dureeReelleH!=null && o.dureeReelleH>0);
+}
 function openCorrectOperator(cid, oid){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
   const o = c.pieces.find(o=>o.id===oid); if(!o) return;
@@ -6529,13 +6548,14 @@ function renderTempsProdDetail(row, indent){
   const th = (key, label) => `<th data-action="temps-prod-detail-sort" data-user-id="${row.uid}" data-key="${key}" style="cursor:pointer; white-space:nowrap;">${label}${sortIndicatorHtml(key, sortState)}</th>`;
   const rows = details.map(d => {
     const overrun = isOverrunTask(d.prevuH, d.h);
+    const correctable = canSupervise() && isCorrectableProductionEntry(d.cid, d.oid);
     return `<tr${overrun?` style="background:${hexToRgba('#b23a30',0.08)};"`:''}>
     <td><span class="temps-prod-commande-link" data-action="show-temps-prod-sessions" data-cid="${d.cid}" data-oid="${d.oid}" title="Voir le détail des horaires (jours, début, pauses, fin)">${escapeHtml(d.commandeNom)}</span>${d.refClient?` <span class="footer-note" style="margin:0;">(${escapeHtml(d.refClient)})</span>`:''}</td>
     <td>${escapeHtml(d.piece)} / ${escapeHtml(d.etape)}</td>
     <td>${escapeHtml(d.machineNom)}</td>
     <td>${d.date ? d.date.toLocaleDateString('fr-FR') : '—'}</td>
     <td>${formatHeures(d.prevuH)}</td>
-    <td>${formatHeures(d.h)}</td>
+    <td>${formatHeures(d.h)}${correctable ? ` <button class="ghost small" data-action="open-correct-operator" data-cid="${d.cid}" data-oid="${d.oid}" title="Corriger qui a réellement réalisé cette tâche (ex. temps compté à tort sur l'opérateur assigné plutôt que sur qui a vraiment travaillé)" style="padding:1px 4px; font-size:9px;">✎</button>` : ''}</td>
     <td>${formatEcart(d.h - d.prevuH)}${overrun?` <span title="Dépassement notable (+50% et plus de 15 min)">⚠️</span>`:''}</td>
   </tr>`;
   }).join('');
@@ -7423,7 +7443,14 @@ function renderSettingsModal(){
         <option value="zones" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='zones'?'selected':''}>📍 Zones de stockage</option>
         <option value="risques" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='risques'?'selected':''}>⚠️ Risques de retard</option>
       </select>
-      <div class="footer-note" style="text-align:left; padding-top:6px;">Page affichée automatiquement à la connexion, à la place du Planning. Propre à ce compte : chacun peut choisir la sienne.</div>` },
+      <div class="footer-note" style="text-align:left; padding-top:6px;">Page affichée automatiquement à la connexion, à la place du Planning. Propre à ce compte : chacun peut choisir la sienne.</div>
+      ${!(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')] ? `
+      <label class="field" style="margin-top:12px;">Vue de planning par défaut</label>
+      <select data-action="user-default-planning-view" data-user-id="${currentUser?currentUser.id:''}">
+        <option value="" ${!(state.userDefaultPlanningView||{})[String(currentUser?currentUser.id:'')]?'selected':''}>Semaine (par défaut)</option>
+        ${['jour','semaine','mois','annee','kanban','liste'].map(v => `<option value="${v}" ${(state.userDefaultPlanningView||{})[String(currentUser?currentUser.id:'')]===v?'selected':''}>${{jour:'Jour',semaine:'Semaine',mois:'Mois',annee:'Année',kanban:'Kanban',liste:'Liste'}[v]}</option>`).join('')}
+      </select>
+      <div class="footer-note" style="text-align:left; padding-top:6px;">Vue du planning ouverte automatiquement à la connexion (Jour, Semaine, Mois, Année, Kanban ou Liste).</div>` : ''}` },
     utilisateurs: { title: `Utilisateurs (${usersList.length})`, body: `
       <div class="machines-grid">
         ${usersList.map(u => {
@@ -8533,7 +8560,7 @@ function renderOpsRow(o, c){
   const elapsedNote = running
     ? `<div class="elapsed-note">${durationLabel(opElapsedHours(o, state))} écoulé${o.statut==='en_pause'?(o.autoPaused?' (pause déjeuner)':' (en pause)'):''}</div>`
     : (done && dureePasseeH(o, state)
-        ? `<div class="elapsed-note">${durationLabel(dureePasseeH(o, state))} réellement passé${canSupervise() && o.dureeReelleH!=null && o.dureeReelleH>0 ? ` <button class="ghost small" data-action="open-correct-operator" data-cid="${c.id}" data-oid="${o.id}" title="Corriger qui a réellement réalisé cette tâche (ex. temps compté à tort sur l'opérateur assigné plutôt que sur qui a vraiment travaillé)" style="padding:1px 4px; font-size:9px;">✎ Opérateur</button>` : ''}</div>`
+        ? `<div class="elapsed-note">${durationLabel(dureePasseeH(o, state))} réellement passé</div>`
         : '');
   const datesCell = o.sousTraitance
     ? (done
@@ -8953,6 +8980,7 @@ function render(){
       renderTempsProdPage(),
       renderTempsProdSessionModal(),
       renderQuickPointageModal(),
+      renderCorrectOperatorModal(),
       renderSettingsModal(),
       renderToast()
     ].join('');
@@ -9317,6 +9345,7 @@ function dispatchChangeAction(el, action){
     case 'user-role': changeUserRole(el.dataset.userId, el.value); break;
     case 'user-email': changeUserEmail(el.dataset.userId, el.value); break;
     case 'user-default-page': updateUserDefaultPage(el.dataset.userId, el.value); break;
+    case 'user-default-planning-view': updateUserDefaultPlanningView(el.dataset.userId, el.value); break;
     case 'leave-type-field': updateLeaveTypeField(el.dataset.typeId, el.dataset.field, el.type==='checkbox' ? el.checked : el.value); break;
     case 'edit-leave-field': updateEditLeaveField(el.dataset.field, el.value); break;
     case 'alternance-field': updateAlternanceField(el.dataset.field, el.value); break;
@@ -10119,7 +10148,22 @@ async function logout(){
 function applyUserDefaultPageOnStart(){
   if(!currentUser) return;
   const pref = (state.userDefaultPage||{})[String(currentUser.id)];
-  if(!pref || pref === 'planning') return;
+  if(!pref || pref === 'planning'){
+    // Page d'accueil = Planning (par défaut ou explicite) : applique la vue de planning préférée,
+    // si une a été choisie — sinon on garde le comportement historique (currentView inchangé, 'semaine').
+    const viewPref = (state.userDefaultPlanningView||{})[String(currentUser.id)];
+    if(['jour','semaine','mois','annee','kanban','liste'].includes(viewPref)){
+      currentView = viewPref;
+      // Même garde-fou que setView() : jamais ouvrir la vue Jour sur un week-end (pas de render() ici,
+      // applyUserDefaultPageOnStart s'exécute avant le tout premier rendu de l'appli).
+      if(currentView==='jour' && (viewAnchor.getDay()===0 || viewAnchor.getDay()===6)){
+        const a = new Date(viewAnchor);
+        do { a.setDate(a.getDate()+1); } while(a.getDay()===0 || a.getDay()===6);
+        viewAnchor = a;
+      }
+    }
+    return;
+  }
   if(pref === 'conges' && !(state.config.modules && state.config.modules.conges)) return; // module désactivé depuis : on garde Planning plutôt que d'ouvrir une page indisponible
   if(['conges','tempsProd','zones','risques'].includes(pref)) currentPage = pref;
 }

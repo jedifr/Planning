@@ -140,15 +140,23 @@ les temps de production comptés à partir de ce correctif sont concernés.
 
 **Correction manuelle (bouton « ✎ Opérateur »).** Pour justement rattraper les pièces déjà closes
 avant le correctif ci-dessus (temps réellement passé mal attribué, sans espoir de le retrouver
-automatiquement), un bouton apparaît à côté de « X h réellement passé » dans le tableau des tâches,
-pour toute pièce `termine` avec un `dureeReelleH` positif — visible uniquement `canSupervise()`
-(superviseur/admin). `openCorrectOperator(cid, oid)`/`renderCorrectOperatorModal` : petit formulaire
-qui préremplit la personne actuellement créditée (celle de `dureeReelleParOperateur` s'il n'y en a
-qu'une, sinon l'opérateur assigné) et laisse en choisir une autre. `submitCorrectOperator()`
-réattribue **l'intégralité** du temps réellement passé à la personne choisie
+automatiquement), un bouton apparaît sur la page **Temps de production** (`renderTempsProdDetail`,
+colonne "Temps passé" du détail par salarié — superviseur et « Mon temps de production »), pas sur
+le planning : c'est là que se lit et se corrige l'attribution du temps de production, pas dans le
+tableau des tâches. `isCorrectableProductionEntry(cid, oid)` — garde-fou affiché uniquement
+`canSupervise()` **et** pour une pièce `termine` avec un `dureeReelleH` positif : sur une pièce
+encore `en_cours`/`en_pause`, `sessions[]` existe toujours et prime dans
+`computeProductionTimeByUser` (voir plus haut) — corriger `dureeReelleParOperateur` n'y aurait
+alors aucun effet visible, d'où l'exclusion explicite plutôt qu'un bouton trompeur qui ne changerait
+rien. `openCorrectOperator(cid, oid)`/`renderCorrectOperatorModal` : petit formulaire qui préremplit
+la personne actuellement créditée (celle de `dureeReelleParOperateur` s'il n'y en a qu'une, sinon
+l'opérateur assigné) et laisse en choisir une autre. `submitCorrectOperator()` réattribue
+**l'intégralité** du temps réellement passé à la personne choisie
 (`o.dureeReelleParOperateur = { [id]: o.dureeReelleH }`) — pas de répartition partielle entre
 plusieurs personnes : le cas visé est justement « tout ce temps était en fait celui de quelqu'un
-d'autre », pas un partage à corriger finement.
+d'autre », pas un partage à corriger finement. `renderCorrectOperatorModal()` fait partie de la
+composition `render()` de la page Temps de production (`currentPage==='tempsProd'`), pas de celle du
+planning.
 
 **Reprise automatique après pause déjeuner** (`applyAutoPauseResume`) : ce n'est PAS un clic de
 quelqu'un — on conserve l'`operatorUserId` de la session qu'on referme, jamais l'identité active du
@@ -889,6 +897,31 @@ doit retrouver sa page d'accueil quel que soit le poste depuis lequel il se conn
 - Le sélecteur (section "Mon compte") ne propose l'option "🏖 Congés" que si `state.config.modules.
   conges` est actif — même condition que le bouton correspondant du sélecteur de pages
   (`renderHeader`) — pour ne jamais laisser choisir une page qui n'existe pas encore à l'écran.
+
+### Vue de planning par défaut
+
+Quand la page d'accueil choisie est Planning (valeur vide, le cas par défaut), la personne peut en
+plus choisir la **vue** du planning ouverte automatiquement — Jour, Semaine, Mois, Année, Kanban ou
+Liste (`currentView`, voir `setView`) — plutôt que de retomber systématiquement sur "Semaine".
+
+- `state.userDefaultPlanningView` (`{ [userId]: 'jour'|'semaine'|'mois'|'annee'|'kanban'|'liste' }`)
+  — même principe que `userDefaultPage` (réglage par personne, synchronisé, pas une préférence de
+  navigateur). `updateUserDefaultPlanningView(userId, view)` stocke `view` vide comme `null`.
+  `migrateState` initialise `userDefaultPlanningView = {}`.
+- Second sélecteur "Vue de planning par défaut" (section "Mon compte"), affiché **seulement** quand
+  le premier sélecteur ("Page d'accueil par défaut") vaut Planning — se cache dès qu'une autre page
+  d'accueil est choisie, puisque le réglage n'a alors aucun effet (la préférence reste cependant
+  enregistrée telle quelle, pas remise à zéro : elle reprendra effet si la page d'accueil repasse un
+  jour sur Planning). Changer l'un ou l'autre sélecteur déclenche un `commit()` donc un `render()`
+  complet de la pop-up Paramètres — c'est ce qui permet à ce second sélecteur d'apparaître/disparaître
+  réactivement sans code de rafraîchissement dédié.
+- `applyUserDefaultPageOnStart()` — quand la préférence de page d'accueil est vide/`'planning'`,
+  applique en plus `userDefaultPlanningView[userId]` à `currentView` (si une valeur valide est
+  enregistrée) avant de rendre la main. Reproduit le même garde-fou que `setView()` pour la vue
+  "Jour" (jamais ouvrir sur un samedi/dimanche, `viewAnchor` avancé au premier jour ouvré) **sans**
+  appeler `setView()` lui-même, qui appelle `render()` — cette fonction s'exécute avant le tout
+  premier rendu de l'appli (voir plus haut), un `render()` prématuré verrait un `state` encore
+  incomplet (`draft`/`usersList` pas encore initialisés à ce stade de `startApp`).
 
 ## Tests
 
