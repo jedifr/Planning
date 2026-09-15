@@ -287,6 +287,28 @@ semaine sur l'autre, pour ne pas les saisir une par une.
 - Comme pour la demi-journée, **le blocage automatique de poste et le moteur de planification** ne
   distinguent pas un congé généré par ce rythme d'un congé posé normalement — mêmes conséquences
   (bloque le poste si l'apprenti en est le seul opérateur lié ce jour-là).
+- **Mode "Sélection manuelle sur calendrier"** (`alternanceDraft.mode==='manuel'`) — un rythme
+  régulier (jours fixes, semaines alternées) ne correspond pas forcément au calendrier réel d'un
+  alternant (retour utilisateur réel). Ce mode remplace le calcul par rythme par une vue mensuelle
+  cliquable (`renderAlternanceCalendar`) : premier clic sur un jour = début d'une période "école"
+  en attente (`alternanceDraft.calendarPendingStart`), second clic = fin — la période `{debut,fin}`
+  (remise dans l'ordre chronologique quel que soit l'ordre des deux clics) rejoint
+  `alternanceDraft.periodes[]`, affichée sous forme de puces retirables individuellement
+  (`remove-alternance-periode`). Cliquer deux fois le même jour annule la sélection en attente
+  plutôt que de créer une période d'un jour "par accident". `navigateAlternanceCalendar(dir)` fait
+  défiler `alternanceDraft.calendarMonth` (`"AAAA-MM"`) mois par mois ; la grille (lundi en première
+  colonne, comme `startOfWeek` déjà utilisé ailleurs) mute visuellement week-ends/fériés sans les
+  rendre non cliquables (une période "école" traversant un week-end reste possible à sélectionner,
+  simplement sans effet sur la génération — voir plus bas).
+  - `submitAlternanceGeneration()` en mode `'manuel'` : passe chaque période cliquée à
+    `computeAlternanceDates(p.debut, p.fin, 'jours', { joursSemaine:[1,2,3,4,5] })` (tous les jours
+    ouvrés cochés) plutôt que de dupliquer le filtrage week-ends/fériés et la fusion en plages
+    contiguës — un week-end à l'intérieur d'une période cliquée casse donc naturellement sa
+    contiguïté, exactement comme les deux autres modes. Le reste (confirmation, jours déjà couverts
+    ignorés, motif `"Alternance"`, statut `approuve` direct) est strictement partagé avec les modes
+    `'jours'`/`'semaines'`, aucune duplication de cette partie.
+  - `alternanceDraft`/`periodes`/`calendarPendingStart`/`calendarMonth` sont purement transitoires
+    côté client (comme `draft`/`customImportState`) — jamais dans `state`, pas de migration requise.
 
 ## Temps de production vs présence théorique
 
@@ -870,6 +892,16 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   `now` — borné à `now` par sécurité (horloge cliente, config changée entre-temps : ne jamais ouvrir
   une session dans le futur). Réflexe : toute reprise "automatique" différée dans le temps doit
   horodater l'événement à quand il aurait dû se produire, jamais à quand il a été CONSTATÉ.
+- **Redessin en cours de frappe dans un champ `type="date"`, comme un ancien bug déjà connu sur
+  `type="time"`.** Le navigateur déclenche déjà "change" sur un champ `date` dès qu'un segment
+  (jour/mois/année) atteint son nombre de chiffres attendu, sans attendre les autres segments ni la
+  sortie du champ — un redessin à cet instant reconstruit l'`<input>` avec une valeur encore
+  incomplète et fait sauter le curseur au segment suivant (bug réel signalé : année affichée "0002"
+  en tapant dans le formulaire "Générer un rythme d'alternance"). `isDeferredTimeField` traitait déjà
+  ce cas pour `type="time"` (redessin différé jusqu'au `focusout`) mais pas encore pour `type="date"`
+  — corrigé en l'étendant aux deux types. Réflexe : tout nouveau champ natif segmenté (date, time,
+  et plus généralement tout `<input>` dont la valeur peut être "complète" avant que l'utilisateur ait
+  fini d'y saisir quelque chose) doit passer par ce même mécanisme de redessin différé.
 
 ## Conventions
 

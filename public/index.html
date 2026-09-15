@@ -662,6 +662,23 @@
   .calmonth-dots{display:flex; gap:2px; flex-wrap:wrap; justify-content:center; min-height:9px; margin-top:2px;}
   .calmonth-dot{width:7px; height:7px; border-radius:50%; display:inline-block;}
   .calmonth-dot.pending{background:transparent; border:1.6px solid;}
+  .alt-cal{max-width:420px;}
+  .alt-cal-head{display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom:8px;}
+  .alt-cal-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:3px;}
+  .alt-cal-grid-header{margin-bottom:2px;}
+  .alt-cal-dow{font-size:11px; color:var(--text-faint); text-align:center; padding-bottom:2px;}
+  .alt-cal-day{border:1px solid var(--line-soft); border-radius:4px; background:var(--panel); min-height:32px; font-size:12.5px; color:var(--text-dim); cursor:pointer; padding:0; font-family:inherit;}
+  .alt-cal-day:hover{border-color:var(--accent);}
+  .alt-cal-day.is-outside{visibility:hidden; border:none; cursor:default;}
+  .alt-cal-day.is-weekend{opacity:0.55;}
+  .alt-cal-day.is-holiday{color:var(--red);}
+  .alt-cal-day.is-today{font-weight:700; border-color:var(--accent);}
+  .alt-cal-day.is-selected{background:var(--accent); color:#fff; border-color:var(--accent); opacity:1;}
+  .alt-cal-day.is-pending{background:var(--amber); color:#fff; border-color:var(--amber); opacity:1;}
+  .alt-cal-periodes{display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;}
+  .alt-cal-periode-chip{display:inline-flex; align-items:center; gap:6px; background:var(--bg); border:1px solid var(--line-soft); border-radius:20px; padding:3px 8px; font-size:12px; color:var(--text-dim);}
+  .alt-cal-periode-remove{border:none; background:transparent; cursor:pointer; color:var(--text-faint); font-size:12px; line-height:1; padding:0;}
+  .alt-cal-periode-remove:hover{color:var(--red);}
   .toolbar-mini{display:flex; gap:8px; align-items:center;}
 
   .modal-overlay{
@@ -746,7 +763,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.7.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -996,8 +1013,11 @@ let editingLeaveRequestDraft = null; // { id, userId, typeId, debut, fin, motif 
 // Formulaire "Générer un rythme d'alternance" (Paramètres → Soldes & types) — génère en masse des
 // congés déjà approuvés suivant un rythme régulier (apprenti à l'école certains jours/semaines).
 // mode 'jours' utilise joursSemaine (1=lundi..5=vendredi) ; mode 'semaines' utilise semaineRef
-// (une date quelconque dans la première semaine "école", alternée ensuite une semaine sur deux).
-let alternanceDraft = { userId:'', typeId:'', debut:'', fin:'', mode:'jours', joursSemaine:[], semaineRef:'' };
+// (une date quelconque dans la première semaine "école", alternée ensuite une semaine sur deux) ;
+// mode 'manuel' utilise periodes[] (voir renderAlternanceCalendar/handleAlternanceCalendarDayClick),
+// pour un rythme irrégulier qui ne suit ni l'un ni l'autre des deux premiers modes.
+let alternanceDraft = { userId:'', typeId:'', debut:'', fin:'', mode:'jours', joursSemaine:[], semaineRef:'',
+  periodes:[], calendarPendingStart:null, calendarMonth:'' };
 let equipePersonneFilter = ''; // '' = toutes les personnes
 let calendrierYear = new Date().getFullYear();
 let calendrierPersonneFilter = ''; // '' = toutes les personnes
@@ -3576,6 +3596,97 @@ function toggleAlternanceJour(dow){
   else alternanceDraft.joursSemaine.push(dow);
   render();
 }
+// Mode "manuel" du rythme d'alternance (voir alternanceDraft) : un rythme régulier (jours fixes,
+// semaines alternées) ne correspond pas forcément au calendrier réel d'un apprenti (retour
+// utilisateur réel) — ce mode laisse cliquer directement, sur une vue mensuelle, le début puis la
+// fin de chaque période "école", sans hypothèse de régularité.
+function alternanceCalendarMonthStart(){
+  if(alternanceDraft.calendarMonth){
+    const [y,m] = alternanceDraft.calendarMonth.split('-').map(Number);
+    return new Date(y, m-1, 1);
+  }
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), 1);
+}
+function navigateAlternanceCalendar(dir){
+  const cur = alternanceCalendarMonthStart();
+  const next = new Date(cur.getFullYear(), cur.getMonth()+dir, 1);
+  alternanceDraft.calendarMonth = `${next.getFullYear()}-${pad(next.getMonth()+1)}`;
+  render();
+}
+// Premier clic = début de période en attente (calendarPendingStart) ; second clic = fin, la période
+// [début,fin] (dans l'ordre chronologique quel que soit l'ordre des deux clics) rejoint periodes[].
+// Un clic sur le jour déjà en attente annule la sélection en cours plutôt que de créer une période
+// d'un seul jour "par accident" — celle-ci reste possible en cliquant deux fois sur des jours
+// différents avec le second égal au premier n'est pas atteignable autrement de toute façon.
+function handleAlternanceCalendarDayClick(dateStr){
+  if(!dateStr) return;
+  if(!alternanceDraft.calendarPendingStart){
+    alternanceDraft.calendarPendingStart = dateStr;
+  } else if(alternanceDraft.calendarPendingStart === dateStr){
+    alternanceDraft.calendarPendingStart = null;
+  } else {
+    const a = alternanceDraft.calendarPendingStart;
+    const debut = a <= dateStr ? a : dateStr;
+    const fin = a <= dateStr ? dateStr : a;
+    alternanceDraft.periodes.push({ debut, fin });
+    alternanceDraft.periodes.sort((x,y) => x.debut.localeCompare(y.debut));
+    alternanceDraft.calendarPendingStart = null;
+  }
+  render();
+}
+function isDateInAlternancePeriodes(dateStr){
+  return alternanceDraft.periodes.some(p => dateStr >= p.debut && dateStr <= p.fin);
+}
+// Grille d'un mois (lundi en première colonne, comme startOfWeek déjà utilisé ailleurs dans
+// l'appli), avec les jours hors mois affichés en creux (non cliquables) pour garder l'alignement
+// des semaines sans laisser croire qu'on peut y sélectionner une période.
+function renderAlternanceCalendar(){
+  const monthStart = alternanceCalendarMonthStart();
+  const monthLabel = monthStart.toLocaleDateString('fr-FR', { month:'long', year:'numeric' });
+  const gridStart = startOfWeek(monthStart);
+  const todayStr = toDateInputValue(new Date());
+  const cells = [];
+  for(let i=0; i<42; i++){
+    const d = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate()+i);
+    const ds = toDateInputValue(d);
+    const inMonth = d.getMonth() === monthStart.getMonth();
+    if(!inMonth){ cells.push(`<div class="alt-cal-day is-outside"></div>`); continue; }
+    const dow = d.getDay();
+    const classes = ['alt-cal-day'];
+    if(dow===0 || dow===6) classes.push('is-weekend');
+    if(isFrenchPublicHoliday(d)) classes.push('is-holiday');
+    if(ds === todayStr) classes.push('is-today');
+    if(isDateInAlternancePeriodes(ds)) classes.push('is-selected');
+    if(alternanceDraft.calendarPendingStart === ds) classes.push('is-pending');
+    cells.push(`<button type="button" class="${classes.join(' ')}" data-action="alternance-calendar-day" data-date="${ds}">${d.getDate()}</button>`);
+  }
+  const periodesHtml = alternanceDraft.periodes.length ? `
+    <div class="alt-cal-periodes">
+      ${alternanceDraft.periodes.map((p,idx) => `
+        <span class="alt-cal-periode-chip">${formatDateFr(p.debut)} → ${formatDateFr(p.fin)}
+          <button type="button" class="alt-cal-periode-remove" data-action="remove-alternance-periode" data-idx="${idx}" title="Retirer cette période">✕</button>
+        </span>`).join('')}
+    </div>` : `<div class="footer-note" style="text-align:left; margin-top:8px;">Aucune période sélectionnée pour l'instant — cliquez un jour de début, puis un jour de fin.</div>`;
+  return `
+    <div class="alt-cal">
+      <div class="alt-cal-head">
+        <button type="button" class="ghost icon-btn" data-action="alternance-calendar-nav" data-dir="-1" title="Mois précédent">◀</button>
+        <strong style="text-transform:capitalize;">${escapeHtml(monthLabel)}</strong>
+        <button type="button" class="ghost icon-btn" data-action="alternance-calendar-nav" data-dir="1" title="Mois suivant">▶</button>
+      </div>
+      <div class="alt-cal-grid alt-cal-grid-header">
+        ${['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'].map(l=>`<div class="alt-cal-dow">${l}</div>`).join('')}
+      </div>
+      <div class="alt-cal-grid">${cells.join('')}</div>
+      ${alternanceDraft.calendarPendingStart ? `
+      <div class="footer-note" style="text-align:left; margin-top:8px; display:flex; align-items:center; gap:8px;">
+        Début choisi : <strong>${formatDateFr(alternanceDraft.calendarPendingStart)}</strong> — cliquez le jour de fin de la période.
+        <button type="button" class="ghost small" data-action="alternance-calendar-cancel-pending">Annuler</button>
+      </div>` : ''}
+      ${periodesHtml}
+    </div>`;
+}
 // Calcule les plages de jours ouvrés "école" sur [debut, fin] (inclus, chaînes AAAA-MM-JJ) suivant
 // le rythme choisi, fusionnées en plages contiguës (des jours ouvrés consécutifs au calendrier —
 // un week-end ou un jour non concerné coupe naturellement la plage, sans traitement particulier :
@@ -3622,12 +3733,23 @@ function submitAlternanceGeneration(){
   const d = alternanceDraft;
   if(!d.userId){ alert('Merci de choisir la personne concernée.'); return; }
   if(!d.typeId){ alert('Merci de choisir un type de congé.'); return; }
-  if(!d.debut || !d.fin){ alert('Merci de renseigner le début et la fin de la période à générer.'); return; }
-  if(d.fin < d.debut){ alert('La date de fin doit être postérieure ou égale à la date de début.'); return; }
-  if(d.mode === 'jours' && !(d.joursSemaine||[]).length){ alert('Merci de cocher au moins un jour de la semaine.'); return; }
-  if(d.mode === 'semaines' && !d.semaineRef){ alert('Merci d\'indiquer une semaine "école" de référence.'); return; }
-  const ranges = computeAlternanceDates(d.debut, d.fin, d.mode, { joursSemaine: d.joursSemaine, semaineRef: d.semaineRef });
-  if(!ranges.length){ alert('Aucun jour ne correspond à ce rythme sur la période choisie.'); return; }
+  let ranges;
+  if(d.mode === 'manuel'){
+    if(!(d.periodes||[]).length){ alert('Merci de sélectionner au moins une période sur le calendrier (cliquer un jour de début, puis un jour de fin).'); return; }
+    // Chaque période cliquée est passée à computeAlternanceDates en mode "jours" avec tous les jours
+    // ouvrés cochés : même logique de filtrage week-ends/fériés et de fusion en plages contiguës que
+    // les deux autres modes, sans dupliquer ce calcul — un week-end à l'intérieur d'une période
+    // cliquée casse naturellement sa contiguïté, comme partout ailleurs.
+    ranges = [];
+    d.periodes.forEach(p => { computeAlternanceDates(p.debut, p.fin, 'jours', { joursSemaine:[1,2,3,4,5] }).forEach(r => ranges.push(r)); });
+  } else {
+    if(!d.debut || !d.fin){ alert('Merci de renseigner le début et la fin de la période à générer.'); return; }
+    if(d.fin < d.debut){ alert('La date de fin doit être postérieure ou égale à la date de début.'); return; }
+    if(d.mode === 'jours' && !(d.joursSemaine||[]).length){ alert('Merci de cocher au moins un jour de la semaine.'); return; }
+    if(d.mode === 'semaines' && !d.semaineRef){ alert('Merci d\'indiquer une semaine "école" de référence.'); return; }
+    ranges = computeAlternanceDates(d.debut, d.fin, d.mode, { joursSemaine: d.joursSemaine, semaineRef: d.semaineRef });
+  }
+  if(!ranges.length){ alert('Aucun jour ouvré ne correspond à ce rythme sur la période choisie.'); return; }
   const existing = (state.leaveRequests||[]).filter(r => r.userId===d.userId && r.statut!=='refuse');
   const toCreate = [];
   let skipped = 0;
@@ -5657,24 +5779,30 @@ function renderSoldesTab(){
           ${state.leaveTypes.map(t=>`<option value="${t.id}" ${alternanceDraft.typeId===t.id?'selected':''}>${escapeHtml(t.nom)}</option>`).join('')}
         </select>
       </div>
+      ${alternanceDraft.mode!=='manuel' ? `
       <div><label class="field">Du</label><input type="date" value="${alternanceDraft.debut}" data-action="alternance-field" data-field="debut"></div>
-      <div><label class="field">Au</label><input type="date" value="${alternanceDraft.fin}" data-action="alternance-field" data-field="fin"></div>
+      <div><label class="field">Au</label><input type="date" value="${alternanceDraft.fin}" data-action="alternance-field" data-field="fin"></div>` : `<div></div><div></div>`}
     </div>
     <div style="margin-top:10px; max-width:280px;">
       <label class="field">Rythme</label>
       <select data-action="alternance-field" data-field="mode">
         <option value="jours" ${alternanceDraft.mode==='jours'?'selected':''}>Jours fixes chaque semaine</option>
         <option value="semaines" ${alternanceDraft.mode==='semaines'?'selected':''}>Semaines alternées</option>
+        <option value="manuel" ${alternanceDraft.mode==='manuel'?'selected':''}>Sélection manuelle sur calendrier</option>
       </select>
     </div>
     ${alternanceDraft.mode==='jours' ? `
     <div style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap;">
       ${[1,2,3,4,5].map(dow => `<label class="statut-chip"><input type="checkbox" data-action="alternance-toggle-jour" data-dow="${dow}" ${alternanceDraft.joursSemaine.includes(dow)?'checked':''}> ${['','Lundi','Mardi','Mercredi','Jeudi','Vendredi'][dow]}</label>`).join('')}
-    </div>` : `
+    </div>` : alternanceDraft.mode==='semaines' ? `
     <div style="margin-top:8px; max-width:280px;">
       <label class="field">Semaine "école" de référence</label>
       <input type="date" value="${alternanceDraft.semaineRef}" data-action="alternance-field" data-field="semaineRef">
       <div class="footer-note" style="text-align:left; padding-top:4px;">Une date quelconque dans la semaine à considérer "école" — cette semaine et une sur deux ensuite seront générées ; les semaines intermédiaires resteront à l'entreprise.</div>
+    </div>` : `
+    <div style="margin-top:10px;">
+      <div class="footer-note" style="text-align:left; padding-bottom:8px;">Cliquez un jour pour marquer le début d'une période "école", puis un second jour pour en marquer la fin. Seuls les jours ouvrés de chaque période seront générés (week-ends et jours fériés exclus automatiquement).</div>
+      ${renderAlternanceCalendar()}
     </div>`}
     <button class="primary small" style="margin-top:12px;" data-action="submit-alternance">Générer les congés</button>
   </div></section>`;
@@ -8647,6 +8775,10 @@ function dispatchClickAction(action, el){
     case 'add-leave-type': addLeaveType(); break;
     case 'admin-assign-leave': adminAssignLeave(); break;
     case 'submit-alternance': submitAlternanceGeneration(); break;
+    case 'alternance-calendar-nav': navigateAlternanceCalendar(Number(el.dataset.dir)); break;
+    case 'alternance-calendar-day': handleAlternanceCalendarDayClick(el.dataset.date); break;
+    case 'alternance-calendar-cancel-pending': alternanceDraft.calendarPendingStart = null; render(); break;
+    case 'remove-alternance-periode': alternanceDraft.periodes.splice(Number(el.dataset.idx), 1); render(); break;
     case 'calyear-nav': calendrierYear += Number(el.dataset.dir); render(); break;
     case 'calyear-today': calendrierYear = new Date().getFullYear(); render(); break;
     case 'remove-leave-type': removeLeaveType(el.dataset.typeId); break;
@@ -8833,8 +8965,16 @@ function dispatchChangeAction(el, action){
     case 'update-import-preview-operateur': updateImportPreviewOperateur(el.dataset.oid, el.value); break;
   }
 }
+// Un champ type="time" OU type="date" peut déclencher "change" avant que l'utilisateur ait fini de
+// le renseigner (le navigateur considère un segment jour/mois/année ou heure/minute "complet" dès
+// qu'il atteint le bon nombre de chiffres, sans attendre les autres segments ni la sortie du champ)
+// — redessiner à cet instant reconstruit l'`<input>` avec une nouvelle valeur pendant la frappe et
+// fait sauter le curseur au segment suivant (voire jour/mois erronés), le tout avant même que la
+// date/l'heure ait un sens (bug réel signalé : année affichée "0002" en tapant dans un champ date du
+// formulaire "Générer un rythme d'alternance"). Voir le "focusout" ci-dessous : le traitement réel
+// n'a lieu qu'à la sortie du champ.
 function isDeferredTimeField(el){
-  return !!(el && el.tagName === 'INPUT' && el.type === 'time');
+  return !!(el && el.tagName === 'INPUT' && (el.type === 'time' || el.type === 'date'));
 }
 document.addEventListener('change', (e) => {
   const el = e.target.closest('[data-action]');
