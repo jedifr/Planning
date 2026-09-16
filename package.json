@@ -1,6 +1,6 @@
 {
   "name": "planning-atelier-serveur",
-  "version": "1.0.0",
+  "version": "1.18.3",
   "private": true,
   "description": "Serveur du planning de production (fraisage / tournage) avec base de données partagée.",
   "main": "server.js",
