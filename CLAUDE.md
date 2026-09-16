@@ -1065,6 +1065,24 @@ personne, rangé dans `state` et synchronisé par le mécanisme habituel (`commi
 préférence de navigateur comme le dernier profil d'import (`LAST_IMPORT_PROFILE_KEY`) — l'utilisateur
 doit retrouver sa page d'accueil quel que soit le poste depuis lequel il se connecte.
 
+- **Bug réel corrigé : "Mon compte" documentée accessible à tout rôle, mais inatteignable pour un
+  non-admin.** Le bouton "⚙ Paramétrer" de l'en-tête (`renderHeader`) et le dispatch
+  `case 'open-settings'` étaient tous deux réservés à `isAdmin()` — un employé/superviseur ne
+  pouvait donc jamais ouvrir la pop-up, y compris pour sa propre section "Mon compte" (changer son
+  mot de passe, sa page d'accueil...), malgré ce paragraphe documentant l'intention contraire depuis
+  le début. Corrigé : le bouton est désormais toujours affiché (libellé "⚙ Mon compte" pour un
+  non-admin, "⚙ Paramétrer" pour un admin — même `title` adapté), et `open-settings` n'est plus
+  gardé par `isAdmin()`. `ADMIN_ONLY_SECTIONS` (dans `renderSettingsModal`) est désormais dérivée de
+  `SETTINGS_SECTION_KEYS.filter(key => key !== 'moncompte')` plutôt qu'une liste figée
+  (`['utilisateurs','conges','backup','importProfiles','maintenance']`, qui omettait `horaires`/
+  `pause`/`affichage`/`machines`/`storageZones` — sans conséquence tant que la pop-up entière était
+  admin-only, mais qui aurait exposé ces réglages d'atelier à tout le monde dès l'ouverture permise à
+  un non-admin) : "Mon compte" reste la SEULE section accessible à tout rôle, toute nouvelle section
+  future est admin-only par défaut sans avoir à y penser. `renderSettingsModal` masque le volet de
+  navigation (`showNav = visibleKeys.length > 1`) et titre la pop-up "Mon compte" plutôt que
+  "Paramètres" quand une seule catégorie est visible (cas d'un non-admin) — pas de sidebar à une
+  seule entrée avec des flèches de réorganisation grisées pour rien.
+
 - `updateUserDefaultPage(userId, page)` — enregistre la préférence (`state.userDefaultPage[userId]`),
   `page` vide (choix "Planning (par défaut)" du sélecteur) stocké comme `null`, jamais comme chaîne
   vide. `migrateState` initialise `userDefaultPage = {}` sur les états existants qui ne l'ont pas.

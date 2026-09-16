@@ -790,7 +790,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.18.2';
+const APP_VERSION = '1.18.3';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -5815,7 +5815,7 @@ function renderHeader(){
       ${currentPage!=='conges' ? `
       <button class="small" data-action="trigger-import" title="Recharger un fichier .json exporté précédemment">Importer</button>
       <input type="file" id="import-file-input" accept="application/json" style="display:none;" onchange="handleImportFile(event)">` : ''}
-      ${isAdmin() ? `<button class="small" data-action="open-settings" title="Paramétrer les horaires de travail">⚙ Paramétrer</button>` : ''}
+      <button class="small" data-action="open-settings" title="${isAdmin()?'Paramétrer les horaires de travail':'Mon compte — mot de passe, page d’accueil par défaut...'}">⚙ ${isAdmin()?'Paramétrer':'Mon compte'}</button>
       ${usersList.length > 1 ? `
       <select data-action="set-active-identity" class="${activeIdentityUserId?'active-identity-select active':'active-identity-select'}" title="Identité active sur ce poste — préremplit l'opérateur des nouvelles tâches et cible « Mon temps de production », sans changer les droits réels ni se déconnecter">
         <option value="" ${!activeIdentityUserId?'selected':''}>👤 ${currentUsername?escapeHtml(currentUsername):'Moi'} (connecté)</option>
@@ -7792,7 +7792,12 @@ function renderSettingsModal(){
       <button class="danger-ghost small" style="border:1px solid var(--red); padding:7px 14px;" data-action="reset-all">Réinitialiser tout le planning</button>` }
   };
 
-  const ADMIN_ONLY_SECTIONS = ['utilisateurs', 'conges', 'backup', 'importProfiles', 'maintenance'];
+  // "Mon compte" est la SEULE section accessible à tout rôle (mot de passe, page d'accueil par
+  // défaut...) — tout le reste (horaires, postes, utilisateurs, sauvegarde...) engage l'atelier
+  // entier et reste réservé aux administrateurs. Dérivé de la liste complète plutôt qu'une liste
+  // figée : une nouvelle section ajoutée à SETTINGS_SECTION_KEYS est admin-only par défaut, jamais
+  // accidentellement exposée à tout le monde faute d'avoir pensé à l'ajouter ici.
+  const ADMIN_ONLY_SECTIONS = SETTINGS_SECTION_KEYS.filter(key => key !== 'moncompte');
   const visibleKeys = settingsSectionOrder.filter(key => sectionDefs[key] && (!ADMIN_ONLY_SECTIONS.includes(key) || isAdmin()));
   // Retombe sur la première catégorie visible si la préférence enregistrée pointe vers une clé
   // absente (ancienne préférence, catégorie supprimée entre-temps) — jamais un volet de droite vide.
@@ -7806,17 +7811,22 @@ function renderSettingsModal(){
       </div>
     </div>`).join('');
   const activeDef = activeKey ? sectionDefs[activeKey] : null;
+  // Un non-administrateur n'a jamais qu'une seule catégorie visible ("Mon compte") — le volet de
+  // navigation n'aurait alors aucune utilité (rien entre quoi naviguer) et n'afficherait qu'une
+  // unique entrée déjà active avec ses flèches de réorganisation grisées. Masqué dans ce cas
+  // précis seulement ; dès qu'une deuxième catégorie est visible (admin), la navigation revient.
+  const showNav = visibleKeys.length > 1;
 
   return `
   <div class="modal-overlay">
     <div class="modal-box modal-box-wide" role="dialog" aria-modal="true">
       <div class="modal-head">
-        <h2>Paramètres</h2>
+        <h2>${isAdmin() ? 'Paramètres' : 'Mon compte'}</h2>
         <button class="ghost icon-btn" data-action="close-settings" title="Fermer">✕</button>
       </div>
       <div class="settings-modal-body">
-        <div class="settings-nav">${navHtml}</div>
-        <div class="settings-content-pane">${activeDef ? `<h3 class="settings-content-title">${activeDef.title}</h3>${activeDef.body}` : ''}</div>
+        ${showNav ? `<div class="settings-nav">${navHtml}</div>` : ''}
+        <div class="settings-content-pane">${activeDef ? (showNav ? `<h3 class="settings-content-title">${activeDef.title}</h3>` : '') + activeDef.body : ''}</div>
       </div>
     </div>
   </div>`;
@@ -9413,7 +9423,7 @@ function dispatchClickAction(action, el){
     case 'fuse-all': fuseAll(el.dataset.key); break;
     case 'toggle-fusion-group-details': toggleFusionGroupDetails(el.dataset.key); break;
     case 'toggle-fusion-panel': toggleFusionPanel(el.dataset.which); break;
-    case 'open-settings': if(isAdmin()){ showSettingsModal = true; render(); loadUsersList(); } break;
+    case 'open-settings': showSettingsModal = true; render(); loadUsersList(); break;
     case 'goto-conges': currentPage = 'conges'; render(); break;
     case 'goto-planning': currentPage = 'planning'; render(); break;
     case 'goto-temps-prod': currentPage = 'tempsProd'; render(); break;
