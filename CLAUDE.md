@@ -887,6 +887,28 @@ libérer) doit se propager à tout le groupe — voir `propagateFusionGroupField
   « 📌 Figée » — pour une pièce fusionnée, il regarde `fusionPinned`, jamais la simple
   présence de `dureeOverrideH` (toujours posé sur un groupe, figé ou non).
 
+## Recherche de commande/pièce — dépliage automatique des bandeaux
+
+La barre `#commande-search-input` (au-dessus de "Tâches en cours") filtre à la fois « Tâches en
+cours » et « Tâches terminées » (`matchesSearch`). Si l'un des deux bandeaux était replié
+(`panelCollapsed.active`/`.done`), chercher un numéro de pièce/commande qu'il contient obligeait
+jusqu'ici à d'abord le déplier à la main pour voir le résultat — retour utilisateur réel.
+
+- `setCommandeSearchQuery(q)` — point de passage **unique** pour modifier `searchQuery` (utilisé par
+  la frappe dans la barre, le bouton "✕ Effacer" et `toggleIsolateCommande`, qui vide aussi la
+  recherche en isolant une commande) : au passage vide→non-vide, mémorise l'état replié/déplié
+  courant des deux bandeaux dans `panelCollapsedBeforeSearch` puis les force tous les deux ouverts ;
+  au passage non-vide→vide, restaure exactement cet état mémorisé puis l'efface (`null`). Continuer
+  à taper (recherche déjà non vide) ne réécrit jamais `panelCollapsedBeforeSearch` — sinon la
+  "mémoire" de l'état de départ serait perdue au profit de l'état forcé ouvert.
+- Ne touche **jamais** `localStorage` (`PANEL_COLLAPSE_STORAGE_KEY`) : forcer l'ouverture pour une
+  recherche est purement visuel et transitoire, comme `toggleAtRiskFilter` le fait déjà pour
+  `panelCollapsed.active` — la préférence réelle de la personne (posée via le chevron, `togglePanelCollapse`)
+  reste inchangée en base, seul l'affichage pendant la recherche est temporairement forcé.
+- Si les deux bandeaux étaient déjà ouverts, aucun changement visuel, mais l'état "ouvert" est quand
+  même mémorisé (cohérence du mécanisme) — la restauration au nettoyage n'a alors simplement aucun
+  effet visible.
+
 ## Filtre « Commande à livrer » (liste des tâches en cours)
 
 Sélecteur dans l'en-tête de la section « Tâches en cours » (`renderCommandes`, à côté de "Trier par

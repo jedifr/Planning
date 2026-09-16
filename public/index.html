@@ -790,7 +790,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.17.1';
+const APP_VERSION = '1.18.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -2047,7 +2047,7 @@ let selectedCommandeId = null;
 function toggleIsolateCommande(cid){
   if(!cid) return;
   selectedCommandeId = (selectedCommandeId === cid) ? null : cid; // reclique sur la même commande = désisole
-  searchQuery = ''; // évite de cumuler recherche et sélection
+  setCommandeSearchQuery(''); // évite de cumuler recherche et sélection
   render();
 }
 // Sur les éléments où un double-clic déclenche une AUTRE action (réinitialiser une tâche figée), on
@@ -8129,6 +8129,27 @@ function togglePanelCollapse(key){
   try{ localStorage.setItem(PANEL_COLLAPSE_STORAGE_KEY, JSON.stringify(panelCollapsed)); }catch(e){}
   render();
 }
+// Mémorise l'état replié/déplié de "Tâches en cours"/"Tâches terminées" juste avant qu'une
+// recherche ne les déploie de force (sinon on chercherait un numéro de pièce/commande dans un
+// bandeau resté fermé) — restauré tel quel dès que la recherche est effacée. `null` = aucune
+// recherche en cours n'a encore forcé l'ouverture (état normal, rien à restaurer). Purement
+// transitoire (jamais persisté dans localStorage) : comme pour toggleAtRiskFilter, forcer
+// l'ouverture pour une recherche ne doit jamais réécrire la préférence réelle de la personne.
+let panelCollapsedBeforeSearch = null;
+function setCommandeSearchQuery(q){
+  const wasEmpty = !searchQuery;
+  const willBeEmpty = !q;
+  if(wasEmpty && !willBeEmpty){
+    panelCollapsedBeforeSearch = { active: panelCollapsed.active, done: panelCollapsed.done };
+    panelCollapsed.active = false;
+    panelCollapsed.done = false;
+  } else if(!wasEmpty && willBeEmpty && panelCollapsedBeforeSearch){
+    panelCollapsed.active = panelCollapsedBeforeSearch.active;
+    panelCollapsed.done = panelCollapsedBeforeSearch.done;
+    panelCollapsedBeforeSearch = null;
+  }
+  searchQuery = q;
+}
 // Repère les pièces "à faire", non figées individuellement, sur un poste marqué fusionnable,
 // partageant la même combinaison Matière + Épaisseur — sans jamais décider seule de fusionner :
 // c'est juste une proposition, la décision et le nombre de pièces retenues restent à vous.
@@ -9495,7 +9516,7 @@ function dispatchClickAction(action, el){
     case 'sort-by-due-date': sortByDueDate(); break;
     case 'export-active-commandes': exportActiveCommandesExcel(); break;
     case 'toggle-at-risk-filter': toggleAtRiskFilter(); break;
-    case 'clear-search': searchQuery = ''; render(); break;
+    case 'clear-search': setCommandeSearchQuery(''); render(); break;
     case 'clear-archive-search': archiveSearchQuery = ''; render(); break;
     case 'unarchive-commande': unarchiveCommande(el.dataset.cid); break;
     case 'archive-now': manualArchiveNow(); break;
@@ -10026,7 +10047,7 @@ document.addEventListener('input', (e) => {
     return;
   }
   if(e.target.id === 'commande-search-input'){
-    searchQuery = e.target.value;
+    setCommandeSearchQuery(e.target.value);
     if(searchQuery) selectedCommandeId = null; // évite de cumuler recherche et sélection manuelle
     const anchorBefore = viewAnchor.getTime();
     if(searchQuery) maybeJumpToHighlight();
