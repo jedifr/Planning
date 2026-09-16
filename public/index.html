@@ -769,7 +769,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.15.0';
+const APP_VERSION = '1.16.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -8502,6 +8502,7 @@ function renderKanbanView(schedule){
         <input type="checkbox" ${kanbanGroupedView?'checked':''} data-action="toggle-kanban-grouped-view">
         🔗 Vue groupée des pièces fusionnées
       </label>
+      <button class="small" style="margin-left:14px;" data-action="open-quick-pointage" title="Démarrer tout de suite une tâche qui n'était pas planifiée">➕ Pointage rapide</button>
     </div>
     <div class="kanban-board">${colsHtml}</div>
     <div class="footer-note" style="text-align:left; padding-top:10px;">Cliquez sur une carte pour isoler sa commande ; clic droit pour ouvrir le menu (Démarrer / Mettre en pause / Terminer). "À faire" garde en priorité les tâches les plus proches dans le temps ; "Terminée" garde les plus récentes et respecte aussi le filtre de période choisi dans le tableau des tâches terminées. "En cours" et "En pause" ne sont jamais limitées (bornées naturellement par votre nombre de postes).</div>
@@ -9132,6 +9133,7 @@ function render(){
     renderFusionGroupDetailModal(),
     renderNewCommandeZoneNoticeModal(),
     renderCorrectOperatorModal(),
+    renderQuickPointageModal(),
     renderContextMenu(),
     renderToast()
   ].join('');

@@ -437,10 +437,18 @@ par `computeProductionTimeByUser` :
 
 ### Pointage rapide (tâche non planifiée)
 
-Bouton « ➕ Pointage rapide » (onglet Temps de production, superviseur et « Mon temps de production »)
-— pour un salarié qui fait une tâche qui n'était pas prévue : démarre tout de suite une session sur
-une commande choisie (ou une nouvelle créée à la volée), sans passer par le formulaire multi-lignes
-« Nouvelle commande » (bien trop lourd pour ce cas d'usage — une seule tâche, pas une gamme complète).
+Bouton « ➕ Pointage rapide » — pour un salarié qui fait une tâche qui n'était pas prévue : démarre
+tout de suite une session sur une commande choisie (ou une nouvelle créée à la volée), sans passer
+par le formulaire multi-lignes « Nouvelle commande » (bien trop lourd pour ce cas d'usage — une
+seule tâche, pas une gamme complète). Disponible à **trois** endroits, en plus l'un de l'autre
+(jamais un déplacement qui retirerait les autres) : onglet Temps de production (superviseur et
+« Mon temps de production »), et la vue Kanban du planning (barre d'outils sous les filtres de
+poste, à côté de « Vue groupée des pièces fusionnées ») — plus naturel pour démarrer une tâche
+directement là où on regarde le travail en cours par statut, plutôt que sur une page d'analyse.
+`openQuickPointage()`/`quickPointageDraft`/`renderQuickPointageModal()` restent strictement
+partagés entre les trois emplacements (aucune duplication de logique, seul le bouton déclencheur
+est dupliqué) ; `renderQuickPointageModal()` fait donc partie de la composition `render()` des
+**deux** pages (`currentPage==='tempsProd'` et la page Planning par défaut), pas d'une seule.
 
 - `quickPointageDraft` (`{ cid, nouvelleCommandeNom, machineId, piece, etape, tempsUnitaire, quantite,
   operatorUserId } | null`) — état du formulaire, purement transitoire côté client (comme `draft`),
