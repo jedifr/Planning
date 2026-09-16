@@ -790,7 +790,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.18.3';
+const APP_VERSION = '1.18.4';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1177,6 +1177,18 @@ function defaultCopyrightMention(){
 /* ---------------- persistence (API + base de données serveur) ---------------- */
 function migrateState(st){
   if(!st.config) st.config = { ...DEFAULT_CONFIG };
+  // Horaires de base (startHour/startMinute/monThuHours/friHours) : un `config` présent mais
+  // incomplet (import, état corrompu, fixture de test) les laissait `undefined` —
+  // dayStartFor/dayHoursFor produisaient alors des dates invalides, et
+  // nextWorkingInstant/addWorkingDuration tournaient à vide jusqu'à leur garde-fou (5000
+  // itérations chacun, imbriqués : ~25 millions d'itérations pour un seul calcul de durée),
+  // simulant un blocage indéfini de getSchedule() dès plusieurs commandes en attente sur le même
+  // poste (bug réel signalé, confirmé pré-existant avant cette session via `git stash`). Toujours
+  // les compléter, pas seulement quand `config` est totalement absent.
+  if(st.config.startHour === undefined) st.config.startHour = DEFAULT_CONFIG.startHour;
+  if(st.config.startMinute === undefined) st.config.startMinute = DEFAULT_CONFIG.startMinute;
+  if(!st.config.monThuHours) st.config.monThuHours = DEFAULT_CONFIG.monThuHours;
+  if(!st.config.friHours && st.config.friHours !== 0) st.config.friHours = DEFAULT_CONFIG.friHours;
   if(st.config.pauseActive === undefined) st.config.pauseActive = DEFAULT_CONFIG.pauseActive;
   if(!st.config.pauseDebut) st.config.pauseDebut = DEFAULT_CONFIG.pauseDebut;
   if(!st.config.pauseFin) st.config.pauseFin = DEFAULT_CONFIG.pauseFin;
@@ -1194,6 +1206,7 @@ function migrateState(st){
   st.machines.forEach((m,i) => {
     if(m.horairesActifs === undefined) m.horairesActifs = false;
     if(!m.horaires) m.horaires = { ...DEFAULT_CONFIG };
+    else Object.keys(DEFAULT_CONFIG).forEach(k => { if(m.horaires[k] === undefined) m.horaires[k] = DEFAULT_CONFIG[k]; }); // même correctif défensif que ci-dessus : un horaire spécifique présent mais incomplet
     if(!m.couleur) m.couleur = MACHINE_COLORS[i%MACHINE_COLORS.length];
     if(!Array.isArray(m.indisponibilites)) m.indisponibilites = [];
     if(m.fusionnable === undefined) m.fusionnable = false;
