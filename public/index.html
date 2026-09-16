@@ -790,7 +790,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.18.0';
+const APP_VERSION = '1.18.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -8136,6 +8136,14 @@ function togglePanelCollapse(key){
 // transitoire (jamais persisté dans localStorage) : comme pour toggleAtRiskFilter, forcer
 // l'ouverture pour une recherche ne doit jamais réécrire la préférence réelle de la personne.
 let panelCollapsedBeforeSearch = null;
+// Même principe pour le filtre "Commande à livrer" (dueFilterRange) : une fenêtre d'échéance encore
+// active (ex. "Cette semaine" laissée d'une session de tri précédente) masquait silencieusement une
+// commande pourtant trouvée par la recherche, sans que rien à l'écran n'indique que CE filtre-là en
+// est la cause (bug réel signalé : recherche d'une pièce existante affichant seulement "Aucune
+// commande à livrer sur cette période"). `null` = pas de recherche en cours (rien à restaurer) ; une
+// valeur mémorisée peut légitimement être `'all'` (pas de filtre au départ), d'où ce sentinel séparé
+// plutôt que de tester la simple présence d'une valeur.
+let dueFilterRangeBeforeSearch = null;
 function setCommandeSearchQuery(q){
   const wasEmpty = !searchQuery;
   const willBeEmpty = !q;
@@ -8143,10 +8151,18 @@ function setCommandeSearchQuery(q){
     panelCollapsedBeforeSearch = { active: panelCollapsed.active, done: panelCollapsed.done };
     panelCollapsed.active = false;
     panelCollapsed.done = false;
-  } else if(!wasEmpty && willBeEmpty && panelCollapsedBeforeSearch){
-    panelCollapsed.active = panelCollapsedBeforeSearch.active;
-    panelCollapsed.done = panelCollapsedBeforeSearch.done;
-    panelCollapsedBeforeSearch = null;
+    dueFilterRangeBeforeSearch = dueFilterRange;
+    dueFilterRange = 'all';
+  } else if(!wasEmpty && willBeEmpty){
+    if(panelCollapsedBeforeSearch){
+      panelCollapsed.active = panelCollapsedBeforeSearch.active;
+      panelCollapsed.done = panelCollapsedBeforeSearch.done;
+      panelCollapsedBeforeSearch = null;
+    }
+    if(dueFilterRangeBeforeSearch !== null){
+      dueFilterRange = dueFilterRangeBeforeSearch;
+      dueFilterRangeBeforeSearch = null;
+    }
   }
   searchQuery = q;
 }

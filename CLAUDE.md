@@ -887,12 +887,12 @@ libérer) doit se propager à tout le groupe — voir `propagateFusionGroupField
   « 📌 Figée » — pour une pièce fusionnée, il regarde `fusionPinned`, jamais la simple
   présence de `dureeOverrideH` (toujours posé sur un groupe, figé ou non).
 
-## Recherche de commande/pièce — dépliage automatique des bandeaux
+## Recherche de commande/pièce — rien ne doit masquer un résultat trouvé
 
 La barre `#commande-search-input` (au-dessus de "Tâches en cours") filtre à la fois « Tâches en
-cours » et « Tâches terminées » (`matchesSearch`). Si l'un des deux bandeaux était replié
-(`panelCollapsed.active`/`.done`), chercher un numéro de pièce/commande qu'il contient obligeait
-jusqu'ici à d'abord le déplier à la main pour voir le résultat — retour utilisateur réel.
+cours » et « Tâches terminées » (`matchesSearch`). Deux réglages indépendants pouvaient jusqu'ici
+masquer silencieusement un résultat que la recherche avait pourtant trouvé, sans que rien à l'écran
+n'indique lequel des deux en était la cause — retours utilisateur réels sur les deux cas :
 
 - `setCommandeSearchQuery(q)` — point de passage **unique** pour modifier `searchQuery` (utilisé par
   la frappe dans la barre, le bouton "✕ Effacer" et `toggleIsolateCommande`, qui vide aussi la
@@ -908,6 +908,20 @@ jusqu'ici à d'abord le déplier à la main pour voir le résultat — retour ut
 - Si les deux bandeaux étaient déjà ouverts, aucun changement visuel, mais l'état "ouvert" est quand
   même mémorisé (cohérence du mécanisme) — la restauration au nettoyage n'a alors simplement aucun
   effet visible.
+- **Filtre "Commande à livrer" (`dueFilterRange`, voir plus bas).** Une fenêtre d'échéance restée
+  active d'une session de tri précédente (ex. "Cette semaine") excluait purement et simplement une
+  commande trouvée par la recherche mais due plus tard — l'écran affichait seulement "Aucune
+  commande à livrer sur cette période", sans lien évident avec la recherche en cours. Même
+  mécanisme que pour les bandeaux, dans la même fonction `setCommandeSearchQuery` : au passage
+  vide→non-vide, `dueFilterRangeBeforeSearch` mémorise la valeur courante puis `dueFilterRange`
+  passe à `'all'` ("Toutes") ; restauré au passage non-vide→vide. Sentinel `null` pour "pas de
+  recherche en cours" (distinct d'une valeur mémorisée qui vaudrait légitimement `'all'`). Là aussi,
+  jamais écrit dans `localStorage` (`DUE_FILTER_STORAGE_KEY`) — la préférence réelle reste celle
+  posée manuellement via le sélecteur (`case 'set-due-filter'`).
+- Réflexe : tout NOUVEAU filtre/repli qui peut exclure une commande de la liste "Tâches en
+  cours"/"Terminées" doit se demander s'il doit, lui aussi, être neutralisé pendant une recherche
+  active — sinon la recherche "trouve" quelque chose que l'écran ne montre jamais, sans indice pour
+  comprendre pourquoi.
 
 ## Filtre « Commande à livrer » (liste des tâches en cours)
 
