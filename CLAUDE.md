@@ -1213,6 +1213,17 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
 
 ## Pièges déjà rencontrés — ne pas les réintroduire
 
+- **Surbrillance de recherche repliée sur le nom de commande, masquant la pièce ciblée.**
+  `isHighlighted(cid, commandeNom, piece, refClient)` testait `commandeNom`/`refClient` AVANT de
+  conclure — si la chaîne recherchée recoupe par coïncidence le nom de la commande (identifiants de
+  pièce et de commande partageant souvent un radical commun, ex. piece "0668-A" et commande
+  "C026-0668"), la commande entière s'allumait, masquant laquelle de ses pièces correspondait
+  vraiment (bug réel corrigé). `searchMatchesAnyPieceItself(query)` détecte qu'AU MOINS une pièce du
+  planning correspond directement au nom recherché (mémorisé par référence de `schedule`, stable le
+  temps d'un rendu) ; si c'est le cas, `isHighlighted` ne retombe plus sur `commandeNom`/`refClient`
+  pour une ligne dont la PROPRE `piece` ne correspond pas — seule la pièce visée s'allume. Une
+  recherche par référence de commande/client (aucune pièce ne correspond nulle part) continue de
+  surligner toute la commande, comportement inchangé.
 - **Casse et espaces des valeurs d'import.** « Laser 2D » et « laser 2d » créaient deux
   entrées distinctes. Tout est normalisé via `normPosteKey()`. Les clés de
   `posteMapping`, `groupByValue`, `sousTraitanceByValue` sont **toujours normalisées**.
