@@ -156,6 +156,16 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   du HTML (`<br>`) affiche les balises littéralement.
 - **Champs de configuration texte.** `updateConfig` convertit par défaut en nombre ;
   un nouveau champ texte a besoin de son cas explicite, sinon il est silencieusement ignoré.
+- **Pop-up Paramètres accessible à tout rôle connecté, pas seulement à `isAdmin()`.**
+  Le bouton "⚙ Paramétrer"/"⚙ Mon compte" (`renderHeader`) et le dispatch
+  `case 'open-settings'` sont gardés par `currentUser`, pas par `isAdmin()` : un employé
+  ou un superviseur doit pouvoir ouvrir la pop-up pour accéder à la section "Mon compte"
+  (changer son mot de passe, son e-mail de notification). C'est `ADMIN_ONLY_SECTIONS`
+  (dans `renderSettingsModal`) qui filtre le *contenu* section par section — elle inclut
+  aujourd'hui `horaires`, `pause`, `affichage`, `utilisateurs`, `conges`, `backup`,
+  `machines`, `importProfiles`, `maintenance`, si bien qu'un non-admin ne voit que
+  "Mon compte". `settingsSectionOpen.moncompte` démarre à `true` pour que cette section,
+  seule visible pour un non-admin, ne s'ouvre pas repliée.
 
 ## Conventions
 

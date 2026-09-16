@@ -686,7 +686,7 @@ let showSettingsModal = false;
 const SETTINGS_SECTION_KEYS = ['moncompte', 'horaires', 'pause', 'affichage', 'utilisateurs', 'conges', 'backup', 'machines', 'importProfiles', 'maintenance'];
 const SETTINGS_UI_STORAGE_KEY = 'planning-atelier-settings-ui';
 let settingsSectionOrder = [...SETTINGS_SECTION_KEYS];
-let settingsSectionOpen = { horaires:true, pause:false, affichage:false, utilisateurs:false, backup:false, machines:false, importProfiles:false, maintenance:false };
+let settingsSectionOpen = { moncompte:true, horaires:true, pause:false, affichage:false, utilisateurs:false, backup:false, machines:false, importProfiles:false, maintenance:false };
 // Préférence propre à ce navigateur (pas synchronisée entre les postes) : ordre et
 // état replié/déplié de chaque section de la pop-up Paramètres.
 function loadSettingsUIPrefs(){
@@ -4335,7 +4335,7 @@ function renderHeader(){
       <button class="small" data-action="export-data" title="Télécharger un fichier .json — à déposer dans un dossier synchronisé avec votre NAS">Exporter (.json)</button>
       <button class="small" data-action="trigger-import" title="Recharger un fichier .json exporté précédemment">Importer</button>
       <input type="file" id="import-file-input" accept="application/json" style="display:none;" onchange="handleImportFile(event)">` : ''}
-      ${isAdmin() ? `<button class="small" data-action="open-settings" title="Paramétrer les horaires de travail">⚙ Paramétrer</button>` : ''}
+      ${currentUser ? (isAdmin() ? `<button class="small" data-action="open-settings" title="Paramétrer les horaires de travail">⚙ Paramétrer</button>` : `<button class="small" data-action="open-settings" title="Mon compte">⚙ Mon compte</button>`) : ''}
       <span class="footer-note" style="margin:0 4px;">${currentUsername?escapeHtml(currentUsername):''}</span>
       <button class="small" data-action="logout" title="Se déconnecter">Déconnexion</button>
     </div>
@@ -5195,7 +5195,7 @@ function renderSettingsModal(){
       <button class="danger-ghost small" style="border:1px solid var(--red); padding:7px 14px;" data-action="reset-all">Réinitialiser tout le planning</button>` }
   };
 
-  const ADMIN_ONLY_SECTIONS = ['utilisateurs', 'conges', 'backup', 'importProfiles', 'maintenance'];
+  const ADMIN_ONLY_SECTIONS = ['horaires', 'pause', 'affichage', 'utilisateurs', 'conges', 'backup', 'machines', 'importProfiles', 'maintenance'];
   const sectionsHtml = settingsSectionOrder.map((key, idx) => {
     if(ADMIN_ONLY_SECTIONS.includes(key) && !isAdmin()) return '';
     const def = sectionDefs[key];
@@ -6497,7 +6497,7 @@ function dispatchClickAction(action, el){
     case 'fuse-all': fuseAll(el.dataset.key); break;
     case 'toggle-fusion-group-details': toggleFusionGroupDetails(el.dataset.key); break;
     case 'toggle-fusion-panel': toggleFusionPanel(el.dataset.which); break;
-    case 'open-settings': if(isAdmin()){ showSettingsModal = true; render(); loadUsersList(); } break;
+    case 'open-settings': if(currentUser){ showSettingsModal = true; render(); loadUsersList(); } break;
     case 'goto-conges': currentPage = 'conges'; render(); break;
     case 'goto-planning': currentPage = 'planning'; render(); break;
     case 'conges-tab': congesTab = el.dataset.tab; render(); break;
