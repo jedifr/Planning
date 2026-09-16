@@ -790,7 +790,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.17.0';
+const APP_VERSION = '1.17.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -6457,6 +6457,25 @@ function tempsProdToday(){
 function dureePrevueH(o){
   return (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (o.tempsUnitaire*o.quantite)/60;
 }
+// Somme une durée (prévue ou réellement passée) sur une liste de pièces, sans compter plusieurs fois
+// le total d'un même groupe fusionné si plusieurs de ses membres apparaissent dans la liste.
+// `dureeOverrideH` est déjà la somme du groupe ENTIER, posée à l'identique sur chaque membre (voir
+// CLAUDE.md, section Regroupement) — et, pour le temps réellement passé, `setOpStatut` démarre/met en
+// pause/clôture tout le groupe EN MÊME TEMPS (mêmes horodatages sur chaque membre) : physiquement,
+// c'est une seule et même opération sur le poste. Sommer chaque membre séparément multiplierait donc
+// le temps réel par le nombre de pièces du lot (bug réel signalé : un lot de 5 pièces comptait pour
+// 5× son temps réel). Une seule occurrence par `fusionGroupId` est retenue ; les pièces non
+// fusionnées comptent normalement.
+function sumDedupedByFusionGroup(pieces, getValue){
+  const seen = new Set();
+  return pieces.reduce((s,o) => {
+    if(o.fusionGroupId){
+      if(seen.has(o.fusionGroupId)) return s;
+      seen.add(o.fusionGroupId);
+    }
+    return s + (getValue(o) || 0);
+  }, 0);
+}
 // Temps de production par salarié sur [periodStart, periodEnd[, à partir des commandes actives ET
 // archivées. Deux sources, comme dureePasseeH() : les sessions[] (tâche en_cours/en_pause, ou pas
 // encore purgées — voir purgeOldSessions) donnent le détail réel, chaque session étant bornée à la
@@ -6473,10 +6492,31 @@ function dureePrevueH(o){
 function computeProductionTimeByUser(st, periodStart, periodEnd){
   const byUser = {};
   const ensure = (uid) => byUser[uid] || (byUser[uid] = { totalH:0, totalPrevuH:0, details:[] });
+  // Nombre de membres de chaque groupe fusionné, calculé une seule fois (commandes actives +
+  // archivées, un groupe pouvant mélanger les deux) — sert au dédoublonnage ci-dessous et au libellé
+  // "+N pièces du même lot" de la ligne de détail retenue comme représentante du groupe.
+  const fusionGroupCounts = {};
+  [...(st.commandes||[]), ...(st.commandesArchivees||[])].forEach(c => c.pieces.forEach(o => {
+    if(o.fusionGroupId) fusionGroupCounts[o.fusionGroupId] = (fusionGroupCounts[o.fusionGroupId]||0) + 1;
+  }));
+  const seenFusionGroups = new Set();
   const consider = (c, o) => {
+    // Une pièce fusionnée démarre/se met en pause/se clôture EN MÊME TEMPS que tout son groupe (voir
+    // setOpStatut) — chaque membre porte ses propres sessions, mais avec des horodatages identiques à
+    // ceux des autres membres : physiquement, une seule et même opération sur le poste. La compter une
+    // fois par membre multiplierait le temps réel (et le temps prévu, dureeOverrideH étant déjà la
+    // somme du groupe entier) par le nombre de pièces du lot — bug réel signalé (un lot de 5 pièces
+    // comptait pour 5× son temps réel et son temps prévu dans le détail par salarié). Un seul membre
+    // représente donc tout le groupe, comme mergeFusedOpsForDisplay le fait déjà pour le Gantt.
+    if(o.fusionGroupId){
+      if(seenFusionGroups.has(o.fusionGroupId)) return;
+      seenFusionGroups.add(o.fusionGroupId);
+    }
     const cfg = configForPiece(o, st);
     const m = state.machines.find(mm=>mm.id===o.machineId);
     const prevuH = dureePrevueH(o);
+    const nbLot = o.fusionGroupId ? fusionGroupCounts[o.fusionGroupId] : 1;
+    const pieceLabel = nbLot > 1 ? `${o.piece} (+${nbLot-1} pièce${nbLot-1>1?'s':''} du même lot)` : o.piece;
     const hByOperator = {}, dateByOperator = {};
     if(o.sessions && o.sessions.length){
       o.sessions.forEach(s => {
@@ -6523,7 +6563,7 @@ function computeProductionTimeByUser(st, periodStart, periodEnd){
         const u = ensure(uid);
         u.totalH += h;
         u.totalPrevuH += prevuH;
-        u.details.push({ cid:c.id, oid:o.id, commandeNom:c.nom, refClient:c.refClient||'', piece:o.piece, etape:o.etape, machineNom: m?m.nom:'—', h, prevuH, date: dateByOperator[opUid] });
+        u.details.push({ cid:c.id, oid:o.id, commandeNom:c.nom, refClient:c.refClient||'', piece:pieceLabel, etape:o.etape, machineNom: m?m.nom:'—', h, prevuH, date: dateByOperator[opUid] });
       }
     });
   };
@@ -9057,8 +9097,10 @@ function renderArchivesPanel(){
     // Sommées sur toutes les pièces de la commande — même logique que partout ailleurs dans
     // l'appli (renderOpsRow, cartes Kanban) : dureeOverrideH prime sur tempsUnitaire×quantité,
     // et le temps réellement passé vient de dureeReelleH (figé à la clôture de chaque pièce).
-    const totalPrevuH = c.pieces.reduce((s,o) => s + ((o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (Number(o.tempsUnitaire)*Number(o.quantite))/60), 0);
-    const totalPasseH = c.pieces.reduce((s,o) => s + (dureePasseeH(o, state) || 0), 0);
+    // Dédupliqué par groupe fusionné (voir sumDedupedByFusionGroup) — sinon deux pièces de CETTE
+    // commande partageant un même lot compteraient deux fois le temps du groupe entier.
+    const totalPrevuH = sumDedupedByFusionGroup(c.pieces, o => (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (Number(o.tempsUnitaire)*Number(o.quantite))/60);
+    const totalPasseH = sumDedupedByFusionGroup(c.pieces, o => dureePasseeH(o, state));
     return `<tr>
       <td>${escapeHtml(c.nom)}</td>
       <td>${c.pieces.length} pièce(s)</td>

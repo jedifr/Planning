@@ -369,6 +369,21 @@ personne, pas une mesure de qui était physiquement là. Onglet « Temps de prod
 (`renderTempsProdPage`/`renderTempsProdSelfPage`), superposé au temps de production déjà mesuré
 par `computeProductionTimeByUser` :
 
+- **Groupe fusionné : compté une seule fois, jamais une fois par pièce.** `dureeOverrideH` d'un
+  groupe fusionné est déjà la SOMME du groupe entier, posée à l'identique sur chaque membre (voir
+  « Regroupement » plus bas) ; et `setOpStatut` démarre/met en pause/clôture tout le groupe EN MÊME
+  TEMPS (mêmes horodatages sur chaque membre) — physiquement, c'est une seule et même opération sur
+  le poste. `computeProductionTimeByUser`/`renderArchivesPanel` (temps prévu/passé par commande
+  archivée) dédupliquent donc par `fusionGroupId` (`sumDedupedByFusionGroup`, ou l'équivalent
+  `seenFusionGroups`/`fusionGroupCounts` dans `computeProductionTimeByUser`) : un seul membre
+  représente tout le groupe dans la somme et dans le détail par salarié (libellé `"{pièce} (+N
+  pièces du même lot)"`), les autres sont ignorés. Bug réel corrigé (retour utilisateur : Cyril,
+  page Temps de production) — un lot de 5 pièces à 9,5h prévues/1,8h réelles comptait pour 47,5h/9h
+  (5×), un lot de 3 pièces à 10,2h comptait pour 30,6h (3×), soit ~78h prévues affichées au lieu des
+  ~19,7h réelles du lot. Réflexe : toute nouvelle somme de durées sur plusieurs pièces (`c.pieces`
+  d'une commande, ou plus largement) doit dédupliquer par `fusionGroupId` de la même façon — sinon
+  toute commande dont plusieurs pièces partagent un même lot verra son total gonflé par le nombre de
+  pièces de ce lot.
 - `applyUserLunchOverride(cfg, userId, st)` — factorise la logique de surcharge horaire propre à
   une personne (`st.userLunch[userId]` : pause(s) propre(s) et/ou horaire de début/fin), utilisée à
   la fois par `configForPiece` (poste en base, pour planifier une pièce) et `baseConfigForUser`
@@ -1288,6 +1303,20 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   nouveau conteneur (pas un simple `<label class="statut-chip">`/`<label class="field">` déjà
   couverts ailleurs) doit explicitement recevoir `width:auto`, jamais supposer que l'absence de
   `width` dans la règle du conteneur suffit.
+- **Somme d'une durée sur plusieurs pièces sans dédupliquer les groupes fusionnés.**
+  `computeProductionTimeByUser` sommait `dureePrevueH(o)`/le temps réel de chaque session pour
+  CHAQUE pièce d'un groupe fusionné, alors que `dureeOverrideH` est déjà la somme du groupe ENTIER
+  (posée à l'identique sur chaque membre) et que `setOpStatut` démarre/pause/clôture tout le groupe
+  en même temps (sessions à horodatages identiques sur chaque membre — une seule opération physique
+  sur le poste). Résultat : un lot de N pièces comptait pour N× son temps réel, prévu comme passé
+  (bug réel signalé : un lot de 5 pièces à 9,5h/1,8h comptait pour 47,5h/9h, un lot de 3 pièces à
+  10,2h comptait pour 30,6h — total affiché ~78h au lieu des ~19,7h réelles). `renderArchivesPanel`
+  avait le même défaut pour le total par commande archivée. Corrigé en dédupliquant par
+  `fusionGroupId` (un seul membre représente tout le groupe dans la somme — voir
+  `sumDedupedByFusionGroup`/« Temps de production vs présence théorique » plus haut). Réflexe :
+  toute nouvelle somme de durées sur une liste de pièces (`c.pieces`, ou un sous-ensemble plus large)
+  doit se demander si ces pièces peuvent partager un `fusionGroupId` — si oui, dédupliquer, sinon le
+  total gonfle avec le nombre de pièces du lot.
 
 ## Conventions
 
