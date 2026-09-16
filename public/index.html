@@ -790,7 +790,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.18.1';
+const APP_VERSION = '1.18.2';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -2047,7 +2047,7 @@ let selectedCommandeId = null;
 function toggleIsolateCommande(cid){
   if(!cid) return;
   selectedCommandeId = (selectedCommandeId === cid) ? null : cid; // reclique sur la même commande = désisole
-  setCommandeSearchQuery(''); // évite de cumuler recherche et sélection
+  searchQuery = ''; // évite de cumuler recherche et sélection
   render();
 }
 // Sur les éléments où un double-clic déclenche une AUTRE action (réinitialiser une tâche figée), on
@@ -8129,42 +8129,27 @@ function togglePanelCollapse(key){
   try{ localStorage.setItem(PANEL_COLLAPSE_STORAGE_KEY, JSON.stringify(panelCollapsed)); }catch(e){}
   render();
 }
-// Mémorise l'état replié/déplié de "Tâches en cours"/"Tâches terminées" juste avant qu'une
-// recherche ne les déploie de force (sinon on chercherait un numéro de pièce/commande dans un
-// bandeau resté fermé) — restauré tel quel dès que la recherche est effacée. `null` = aucune
-// recherche en cours n'a encore forcé l'ouverture (état normal, rien à restaurer). Purement
-// transitoire (jamais persisté dans localStorage) : comme pour toggleAtRiskFilter, forcer
-// l'ouverture pour une recherche ne doit jamais réécrire la préférence réelle de la personne.
-let panelCollapsedBeforeSearch = null;
-// Même principe pour le filtre "Commande à livrer" (dueFilterRange) : une fenêtre d'échéance encore
-// active (ex. "Cette semaine" laissée d'une session de tri précédente) masquait silencieusement une
-// commande pourtant trouvée par la recherche, sans que rien à l'écran n'indique que CE filtre-là en
-// est la cause (bug réel signalé : recherche d'une pièce existante affichant seulement "Aucune
-// commande à livrer sur cette période"). `null` = pas de recherche en cours (rien à restaurer) ; une
-// valeur mémorisée peut légitimement être `'all'` (pas de filtre au départ), d'où ce sentinel séparé
-// plutôt que de tester la simple présence d'une valeur.
-let dueFilterRangeBeforeSearch = null;
-function setCommandeSearchQuery(q){
-  const wasEmpty = !searchQuery;
-  const willBeEmpty = !q;
-  if(wasEmpty && !willBeEmpty){
-    panelCollapsedBeforeSearch = { active: panelCollapsed.active, done: panelCollapsed.done };
-    panelCollapsed.active = false;
-    panelCollapsed.done = false;
-    dueFilterRangeBeforeSearch = dueFilterRange;
-    dueFilterRange = 'all';
-  } else if(!wasEmpty && willBeEmpty){
-    if(panelCollapsedBeforeSearch){
-      panelCollapsed.active = panelCollapsedBeforeSearch.active;
-      panelCollapsed.done = panelCollapsedBeforeSearch.done;
-      panelCollapsedBeforeSearch = null;
-    }
-    if(dueFilterRangeBeforeSearch !== null){
-      dueFilterRange = dueFilterRangeBeforeSearch;
-      dueFilterRangeBeforeSearch = null;
-    }
-  }
-  searchQuery = q;
+// Rien ne doit jamais masquer un résultat qu'une recherche a pourtant trouvé — "Tâches en
+// cours"/"Terminées" repliés, ou le filtre "Commande à livrer" (dueFilterRange) laissé sur une
+// fenêtre restreinte (bug réel signalé deux fois : d'abord les bandeaux repliés, puis le filtre
+// d'échéance, qui pouvait tous les deux cacher silencieusement une commande trouvée par la
+// recherche). Une première version mémorisait l'état d'avant pour le restaurer à l'effacement de la
+// recherche (`panelCollapsedBeforeSearch`/`dueFilterRangeBeforeSearch`) — fragile : un changement
+// manuel du filtre PENDANT la recherche (ex. re-sélectionner "Cette semaine" dans le menu tout en
+// continuant de taper) écrivait directement `dueFilterRange`/`panelCollapsed`, sans repasser par ce
+// mécanisme, et restait donc actif pour le reste de la recherche — exactement le bug à nouveau.
+// Design plus robuste, sans aucun état à garder synchronisé : `effectiveDueFilterRange`/
+// `isPanelEffectivelyCollapsed(key)` ci-dessous ne MODIFIENT jamais `dueFilterRange`/
+// `panelCollapsed` — ils calculent, à chaque rendu, la valeur à utiliser pour filtrer/afficher en
+// tenant compte de `searchQuery`. Pendant une recherche, la fenêtre d'échéance est donc TOUJOURS
+// ignorée et les deux bandeaux TOUJOURS dépliés, quoi qu'il arrive par ailleurs (aucun changement
+// manuel ne peut plus rouvrir la faille) ; dès que la recherche est vidée, la vraie valeur
+// (jamais touchée) redevient effective — "restauration" gratuite, sans rien à mémoriser.
+function effectiveDueFilterRange(){
+  return searchQuery ? 'all' : dueFilterRange;
+}
+function isPanelEffectivelyCollapsed(key){
+  return !!panelCollapsed[key] && !searchQuery;
 }
 // Repère les pièces "à faire", non figées individuellement, sur un poste marqué fusionnable,
 // partageant la même combinaison Matière + Épaisseur — sans jamais décider seule de fusionner :
@@ -8967,7 +8952,7 @@ function exportActiveCommandesExcel(){
   const schedule = getSchedule();
   const filtered = schedule.filter(c => matchesSearch(c, searchQuery) && (!selectedCommandeId || c.id===selectedCommandeId));
   let active = filtered.filter(c => c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine'));
-  active = active.filter(c => commandeMatchesDueFilter(c, dueFilterRange));
+  active = active.filter(c => commandeMatchesDueFilter(c, effectiveDueFilterRange()));
   if(atRiskFilterActive){
     active = active.filter(isCommandeAtRisk).sort((a,b) => commandeRiskDaysLate(b) - commandeRiskDaysLate(a));
   }
@@ -8992,9 +8977,10 @@ function exportActiveCommandesExcel(){
   XLSX.writeFile(wb, `commandes-en-cours_${toDateInputValue(new Date())}.xlsx`);
 }
 function renderCommandes(schedule){
+  const dueFilterEffective = effectiveDueFilterRange();
   const filtered = schedule.filter(c => matchesSearch(c, searchQuery) && (!selectedCommandeId || c.id===selectedCommandeId));
   let active = filtered.filter(c => c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine'));
-  active = active.filter(c => commandeMatchesDueFilter(c, dueFilterRange));
+  active = active.filter(c => commandeMatchesDueFilter(c, dueFilterEffective));
   const nbAtRisk = active.filter(isCommandeAtRisk).length;
   if(atRiskFilterActive){
     active = active.filter(isCommandeAtRisk).sort((a,b) => commandeRiskDaysLate(b) - commandeRiskDaysLate(a));
@@ -9025,7 +9011,7 @@ function renderCommandes(schedule){
     activeBody = `<div class="empty-state"><strong>Aucune commande en cours</strong>Ajoutez votre première commande ci-dessous pour démarrer le planning.</div>`;
   } else if(atRiskFilterActive){
     activeBody = `<div class="empty-state"><strong>Aucune commande à risque</strong>Toutes les commandes en cours respectent leur échéance estimée.</div>`;
-  } else if(dueFilterRange !== 'all'){
+  } else if(dueFilterEffective !== 'all'){
     activeBody = `<div class="empty-state"><strong>Aucune commande à livrer sur cette période</strong>Essayez "Toutes" pour retrouver l'ensemble des commandes en cours.</div>`;
   } else if(searchQuery){
     activeBody = `<div class="empty-state"><strong>Aucun résultat</strong>Aucune commande en cours ne correspond à votre recherche.</div>`;
@@ -9047,16 +9033,16 @@ function renderCommandes(schedule){
 
   const atRiskBtn = `<button class="small ${atRiskFilterActive?'btn-at-risk-active':''}" data-action="toggle-at-risk-filter" title="N'afficher que les commandes actives dont la fin estimée dépasse l'échéance, triées de la plus en retard à la moins en retard">${atRiskFilterActive?'✕ Afficher tout':`⚠️ À risque${nbAtRisk>0?` (${nbAtRisk})`:''}`}</button>`;
   const dueFilterControl = `
-    <select class="small done-filter-select" data-action="set-due-filter" title="Commande à livrer — filtre sur la date d'échéance">
-      <option value="all" ${dueFilterRange==='all'?'selected':''}>Toutes</option>
-      <option value="week" ${dueFilterRange==='week'?'selected':''}>Cette semaine</option>
-      <option value="nextWeek" ${dueFilterRange==='nextWeek'?'selected':''}>La semaine prochaine</option>
-      <option value="month" ${dueFilterRange==='month'?'selected':''}>Le mois en cours</option>
-      <option value="nextMonth" ${dueFilterRange==='nextMonth'?'selected':''}>Le mois suivant</option>
+    <select class="small done-filter-select" data-action="set-due-filter" title="Commande à livrer — filtre sur la date d'échéance${searchQuery?' (suspendu pendant une recherche)':''}">
+      <option value="all" ${dueFilterEffective==='all'?'selected':''}>Toutes</option>
+      <option value="week" ${dueFilterEffective==='week'?'selected':''}>Cette semaine</option>
+      <option value="nextWeek" ${dueFilterEffective==='nextWeek'?'selected':''}>La semaine prochaine</option>
+      <option value="month" ${dueFilterEffective==='month'?'selected':''}>Le mois en cours</option>
+      <option value="nextMonth" ${dueFilterEffective==='nextMonth'?'selected':''}>Le mois suivant</option>
     </select>`;
   const filtersTriDd = `
     <details class="dd-menu" data-dd-key="active-filters-tri" ontoggle="openMiniDropdowns['active-filters-tri']=this.open" ${openMiniDropdowns['active-filters-tri']?'open':''}>
-      <summary class="small">🔧 Filtres &amp; tri${dueFilterRange!=='all'?' •':''}</summary>
+      <summary class="small">🔧 Filtres &amp; tri${dueFilterEffective!=='all'?' •':''}</summary>
       <div class="dd-panel">
         <div class="dd-panel-title">Trier</div>
         <div class="dd-row">
@@ -9065,6 +9051,7 @@ function renderCommandes(schedule){
         </div>
         <div class="dd-panel-title">Commande à livrer</div>
         ${dueFilterControl}
+        ${searchQuery ? `<div class="footer-note" style="text-align:left; padding-top:4px;">Suspendu pendant la recherche — reprend sa valeur dès que la recherche est effacée.</div>` : ''}
       </div>
     </details>`;
   const activeSection = `
@@ -9078,10 +9065,10 @@ function renderCommandes(schedule){
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
         ${activeLimitControl}
-        <button class="ghost icon-btn collapse-chevron ${panelCollapsed.active?'collapsed':''}" data-action="toggle-panel-collapse" data-key="active" title="${panelCollapsed.active?'Déplier':'Replier'}">▾</button>
+        <button class="ghost icon-btn collapse-chevron ${isPanelEffectivelyCollapsed('active')?'collapsed':''}" data-action="toggle-panel-collapse" data-key="active" title="${isPanelEffectivelyCollapsed('active')?'Déplier':'Replier'}">▾</button>
       </div>
     </div>
-    ${panelCollapsed.active ? '' : `<div class="panel-body" style="padding:12px;">${activeBody}</div>`}
+    ${isPanelEffectivelyCollapsed('active') ? '' : `<div class="panel-body" style="padding:12px;">${activeBody}</div>`}
   </section>`;
 
   const doneFilterControl = `
@@ -9098,12 +9085,12 @@ function renderCommandes(schedule){
   const doneCountLabel = (doneFilterRange!=='all' && done.length!==doneAll.length)
     ? `<span class="n">${done.length}</span>Tâches terminées <span class="footer-note" style="display:inline; margin:0;">(sur ${doneAll.length} au total)</span>`
     : `<span class="n">${done.length}</span>Tâches terminées`;
-  const doneChevron = `<button class="ghost icon-btn collapse-chevron ${panelCollapsed.done?'collapsed':''}" data-action="toggle-panel-collapse" data-key="done" title="${panelCollapsed.done?'Déplier':'Replier'}">▾</button>`;
+  const doneChevron = `<button class="ghost icon-btn collapse-chevron ${isPanelEffectivelyCollapsed('done')?'collapsed':''}" data-action="toggle-panel-collapse" data-key="done" title="${isPanelEffectivelyCollapsed('done')?'Déplier':'Replier'}">▾</button>`;
 
   const doneSection = doneAll.length ? `
   <section class="panel">
     <div class="panel-head"><h2>${doneCountLabel}</h2><div style="display:flex; align-items:center; gap:8px;">${doneFilterControl}${doneChevron}</div></div>
-    ${panelCollapsed.done ? '' : `<div class="panel-body" style="padding:12px;">${done.length ? done.map((c,idx)=>renderCommandeCard(c, idx, done.length)).join('') : `<div class="empty-state">Aucune commande terminée sur cette période.</div>`}</div>`}
+    ${isPanelEffectivelyCollapsed('done') ? '' : `<div class="panel-body" style="padding:12px;">${done.length ? done.map((c,idx)=>renderCommandeCard(c, idx, done.length)).join('') : `<div class="empty-state">Aucune commande terminée sur cette période.</div>`}</div>`}
   </section>` : (searchQuery && schedule.some(c=>c.pieces.length>0 && c.pieces.every(o=>o.statut==='termine')) ? `
   <section class="panel">
     <div class="panel-head"><h2><span class="n">0</span>Tâches terminées</h2></div>
@@ -9532,7 +9519,7 @@ function dispatchClickAction(action, el){
     case 'sort-by-due-date': sortByDueDate(); break;
     case 'export-active-commandes': exportActiveCommandesExcel(); break;
     case 'toggle-at-risk-filter': toggleAtRiskFilter(); break;
-    case 'clear-search': setCommandeSearchQuery(''); render(); break;
+    case 'clear-search': searchQuery = ''; render(); break;
     case 'clear-archive-search': archiveSearchQuery = ''; render(); break;
     case 'unarchive-commande': unarchiveCommande(el.dataset.cid); break;
     case 'archive-now': manualArchiveNow(); break;
@@ -10063,7 +10050,7 @@ document.addEventListener('input', (e) => {
     return;
   }
   if(e.target.id === 'commande-search-input'){
-    setCommandeSearchQuery(e.target.value);
+    searchQuery = e.target.value;
     if(searchQuery) selectedCommandeId = null; // évite de cumuler recherche et sélection manuelle
     const anchorBefore = viewAnchor.getTime();
     if(searchQuery) maybeJumpToHighlight();

@@ -890,38 +890,51 @@ libérer) doit se propager à tout le groupe — voir `propagateFusionGroupField
 ## Recherche de commande/pièce — rien ne doit masquer un résultat trouvé
 
 La barre `#commande-search-input` (au-dessus de "Tâches en cours") filtre à la fois « Tâches en
-cours » et « Tâches terminées » (`matchesSearch`). Deux réglages indépendants pouvaient jusqu'ici
-masquer silencieusement un résultat que la recherche avait pourtant trouvé, sans que rien à l'écran
-n'indique lequel des deux en était la cause — retours utilisateur réels sur les deux cas :
+cours » et « Tâches terminées » (`matchesSearch`). Deux réglages indépendants pouvaient masquer
+silencieusement un résultat que la recherche avait pourtant trouvé, sans que rien à l'écran
+n'indique lequel des deux en était la cause : les bandeaux repliés, et le filtre "Commande à
+livrer" (`dueFilterRange`) laissé sur une fenêtre restreinte (ex. "Cette semaine" oublié d'une
+session de tri précédente).
 
-- `setCommandeSearchQuery(q)` — point de passage **unique** pour modifier `searchQuery` (utilisé par
-  la frappe dans la barre, le bouton "✕ Effacer" et `toggleIsolateCommande`, qui vide aussi la
-  recherche en isolant une commande) : au passage vide→non-vide, mémorise l'état replié/déplié
-  courant des deux bandeaux dans `panelCollapsedBeforeSearch` puis les force tous les deux ouverts ;
-  au passage non-vide→vide, restaure exactement cet état mémorisé puis l'efface (`null`). Continuer
-  à taper (recherche déjà non vide) ne réécrit jamais `panelCollapsedBeforeSearch` — sinon la
-  "mémoire" de l'état de départ serait perdue au profit de l'état forcé ouvert.
-- Ne touche **jamais** `localStorage` (`PANEL_COLLAPSE_STORAGE_KEY`) : forcer l'ouverture pour une
-  recherche est purement visuel et transitoire, comme `toggleAtRiskFilter` le fait déjà pour
-  `panelCollapsed.active` — la préférence réelle de la personne (posée via le chevron, `togglePanelCollapse`)
-  reste inchangée en base, seul l'affichage pendant la recherche est temporairement forcé.
-- Si les deux bandeaux étaient déjà ouverts, aucun changement visuel, mais l'état "ouvert" est quand
-  même mémorisé (cohérence du mécanisme) — la restauration au nettoyage n'a alors simplement aucun
-  effet visible.
-- **Filtre "Commande à livrer" (`dueFilterRange`, voir plus bas).** Une fenêtre d'échéance restée
-  active d'une session de tri précédente (ex. "Cette semaine") excluait purement et simplement une
-  commande trouvée par la recherche mais due plus tard — l'écran affichait seulement "Aucune
-  commande à livrer sur cette période", sans lien évident avec la recherche en cours. Même
-  mécanisme que pour les bandeaux, dans la même fonction `setCommandeSearchQuery` : au passage
-  vide→non-vide, `dueFilterRangeBeforeSearch` mémorise la valeur courante puis `dueFilterRange`
-  passe à `'all'` ("Toutes") ; restauré au passage non-vide→vide. Sentinel `null` pour "pas de
-  recherche en cours" (distinct d'une valeur mémorisée qui vaudrait légitimement `'all'`). Là aussi,
-  jamais écrit dans `localStorage` (`DUE_FILTER_STORAGE_KEY`) — la préférence réelle reste celle
-  posée manuellement via le sélecteur (`case 'set-due-filter'`).
+**Deux fonctions pures, sans aucun état à garder synchronisé** — `effectiveDueFilterRange()` et
+`isPanelEffectivelyCollapsed(key)` — recalculent, à chaque rendu, la valeur à utiliser à partir de
+`searchQuery`, sans jamais modifier `dueFilterRange` ni `panelCollapsed` eux-mêmes :
+```js
+function effectiveDueFilterRange(){ return searchQuery ? 'all' : dueFilterRange; }
+function isPanelEffectivelyCollapsed(key){ return !!panelCollapsed[key] && !searchQuery; }
+```
+Pendant une recherche active, la fenêtre d'échéance est donc **toujours** ignorée et les deux
+bandeaux **toujours** dépliés — quoi qu'il arrive par ailleurs. Dès que la recherche est vidée, la
+vraie valeur (jamais touchée) redevient effective automatiquement : pas de restauration à coder,
+rien à oublier de remettre en place.
+
+- `renderCommandes` (filtre `active`, message d'état vide, sélecteur "Commande à livrer", indicateur
+  "•" du menu "Filtres & tri", chevrons/corps des deux bandeaux) et `exportActiveCommandesExcel`
+  (même filtre sur l'export, pour rester cohérent avec ce qui est affiché à l'écran) appellent ces
+  deux fonctions au lieu de lire `dueFilterRange`/`panelCollapsed` directement.
+- Le sélecteur "Commande à livrer" affiche l'option correspondant à `effectiveDueFilterRange()`
+  (donc "Toutes" pendant une recherche, jamais la valeur réelle suspendue) et porte une note "Suspendu
+  pendant la recherche" tant que `searchQuery` est renseigné — la neutralisation est expliquée à
+  l'écran, pas seulement appliquée en silence.
+- `togglePanelCollapse`/`case 'set-due-filter'` continuent d'écrire directement
+  `panelCollapsed`/`dueFilterRange`, exactement comme avant — ce sont les seuls points d'écriture,
+  jamais modifiés par la recherche elle-même.
+- **Pourquoi pas un mécanisme "mémoriser l'état d'avant, restaurer à l'effacement" ?** Une première
+  version fonctionnait ainsi (`panelCollapsedBeforeSearch`/`dueFilterRangeBeforeSearch`, capturés à
+  l'ouverture de la recherche, restaurés à la fermeture) — bug réel corrigé : un changement manuel du
+  filtre "Commande à livrer" **pendant** la recherche (re-sélectionner "Cette semaine" dans le menu
+  tout en continuant de taper) écrivait directement `dueFilterRange` sans passer par ce mécanisme, et
+  restait donc actif pour le reste de la recherche — exactement le même bug, signalé une seconde
+  fois par l'utilisateur juste après le premier correctif. Le calcul à la volée (sans état à
+  synchroniser) rend ce scénario structurellement impossible : quoi qu'on modifie pendant une
+  recherche, le filtre reste neutralisé jusqu'à ce que la recherche soit vidée, un point c'est tout.
+  Un changement manuel fait *pendant* la recherche devient simplement la nouvelle valeur de
+  référence une fois la recherche terminée (comportement voulu : la dernière action explicite de la
+  personne l'emporte, sans notion d'"avant/après" à retenir).
 - Réflexe : tout NOUVEAU filtre/repli qui peut exclure une commande de la liste "Tâches en
-  cours"/"Terminées" doit se demander s'il doit, lui aussi, être neutralisé pendant une recherche
-  active — sinon la recherche "trouve" quelque chose que l'écran ne montre jamais, sans indice pour
-  comprendre pourquoi.
+  cours"/"Terminées" doit avoir sa propre fonction `effectiveXxx()`/`isXxxEffectively...()` sur ce
+  modèle plutôt qu'un mécanisme de capture/restauration — plus robuste par construction, jamais de
+  travers-caisse possible entre une modification manuelle et l'état mémorisé.
 
 ## Filtre « Commande à livrer » (liste des tâches en cours)
 
@@ -1353,6 +1366,23 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   toute nouvelle somme de durées sur une liste de pièces (`c.pieces`, ou un sous-ensemble plus large)
   doit se demander si ces pièces peuvent partager un `fusionGroupId` — si oui, dédupliquer, sinon le
   total gonfle avec le nombre de pièces du lot.
+- **"Mémoriser l'état d'avant, restaurer à la fin" desynchronisé par une écriture directe pendant
+  l'intervalle.** Neutraliser temporairement un réglage pendant une recherche (bandeaux repliés,
+  filtre "Commande à livrer") en capturant sa valeur au début puis en la réappliquant à la fin
+  (`xxxBeforeSearch`) a un point faible structurel : tout code qui écrit DIRECTEMENT ce réglage
+  PENDANT l'intervalle (ex. re-sélectionner "Cette semaine" dans le menu tout en continuant de
+  taper une recherche) contourne le mécanisme sans le savoir, et le réglage reste actif pour le
+  reste de l'opération — bug réel signalé deux fois de suite (le correctif "mémoriser/restaurer" du
+  filtre "Commande à livrer" pendant la recherche a été cassé par exactement ce scénario, dans la
+  session qui l'a introduit). Corrigé en remplaçant la capture/restauration par un calcul à la
+  volée, sans aucun état à synchroniser (`effectiveDueFilterRange()`/`isPanelEffectivelyCollapsed(key)`,
+  voir « Recherche de commande/pièce » plus haut) : la neutralisation se déduit de `searchQuery` à
+  chaque rendu, jamais mémorisée nulle part, donc jamais contournable par une écriture directe
+  ailleurs. Réflexe : dès qu'un "avant/pendant/après" doit neutraliser un réglage existant plutôt
+  que d'en introduire un nouveau, préférer une fonction pure qui recalcule l'effectif à chaque
+  lecture plutôt qu'une capture ponctuelle suivie d'une restauration — la capture/restauration ne
+  protège que les chemins qui passent par elle, jamais les écritures directes qui existent déjà
+  ailleurs dans le code.
 
 ## Conventions
 
