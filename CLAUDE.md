@@ -1216,6 +1216,24 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
 - **Casse et espaces des valeurs d'import.** « Laser 2D » et « laser 2d » créaient deux
   entrées distinctes. Tout est normalisé via `normPosteKey()`. Les clés de
   `posteMapping`, `groupByValue`, `sousTraitanceByValue` sont **toujours normalisées**.
+- **`config` présent mais incomplet dans `migrateState()`, jamais complété.** L'ancien
+  `migrateState()` ne posait `startHour`/`startMinute`/`monThuHours`/`friHours` que si
+  `st.config` était **totalement absent** (`if(!st.config) st.config = {...DEFAULT_CONFIG}`) —
+  un `config` présent mais partiel (`{}`, état corrompu, import, fixture de test) laissait ces
+  champs `undefined`. `dayStartFor`/`dayHoursFor` produisaient alors des dates invalides, et
+  `nextWorkingInstant`/`addWorkingDuration` tournaient à vide jusqu'à leur garde-fou (5000
+  itérations chacun, imbriqués : ~25 millions d'itérations pour un seul calcul de durée) — un
+  blocage indéfini de `getSchedule()` dès plusieurs commandes en attente sur le même poste (bug
+  réel pré-existant, repéré via la suite de tests de `test_limit.js` : 30 commandes, `config:{}`,
+  un seul poste). Corrigé en complétant individuellement chacun de ces quatre champs (comme les
+  autres réglages déjà migrés un par un juste en dessous), et en appliquant le même correctif
+  défensif à l'horaire spécifique d'un poste (`m.horaires`) pour la même classe de bug. Attention
+  au piège inverse en écrivant ce genre de correctif : `friHours` peut légitimement valoir `0`
+  (atelier fermé le vendredi) — un simple `if(!st.config.friHours)` l'aurait confondu avec
+  "manquant" et écrasé ; la condition doit explicitement exclure `0` (`if(!st.config.friHours &&
+  st.config.friHours !== 0)`), comme `margeEcheanceJours` le fait déjà un peu plus bas pour la
+  même raison. Réflexe : toute nouvelle valeur de configuration numérique pouvant légitimement
+  valoir `0`/`false` doit être testée avec `=== undefined`, jamais une simple négation.
 - **Mutation du planning sans invalider le cache avant de le relire.** `scheduleCache`
   n'est recalculé que par `invalidateSchedule()` (par défaut dans `commit()`). Deux bugs
   distincts en ont découlé : la reprise automatique de pause déjeuner (`setInterval` dans
