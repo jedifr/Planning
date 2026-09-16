@@ -295,17 +295,7 @@
   /* Filtre par poste en cases à cocher : un opérateur qui conduit plusieurs machines coche les
      siennes et retrouve sa sélection à chaque visite (mémorisée sur son propre poste de travail). */
   .kanban-machine-filters{display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:8px;}
-  .kanban-filter-label{font-size:10.5px; text-transform:uppercase; letter-spacing:0.6px; color:var(--text-faint); margin-right:4px;}
-  .kanban-filter-chip{
-    display:inline-flex; align-items:center; gap:5px; padding:4px 10px 4px 7px; border-radius:20px;
-    border:1px solid var(--line); background:var(--panel-2); font-size:11.5px; color:var(--text-faint);
-    cursor:pointer; user-select:none; transition:background .12s, border-color .12s, color .12s;
-  }
-  .kanban-filter-chip:hover{border-color:var(--text-faint);}
-  .kanban-filter-chip.on{background:var(--panel); border-color:var(--line); color:var(--text); font-weight:600;}
-  .kanban-filter-chip input{width:auto; margin:0; accent-color:var(--accent);}
-  .kanban-filter-chip .machine-dot{width:8px; height:8px; border-radius:2px; display:inline-block;}
-  .kanban-filter-chip:not(.on) .machine-dot{opacity:0.35;}
+  .dd-panel-check .machine-dot{width:8px; height:8px; border-radius:2px; display:inline-block;}
   .kanban-col-body{padding:8px; display:flex; flex-direction:column; gap:7px; flex:1; overflow-y:auto; max-height:520px;}
   .kanban-card{
     background:var(--panel); border:1px solid var(--line-soft); border-radius:2px; padding:7px 9px; cursor:pointer;
@@ -714,17 +704,26 @@
     max-height:180px; overflow-y:auto; background:var(--bg); border:1px solid var(--line-soft); border-radius:2px;
     padding:8px 10px; font-size:11.5px; color:var(--red); line-height:1.6;
   }
-  .settings-section{border:1px solid var(--line-soft); border-radius:2px; margin-bottom:10px; background:var(--bg);}
-  .settings-section-head{display:flex; align-items:center; gap:6px; padding:4px 6px;}
+  /* Pop-up Paramètres en deux volets : catégories à gauche (toujours visibles), contenu de la
+     catégorie sélectionnée à droite — remplace l'ancien accordéon vertical (une seule section
+     ouverte à la fois, plus de long défilement pour atteindre une catégorie du bas). */
+  .settings-modal-body{display:flex; height:min(620px, 74vh); min-height:0;}
+  .settings-nav{width:220px; flex-shrink:0; border-right:1px solid var(--line-soft); background:var(--panel-2); overflow-y:auto; padding:8px;}
+  .settings-nav-item{display:flex; align-items:center; gap:2px;}
   .settings-reorder{display:flex; flex-direction:column; gap:0;}
-  .settings-reorder button{padding:0px 6px; font-size:9px; line-height:1.5;}
-  .settings-section-title-btn{
-    flex:1; text-align:left; background:none; border:none; padding:8px 6px;
-    font-family:'Oswald',sans-serif; font-size:11.5px; font-weight:600; letter-spacing:0.7px;
-    text-transform:uppercase; color:var(--text-dim); display:flex; align-items:center; gap:8px; cursor:pointer;
+  .settings-reorder button{padding:0px 4px; font-size:8px; line-height:1.4;}
+  .settings-nav-btn{
+    flex:1; text-align:left; background:none; border:none; border-radius:2px; padding:9px 8px;
+    font-family:'Oswald',sans-serif; font-size:11.5px; font-weight:600; letter-spacing:0.5px;
+    text-transform:uppercase; color:var(--text-dim); cursor:pointer;
   }
-  .settings-section-title-btn:hover{color:var(--text);}
-  .settings-section-body{padding:4px 16px 16px;}
+  .settings-nav-btn:hover{color:var(--text); background:var(--panel);}
+  .settings-nav-btn.active{color:var(--accent); background:var(--panel); box-shadow:inset 3px 0 0 var(--accent);}
+  .settings-content-pane{flex:1; overflow-y:auto; padding:16px 22px 22px; min-width:0;}
+  .settings-content-title{
+    font-family:'Oswald',sans-serif; font-size:15px; font-weight:600; letter-spacing:0.3px;
+    margin:0 0 16px; color:var(--text); padding-bottom:10px; border-bottom:1px solid var(--line-soft);
+  }
 
   .context-menu{
     position:fixed; z-index:1100; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
@@ -739,6 +738,28 @@
     padding:9px 12px; font-size:13px; cursor:pointer; color:var(--text);
   }
   .context-menu-item:hover{background:var(--panel-2);}
+
+  /* Petits menus déroulants (<details>) du planning — "Filtres & tri", "Postes affichés"... */
+  details.dd-menu{position:relative; display:inline-block;}
+  details.dd-menu summary{list-style:none; cursor:pointer;}
+  details.dd-menu summary::-webkit-details-marker{display:none;}
+  details.dd-menu summary::marker{content:'';}
+  details.dd-menu .dd-panel{
+    position:absolute; top:calc(100% + 5px); left:0; z-index:50; background:var(--panel);
+    border:1px solid var(--line); border-radius:var(--radius); box-shadow:0 8px 24px rgba(0,0,0,0.18);
+    padding:10px 12px; min-width:210px;
+  }
+  details.dd-menu.dd-panel-right .dd-panel{left:auto; right:0;}
+  .dd-panel-title{
+    font-family:'Oswald',sans-serif; font-size:9.5px; font-weight:600; letter-spacing:0.8px;
+    text-transform:uppercase; color:var(--text-faint); margin:0 0 6px;
+  }
+  .dd-panel-title:not(:first-child){margin-top:10px;}
+  .dd-panel .dd-row{display:flex; gap:6px; flex-wrap:wrap;}
+  .dd-panel select{width:100%;}
+  .dd-panel-check{display:flex; align-items:center; gap:7px; padding:3px 0; font-size:12.5px; white-space:nowrap;}
+  .dd-panel-check input{width:auto; accent-color:var(--accent); margin:0;}
+  .dd-panel hr{border:none; border-top:1px solid var(--line-soft); margin:8px 0;}
 
   @media screen and (max-width:1100px){
     .commandes-columns{grid-template-columns:1fr !important;}
@@ -769,7 +790,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.16.0';
+const APP_VERSION = '1.17.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -812,9 +833,13 @@ let showSettingsModal = false;
 const SETTINGS_SECTION_KEYS = ['moncompte', 'horaires', 'pause', 'affichage', 'utilisateurs', 'conges', 'backup', 'machines', 'storageZones', 'importProfiles', 'maintenance'];
 const SETTINGS_UI_STORAGE_KEY = 'planning-atelier-settings-ui';
 let settingsSectionOrder = [...SETTINGS_SECTION_KEYS];
-let settingsSectionOpen = { horaires:true, pause:false, affichage:false, utilisateurs:false, backup:false, machines:false, storageZones:false, importProfiles:false, maintenance:false };
-// Préférence propre à ce navigateur (pas synchronisée entre les postes) : ordre et
-// état replié/déplié de chaque section de la pop-up Paramètres.
+// Pop-up Paramètres en deux volets (catégories à gauche, contenu à droite) — une seule section
+// affichée à la fois, contrairement à l'ancien accordéon vertical où plusieurs pouvaient être
+// dépliées en même temps. `settingsActiveSection` retombe sur 'horaires' (première section utile)
+// si la clé enregistrée n'existe plus (ancienne préférence, section supprimée entre-temps).
+let settingsActiveSection = 'horaires';
+// Préférence propre à ce navigateur (pas synchronisée entre les postes) : ordre des catégories et
+// dernière catégorie consultée dans la pop-up Paramètres.
 function loadSettingsUIPrefs(){
   try{
     const raw = localStorage.getItem(SETTINGS_UI_STORAGE_KEY);
@@ -824,13 +849,13 @@ function loadSettingsUIPrefs(){
        && SETTINGS_SECTION_KEYS.every(k => parsed.order.includes(k))){
       settingsSectionOrder = parsed.order;
     }
-    if(parsed.open && typeof parsed.open === 'object'){
-      SETTINGS_SECTION_KEYS.forEach(k => { if(typeof parsed.open[k]==='boolean') settingsSectionOpen[k] = parsed.open[k]; });
+    if(typeof parsed.active === 'string' && SETTINGS_SECTION_KEYS.includes(parsed.active)){
+      settingsActiveSection = parsed.active;
     }
   }catch(e){ /* préférence absente ou invalide : on garde les valeurs par défaut */ }
 }
 function saveSettingsUIPrefs(){
-  try{ localStorage.setItem(SETTINGS_UI_STORAGE_KEY, JSON.stringify({ order: settingsSectionOrder, open: settingsSectionOpen })); }
+  try{ localStorage.setItem(SETTINGS_UI_STORAGE_KEY, JSON.stringify({ order: settingsSectionOrder, active: settingsActiveSection })); }
   catch(e){ /* stockage indisponible : préférence simplement non retenue */ }
 }
 let searchQuery = '';
@@ -845,6 +870,13 @@ function loadDueFilterPref(){
 }
 const KANBAN_DONE_LIMIT_KEY = 'planning-atelier-kanban-done-limit';
 let kanbanDoneLimit = 10;
+// État ouvert/fermé des petits menus déroulants (<details class="dd-menu">) du planning — "Filtres
+// & tri" des tâches en cours, "Postes affichés" du Kanban... Purement transitoire (jamais persisté),
+// mais doit survivre au render() complet déclenché par une action à l'intérieur du menu (cocher un
+// poste, changer un tri) : sans ce suivi, le <details> reconstruit à neuf retomberait toujours fermé.
+// Le clic en dehors (voir le gestionnaire 'click' global) referme directement le <details> concerné
+// ET met à jour cet objet, un <details> natif ne se refermant jamais tout seul au clic extérieur.
+let openMiniDropdowns = {};
 let kanbanMachineFilter = ''; // ancien filtre à poste unique — conservé pour la migration de préférence
 // Set d'ids de postes affichés ; null = tous (cas par défaut). Contient aussi, le cas échéant, les
 // deux pseudo-ids ci-dessous — traités comme deux "postes" de plus par ce même filtre, pour
@@ -5781,7 +5813,6 @@ function renderHeader(){
       ${renderSyncBadge()}
       ${(() => { const n = pausedSinceEarlierTasks().length; return n>0 ? `<button class="small" data-action="show-paused-banner" title="Revoir les tâches en pause depuis la veille ou avant">⏸ ${n} en pause</button>` : ''; })()}
       ${currentPage!=='conges' ? `
-      <button class="small" data-action="export-data" title="Télécharger un fichier .json — à déposer dans un dossier synchronisé avec votre NAS">Exporter (.json)</button>
       <button class="small" data-action="trigger-import" title="Recharger un fichier .json exporté précédemment">Importer</button>
       <input type="file" id="import-file-input" accept="application/json" style="display:none;" onchange="handleImportFile(event)">` : ''}
       ${isAdmin() ? `<button class="small" data-action="open-settings" title="Paramétrer les horaires de travail">⚙ Paramétrer</button>` : ''}
@@ -7693,6 +7724,11 @@ function renderSettingsModal(){
       </div>`).join('')}
       <div class="footer-note" style="text-align:left; padding-top:8px;">La correspondance des colonnes elle-même (quelle colonne du fichier va dans quel champ) se modifie au prochain import personnalisé, en choisissant ce profil.</div>` },
     maintenance: { title: 'Maintenance', body: `
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+        <button class="small" data-action="export-data" title="Télécharger un fichier .json — à déposer dans un dossier synchronisé avec votre NAS">Exporter (.json)</button>
+        <span class="footer-note" style="margin:0;">Sauvegarde manuelle complète du planning — le fichier obtenu se recharge via "Importer" dans l'en-tête.</span>
+      </div>
+      <hr style="border:none; border-top:1px solid var(--line-soft); margin:14px 0;">
       <div class="machines-grid" style="margin-bottom:16px;">
         <div><label class="field">Délai de synchronisation entre postes (secondes)</label><input type="number" min="2" max="120" step="1" value="${cfg.syncIntervalSec||4}" data-action="update-config" data-field="syncIntervalSec"></div>
       </div>
@@ -7717,25 +7753,19 @@ function renderSettingsModal(){
   };
 
   const ADMIN_ONLY_SECTIONS = ['utilisateurs', 'conges', 'backup', 'importProfiles', 'maintenance'];
-  const sectionsHtml = settingsSectionOrder.map((key, idx) => {
-    if(ADMIN_ONLY_SECTIONS.includes(key) && !isAdmin()) return '';
-    const def = sectionDefs[key];
-    if(!def) return '';
-    const open = !!settingsSectionOpen[key];
-    return `
-    <div class="settings-section">
-      <div class="settings-section-head">
-        <div class="settings-reorder">
-          <button class="ghost icon-btn" data-action="move-settings-section" data-key="${key}" data-dir="-1" ${idx===0?'disabled':''} title="Monter">▲</button>
-          <button class="ghost icon-btn" data-action="move-settings-section" data-key="${key}" data-dir="1" ${idx===settingsSectionOrder.length-1?'disabled':''} title="Descendre">▼</button>
-        </div>
-        <button class="settings-section-title-btn" data-action="toggle-settings-section" data-key="${key}">
-          <span class="collapse-chevron ${open?'':'collapsed'}">▾</span>${def.title}
-        </button>
+  const visibleKeys = settingsSectionOrder.filter(key => sectionDefs[key] && (!ADMIN_ONLY_SECTIONS.includes(key) || isAdmin()));
+  // Retombe sur la première catégorie visible si la préférence enregistrée pointe vers une clé
+  // absente (ancienne préférence, catégorie supprimée entre-temps) — jamais un volet de droite vide.
+  const activeKey = visibleKeys.includes(settingsActiveSection) ? settingsActiveSection : visibleKeys[0];
+  const navHtml = visibleKeys.map((key, idx) => `
+    <div class="settings-nav-item">
+      <button class="settings-nav-btn ${key===activeKey?'active':''}" data-action="select-settings-section" data-key="${key}">${sectionDefs[key].title}</button>
+      <div class="settings-reorder">
+        <button class="ghost icon-btn" data-action="move-settings-section" data-key="${key}" data-dir="-1" ${idx===0?'disabled':''} title="Monter">▲</button>
+        <button class="ghost icon-btn" data-action="move-settings-section" data-key="${key}" data-dir="1" ${idx===visibleKeys.length-1?'disabled':''} title="Descendre">▼</button>
       </div>
-      ${open ? `<div class="settings-section-body">${def.body}</div>` : ''}
-    </div>`;
-  }).join('');
+    </div>`).join('');
+  const activeDef = activeKey ? sectionDefs[activeKey] : null;
 
   return `
   <div class="modal-overlay">
@@ -7744,7 +7774,10 @@ function renderSettingsModal(){
         <h2>Paramètres</h2>
         <button class="ghost icon-btn" data-action="close-settings" title="Fermer">✕</button>
       </div>
-      <div class="modal-body">${sectionsHtml}</div>
+      <div class="settings-modal-body">
+        <div class="settings-nav">${navHtml}</div>
+        <div class="settings-content-pane">${activeDef ? `<h3 class="settings-content-title">${activeDef.title}</h3>${activeDef.body}` : ''}</div>
+      </div>
     </div>
   </div>`;
 }
@@ -8475,22 +8508,30 @@ function renderKanbanView(schedule){
   const nbVisibles = kanbanMachineFilters ? state.machines.filter(m=>kanbanMachineFilters.has(m.id)).length : state.machines.length;
   return `<div class="panel-body">
     <div class="kanban-machine-filters">
-      <span class="kanban-filter-label">Postes affichés (${nbVisibles}/${state.machines.length})</span>
-      ${state.machines.map(m=>`
-        <label class="kanban-filter-chip ${isKanbanMachineVisible(m.id)?'on':''}">
-          <input type="checkbox" ${isKanbanMachineVisible(m.id)?'checked':''} data-action="toggle-kanban-machine" data-id="${m.id}">
-          <span class="machine-dot" style="background:${escapeHtml(m.couleur||'#888')}"></span>${escapeHtml(m.nom)}
-        </label>`).join('')}
-      <label class="kanban-filter-chip ${isKanbanMachineVisible(KANBAN_SANS_POSTE_MOI)?'on':''}" title="Tâches sans poste choisi (pointage rapide), assignées à ${escapeHtml(activeIdentityUsername()||'moi')}">
-        <input type="checkbox" ${isKanbanMachineVisible(KANBAN_SANS_POSTE_MOI)?'checked':''} data-action="toggle-kanban-machine" data-id="${KANBAN_SANS_POSTE_MOI}">
-        📋 Sans poste (moi)
-      </label>
-      <label class="kanban-filter-chip ${isKanbanMachineVisible(KANBAN_SANS_POSTE_TOUS)?'on':''}" title="Tâches sans poste choisi (pointage rapide), tous opérateurs confondus">
-        <input type="checkbox" ${isKanbanMachineVisible(KANBAN_SANS_POSTE_TOUS)?'checked':''} data-action="toggle-kanban-machine" data-id="${KANBAN_SANS_POSTE_TOUS}">
-        📋 Sans poste (tout)
-      </label>
-      <button class="ghost small" data-action="kanban-machines-all">Tout</button>
-      <button class="ghost small" data-action="kanban-machines-none">Aucun</button>
+      <details class="dd-menu" data-dd-key="kanban-postes" ontoggle="openMiniDropdowns['kanban-postes']=this.open" ${openMiniDropdowns['kanban-postes']?'open':''}>
+        <summary class="small">Postes affichés (${nbVisibles}/${state.machines.length}) ▾</summary>
+        <div class="dd-panel">
+          ${state.machines.map(m=>`
+            <label class="dd-panel-check">
+              <input type="checkbox" ${isKanbanMachineVisible(m.id)?'checked':''} data-action="toggle-kanban-machine" data-id="${m.id}">
+              <span class="machine-dot" style="background:${escapeHtml(m.couleur||'#888')}"></span>${escapeHtml(m.nom)}
+            </label>`).join('')}
+          <hr>
+          <label class="dd-panel-check" title="Tâches sans poste choisi (pointage rapide), assignées à ${escapeHtml(activeIdentityUsername()||'moi')}">
+            <input type="checkbox" ${isKanbanMachineVisible(KANBAN_SANS_POSTE_MOI)?'checked':''} data-action="toggle-kanban-machine" data-id="${KANBAN_SANS_POSTE_MOI}">
+            📋 Sans poste (moi)
+          </label>
+          <label class="dd-panel-check" title="Tâches sans poste choisi (pointage rapide), tous opérateurs confondus">
+            <input type="checkbox" ${isKanbanMachineVisible(KANBAN_SANS_POSTE_TOUS)?'checked':''} data-action="toggle-kanban-machine" data-id="${KANBAN_SANS_POSTE_TOUS}">
+            📋 Sans poste (tout)
+          </label>
+          <hr>
+          <div class="dd-row">
+            <button class="ghost small" data-action="kanban-machines-all">Tout</button>
+            <button class="ghost small" data-action="kanban-machines-none">Aucun</button>
+          </div>
+        </div>
+      </details>
     </div>
     <div class="kanban-limit-toolbar">
       <label for="kanban-done-limit-select">Limiter "À faire" et "Terminée" à</label>
@@ -8936,15 +8977,26 @@ function renderCommandes(schedule){
       <option value="month" ${dueFilterRange==='month'?'selected':''}>Le mois en cours</option>
       <option value="nextMonth" ${dueFilterRange==='nextMonth'?'selected':''}>Le mois suivant</option>
     </select>`;
+  const filtersTriDd = `
+    <details class="dd-menu" data-dd-key="active-filters-tri" ontoggle="openMiniDropdowns['active-filters-tri']=this.open" ${openMiniDropdowns['active-filters-tri']?'open':''}>
+      <summary class="small">🔧 Filtres &amp; tri${dueFilterRange!=='all'?' •':''}</summary>
+      <div class="dd-panel">
+        <div class="dd-panel-title">Trier</div>
+        <div class="dd-row">
+          <button class="small" data-action="sort-by-priority" title="Urgence d'abord (Urgente > Importante > Normale), puis échéance la plus proche">⇕ Priorité</button>
+          <button class="small" data-action="sort-by-due-date" title="Échéance la plus proche d'abord, sans tenir compte de l'urgence déclarée">📅 Échéance</button>
+        </div>
+        <div class="dd-panel-title">Commande à livrer</div>
+        ${dueFilterControl}
+      </div>
+    </details>`;
   const activeSection = `
   <section class="panel">
     <div class="panel-head">
       <h2>${activeCountLabel}</h2>
       <div style="display:flex; align-items:center; gap:8px;">
-        <button class="small primary" data-action="sort-by-priority" title="Urgence d'abord (Urgente > Importante > Normale), puis échéance la plus proche">⇕ Trier par priorité</button>
-        <button class="small" data-action="sort-by-due-date" title="Échéance la plus proche d'abord, sans tenir compte de l'urgence déclarée">📅 Trier par échéance</button>
         ${atRiskBtn}
-        ${dueFilterControl}
+        ${filtersTriDd}
         <button class="small" data-action="export-active-commandes" title="Exporter (.xlsx) la liste actuellement affichée, avec les filtres en cours">⬇ Exporter (.xlsx)</button>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
@@ -9238,6 +9290,9 @@ document.addEventListener('click', (e) => {
   if(contextMenu && !e.target.closest('.context-menu')){
     contextMenu = null; render();
   }
+  document.querySelectorAll('details.dd-menu[open]').forEach(d => {
+    if(!d.contains(e.target)){ d.open = false; if(d.dataset.ddKey) openMiniDropdowns[d.dataset.ddKey] = false; }
+  });
   // Tâche non draggable (terminée / en cours / en pause) : un clic simple ne passe jamais par le
   // mécanisme de glisser, donc on peut l'utiliser directement pour isoler sa commande.
   const staticBar = e.target.closest('.gantt-bar.done, .gantt-bar.running, .gantt-bar.paused, .month-chip[draggable="false"]');
@@ -9352,7 +9407,7 @@ function dispatchClickAction(action, el){
     case 'change-user-password': changeUserPassword(el.dataset.id, el.dataset.username); break;
     case 'change-my-password': changeMyPassword(); break;
     case 'clear-user-machines': clearUserMachines(el.dataset.userId); break;
-    case 'toggle-settings-section': settingsSectionOpen[el.dataset.key] = !settingsSectionOpen[el.dataset.key]; saveSettingsUIPrefs(); render(); break;
+    case 'select-settings-section': settingsActiveSection = el.dataset.key; saveSettingsUIPrefs(); render(); break;
     case 'move-settings-section': {
       const key = el.dataset.key, dir = Number(el.dataset.dir);
       const idx = settingsSectionOrder.indexOf(key);

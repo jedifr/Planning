@@ -1044,6 +1044,59 @@ Liste (`currentView`, voir `setView`) — plutôt que de retomber systématiquem
   premier rendu de l'appli (voir plus haut), un `render()` prématuré verrait un `state` encore
   incomplet (`draft`/`usersList` pas encore initialisés à ce stade de `startApp`).
 
+## Ergonomie de l'interface
+
+Quatre pistes issues d'une revue ergonomique (perspective manager + designer), pour réduire
+l'encombrement d'écrans devenus denses au fil des fonctionnalités ajoutées une à une — aucune
+d'elles ne change de comportement fonctionnel, seulement la façon dont les actions déjà existantes
+sont regroupées/exposées.
+
+- **Export .json déplacé dans Paramètres → Maintenance.** Le bouton "Exporter (.json)" de l'en-tête
+  (`renderHeader`) est une sauvegarde manuelle complète, utile en admin mais jamais en usage
+  quotidien — il n'a plus sa place à côté de la déconnexion sur chaque page. Toujours le même
+  `data-action="export-data"`/`exportData()`, simplement rendu depuis la section `maintenance` de
+  `renderSettingsModal()` au lieu de `renderHeader()`. "Importer" (et son `<input type="file">`)
+  reste dans l'en-tête — c'est le seul des deux qui a besoin d'être accessible en un clic depuis
+  n'importe quelle page.
+- **Menu "Filtres & tri ▾" dans l'en-tête "Tâches en cours".** Les deux tris one-shot (`sortByPriority`/
+  `sortByDueDate` — voir plus haut, ce sont des actions déclenchées à la main, pas un mode persistant)
+  et le sélecteur de fenêtre d'échéance (`dueFilterRange`) étaient 3 des 7 contrôles alignés dans
+  l'en-tête du panneau, ajoutés indépendamment au fil du temps. Regroupés dans un unique
+  `<details class="dd-menu" data-dd-key="active-filters-tri">` — "⚠️ À risque" et "⬇ Exporter (.xlsx)"
+  restent seuls visibles en permanence, ce sont les deux actions les plus utilisées d'un coup d'œil.
+- **Filtre Kanban par poste en menu déroulant.** L'ancienne rangée de puces à cocher
+  (`.kanban-filter-chip`, une par poste + les deux pseudo-entrées "Sans poste") ne passait pas à
+  l'échelle au-delà de 5-6 postes (retour à plusieurs lignes). Remplacée par
+  `<details class="dd-menu" data-dd-key="kanban-postes">` affichant "Postes affichés (X/Y) ▾" —
+  toujours une seule ligne quel que soit le nombre de postes. Le contenu du menu (cases à cocher,
+  Tout/Aucun) et toute la logique de filtrage (`kanbanMachineFilters`, `KANBAN_SANS_POSTE_MOI`/
+  `KANBAN_SANS_POSTE_TOUS`, `toggleKanbanMachineFilter`...) sont strictement inchangés — seul le
+  conteneur visuel a changé, les classes `.kanban-filter-chip`/`.kanban-filter-label` ont été
+  supprimées (plus aucun usage).
+- **Pop-up Paramètres en deux volets.** L'ancien accordéon vertical (`settingsSectionOpen`,
+  plusieurs sections dépliables indépendamment, un long défilement pour atteindre les dernières)
+  est remplacé par un classique volet catégories (gauche, toujours visible, avec les mêmes flèches
+  ▲/▼ de réorganisation qu'avant) + contenu de la catégorie sélectionnée (droite) —
+  `settingsActiveSection` (une seule clé active à la fois) remplace `settingsSectionOpen` (un bool
+  par section). `ADMIN_ONLY_SECTIONS` et `settingsSectionOrder` (ordre personnalisable, persisté
+  côté navigateur) sont inchangés ; `select-settings-section` (nouveau) remplace
+  `toggle-settings-section` (supprimé) dans `dispatchClickAction`. Repli automatique sur la première
+  catégorie visible si `settingsActiveSection` pointe vers une clé absente (ancienne préférence
+  enregistrée avant suppression d'une section) — jamais de volet de droite vide.
+- **`openMiniDropdowns` — état ouvert/fermé des petits menus `<details class="dd-menu">`.** Un
+  `render()` complet reconstruit tout le DOM à chaque action (voir le piège "mutation du planning
+  sans invalider le cache" plus bas pour le principe général) : un `<details>` sans suivi d'état
+  retomberait toujours fermé dès qu'une action à l'intérieur (cocher un poste, changer un tri)
+  déclenche ce `render()`. `openMiniDropdowns[key]` (objet global, purement transitoire, jamais
+  persisté) est mis à jour par un `ontoggle` inline sur chaque `<details data-dd-key="...">`, et lu
+  au rendu pour poser l'attribut `open` en conséquence. Un `<details>` natif ne se referme jamais
+  tout seul au clic en dehors : le gestionnaire `document.addEventListener('click', ...)` existant
+  (déjà responsable de fermer `contextMenu`) referme aussi, à chaque clic, tout
+  `details.dd-menu[open]` dont le clic n'était pas à l'intérieur — à la fois dans le DOM (`d.open =
+  false`) et dans `openMiniDropdowns`, pour que ça reste fermé au prochain `render()`. Réflexe : tout
+  nouveau menu déroulant du planning doit réutiliser ce même mécanisme (`class="dd-menu"`,
+  `data-dd-key`, `ontoggle`) plutôt qu'en inventer un troisième.
+
 ## Tests
 
 Il n'y a pas de framework de test. La méthode utilisée, efficace sur ce projet :
@@ -1223,6 +1276,18 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   temps qu'il reste **réellement** à faire, projeté depuis maintenant — jamais d'une durée totale
   appliquée telle quelle depuis un point de départ ancien, qui ignore silencieusement tout ce qui
   s'est passé (ou pas) entre-temps.
+- **Case à cocher écrasée par la règle globale `input,select{width:100%}`.** Cette règle (pensée
+  pour les champs texte/nombre des formulaires) s'applique aussi, faute de sélecteur plus précis, à
+  n'importe quel `<input type="checkbox">` — dans un conteneur flex (`.dd-panel-check`, label d'un
+  menu déroulant), la case s'étire alors sur toute la largeur disponible et écrase visuellement
+  l'espacement avec le texte à côté (bug réel repéré à la relecture visuelle du menu "Postes
+  affichés" du Kanban : case à gauche, texte collé au bord droit, pastille de couleur du poste
+  flottant entre les deux). Les anciennes puces `.kanban-filter-chip` avaient déjà ce correctif
+  (`.kanban-filter-chip input{width:auto; ...}`) mais ce n'est pas un réflexe acquis : le nouveau
+  `.dd-panel-check input` en manquait à l'écriture. Réflexe : toute checkbox/radio posée dans un
+  nouveau conteneur (pas un simple `<label class="statut-chip">`/`<label class="field">` déjà
+  couverts ailleurs) doit explicitement recevoir `width:auto`, jamais supposer que l'absence de
+  `width` dans la règle du conteneur suffit.
 
 ## Conventions
 
