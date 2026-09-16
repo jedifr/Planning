@@ -491,6 +491,36 @@ une commande choisie (ou une nouvelle créée à la volée), sans passer par le 
   Risques de retard (voir plus bas) — un `end` manquant sur une pièce activement suivie n'est pas
   une anomalie ici, juste l'état normal d'une tâche sans durée estimée.
 
+### Filtre Kanban par poste et tâches sans poste
+
+`kanbanMachineFilters` (`Set` d'ids de postes affichés, `null` = tous — Kanban, cases à cocher
+« Postes affichés ») ne contenait que des ids de vrais postes : une tâche sans poste choisi
+(`machineId===null`, typiquement un « Pointage rapide » sans durée fiable où l'opérateur n'a pas
+désigné de poste — voir ci-dessus) n'appartenait à AUCUN poste du filtre, donc disparaissait dès
+qu'on décochait ne serait-ce qu'un seul poste — bug réel signalé (Cyril filtrait sur ses postes
+habituels et ne retrouvait plus son propre pointage rapide).
+
+- `KANBAN_SANS_POSTE_MOI` / `KANBAN_SANS_POSTE_TOUS` — deux pseudo-ids ajoutés à ce même `Set`
+  (jamais un second mécanisme de préférence séparé) : réutilisent tel quel tout ce qui existait déjà
+  pour les postes (persistance `localStorage` via `saveKanbanMachineFilters`, boutons "Tout"/"Aucun",
+  bascule "tous cochés → `null`" via `nbTotalKanbanFilterEntries()` = `state.machines.length + 2`).
+  `toggleKanbanMachineFilter` matérialise désormais le `Set` complet (postes **+** ces deux
+  pseudo-entrées) au premier décochage — décocher un seul poste ne fait donc plus jamais disparaître
+  les tâches sans poste au passage.
+- Dans `renderKanbanView`, une tâche `machineId===null` ignore totalement `kanbanMachineFilters.has
+  (o.machineId)` (qui vaudrait toujours faux) : elle est visible si `KANBAN_SANS_POSTE_TOUS` est
+  coché, sinon si `KANBAN_SANS_POSTE_MOI` est coché **et** `o.operatorUserId` correspond à
+  `activeIdentityId()` — l'opérateur ASSIGNÉ de la pièce (voir modèle de données), pas qui a
+  réellement ouvert une session dessus. Sans filtre actif du tout (`kanbanMachineFilters===null`,
+  cas par défaut), aucune de ces deux vérifications n'intervient : toutes les tâches sans poste
+  restent visibles comme avant ce correctif, zéro régression pour qui n'a jamais touché ce filtre.
+- Le compteur « Postes affichés (X/N) » ne compte que les vrais postes (`state.machines`), jamais
+  les deux pseudo-entrées, pour ne pas afficher un total qui ne correspondrait à rien de visible à
+  l'écran (pas de case "postes" numérotée N+2).
+- Cases dédiées dans la barre de filtres (`renderKanbanView`), même mécanisme `data-action=
+  "toggle-kanban-machine"` que les postes (aucun nouveau cas de dispatch nécessaire, `machineId` y
+  est traité comme une clé opaque) : « 📋 Sans poste (moi) » et « 📋 Sans poste (tout) ».
+
 ## Zones de stockage
 
 Emplacements physiques où sont entreposées les pièces d'une commande pendant sa production.

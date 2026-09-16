@@ -769,7 +769,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.14.0';
+const APP_VERSION = '1.15.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -846,7 +846,13 @@ function loadDueFilterPref(){
 const KANBAN_DONE_LIMIT_KEY = 'planning-atelier-kanban-done-limit';
 let kanbanDoneLimit = 10;
 let kanbanMachineFilter = ''; // ancien filtre à poste unique — conservé pour la migration de préférence
-let kanbanMachineFilters = null; // Set d'ids de postes affichés ; null = tous (cas par défaut)
+// Set d'ids de postes affichés ; null = tous (cas par défaut). Contient aussi, le cas échéant, les
+// deux pseudo-ids ci-dessous — traités comme deux "postes" de plus par ce même filtre, pour
+// réutiliser tel quel tout le mécanisme existant (persistance, boutons Tout/Aucun, bascule
+// "tous cochés = null") plutôt que d'inventer un second système de préférence en parallèle.
+const KANBAN_SANS_POSTE_MOI = '__sans_poste_moi__';
+const KANBAN_SANS_POSTE_TOUS = '__sans_poste_tous__';
+let kanbanMachineFilters = null;
 const KANBAN_FILTER_STORAGE_KEY = 'planning-kanban-machines';
 function loadKanbanMachineFilters(){
   try{
@@ -862,12 +868,19 @@ function saveKanbanMachineFilters(){
     else localStorage.removeItem(KANBAN_FILTER_STORAGE_KEY);
   }catch(e){ /* stockage indisponible : le filtre reste valable pour la session */ }
 }
+// nbTotalKanbanFilterEntries : postes réels + les deux pseudo-entrées "sans poste" — sert à savoir
+// quand "tout est coché" doit retomber sur `null` (pas de filtre), comme pour les postes seuls avant
+// l'ajout de ces deux entrées.
+function nbTotalKanbanFilterEntries(){ return state.machines.length + 2; }
 function toggleKanbanMachineFilter(machineId, checked){
   // Départ implicite "tous cochés" : au premier décochage, on matérialise la liste complète
-  // moins ce poste, plutôt que de tout faire disparaître d'un coup.
-  if(!kanbanMachineFilters) kanbanMachineFilters = new Set(state.machines.map(m=>m.id));
+  // (postes + les deux pseudo-entrées "sans poste") moins l'entrée décochée, plutôt que de tout
+  // faire disparaître d'un coup — décocher UN poste ne doit jamais faire disparaître les tâches
+  // sans poste au passage (bug réel signalé : un pointage rapide sans poste choisi devenait
+  // introuvable dès qu'on filtrait sur un poste précis).
+  if(!kanbanMachineFilters) kanbanMachineFilters = new Set([...state.machines.map(m=>m.id), KANBAN_SANS_POSTE_MOI, KANBAN_SANS_POSTE_TOUS]);
   if(checked) kanbanMachineFilters.add(machineId); else kanbanMachineFilters.delete(machineId);
-  if(kanbanMachineFilters.size === state.machines.length) kanbanMachineFilters = null; // tous = pas de filtre
+  if(kanbanMachineFilters.size === nbTotalKanbanFilterEntries()) kanbanMachineFilters = null; // tous = pas de filtre
   saveKanbanMachineFilters();
   render();
 }
@@ -8335,7 +8348,15 @@ function renderKanbanView(schedule){
     allOps.push({ ...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin, zoneStockage:c.zoneStockage });
   }));
   allOps = allOps.filter(o => matchesSearch({ nom:o.commandeNom, pieces:[o] }, searchQuery));
-  if(kanbanMachineFilters) allOps = allOps.filter(o => kanbanMachineFilters.has(o.machineId));
+  if(kanbanMachineFilters) allOps = allOps.filter(o => {
+    // Une tâche sans poste (pointage rapide sans machine choisie, voir CLAUDE.md) n'appartient à
+    // aucun des postes du filtre — elle a ses deux propres pseudo-entrées, jamais celles des postes.
+    if(o.machineId === null){
+      if(kanbanMachineFilters.has(KANBAN_SANS_POSTE_TOUS)) return true;
+      return kanbanMachineFilters.has(KANBAN_SANS_POSTE_MOI) && String(o.operatorUserId) === String(activeIdentityId());
+    }
+    return kanbanMachineFilters.has(o.machineId);
+  });
 
   const doneCutoff = doneFilterCutoff(doneFilterRange);
   const colsHtml = cols.map(col => {
@@ -8451,7 +8472,7 @@ function renderKanbanView(schedule){
     </div>`;
   }).join('');
 
-  const nbVisibles = kanbanMachineFilters ? kanbanMachineFilters.size : state.machines.length;
+  const nbVisibles = kanbanMachineFilters ? state.machines.filter(m=>kanbanMachineFilters.has(m.id)).length : state.machines.length;
   return `<div class="panel-body">
     <div class="kanban-machine-filters">
       <span class="kanban-filter-label">Postes affichés (${nbVisibles}/${state.machines.length})</span>
@@ -8460,6 +8481,14 @@ function renderKanbanView(schedule){
           <input type="checkbox" ${isKanbanMachineVisible(m.id)?'checked':''} data-action="toggle-kanban-machine" data-id="${m.id}">
           <span class="machine-dot" style="background:${escapeHtml(m.couleur||'#888')}"></span>${escapeHtml(m.nom)}
         </label>`).join('')}
+      <label class="kanban-filter-chip ${isKanbanMachineVisible(KANBAN_SANS_POSTE_MOI)?'on':''}" title="Tâches sans poste choisi (pointage rapide), assignées à ${escapeHtml(activeIdentityUsername()||'moi')}">
+        <input type="checkbox" ${isKanbanMachineVisible(KANBAN_SANS_POSTE_MOI)?'checked':''} data-action="toggle-kanban-machine" data-id="${KANBAN_SANS_POSTE_MOI}">
+        📋 Sans poste (moi)
+      </label>
+      <label class="kanban-filter-chip ${isKanbanMachineVisible(KANBAN_SANS_POSTE_TOUS)?'on':''}" title="Tâches sans poste choisi (pointage rapide), tous opérateurs confondus">
+        <input type="checkbox" ${isKanbanMachineVisible(KANBAN_SANS_POSTE_TOUS)?'checked':''} data-action="toggle-kanban-machine" data-id="${KANBAN_SANS_POSTE_TOUS}">
+        📋 Sans poste (tout)
+      </label>
       <button class="ghost small" data-action="kanban-machines-all">Tout</button>
       <button class="ghost small" data-action="kanban-machines-none">Aucun</button>
     </div>
