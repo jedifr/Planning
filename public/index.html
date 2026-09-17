@@ -176,7 +176,7 @@
   .machine-horaires{margin-top:10px; padding-top:10px; border-top:1px dashed var(--line-soft); display:flex; flex-direction:column; gap:8px;}
 
   .planning-toolbar{display:flex; justify-content:space-between; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line-soft); background:var(--panel-2); flex-wrap:wrap; gap:10px;}
-  .view-tabs{display:flex; gap:4px;}
+  .view-tabs{display:flex; gap:4px; flex-wrap:wrap; row-gap:6px;}
   .view-tabs button.active{background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600;}
   .view-nav{display:flex; align-items:center; gap:8px;}
   .view-nav .range-label{font-family:'Oswald',sans-serif; font-size:13px; color:var(--text-dim); letter-spacing:0.3px; min-width:190px; text-align:center; text-transform:capitalize;}
@@ -448,7 +448,10 @@
     white-space:normal; overflow-wrap:anywhere; text-align:center;
   }
   .zone-cell-occupant:hover{text-decoration:underline;}
-  .search-bar{display:flex; align-items:center; gap:10px; margin-bottom:10px;}
+  .search-bar{display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; row-gap:8px;}
+  /* Un label+select ne doit jamais être séparé sur deux lignes quand la barre déborde (mobile) —
+     voir CLAUDE.md, ergonomie mobile de la barre de filtres du calendrier annuel. */
+  .search-bar-group{display:inline-flex; align-items:center; gap:8px;}
   .isolate-banner{
     display:flex; align-items:center; gap:10px; margin-bottom:10px; padding:7px 12px;
     background:var(--accent-dim); border:1px solid var(--accent); border-radius:2px; font-size:12px; color:var(--text);
@@ -775,7 +778,13 @@
     .columns-resize-handle{display:none !important;}
   }
   @media screen and (max-width:720px){
-    .commande-top-fields{grid-template-columns:1fr;}
+    /* !important nécessaire : plusieurs formulaires (Nouvelle demande, Attribuer un congé
+       directement, Générer un rythme d'alternance...) fixent leur propre grid-template-columns en
+       style inline (nombre de colonnes propre à chaque formulaire) — sans !important, cette règle
+       ne s'appliquait jamais sur petit écran malgré son intention (même piège que
+       `.commandes-columns` juste au-dessus, qui l'a déjà). Bug réel repéré en vérifiant "Nouvelle
+       demande" à 390px : les champs restaient collés sur plusieurs colonnes étroites. */
+    .commande-top-fields{grid-template-columns:1fr !important;}
     .draft-op-row{grid-template-columns:1fr 1fr; }
     table.ops-table{display:block; overflow-x:auto;}
     .gantt-row-label{width:110px; flex-basis:110px;}
@@ -817,7 +826,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.23.0';
+const APP_VERSION = '1.24.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1141,14 +1150,28 @@ function newAlternanceDraft(){
 }
 let alternanceDraft = newAlternanceDraft();
 let equipePersonneFilter = ''; // '' = toutes les personnes
+// Même seuil que la règle CSS `@media screen and (max-width:720px)` déjà utilisée ailleurs (formulaire
+// "Nouvelle demande", tableaux, grille des 12 mois) — un seul chiffre à changer si ce seuil évolue un jour.
+const MOBILE_BREAKPOINT_PX = 720;
+function isNarrowViewport(){
+  return typeof window !== 'undefined' && !!window.innerWidth && window.innerWidth <= MOBILE_BREAKPOINT_PX;
+}
 let calendrierYear = new Date().getFullYear();
 let calendrierMonth = new Date().getMonth(); // 0-11, utilisé seulement en vue "mois"
-let calendrierViewMode = 'annee'; // 'annee' | 'mois'
+// Sur petit écran, une cellule de la vue "Année" (38px, plusieurs pastilles) est trop petite pour
+// viser un jour au doigt — "Mois" (cellules bien plus grandes) démarre donc par défaut sur mobile.
+// Un choix ponctuel à l'ouverture, jamais réappliqué ensuite : basculer manuellement sur "Année"
+// reste possible et n'est jamais annulé par un redessin (même principe que `userDefaultPlanningView`,
+// une préférence qu'on ne réécrase pas après le premier calcul).
+let calendrierViewMode = isNarrowViewport() ? 'mois' : 'annee'; // 'annee' | 'mois'
 let calendrierPersonneFilter = ''; // '' = toutes les personnes
 let calendrierStatutFilter = 'approuve_attente'; // 'approuve_attente' | 'approuve' | 'en_attente' | 'toutes'
 let calendrierTypeFilter = ''; // '' = tous les types de congé
 let leaveReqPrefillDate = null; // date (AAAA-MM-JJ) à préremplir au prochain rendu de "Mes demandes"
   // (posée par un clic sur un jour du calendrier annuel), consommée une seule fois puis remise à null
+let calendrierDayDetail = null; // { date } | null — jour dont le détail (qui est en congé) est
+  // affiché en pop-up avant de proposer "poser un congé ce jour" (voir plus bas, uniquement sur
+  // petit écran : le survol souris donne déjà cette info ailleurs via `title`)
 let viewAnchor = new Date();
 let weekRenderCtx = { days: [] };
 let dragCtx = null;
@@ -3605,6 +3628,18 @@ function findLeaveConflicts(userId, debut, fin, excludeId){
     r.statut !== 'refuse' &&
     r.debut <= fin && r.fin >= debut   // chevauchement, même partiel
   );
+}
+// Qui est en congé un jour précis, toutes personnes confondues — utilisé par la pop-up de détail du
+// calendrier annuel sur petit écran (voir `calendrierDayDetail`). Indépendant des filtres d'affichage
+// du calendrier (personne/type/statut) : le but est de répondre à "qui est vraiment là", pas de
+// reproduire la vue déjà filtrée à l'écran.
+function leaveEntriesForDate(dateKey){
+  return (state.leaveRequests||[]).filter(r => r.statut !== 'refuse' && r.debut <= dateKey && r.fin >= dateKey)
+    .map(r => {
+      const u = usersList.find(uu=>String(uu.id)===r.userId);
+      const t = leaveTypeById(r.typeId);
+      return { username: u?u.username:'?', typeNom: t?t.nom:'Congé', couleur: t?t.couleur:'#888', statut: r.statut };
+    });
 }
 // Cherche la plus longue période demandée qui reste réellement libre, pour pouvoir la proposer
 // en remplacement plutôt que de laisser l'utilisateur recalculer les dates lui-même.
@@ -6259,6 +6294,33 @@ function renderCalendrierBalanceStrip(year, userId){
     <strong style="color:var(--text-dim);">💼 Solde de ${escapeHtml(u.username)} (${year})</strong>${items}
   </div>`;
 }
+// Pop-up "qui est en congé ce jour" — sur petit écran uniquement (voir `calendrierDayDetail`) : le
+// clic sur un jour du calendrier annuel n'a alors pas de survol souris pour montrer ce détail avant
+// de foncer vers "Nouvelle demande" (voir isNarrowViewport/le dispatch de 'calendrier-request-day').
+function renderCalendrierDayDetailModal(){
+  if(!calendrierDayDetail) return '';
+  const { date } = calendrierDayDetail;
+  const entries = leaveEntriesForDate(date);
+  const rows = entries.length ? entries.map(en => `
+    <div class="leave-confirm-banner" style="margin-bottom:6px; text-align:left;">
+      <span class="machine-swatch" style="background:${en.couleur}"></span> ${escapeHtml(en.username)} — ${escapeHtml(en.typeNom)}${en.statut==='en_attente'?' <span class="footer-note" style="margin:0;">(en attente)</span>':''}
+    </div>`).join('') : `<div class="footer-note" style="text-align:left;">Personne n'est en congé ce jour-là.</div>`;
+  return `<div class="modal-overlay">
+    <div class="modal-box" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>${formatDateFr(date)}</h2>
+        <button class="ghost icon-btn" data-action="close-calendrier-day-detail" title="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+        ${rows}
+        <div class="form-actions" style="margin-top:16px;">
+          <button class="ghost" data-action="close-calendrier-day-detail">Fermer</button>
+          <button class="primary" data-action="calendrier-request-day-confirmed" data-date="${date}">📅 Poser un congé ce jour</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
 function renderCalendrierAnnuelTab(){
   const year = calendrierYear;
   const todayKey = toDateInputValue(new Date());
@@ -6315,23 +6377,29 @@ function renderCalendrierAnnuelTab(){
         <button class="small ${isMoisMode?'active':''}" data-action="calview-mode" data-mode="mois">Mois</button>
       </div>
       ${navHtml}
-      <label class="field" style="margin:0 0 0 12px;">Personne</label>
-      <select data-action="calyear-personne-filter" style="width:auto;">
-        <option value="">Toutes</option>
-        ${usersList.map(u=>`<option value="${u.id}" ${calendrierPersonneFilter===String(u.id)?'selected':''}>${escapeHtml(u.username)}</option>`).join('')}
-      </select>
-      <label class="field" style="margin:0 0 0 12px;">Type</label>
-      <select data-action="calyear-type-filter" style="width:auto;">
-        <option value="">Tous</option>
-        ${state.leaveTypes.map(t=>`<option value="${t.id}" ${calendrierTypeFilter===t.id?'selected':''}>${escapeHtml(t.nom)}</option>`).join('')}
-      </select>
-      <label class="field" style="margin:0 0 0 12px;">Statut</label>
-      <select data-action="calyear-statut-filter" style="width:auto;">
-        <option value="approuve_attente" ${calendrierStatutFilter==='approuve_attente'?'selected':''}>Approuvés + en attente</option>
-        <option value="approuve" ${calendrierStatutFilter==='approuve'?'selected':''}>Approuvés uniquement</option>
-        <option value="en_attente" ${calendrierStatutFilter==='en_attente'?'selected':''}>En attente uniquement</option>
-        <option value="toutes" ${calendrierStatutFilter==='toutes'?'selected':''}>Toutes (avec refusées)</option>
-      </select>
+      <span class="search-bar-group">
+        <label class="field" style="margin:0 0 0 12px;">Personne</label>
+        <select data-action="calyear-personne-filter" style="width:auto;">
+          <option value="">Toutes</option>
+          ${usersList.map(u=>`<option value="${u.id}" ${calendrierPersonneFilter===String(u.id)?'selected':''}>${escapeHtml(u.username)}</option>`).join('')}
+        </select>
+      </span>
+      <span class="search-bar-group">
+        <label class="field" style="margin:0 0 0 12px;">Type</label>
+        <select data-action="calyear-type-filter" style="width:auto;">
+          <option value="">Tous</option>
+          ${state.leaveTypes.map(t=>`<option value="${t.id}" ${calendrierTypeFilter===t.id?'selected':''}>${escapeHtml(t.nom)}</option>`).join('')}
+        </select>
+      </span>
+      <span class="search-bar-group">
+        <label class="field" style="margin:0 0 0 12px;">Statut</label>
+        <select data-action="calyear-statut-filter" style="width:auto;">
+          <option value="approuve_attente" ${calendrierStatutFilter==='approuve_attente'?'selected':''}>Approuvés + en attente</option>
+          <option value="approuve" ${calendrierStatutFilter==='approuve'?'selected':''}>Approuvés uniquement</option>
+          <option value="en_attente" ${calendrierStatutFilter==='en_attente'?'selected':''}>En attente uniquement</option>
+          <option value="toutes" ${calendrierStatutFilter==='toutes'?'selected':''}>Toutes (avec refusées)</option>
+        </select>
+      </span>
     </div>
     ${renderCalendrierBalanceStrip(year, calendrierPersonneFilter || (currentUser?String(currentUser.id):''))}
     <div class="footer-note" style="text-align:left; padding:6px 0 12px; display:flex; gap:14px; flex-wrap:wrap;">${legend}</div>
@@ -9556,6 +9624,7 @@ function render(){
       renderSettingsModal(),
       renderEditLeaveRequestModal(),
       renderLeaveRequestPreviewModal(),
+      renderCalendrierDayDetailModal(),
       renderToast()
     ].join('');
     restoreModalScroll(modalScrollTop);
@@ -9840,7 +9909,27 @@ function dispatchClickAction(action, el){
       break;
     }
     case 'calmonth-today': { const t = new Date(); calendrierYear = t.getFullYear(); calendrierMonth = t.getMonth(); render(); break; }
-    case 'calendrier-request-day': congesTab = 'mes-demandes'; leaveReqPrefillDate = el.dataset.date; render(); break;
+    case 'calendrier-request-day': {
+      const date = el.dataset.date;
+      // Sur petit écran, pas de survol souris pour montrer qui est déjà en congé ce jour-là (voir
+      // `title` sur la cellule) : un premier tap affiche donc ce détail au lieu de foncer directement
+      // vers "Nouvelle demande" — uniquement si quelqu'un y est déjà, sinon rien à montrer.
+      if(isNarrowViewport() && leaveEntriesForDate(date).length > 0){
+        calendrierDayDetail = { date };
+      } else {
+        congesTab = 'mes-demandes';
+        leaveReqPrefillDate = date;
+      }
+      render();
+      break;
+    }
+    case 'close-calendrier-day-detail': calendrierDayDetail = null; render(); break;
+    case 'calendrier-request-day-confirmed':
+      calendrierDayDetail = null;
+      congesTab = 'mes-demandes';
+      leaveReqPrefillDate = el.dataset.date;
+      render();
+      break;
     case 'remove-leave-type': removeLeaveType(el.dataset.typeId); break;
     case 'logout': logout(); break;
     case 'activate-license': activateLicenseKey(); break;

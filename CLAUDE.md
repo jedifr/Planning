@@ -420,6 +420,53 @@ une pastille par jour et par personne en congé, plutôt que la liste tabulaire 
   seule journée du jour ; entièrement absent (pas d'encart vide) si personne n'est en congé
   aujourd'hui, comme sur les vues Jour/Semaine.
 
+### Ergonomie mobile du calendrier annuel
+
+Trois correctifs suite à une revue explicite de l'utilisation sur smartphone (retour utilisateur
+réel, testé à 390px de large) :
+
+- **`isNarrowViewport()`/`MOBILE_BREAKPOINT_PX`** (720, même seuil que la règle CSS `@media
+  screen and (max-width:720px)` déjà utilisée ailleurs) — petite fonction utilitaire (`typeof
+  window !== 'undefined' && window.innerWidth <= 720`) réutilisée par les deux points suivants.
+- **Vue « Mois » par défaut sur petit écran** — `calendrierViewMode` est désormais initialisée à
+  `isNarrowViewport() ? 'mois' : 'annee'` (plus une constante figée à `'annee'`) : une cellule de
+  38px de la vue Année, avec plusieurs pastilles, est trop petite pour viser un jour précis au
+  doigt, alors que "Mois" (cellules bien plus grandes) s'y prête. Un calcul **une seule fois**, à la
+  déclaration de la variable (donc au chargement de l'appli) — jamais réappliqué ensuite : basculer
+  manuellement sur "Année" reste possible et n'est jamais annulé par un redessin, même principe que
+  `userDefaultPlanningView` (une préférence posée une fois, jamais réécrasée après coup).
+- **Détail du jour accessible au tap, avant de foncer vers "Nouvelle demande"**
+  (`calendrierDayDetail`/`renderCalendrierDayDetailModal`/`leaveEntriesForDate`) — le clic sur un
+  jour ("Poser un congé directement depuis le calendrier", voir plus haut) montre déjà cette info au
+  survol sur ordinateur (`title`), mais un survol n'existe pas au doigt : sur petit écran, cliquer un
+  jour où quelqu'un est **déjà** en congé ouvre donc d'abord une pop-up listant qui (indépendante des
+  filtres personne/type/statut du calendrier — le but est de répondre à "qui est vraiment là", pas de
+  reproduire la vue déjà filtrée à l'écran), avec un bouton "📅 Poser un congé ce jour" pour
+  poursuivre. Sur un jour sans personne en congé, ou sur grand écran (le survol souris couvre déjà ce
+  cas), le clic fonce directement vers "Nouvelle demande" comme avant — aucun changement de
+  comportement en dehors de ce cas précis.
+- **`.view-tabs`/`.search-bar` avec `flex-wrap`** — ces deux conteneurs (barre d'onglets Congés,
+  barre de filtres du calendrier, et plus généralement toute barre de recherche/filtres de l'appli)
+  n'avaient aucun retour à la ligne : sur un téléphone, 5 onglets ou plusieurs sélecteurs côte à côte
+  débordaient plutôt que de s'empiler proprement. `.search-bar-group` — petit conteneur
+  `inline-flex` qui garde un couple `<label>`+`<select>` ensemble sur la même ligne quand la barre
+  se met à retomber sur plusieurs lignes (sinon le label et son select pourraient se retrouver
+  séparés sur deux lignes différentes) ; utilisé pour les filtres Personne/Type/Statut du calendrier.
+- **Bug réel découvert en vérifiant "Nouvelle demande" à 390px : `!important` manquant sur la règle
+  mobile de `.commande-top-fields`.** Plusieurs formulaires (« Nouvelle demande », « Attribuer un
+  congé directement », « Générer un rythme d'alternance ») fixent leur propre nombre de colonnes en
+  style **inline** (`style="grid-template-columns:1fr 1fr 1fr 1fr 1.2fr auto;"`, etc.) — un style
+  inline gagne toujours face à une règle de classe, y compris une règle `@media`, sauf `!important`.
+  La règle mobile `.commande-top-fields{grid-template-columns:1fr;}` (sous `max-width:720px`)
+  n'avait donc **jamais** eu d'effet sur ces formulaires, malgré l'intention affichée depuis
+  longtemps dans ce document ("le formulaire Nouvelle commande... repasse déjà en une seule colonne
+  sous 720px" — inexact pour ces instances-là) : les champs restaient collés sur plusieurs colonnes
+  étroites au lieu de s'empiler. Corrigé en ajoutant `!important` à cette règle, même remède déjà
+  appliqué juste au-dessus pour `.commandes-columns` (qui a le même problème avec un style posé par
+  JS plutôt qu'en dur) — réflexe : toute nouvelle règle mobile visant une classe qui peut aussi
+  recevoir un style inline (grille de colonnes personnalisée par formulaire) doit être vérifiée en
+  conditions réelles à largeur réduite, pas seulement relue dans le code, sous peine de croire un
+  correctif effectif alors qu'il ne s'applique en pratique jamais.
 
 `leaveTypes[]` porte `sansSolde` (bool, `false` par défaut) — un type dont les jours pris ne
 s'imputent sur aucune allocation annuelle (typiquement un type « École » pour un apprenti en
@@ -1766,6 +1813,21 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   nom de fonction commençant par "parse" renvoie l'objet qu'on imagine. Réflexe : avant de
   réutiliser le retour d'une fonction existante, vérifier son type réel (au besoin en lisant son
   corps), surtout quand un nom pourrait suggérer autre chose.
+- **Règle CSS mobile sans effet face à un style inline sur le même élément.** Une règle `@media
+  (max-width:...)` a une spécificité de classe normale : un `style="grid-template-columns:..."`
+  posé en dur sur l'élément (nombre de colonnes propre à chaque formulaire, ex.
+  `.commande-top-fields`) la bat systématiquement, quelle que soit la largeur d'écran — la règle
+  mobile ne s'applique alors JAMAIS, en silence, sans erreur ni avertissement nulle part. Repéré en
+  vérifiant "Nouvelle demande" (Congés) à 390px de large : les champs restaient sur plusieurs
+  colonnes étroites malgré la règle `@media max-width:720px{.commande-top-fields{grid-template-
+  columns:1fr;}}` déjà présente. `.commandes-columns` avait déjà ce correctif un peu plus haut dans
+  la feuille de style (`!important`), mais ce n'est pas un réflexe acquis : `.commande-top-fields`
+  n'avait pas reçu le même traitement. Réflexe : toute règle mobile visant une classe qui peut aussi
+  recevoir un `style` inline (JS ou marquage) doit être **vérifiée en conditions réelles à largeur
+  réduite** (DevTools ou Playwright avec un viewport étroit), jamais seulement relue dans le code —
+  sous peine de croire un correctif effectif alors qu'il ne s'applique en pratique jamais. Si la
+  vérification révèle le problème, ajouter `!important` à la règle mobile (même remède que
+  `.commandes-columns`).
 
 ## Conventions
 
