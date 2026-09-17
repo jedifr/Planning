@@ -818,6 +818,36 @@ des deux flux à avoir une étape « avant de confirmer » — l'import Excel st
   tel aperçu à l'import standard serait un changement de flux plus large (introduire une étape de
   confirmation qui n'existe pas aujourd'hui), pas fait.
 
+### Date de début possible à l'import
+
+`pieces[].dateDebutPossible` (voir modèle de données — déjà respecté par `computeSchedule` comme
+plancher de planification, `materialFloor`) est désormais renseignable **dès l'import**, pas
+seulement après coup ligne par ligne dans le tableau des tâches — cas réel : une pièce qui ne peut
+pas démarrer avant l'arrivée d'une matière première, connue au moment de préparer l'import.
+
+- **Import standard (Excel)** : colonne optionnelle reconnue par `normalizeHeaderKey` sous les noms
+  « Date de début possible »/« Départ possible »/« Date matière »/etc. — absente, `dateDebutPossible`
+  reste `null`, comportement inchangé. Parsée par `parseFlexibleDate` (même formats flexibles que la
+  date de besoin, voir plus bas).
+- **Import personnalisé** : colonne à associer dans le mapping (`map.dateDebutPossible`, optionnelle,
+  comme `numeroLigne`/`matiere`), propagée par `transformCustomRow` sous la clé canonique
+  `'DateDebutPossible'` que `buildImportGroups` reçoit en dernier paramètre (`kDateDebutPossible`).
+  **Également éditable ligne par ligne dans l'aperçu** (`renderCustomImportModal`, étape `'preview'`,
+  colonne "Départ possible", un `<input type="date">` par pièce à côté de Poste/Opérateur/Durée) —
+  utile quand l'information n'est pas dans le fichier mais connue au moment de valider l'import.
+  `updateImportPreviewDateDebutPossible(oid, value)` (même mécanisme que
+  `updateImportPreviewPoste`/`updateImportPreviewOperateur`) pose la valeur sur la bonne pièce dans
+  `cs.preview.groups` et déclenche un `render()` — la colonne "Début au mieux" (voir ci-dessus) se
+  recalcule donc aussitôt en fonction, `simulateImportStarts` clonant déjà les pièces telles quelles.
+  `applyImportProfile` initialise `dateDebutPossible: ''` sur un profil enregistré avant l'ajout de ce
+  champ (même garde-fou que pour `reference2`/`refClient`).
+- Une valeur illisible (colonne mappée mais cellule vide ou mal formée) **n'est jamais un motif de
+  ligne ignorée** contrairement à une date de besoin invalide — `dateDebutPossible` reste simplement
+  `null`, un champ optionnel qu'on peut de toute façon corriger après coup.
+- `<input type="date">` bénéficie automatiquement du redessin différé jusqu'au `focusout`
+  (`isDeferredTimeField`, voir Pièges) — aucun code supplémentaire nécessaire, le mécanisme est
+  générique à tout champ `type="date"`/`"time"` porteur d'un `data-action`.
+
 ## Dates flexibles à l'import
 
 `parseFlexibleDate(raw)` accepte, en plus d'un objet `Date` déjä résolu (cellule Excel réellement
@@ -956,38 +986,60 @@ libérer) doit se propager à tout le groupe — voir `propagateFusionGroupField
   « 📌 Figée » — pour une pièce fusionnée, il regarde `fusionPinned`, jamais la simple
   présence de `dureeOverrideH` (toujours posé sur un groupe, figé ou non).
 
-## Recherche de commande/pièce — rien ne doit masquer un résultat trouvé
+## Recherche/isolement de commande — rien ne doit masquer un résultat trouvé
 
 La barre `#commande-search-input` (au-dessus de "Tâches en cours") filtre à la fois « Tâches en
-cours » et « Tâches terminées » (`matchesSearch`). Deux réglages indépendants pouvaient masquer
-silencieusement un résultat que la recherche avait pourtant trouvé, sans que rien à l'écran
-n'indique lequel des deux en était la cause : les bandeaux repliés, et le filtre "Commande à
-livrer" (`dueFilterRange`) laissé sur une fenêtre restreinte (ex. "Cette semaine" oublié d'une
-session de tri précédente).
+cours » et « Tâches terminées » (`matchesSearch`) ; isoler une commande (`selectedCommandeId` —
+clic sur un occupant de casier "Zones de stockage", une commande liée depuis "Risques de retard"/
+"Temps de production", ou le bouton `#N` d'une carte) restreint la liste à cette seule commande.
+`highlightActive()` (`!!(selectedCommandeId || searchQuery)`) traite les deux de façon symétrique
+pour le surlignage — mais plusieurs réglages indépendants pouvaient encore masquer silencieusement
+le résultat trouvé/isolé, sans que rien à l'écran n'indique lequel en était la cause : les bandeaux
+repliés, le filtre "Commande à livrer" (`dueFilterRange`) laissé sur une fenêtre restreinte, le
+filtre "⚠️ À risque" resté actif, et la fenêtre de récence des tâches terminées (`doneFilterRange`).
+Corrigés en deux temps : d'abord pour la recherche seule, puis (bug réel signalé séparément :
+cliquer un occupant de casier n'affichait rien si l'un de ces réglages traînait d'une session de tri
+précédente) étendu à l'isolement, qui n'avait pas été repris lors du premier correctif alors que le
+même principe s'appliquait déjà.
 
-**Deux fonctions pures, sans aucun état à garder synchronisé** — `effectiveDueFilterRange()` et
-`isPanelEffectivelyCollapsed(key)` — recalculent, à chaque rendu, la valeur à utiliser à partir de
-`searchQuery`, sans jamais modifier `dueFilterRange` ni `panelCollapsed` eux-mêmes :
+**Fonctions pures, sans aucun état à garder synchronisé** — recalculent, à chaque rendu, la valeur à
+utiliser à partir de `highlightActive()`, sans jamais modifier `dueFilterRange`/`panelCollapsed`/
+`doneFilterRange` eux-mêmes :
 ```js
-function effectiveDueFilterRange(){ return searchQuery ? 'all' : dueFilterRange; }
-function isPanelEffectivelyCollapsed(key){ return !!panelCollapsed[key] && !searchQuery; }
+function effectiveDueFilterRange(){ return highlightActive() ? 'all' : dueFilterRange; }
+function isPanelEffectivelyCollapsed(key){ return !!panelCollapsed[key] && !highlightActive(); }
 ```
-Pendant une recherche active, la fenêtre d'échéance est donc **toujours** ignorée et les deux
-bandeaux **toujours** dépliés — quoi qu'il arrive par ailleurs. Dès que la recherche est vidée, la
-vraie valeur (jamais touchée) redevient effective automatiquement : pas de restauration à coder,
-rien à oublier de remettre en place.
+Pendant une recherche OU un isolement, la fenêtre d'échéance est donc **toujours** ignorée et les
+deux bandeaux **toujours** dépliés — quoi qu'il arrive par ailleurs. Dès que recherche et isolement
+sont tous deux retombés à rien, la vraie valeur (jamais touchée) redevient effective
+automatiquement : pas de restauration à coder, rien à oublier de remettre en place.
 
 - `renderCommandes` (filtre `active`, message d'état vide, sélecteur "Commande à livrer", indicateur
   "•" du menu "Filtres & tri", chevrons/corps des deux bandeaux) et `exportActiveCommandesExcel`
   (même filtre sur l'export, pour rester cohérent avec ce qui est affiché à l'écran) appellent ces
   deux fonctions au lieu de lire `dueFilterRange`/`panelCollapsed` directement.
 - Le sélecteur "Commande à livrer" affiche l'option correspondant à `effectiveDueFilterRange()`
-  (donc "Toutes" pendant une recherche, jamais la valeur réelle suspendue) et porte une note "Suspendu
-  pendant la recherche" tant que `searchQuery` est renseigné — la neutralisation est expliquée à
-  l'écran, pas seulement appliquée en silence.
-- `togglePanelCollapse`/`case 'set-due-filter'` continuent d'écrire directement
-  `panelCollapsed`/`dueFilterRange`, exactement comme avant — ce sont les seuls points d'écriture,
-  jamais modifiés par la recherche elle-même.
+  (donc "Toutes" pendant une recherche/un isolement, jamais la valeur réelle suspendue) et porte une
+  note "Suspendu pendant la recherche ou l'isolement d'une commande" tant que `highlightActive()` est
+  vrai — la neutralisation est expliquée à l'écran, pas seulement appliquée en silence.
+- **Filtre "⚠️ À risque"** (`atRiskFilterActive`) — même règle, appliquée directement au point
+  d'usage (pas de fonction `effective...` dédiée, une seule condition suffit) : `if(atRiskFilterActive
+  && !highlightActive())` dans `renderCommandes` et `exportActiveCommandesExcel`. Sans ce garde-fou,
+  isoler une commande qui n'est pas à risque restait invisible si ce filtre était resté actif.
+- **Fenêtre de récence des tâches terminées** (`doneFilterRange`/`doneFilterCutoff`) — même règle :
+  `const doneCutoff = highlightActive() ? null : doneFilterCutoff(doneFilterRange);` dans
+  `renderCommandes`. Cas réel visé : isoler, depuis un casier occupé, une commande déjà entièrement
+  terminée mais dont le casier n'est pas encore libéré (module "Libération manuelle du casier" actif,
+  voir plus bas) — sans ce correctif, une fenêtre "1 semaine" par exemple aurait pu la masquer si sa
+  date de clôture était plus ancienne.
+- `togglePanelCollapse`/`case 'set-due-filter'`/`toggle-at-risk-filter`/`case 'set-done-filter'`
+  continuent d'écrire directement `panelCollapsed`/`dueFilterRange`/`atRiskFilterActive`/
+  `doneFilterRange`, exactement comme avant — ce sont les seuls points d'écriture, jamais modifiés
+  par la recherche/l'isolement eux-mêmes.
+- Message d'état vide dédié dans `renderCommandes` : si `selectedCommandeId` est posé mais qu'aucune
+  commande n'apparaît dans "Tâches en cours" (tous les filtres étant pourtant neutralisés), le
+  message explique qu'elle est sans doute déjà entièrement terminée plutôt que d'afficher à tort
+  "Aucune commande à risque"/un message générique — ce cas prime sur les autres messages d'état vide.
 - **Pourquoi pas un mécanisme "mémoriser l'état d'avant, restaurer à l'effacement" ?** Une première
   version fonctionnait ainsi (`panelCollapsedBeforeSearch`/`dueFilterRangeBeforeSearch`, capturés à
   l'ouverture de la recherche, restaurés à la fermeture) — bug réel corrigé : un changement manuel du
@@ -1001,9 +1053,13 @@ rien à oublier de remettre en place.
   référence une fois la recherche terminée (comportement voulu : la dernière action explicite de la
   personne l'emporte, sans notion d'"avant/après" à retenir).
 - Réflexe : tout NOUVEAU filtre/repli qui peut exclure une commande de la liste "Tâches en
-  cours"/"Terminées" doit avoir sa propre fonction `effectiveXxx()`/`isXxxEffectively...()` sur ce
-  modèle plutôt qu'un mécanisme de capture/restauration — plus robuste par construction, jamais de
-  travers-caisse possible entre une modification manuelle et l'état mémorisé.
+  cours"/"Terminées" doit avoir sa propre fonction `effectiveXxx()`/`isXxxEffectively...()` (ou au
+  minimum un `&& !highlightActive()` au point d'usage) sur ce modèle plutôt qu'un mécanisme de
+  capture/restauration — plus robuste par construction, jamais de travers-caisse possible entre une
+  modification manuelle et l'état mémorisé. Et **vérifier qu'un correctif déjà fait pour la
+  recherche couvre aussi l'isolement** (et réciproquement) : les deux masquent le même genre de
+  résultat pour les mêmes raisons, un correctif qui ne traite que l'un des deux repropage la faille
+  sur l'autre, comme signalé ici.
 
 ## Filtre « Commande à livrer » (liste des tâches en cours)
 
@@ -1585,6 +1641,19 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   Réflexe : avant de cloner un objet pour une simulation jetable, vérifier qu'aucun de ses champs ne
   porte une référence vers un objet qu'une fonction appelée ensuite mute par référence — sinon le
   clone silencieusement "perd" cette relation.
+- **`parseFlexibleDate` renvoie une chaîne "AAAA-MM-JJ", jamais un objet `Date`.** En ajoutant la
+  colonne "Date de début possible" à l'import (voir plus haut), première version : `const parsed =
+  parseFlexibleDate(...); dateDebutPossible: parsed ? toDateInputValue(parsed) : null` — plantage
+  immédiat (`d.getFullYear is not a function`), détecté par le test de non-régression avant tout
+  déploiement. `parseFlexibleDate` fait DÉJÀ tout le travail de conversion en interne et renvoie
+  directement la chaîne au format attendu par les champs `dateDebutPossible`/`dateBesoin` (ou `''`
+  si illisible) — lui repasser le résultat dans `toDateInputValue` (qui attend un objet `Date`, pas
+  une chaîne) est une erreur de type silencieuse à l'écriture, plantant seulement à l'exécution. Le
+  reste du fichier l'utilise déjà correctement ainsi (`resolvedDate`, `datesByRef`, comparaisons de
+  chaînes) — un nouveau point d'appel doit s'aligner sur ce contrat plutôt que de supposer qu'un
+  nom de fonction commençant par "parse" renvoie l'objet qu'on imagine. Réflexe : avant de
+  réutiliser le retour d'une fonction existante, vérifier son type réel (au besoin en lisant son
+  corps), surtout quand un nom pourrait suggérer autre chose.
 
 ## Conventions
 
