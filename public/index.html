@@ -808,7 +808,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.19.0';
+const APP_VERSION = '1.20.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1389,6 +1389,7 @@ function migrateState(st){
       if(o.epaisseur === undefined) o.epaisseur = '';
       if(o.numeroLigne === undefined) o.numeroLigne = null;
       if(o.previsionAvantCloture === undefined) o.previsionAvantCloture = null;
+      if(o.previsionAuDemarrage === undefined) o.previsionAuDemarrage = null; // voir applySingleStatusChange/CLAUDE.md, section "Retard de démarrage"
       if(o.fusionGroupId === undefined) o.fusionGroupId = null;
       if(o.fusionPinned === undefined){
         // Migration unique : jusqu'ici, un groupe fusionné était TOUJOURS figé (manualStart) une
@@ -4539,6 +4540,28 @@ function isPositionPinned(o){
   if(o.fusionGroupId) return !!o.fusionPinned;
   return !!(o.manualStart || o.dureeOverrideH);
 }
+// Retard de démarrage : écart entre la position que le moteur donnait à cette pièce juste avant son
+// démarrage réel (previsionAuDemarrage, figé une seule fois au premier "Démarrer" — voir
+// applySingleStatusChange) et ce démarrage réel (debutReel). Contrairement à l'écart de durée
+// (computeProductionTimeByUser, prévu vs réellement passé) : volontairement PAS attribué à un
+// opérateur, ni affiché dans "Temps de production" — un retard de démarrage tient à la disponibilité
+// du poste / à l'ordonnancement, pas à qui a fini par exécuter la tâche une fois prise en main.
+// `null` si l'un des deux horodatages manque (pièce jamais démarrée via l'appli, ou démarrée avant
+// l'introduction de ce suivi — aucune donnée rétroactive, comme previsionAvantCloture).
+function retardDemarrageJours(o){
+  if(!o.previsionAuDemarrage || !o.previsionAuDemarrage.debut || !o.debutReel) return null;
+  const prevu = new Date(o.previsionAuDemarrage.debut);
+  const reel = new Date(o.debutReel);
+  return (reel - prevu) / 86400000;
+}
+// Badge discret, affiché uniquement au-delà d'un demi-jour de retard (une tâche pile à l'heure ou en
+// avance n'a rien à signaler) — même seuil de prudence que le reste de l'appli pour ne pas noyer
+// l'information utile sous du bruit de planification normal (quelques heures d'écart sont courantes).
+function retardDemarrageBadgeHtml(o){
+  const j = retardDemarrageJours(o);
+  if(j == null || j < 0.5) return '';
+  return `<div class="footer-note" style="margin:2px 0 0; color:var(--red);" title="Le planning prévoyait un démarrage le ${formatDT(new Date(o.previsionAuDemarrage.debut))}">🕓 Démarrée avec ${Math.round(j*10)/10} j de retard</div>`;
+}
 function opElapsedHours(o, st){
   if(!o.sessions || o.sessions.length===0) return 0;
   const cfg = configForPiece(o, st);
@@ -4824,7 +4847,7 @@ function renderPausedTasksBanner(){
 // archivePrevisionHistory) — sans elle, cette estimation serait perdue dès que le moteur ancre
 // start/end sur les horaires réels. Les deux sont pré-calculés par l'appelant, sur le planning
 // d'AVANT la mutation.
-function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, previsionAvant){
+function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, previsionAvant, previsionAuDemarrage){
   const prev = o.statut;
   if(!o.sessions) o.sessions = [];
 
@@ -4832,6 +4855,11 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
     if(prev === 'a_faire'){
       o.debutReel = nowStr;
       o.manualStart = nowStr; // la tâche démarre réellement maintenant : on fige son début
+      // Fige la dernière position de DÉBUT que le moteur calculait pour cette pièce juste avant ce
+      // démarrage réel — permet de mesurer après coup un retard de démarrage (voir CLAUDE.md,
+      // section "Retard de démarrage"). Jamais réécrit ensuite (une pause/reprise n'est pas un
+      // nouveau démarrage) ; absent si la pièce a été démarrée avant l'introduction de ce suivi.
+      if(previsionAuDemarrage) o.previsionAuDemarrage = { debut: toInputValue(previsionAuDemarrage) };
       // Tague automatiquement l'opérateur si personne ne l'a fait à la création (poste partagé :
       // voir activeIdentityId) — jamais d'écrasement si un opérateur était déjà choisi.
       if(!o.operatorUserId){ const aid = activeIdentityId(); if(aid) o.operatorUserId = aid; }
@@ -4924,6 +4952,7 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
     o.sessions = [];
     o.dureeReelleH = null; // le temps réellement passé sera reconstitué à la prochaine clôture
     o.dureeReelleParOperateur = null;
+    o.previsionAuDemarrage = null; // un nouveau retard de démarrage sera mesuré au prochain vrai démarrage
     o.autoPaused = false;
   }
   return null;
@@ -4994,11 +5023,26 @@ function setOpStatut(cid, oid, newStatut){
       if((oo.statut === 'en_cours' || oo.statut === 'en_pause') && opBefore && opBefore.end) plannedEndsBefore[oo.id] = opBefore.end;
     });
   }
+  // Dernière position de DÉBUT calculée par le moteur juste avant qu'une pièce "à faire" ne démarre
+  // réellement — transition symétrique de previsionsAvant ci-dessus (qui fige la fin juste avant la
+  // clôture) : sert uniquement à mesurer, après coup, un retard de démarrage (voir CLAUDE.md, section
+  // "Retard de démarrage" et applySingleStatusChange). Seules les pièces encore "à faire" sont
+  // concernées — une reprise après pause (en_pause -> en_cours) n'est pas un nouveau démarrage.
+  const previsionsAuDemarrage = {};
+  if(newStatut === 'en_cours'){
+    const scheduleBeforeStart = getSchedule();
+    group.forEach(({cc, oo}) => {
+      if(oo.statut !== 'a_faire') return;
+      const cBefore = scheduleBeforeStart.find(x=>x.id===cc.id);
+      const opBefore = cBefore && cBefore.pieces.find(p=>p.id===oo.id);
+      if(opBefore && opBefore.start) previsionsAuDemarrage[oo.id] = opBefore.start;
+    });
+  }
 
   const nowStr = toInputValue(new Date());
   let maxAdvanceH = 0;
   group.forEach(({cc, oo}) => {
-    const diffH = applySingleStatusChange(cc, oo, newStatut, nowStr, plannedEndsBefore[oo.id], previsionsAvant[oo.id]);
+    const diffH = applySingleStatusChange(cc, oo, newStatut, nowStr, plannedEndsBefore[oo.id], previsionsAvant[oo.id], previsionsAuDemarrage[oo.id]);
     if(diffH && diffH > maxAdvanceH) maxAdvanceH = diffH;
   });
   if(maxAdvanceH > 0){
@@ -5409,6 +5453,32 @@ function commitImportGroups(targetState, groups){
     createdNoms.push({ nom: ref, dateBesoin: g.dateBesoin, urgence: g.urgence, nbPieces: g.pieces.length, zoneStockage: importedCmd.zoneStockage });
   });
   return { createdNoms, updatedNoms, sansEcheance };
+}
+// Date de début "au mieux" pour chaque pièce d'un import, calculée AVANT de confirmer quoi que ce
+// soit : simule l'ajout de ces groupes sur une copie jetable de l'état réel, puis lit la position que
+// le moteur donnerait à chacune — sans jamais toucher au vrai planning tant que "Confirmer l'import"
+// n'a pas été cliqué. Clone `state` en profondeur (JSON, comme le fait déjà la sauvegarde/l'export) ;
+// reconstruit les groupes plutôt que de les cloner tels quels, car `g.existing` pointe vers une
+// commande RÉELLE de `state.commandes` — un clone JSON brut du groupe la détacherait de la copie de
+// l'état, et `commitImportGroups` (qui mute `existing` par référence) n'ajouterait alors les
+// nouvelles pièces nulle part de visible dans la simulation.
+function simulateImportStarts(groups){
+  const clonedState = JSON.parse(JSON.stringify(state));
+  const simGroups = {};
+  Object.keys(groups).forEach(ref => {
+    const g = groups[ref];
+    const existing = g.existing ? clonedState.commandes.find(c => c.id === g.existing.id) : null;
+    simGroups[ref] = {
+      dateBesoin: g.dateBesoin, urgence: g.urgence, refClient: g.refClient,
+      pieces: JSON.parse(JSON.stringify(g.pieces)),
+      existing
+    };
+  });
+  commitImportGroups(clonedState, simGroups);
+  const schedule = computeSchedule(clonedState);
+  const startByPieceId = {};
+  schedule.forEach(c => c.pieces.forEach(o => { if(o.start) startByPieceId[o.id] = o.start; }));
+  return startByPieceId;
 }
 function processExcelImportRows(rows){
   if(!rows.length){ alert('Le fichier ne contient aucune ligne de données.'); return; }
@@ -6414,6 +6484,31 @@ function machineNeighbors(byMachine, machineId, pieceId){
   if(idx < 0) return { before:null, after:null };
   return { before: idx>0 ? list[idx-1] : null, after: idx<list.length-1 ? list[idx+1] : null };
 }
+// Vue d'ensemble des retards de démarrage constatés, groupée par POSTE — jamais par personne (voir
+// CLAUDE.md, section "Retard de démarrage") : un poste chroniquement en retard au démarrage de ses
+// tâches est un signal d'ordonnancement/charge, pas une question d'individu, contrairement à l'écart
+// de durée (page Temps de production, lui bien attribué par opérateur). Parcourt commandes actives
+// ET archivées (comme computeProductionTimeByUser) — previsionAuDemarrage n'est jamais vidé par
+// l'archivage. Seules les pièces avec au moins un demi-jour de retard sont comptées (même seuil que
+// retardDemarrageBadgeHtml).
+function computeRetardDemarrageParPoste(st){
+  const byMachine = {};
+  const consider = (o) => {
+    const j = retardDemarrageJours(o);
+    if(j == null || j < 0.5) return;
+    const key = o.machineId || '—';
+    const rec = byMachine[key] || (byMachine[key] = { nbTaches:0, totalJours:0 });
+    rec.nbTaches++;
+    rec.totalJours += j;
+  };
+  (st.commandes||[]).forEach(c => c.pieces.forEach(consider));
+  (st.commandesArchivees||[]).forEach(c => c.pieces.forEach(consider));
+  return Object.keys(byMachine).map(machineId => {
+    const m = st.machines.find(mm=>mm.id===machineId);
+    const rec = byMachine[machineId];
+    return { machineId, machineNom: m?m.nom:'Poste supprimé', nbTaches: rec.nbTaches, moyenneJours: rec.totalJours/rec.nbTaches, totalJours: rec.totalJours };
+  }).sort((a,b) => b.totalJours - a.totalJours);
+}
 function renderRisquesPage(){
   const schedule = getSchedule();
   // Même filtre "commande active" que la liste principale (renderCommandes) : une commande
@@ -6479,7 +6574,23 @@ function renderRisquesPage(){
       </table>
     </div>`;
   }).join('') : `<div class="empty-state"><strong>Aucune commande à risque</strong>Toutes les commandes en cours respectent leur échéance estimée.</div>`;
+  const retardsDemarrage = computeRetardDemarrageParPoste(state);
+  const retardsDemarrageHtml = retardsDemarrage.length ? `
+  <section class="panel">
+    <div class="panel-head">
+      <h2>🕓 Retards de démarrage constatés</h2>
+      <span class="footer-note" style="margin:0;">Par poste, jamais par personne</span>
+    </div>
+    <div class="panel-body">
+      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Écart entre la date de début que le planning prévoyait juste avant qu'une tâche ne démarre réellement, et son démarrage effectif. Mesuré uniquement à partir de maintenant — aucune donnée avant l'introduction de ce suivi. Regroupé par poste plutôt que par personne : ce retard tient à la disponibilité du poste et à l'ordonnancement, pas à qui a fini par exécuter la tâche.</div>
+      <table class="ops-table">
+        <thead><tr><th>Poste</th><th>Tâches démarrées en retard</th><th>Retard moyen</th><th>Retard cumulé</th></tr></thead>
+        <tbody>${retardsDemarrage.map(r => `<tr><td>${escapeHtml(r.machineNom)}</td><td>${r.nbTaches}</td><td>${Math.round(r.moyenneJours*10)/10} j</td><td>${Math.round(r.totalJours*10)/10} j</td></tr>`).join('')}</tbody>
+      </table>
+    </div>
+  </section>` : '';
   return `
+  ${retardsDemarrageHtml}
   <section class="panel">
     <div class="panel-head">
       <h2>⚠️ Risques de retard</h2>
@@ -7275,24 +7386,36 @@ function renderCustomImportModal(){
       </div>`;
   } else if(cs.step === 'preview'){
     const p = cs.preview;
+    // Date de début "au mieux" pour chaque pièce, recalculée à CHAQUE rendu (donc à chaque correction
+    // de poste/opérateur dans ce même aperçu, qui changerait la file d'attente) — jamais mise en cache
+    // ici : voir simulateImportStarts, purement calculée sur une copie jetable de l'état, sans jamais
+    // toucher au vrai planning avant "Confirmer l'import".
+    const projectedStarts = simulateImportStarts(p.groups);
     const refRows = Object.keys(p.groups).filter(r=>p.groups[r].pieces.length>0).map(ref => {
       const g = p.groups[ref];
-      const pieceRows = g.pieces.map(pc => `
+      const refStarts = g.pieces.map(pc => projectedStarts[pc.id]).filter(Boolean);
+      const refEarliest = refStarts.length ? new Date(Math.min(...refStarts.map(d=>d.getTime()))) : null;
+      const pieceRows = g.pieces.map(pc => {
+        const debutPrevu = projectedStarts[pc.id];
+        return `
         <tr>
           <td style="padding-left:20px;">${escapeHtml([pc.piece,pc.etape].filter(Boolean).join(' / ')||'—')}</td>
           <td><select data-action="update-import-preview-poste" data-oid="${pc.id}">${machineOptions(pc.machineId)}</select></td>
           <td><select data-action="update-import-preview-operateur" data-oid="${pc.id}">${operatorOptions(pc.operatorUserId)}</select></td>
           <td>${durationLabel((pc.tempsUnitaire*pc.quantite)/60)}</td>
-        </tr>`).join('');
-      return `<tr><td colspan="4" style="background:var(--panel-2); font-weight:600;">${escapeHtml(ref)} — ${g.existing?'fusion dans commande existante':'nouvelle commande'}</td></tr>${pieceRows}`;
+          <td>${debutPrevu ? formatDT(debutPrevu) : '—'}</td>
+        </tr>`;
+      }).join('');
+      const refHeadSuffix = refEarliest ? ` <span class="footer-note" style="margin:0;">— début au mieux : ${formatDT(refEarliest)}</span>` : '';
+      return `<tr><td colspan="5" style="background:var(--panel-2); font-weight:600;">${escapeHtml(ref)} — ${g.existing?'fusion dans commande existante':'nouvelle commande'}${refHeadSuffix}</td></tr>${pieceRows}`;
     }).join('');
     body = `
       <div class="modal-section-title" style="margin-top:0;">Aperçu avant import</div>
       <div class="leave-confirm-banner">
         <strong>${p.nbNouvelles}</strong> nouvelle(s) commande(s), <strong>${p.nbFusions}</strong> fusion(s) dans une commande existante, <strong>${p.nbPieces}</strong> pièce(s) au total.
       </div>
-      <div class="footer-note" style="text-align:left; margin-bottom:6px;">Poste et opérateur peuvent être corrigés ici avant de valider, ligne par ligne.</div>
-      ${refRows ? `<table class="ops-table"><thead><tr><th>Pièce / Étape</th><th>Poste</th><th>Opérateur</th><th>Durée</th></tr></thead><tbody>${refRows}</tbody></table>` : ''}
+      <div class="footer-note" style="text-align:left; margin-bottom:6px;">Poste et opérateur peuvent être corrigés ici avant de valider, ligne par ligne — la colonne "Début au mieux" se recalcule aussitôt en fonction. C'est une simulation sur l'état actuel du planning, pas un engagement figé : la position réelle une fois importée dépendra de ce qui aura changé entre-temps (autres commandes, priorités).</div>
+      ${refRows ? `<table class="ops-table"><thead><tr><th>Pièce / Étape</th><th>Poste</th><th>Opérateur</th><th>Durée</th><th>Début au mieux</th></tr></thead><tbody>${refRows}</tbody></table>` : ''}
       ${(() => {
         // Détail complet (valeurs du fichier), pas juste un résumé texte par ligne — pour retrouver
         // à quoi correspondait une ligne ignorée sans devoir rouvrir l'Excel.
@@ -8867,8 +8990,8 @@ function renderOpsRow(o, c){
         ? (o.finReel ? `<span class="dates-val">📋 <span class="lbl">Terminée le</span> ${formatDT(new Date(o.finReel))}</span>` : `<span class="dates-val" style="color:var(--text-faint)">📋 Hors planning — réalisée</span>`)
         : (o.debutReel ? `<span class="dates-val">📋 <span class="lbl">Hors planning — depuis</span> ${formatDT(new Date(o.debutReel))}</span>` : `<span class="dates-val" style="color:var(--text-faint)">📋 Hors planning</span>`))
     : done
-    ? (o.finReel ? `<span class="dates-val"><span class="lbl">Terminée le</span> ${formatDT(new Date(o.finReel))}</span>` : `<span class="dates-val" style="color:var(--text-faint)">Réalisée</span>`)
-    : (o.start ? `<span class="dates-val"><span class="lbl">Début</span> ${formatDT(o.start)} <button class="ghost icon-btn date-pin-btn" data-action="open-date-picker" data-target="ms-${o.id}" title="Modifier et figer la date de départ">📅</button><input type="datetime-local" id="ms-${o.id}" class="hidden-date-input" data-action="set-manual-start" data-cid="${c.id}" data-oid="${o.id}" value="${o.manualStart || toInputValue(o.start)}"><br><span class="lbl">Fin</span> ${formatDT(o.end)}<br><span class="pin-badge ${overridden?'pinned':'floating'}">${overridden?'📌 Figée':'〰️ Volante'}</span>${overridden?` <button class="ghost small" data-action="reset-op-override" data-cid="${c.id}" data-oid="${o.id}" style="padding:2px 6px;">↺ Libérer</button>`:''}</span>` : '—');
+    ? (o.finReel ? `<span class="dates-val"><span class="lbl">Terminée le</span> ${formatDT(new Date(o.finReel))}</span>${retardDemarrageBadgeHtml(o)}` : `<span class="dates-val" style="color:var(--text-faint)">Réalisée</span>`)
+    : (o.start ? `<span class="dates-val"><span class="lbl">Début</span> ${formatDT(o.start)} <button class="ghost icon-btn date-pin-btn" data-action="open-date-picker" data-target="ms-${o.id}" title="Modifier et figer la date de départ">📅</button><input type="datetime-local" id="ms-${o.id}" class="hidden-date-input" data-action="set-manual-start" data-cid="${c.id}" data-oid="${o.id}" value="${o.manualStart || toInputValue(o.start)}"><br><span class="lbl">Fin</span> ${formatDT(o.end)}<br><span class="pin-badge ${overridden?'pinned':'floating'}">${overridden?'📌 Figée':'〰️ Volante'}</span>${overridden?` <button class="ghost small" data-action="reset-op-override" data-cid="${c.id}" data-oid="${o.id}" style="padding:2px 6px;">↺ Libérer</button>`:''}</span>${retardDemarrageBadgeHtml(o)}` : '—');
   const phaseCell = `<input type="number" min="1" step="1" class="phase-input" value="${o.phase||1}" data-action="op-phase" data-cid="${c.id}" data-oid="${o.id}" title="Cette pièce démarre une fois terminées toutes les pièces de phase inférieure de la même commande">
     <input type="date" class="phase-input" style="margin-top:4px;" value="${o.dateDebutPossible||''}" data-action="op-date-debut-possible" data-cid="${c.id}" data-oid="${o.id}" title="Départ possible au plus tôt (optionnel) — ex : en attente d'une matière qui arrive à cette date">`;
   const machineIdxPourPiece = state.machines.findIndex(mm=>mm.id===o.machineId);

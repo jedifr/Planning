@@ -782,6 +782,42 @@ pas seulement celle qui a posé problème.
 - `proceedFromPostes()` propage `errorDetails`/`duplicateDetails` dans `cs.preview`, au même endroit
   que `groups`/`errors`/`duplicateLines`.
 
+### Date de début « au mieux » à l'aperçu (import personnalisé)
+
+Avant même de confirmer, l'aperçu (`renderCustomImportModal`, étape `'preview'`) affiche la date de
+début que le moteur donnerait à chaque pièce si l'import était validé tel quel — colonne « Début au
+mieux » sur chaque ligne, et un résumé sur l'en-tête de chaque référence (« — début au mieux :
+{date} », la plus précoce de ses pièces). Uniquement sur l'import **personnalisé** : c'est le seul
+des deux flux à avoir une étape « avant de confirmer » — l'import Excel standard
+(`processExcelImportRows`) importe directement puis affiche un résultat, sans jamais repasser par un
+écran de confirmation (voir plus bas, § Import Excel standard : direct, aucun aperçu chiffré).
+
+- `simulateImportStarts(groups)` — clone `state` en profondeur (JSON, comme la sauvegarde/l'export),
+  reconstruit une copie des groupes en **rattachant `existing` à la commande correspondante DANS LE
+  CLONE** (jamais un clone JSON brut du groupe : `g.existing` pointe vers une commande RÉELLE de
+  `state.commandes`, et `commitImportGroups` mute cet objet par référence pour y ajouter les
+  nouvelles pièces — un clone JSON détacherait `existing` de la copie de l'état, et les pièces
+  fusionnées n'apparaîtraient nulle part de visible dans la simulation), appelle
+  `commitImportGroups(clonedState, ...)` sur cette copie jetable, puis lit `o.start` pour chaque
+  pièce dans `computeSchedule(clonedState)`. **Jamais un `commit()`, jamais un `render()` du vrai
+  planning** — purement une lecture, le vrai `state` n'est jamais touché tant que « ✓ Confirmer
+  l'import » n'a pas été cliqué.
+- Recalculée **à chaque rendu** de l'étape preview (pas mise en cache) : une correction de poste ou
+  d'opérateur dans ce même aperçu (`updateImportPreviewPoste`/`updateImportPreviewOperateur`, qui
+  déclenchent déjà un `render()`) change la file d'attente du poste choisi, donc la date projetée —
+  la recalculer à la volée évite tout état supplémentaire à invalider (même philosophie que
+  `effectiveDueFilterRange()`, voir plus haut).
+- C'est une **simulation sur l'état actuel**, pas un engagement figé (texte explicite dans l'aperçu) :
+  la position réelle une fois l'import confirmé dépendra de ce qui aura changé entre-temps (une autre
+  commande créée sur le même poste, une urgence, etc.) — d'autant plus vrai si l'aperçu reste ouvert
+  un moment avant de cliquer « Confirmer ».
+- **Import Excel standard : direct, aucun aperçu chiffré.** `processExcelImportRows` appelle
+  `commitImportGroups(state, groups)` immédiatement, `commit()` dans la foulée, puis affiche
+  seulement un résultat (`excelImportResult`/`renderExcelImportModal`) — jamais de « Début au mieux »
+  ici, puisqu'il n'y a structurellement aucun moment « avant de confirmer » où l'afficher. Ajouter un
+  tel aperçu à l'import standard serait un changement de flux plus large (introduire une étape de
+  confirmation qui n'existe pas aujourd'hui), pas fait.
+
 ## Dates flexibles à l'import
 
 `parseFlexibleDate(raw)` accepte, en plus d'un objet `Date` déjä résolu (cellule Excel réellement
@@ -1073,6 +1109,42 @@ onglet (`currentPage==='risques'`, bouton dans `renderHeader`) qui réunit ça d
 - Bouton de l'onglet (`renderHeader`) : badge avec le nombre de commandes à risque, sur le même
   modèle que le badge de congés en attente — recalculé à chaque rendu via `getSchedule()`, jamais
   mis en cache séparément.
+
+### Retard de démarrage
+
+Distinct de l'écart de durée déjà mesuré par la page « ⏱ Temps de production » (théorique
+`tempsUnitaire×quantité` vs réellement passé, attribué par opérateur, voir `computeProductionTimeByUser`/
+`formatEcart`) : ici, on mesure si une tâche a **démarré** quand le planning le prévoyait, pas
+combien de temps elle a pris une fois commencée. Volontairement **jamais attribué à une personne** —
+un retard de démarrage tient à la disponibilité du poste et à l'ordonnancement (une autre commande
+l'occupait, une urgence est passée devant), pas à qui a fini par exécuter la tâche une fois prise en
+main.
+
+- `pieces[].previsionAuDemarrage` (`{ debut } | null`) — posé par `applySingleStatusChange`
+  **au moment précis** de la transition `a_faire → en_cours` (le tout premier « Démarrer », jamais
+  une reprise après pause), à partir du planning d'AVANT cette mutation (`getSchedule()` appelé par
+  `setOpStatut`, même principe que `previsionAvantCloture` — voir plus haut — mais à la transition
+  symétrique : ici on fige le DÉBUT juste avant qu'il devienne réel, là-bas la FIN). Remis à `null`
+  à la réouverture (`↺ Rouvrir`), comme `dureeReelleH` — un nouveau retard sera mesuré au prochain
+  vrai démarrage. `migrateState` l'initialise à `null` sur les pièces existantes. Champ purement
+  transitoire côté client au sens où il n'est jamais réaffiché tel quel : seul `retardDemarrageJours`
+  le lit.
+- `retardDemarrageJours(o)` — écart en jours entre `previsionAuDemarrage.debut` et `debutReel` ;
+  positif = démarrée en retard, négatif = en avance. `null` si l'un des deux horodatages manque
+  (pièce jamais démarrée via l'appli, ou démarrée avant l'introduction de ce suivi) — **aucune
+  donnée rétroactive**, exactement comme `previsionAvantCloture`.
+- `retardDemarrageBadgeHtml(o)` — badge discret (🕓, rouge) sur la ligne d'une pièce, dans le tableau
+  des tâches (`renderOpsRow`/`datesCell`, branches « Terminée » et « volante/en cours »), affiché
+  **seulement au-delà d'un demi-jour** de retard — une tâche pile à l'heure ou en avance n'affiche
+  rien, pour ne pas noyer l'info utile sous du bruit de planification normal.
+- `computeRetardDemarrageParPoste(st)` — vue d'ensemble groupée **par poste**, jamais par personne :
+  nombre de tâches démarrées en retard, retard moyen, retard cumulé. Parcourt commandes actives ET
+  archivées (comme `computeProductionTimeByUser`) — `previsionAuDemarrage` n'est jamais vidé par
+  l'archivage. Affichée dans une section dédiée « 🕓 Retards de démarrage constatés » en tête de la
+  page « ⚠️ Risques de retard » (page choisie plutôt que « Temps de production », qui reste
+  exclusivement organisée par personne) — section indépendante du filtre « commande active/à
+  risque » du reste de la page : un poste peut être régulièrement en retard au démarrage même une
+  fois ses commandes terminées ou hors risque.
 
 ### Lisibilité des couleurs d'allée utilisées comme texte
 
@@ -1483,6 +1555,36 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   s'exécute en pratique jamais après un déploiement réel. Rendre les sessions persistantes à travers
   un redémarrage demanderait un store dédié (ex. `connect-sqlite3` sur la même base) — non fait,
   changement plus large qu'une simple configuration.
+- **Un aperçu qui se met à appeler `computeSchedule()` expose les fixtures de test à l'ancien piège
+  du `config` incomplet.** `simulateImportStarts` (date de début « au mieux » à l'aperçu d'import,
+  voir plus haut) a fait exécuter le moteur de planification dans un rendu (`renderCustomImportModal`,
+  étape preview) qui ne le sollicitait jamais auparavant — un test de non-régression existant
+  (`test_import_ignored_lines_detail.js`) construisait un `state.config` minimal
+  (`{ matiereFusionActive, storageZones, importDateGroupingToleranceDays }`, sans jamais passer par
+  `migrateState`) qui n'avait jamais posé problème puisque rien n'appelait le moteur sur cet état —
+  jusqu'à ce que ce nouveau rendu le fasse, retombant exactement dans le piège déjà documenté plus
+  haut (« `config` présent mais incomplet dans `migrateState()` ») : `nextWorkingInstant`/
+  `addWorkingDuration` tournant à vide jusqu'à leur garde-fou, ralentissant le test au point de
+  dépasser le timeout (15 s) de la suite. Corrigé en complétant le `config` de la fixture, pas en
+  modifiant le moteur (un vrai `state` applicatif passe toujours par `migrateState`, donc ce
+  `config` incomplet n'existe que dans un test construit à la main). Réflexe : tout nouveau code qui
+  fait dépendre un rendu jusque-là "léger" de `computeSchedule()`/`getSchedule()` doit rejouer toute
+  la suite de tests existante, pas seulement ses propres tests — un test qui construisait un `state`
+  minimal en toute sécurité peut cesser de l'être du jour au lendemain.
+- **Détacher `g.existing` d'une commande réelle en clonant un groupe d'import pour une simulation.**
+  `simulateImportStarts` doit exécuter `commitImportGroups` sur une copie jetable de `state` (jamais
+  le vrai) — la tentation immédiate est de cloner `groups` tel quel (`JSON.parse(JSON.stringify(...))`)
+  en même temps que `state`. Piège : `g.existing`, quand il est posé, pointe vers une commande RÉELLE
+  de `state.commandes` (pas une copie), et `commitImportGroups` la mute PAR RÉFÉRENCE pour lui
+  ajouter les nouvelles pièces (`existing.pieces.push(...)`) — un clone JSON de `groups` détache
+  `g.existing` de la copie de l'état (`clonedState`) sur laquelle tourne la simulation : les pièces
+  "fusionnées dans une commande existante" ne rejoindraient alors AUCUNE commande visible de
+  `clonedState.commandes`, et `computeSchedule` ne leur donnerait donc jamais de position. Corrigé en
+  reconstruisant les groupes de simulation à la main, en rattachant explicitement `existing` à la
+  commande de même id retrouvée DANS `clonedState.commandes`, plutôt qu'en clonant le groupe entier.
+  Réflexe : avant de cloner un objet pour une simulation jetable, vérifier qu'aucun de ses champs ne
+  porte une référence vers un objet qu'une fonction appelée ensuite mute par référence — sinon le
+  clone silencieusement "perd" cette relation.
 
 ## Conventions
 
