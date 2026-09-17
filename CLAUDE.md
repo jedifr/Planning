@@ -307,7 +307,89 @@ normalisation est la responsabilité de l'appelant, pas de la validation finale.
   midi ») utilisé dans les tableaux (Mes demandes, Équipe, À valider) et les e-mails de
   notification. `leaveDureeLabel(jours)` formate un nombre de jours (entier ou `.5`) en français.
 
-### Type sans décompte de solde (apprentis, etc.)
+### Chevauchement de congés (même personne, types différents ou pas)
+
+`findLeaveConflicts(userId, debut, fin, excludeId)` détecte les congés d'une même personne qui
+chevauchent une période donnée, **quel que soit leur type** (un RTT posé au milieu d'un congé payé
+reste un doublon) — seuls les congés `refuse` ne comptent pas. `suggestFreeRange` s'en sert pour
+proposer la plus longue plage réellement libre à l'intérieur de la période demandée.
+
+- **À la création/modification d'une demande** (`renderLeaveRequestPreviewModal`, pop-up
+  « Conséquences ») : le chevauchement est affiché avec le détail des congés concernés et, si une
+  plage libre existe, une suggestion pour s'y ramener en un clic. Pour un salarié qui soumet sa
+  propre demande, c'est **bloquant** (pas de bouton de confirmation, juste « Corrigez les dates »).
+  Pour un administrateur (attribution directe ou correction d'un congé existant), c'est un simple
+  **avertissement** : il garde la main (« Attribuer malgré le chevauchement »), une raison légitime
+  de superposer étant possible (ex. régularisation).
+- **Bug réel corrigé : deux points qui font BASCULER une demande à `approuve` ne vérifiaient aucun
+  chevauchement**, contournant entièrement l'avertissement ci-dessus — signalé après qu'une personne
+  (Cyril) s'est retrouvée avec deux types de congés différents ("Congés payés" ET "Sans solde")
+  tous deux approuvés le même jour. Chaque demande, prise isolément au moment de sa création, ne
+  chevauchait rien d'encore existant ; c'est leur approbation **séparée**, plus tard, qui a créé le
+  doublon, sans qu'aucun des deux flux d'approbation ne les compare l'une à l'autre :
+  - `decideLeaveRequest(reqId, 'approuve')` (bouton « ✓ Approuver » de l'onglet « À valider ») —
+    appelle désormais `findLeaveConflicts` et affiche un `confirm()` listant le(s) congé(s) en
+    conflit avant de finaliser l'approbation. Refuser une demande, ou approuver une demande sans
+    aucun chevauchement, ne déclenche jamais cet avertissement (comportement inchangé dans ces cas).
+  - `confirmMyLeaveAssignment(reqId, 'accept')` (la personne accepte, depuis « Mes demandes » ou le
+    lien e-mail, une proposition d'un administrateur) — même avertissement, cette fois adressé à la
+    personne elle-même (c'est elle qui, à cet instant précis, décide en connaissance de cause).
+    Refuser une proposition ne déclenche jamais l'avertissement (aucun nouveau congé approuvé ne
+    serait créé).
+  - Dans les deux cas : un simple avertissement (`confirm()`), jamais un blocage silencieux — cohérent
+    avec l'esprit du reste de la fonctionnalité congés (l'admin/la personne concernée garde toujours
+    la main, informée plutôt qu'empêchée).
+- **Visibilité avant même de cliquer** : un badge rouge (« ⚠ chevauche N congé(s) déjà posé(s) »)
+  apparaît directement dans la ligne du tableau de l'onglet « À valider »
+  (`renderAValiderTab`) et dans la bannière « Propositions à confirmer » de « Mes demandes »
+  (`renderMesDemandesTab`) dès qu'un chevauchement existe — pour ne pas dépendre uniquement du
+  `confirm()` déclenché au clic, qui n'apparaît qu'après coup.
+- Réflexe : tout nouveau point de code qui fait passer une demande de congé au statut `approuve`
+  (pas seulement les trois déjà couverts : création directe imposée, `decideLeaveRequest`,
+  `confirmMyLeaveAssignment`) doit se demander s'il doit aussi vérifier `findLeaveConflicts` — une
+  demande qui n'était pas encore en conflit au moment de sa création peut très bien l'être devenue
+  entre-temps (une autre demande approuvée sur la même période, dans l'intervalle).
+
+### Calendrier annuel des congés
+
+Onglet « Calendrier annuel » (`congesTab==='calendrier'`, `renderCalendrierAnnuelTab`) — vue
+d'ensemble type calendrier mural (inspirée d'un outil RH externe montré par l'utilisateur, Lucca) :
+une pastille par jour et par personne en congé, plutôt que la liste tabulaire des autres onglets.
+
+- `calendrierYear`/`calendrierPersonneFilter`/`calendrierStatutFilter` — état d'affichage purement
+  transitoire (comme `searchQuery`/`selectedCommandeId`), jamais persisté. Le filtre statut
+  (`approuve_attente` par défaut, ou `approuve`/`en_attente`/`toutes` avec les refusées) et le
+  filtre personne s'appliquent à l'indexation `byDate` (une seule fois pour toute l'année visible,
+  jamais recalculée par mois), commune aux deux vues ci-dessous.
+- **Vue « Année » (par défaut)** — les 12 mois de l'année en grille compacte (`calyear-months-wrap`),
+  une pastille pleine par personne en congé approuvé ce jour (contour seulement si `en_attente`),
+  infobulle (`title`) au survol pour le détail. Comportement et rendu strictement inchangés par les
+  ajouts ci-dessous.
+- **Vue « Mois » (nouvelle)** — `calendrierViewMode` (`'annee'` | `'mois'`), bascule via les deux
+  boutons `.view-tabs` en tête de l'onglet (même style que les onglets de vues du planning
+  Jour/Semaine/...). Un seul mois affiché en grand (`calendrierMonth`, 0-11), avec le **nom des
+  personnes directement lisible** (`.calmonth-name-pill`) plutôt que de simples pastilles — assez de
+  place disponible en vue mono-mois pour ne pas se limiter à un survol. Au-delà de 3 personnes un
+  même jour, un compteur `+N` remplace les pastilles supplémentaires (comportement volontairement
+  identique à la troncature déjà en place à 4 pastilles en vue Année). Navigation par mois
+  (`calmonth-nav`, gère le passage à l'année suivante/précédente en butée décembre/janvier) et
+  bouton « Mois en cours » (`calmonth-today`), symétriques des équivalents déjà existants côté année
+  (`calyear-nav`/`calyear-today`, tous deux inchangés).
+- `renderCalMonthBlock(year, mois, byDate, todayKey, large)` — factorise la construction d'un bloc
+  mois, partagée par les deux vues (`large=false` en vue Année, `large=true` en vue Mois) : même
+  indexation `byDate`, seule la richesse d'affichage de chaque case change. Réflexe déjà appliqué
+  ailleurs dans l'appli (`ganttBarsHtml`, `ADMIN_ONLY_SECTIONS`...) : factoriser plutôt que dupliquer
+  un rendu presque identique entre deux contextes.
+- **Filtre par type de congé** (`calendrierTypeFilter`, `''` = tous) — sélecteur supplémentaire à
+  côté de « Personne »/« Statut », s'applique à la même indexation `byDate` (donc aux deux vues). La
+  légende (`legendTypes`) se réduit au seul type filtré plutôt que de continuer à lister tous les
+  types de l'atelier — éviter de faire croire que les autres couleurs peuvent encore apparaître.
+- **Week-ends et jours fériés mis en évidence** (`isFrenchPublicHoliday`, déjà utilisée ailleurs
+  dans l'appli) — fond légèrement teinté (`.calmonth-daycell.weekend`, réutilise `--panel-2`) sur
+  ces jours dans la grille, dans les deux vues — repère visuel rapide pour ne pas confondre un jour
+  sans aucun congé posé avec un jour où, de toute façon, personne ne travaille.
+
+
 
 `leaveTypes[]` porte `sansSolde` (bool, `false` par défaut) — un type dont les jours pris ne
 s'imputent sur aucune allocation annuelle (typiquement un type « École » pour un apprenti en

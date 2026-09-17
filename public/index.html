@@ -653,10 +653,18 @@
   .calmonth-weekday-hd{font-size:11px; color:var(--text-faint); text-align:center; padding-bottom:4px;}
   .calmonth-daycell{min-height:38px; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding-top:3px; border-radius:3px;}
   .calmonth-daycell.other-month{opacity:0.3;}
+  .calmonth-daycell.weekend{background:var(--panel-2);}
   .calmonth-daycell.today .calmonth-daynum{background:var(--accent); color:#fff; border-radius:50%;}
   .calmonth-daynum{font-size:12.5px; width:24px; height:24px; display:flex; align-items:center; justify-content:center; color:var(--text-dim);}
   .calmonth-dots{display:flex; gap:2px; flex-wrap:wrap; justify-content:center; min-height:9px; margin-top:2px;}
   .calmonth-dot{width:7px; height:7px; border-radius:50%; display:inline-block;}
+  .calmonth-single-wrap{max-width:640px; margin:0 auto;}
+  .calmonth-block-large .calmonth-title{font-size:18px;}
+  .calmonth-daycell.large{min-height:76px; align-items:stretch; padding:4px 3px;}
+  .calmonth-daycell.large .calmonth-daynum{align-self:flex-start; width:auto; height:auto;}
+  .calmonth-names{display:flex; flex-direction:column; gap:2px; margin-top:2px; width:100%;}
+  .calmonth-name-pill{font-size:10px; line-height:1.5; padding:0 5px; border-radius:8px; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .calmonth-name-pill.pending{background:transparent; border:1.3px solid;}
   .calmonth-dot.pending{background:transparent; border:1.6px solid;}
   .alt-cal{max-width:420px;}
   .alt-cal-head{display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom:8px;}
@@ -808,7 +816,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.21.0';
+const APP_VERSION = '1.22.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1133,8 +1141,11 @@ function newAlternanceDraft(){
 let alternanceDraft = newAlternanceDraft();
 let equipePersonneFilter = ''; // '' = toutes les personnes
 let calendrierYear = new Date().getFullYear();
+let calendrierMonth = new Date().getMonth(); // 0-11, utilisé seulement en vue "mois"
+let calendrierViewMode = 'annee'; // 'annee' | 'mois'
 let calendrierPersonneFilter = ''; // '' = toutes les personnes
 let calendrierStatutFilter = 'approuve_attente'; // 'approuve_attente' | 'approuve' | 'en_attente' | 'toutes'
+let calendrierTypeFilter = ''; // '' = tous les types de congé
 let viewAnchor = new Date();
 let weekRenderCtx = { days: [] };
 let dragCtx = null;
@@ -3490,6 +3501,16 @@ async function notifyUserOfImposedLeave(req_){
 function confirmMyLeaveAssignment(reqId, decision){
   const req_ = state.leaveRequests.find(r=>r.id===reqId);
   if(!req_ || req_.statut!=='a_confirmer') return;
+  if(decision === 'accept'){
+    const conflicts = findLeaveConflicts(req_.userId, req_.debut, req_.fin, req_.id);
+    if(conflicts.length > 0){
+      const detail = conflicts.map(c => {
+        const ct = leaveTypeById(c.typeId);
+        return `- ${ct?ct.nom:'Congé'} du ${formatDateFr(c.debut)} au ${formatDateFr(c.fin)}`;
+      }).join('\n');
+      if(!confirm(`⚠ Vous avez déjà un congé sur cette période :\n${detail}\n\nAccepter quand même ce congé en plus ?`)) return;
+    }
+  }
   req_.statut = decision === 'accept' ? 'approuve' : 'refuse';
   req_.traiteLe = new Date().toISOString();
   req_.commentaireValidation = decision === 'accept' ? 'Confirmé par la personne concernée.' : 'Refusé par la personne concernée.';
@@ -3751,6 +3772,19 @@ function simulateLeaveImpact(reqId){
 function decideLeaveRequest(reqId, statut){
   const req_ = state.leaveRequests.find(r=>r.id===reqId);
   if(!req_) return;
+  if(statut === 'approuve'){
+    const conflicts = findLeaveConflicts(req_.userId, req_.debut, req_.fin, req_.id);
+    if(conflicts.length > 0){
+      const requester = usersList.find(u=>String(u.id)===req_.userId);
+      const nomPersonne = requester ? requester.username : 'Cette personne';
+      const detail = conflicts.map(c => {
+        const ct = leaveTypeById(c.typeId);
+        const statutLabels = { approuve:'approuvé', a_confirmer:'à confirmer', en_attente:'en attente' };
+        return `- ${ct?ct.nom:'Congé'} du ${formatDateFr(c.debut)} au ${formatDateFr(c.fin)} (${statutLabels[c.statut]||c.statut})`;
+      }).join('\n');
+      if(!confirm(`⚠ ${nomPersonne} a déjà un congé sur cette période, éventuellement d'un autre type :\n${detail}\n\nApprouver quand même cette demande ?`)) return;
+    }
+  }
   let commentaire = '';
   if(statut==='refuse'){
     commentaire = prompt('Motif du refus (optionnel) :') || '';
@@ -6047,8 +6081,11 @@ function renderMesDemandesTab(){
   const toConfirmBanner = toConfirm.length ? `<div class="modal-section-title" style="margin-top:0;">Propositions à confirmer</div>
     ${toConfirm.map(r => {
       const t = leaveTypeById(r.typeId);
+      const conflicts = findLeaveConflicts(r.userId, r.debut, r.fin, r.id);
+      const conflictNote = conflicts.length ? `<div class="footer-note" style="margin:6px 0 0; color:var(--red);">⚠ Vous avez déjà ${conflicts.length} congé(s) sur cette période : ${conflicts.map(c=>{ const ct=leaveTypeById(c.typeId); return `${ct?ct.nom:'congé'} du ${formatDateFr(c.debut)} au ${formatDateFr(c.fin)}`; }).join(', ')}.</div>` : '';
       return `<div class="leave-confirm-banner">
         <div>Un administrateur vous propose un congé de <strong>${t?escapeHtml(t.nom):'congé'}</strong> du <strong>${formatDateFr(r.debut)}</strong> au <strong>${formatDateFr(r.fin)}</strong>${r.motif?` — ${escapeHtml(r.motif)}`:''}.</div>
+        ${conflictNote}
         <div style="display:flex; gap:8px; margin-top:8px;">
           <button class="small" style="color:var(--green); border-color:var(--green);" data-action="confirm-my-leave" data-id="${r.id}" data-decision="accept">✅ Oui, j'accepte</button>
           <button class="danger-ghost small" data-action="confirm-my-leave" data-id="${r.id}" data-decision="refuse">❌ Non, je refuse</button>
@@ -6148,9 +6185,53 @@ function renderEquipeTab(){
     <div class="footer-note" style="text-align:left; padding-top:10px;">Les périodes déjà passées apparaissent en grisé.</div>
   </div></section>`;
 }
+const CAL_MONTH_NAMES = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+// Construit un mois de la grille (vue année : compact, une pastille par personne ; vue mois : plus
+// grand, avec le nom des personnes directement lisible). `large` ne change aucune donnée, seulement
+// la richesse d'affichage — même `byDate` déjà indexé pour toute l'année, aucun recalcul nécessaire.
+function renderCalMonthBlock(year, mi, byDate, todayKey, large){
+  const first = new Date(year, mi, 1);
+  const gridStart = startOfWeek(first);
+  const cells = []; for(let i=0;i<42;i++){ const d=new Date(gridStart); d.setDate(d.getDate()+i); cells.push(d); }
+  // Une grille de 5 semaines suffit presque toujours ; on ne montre la 6e que si le mois en a réellement besoin.
+  const need6 = cells[34].getMonth()===mi;
+  const shownCells = need6 ? cells : cells.slice(0,35);
+  const hd = ['L','M','M','J','V','S','D'].map(w=>`<div class="calmonth-weekday-hd">${w}</div>`).join('');
+  const dayCells = shownCells.map(d => {
+    const key = toDateInputValue(d);
+    const inMonth = d.getMonth()===mi;
+    const isToday = key===todayKey;
+    const isWeekend = d.getDay()===0 || d.getDay()===6;
+    const isHoliday = isFrenchPublicHoliday(d);
+    const entries = byDate[key] || [];
+    let bodyHtml;
+    if(large){
+      const shown = entries.slice(0,3);
+      const rest = entries.length - shown.length;
+      bodyHtml = `<div class="calmonth-names">${shown.map(en =>
+        `<span class="calmonth-name-pill ${en.statut==='en_attente'?'pending':''}" style="${en.statut==='en_attente'?`border-color:${en.couleur}; color:${en.couleur};`:`background:${en.couleur};`}">${escapeHtml(en.username)}</span>`
+      ).join('')}${rest>0?`<span class="footer-note" style="margin:0;">+${rest}</span>`:''}</div>`;
+    } else {
+      bodyHtml = `<div class="calmonth-dots">${entries.slice(0,4).map(en =>
+        `<span class="calmonth-dot ${en.statut==='en_attente'?'pending':''}" style="${en.statut==='en_attente'?`border-color:${en.couleur};`:`background:${en.couleur};`}"></span>`
+      ).join('')}</div>`;
+    }
+    const titleAttr = entries.length ? entries.map(en => `${en.username} — ${en.typeNom}${en.statut==='en_attente'?' (en attente)':''}`).join('\n') : '';
+    const cls = ['calmonth-daycell', inMonth?'':'other-month', isToday?'today':'', (isWeekend||isHoliday)?'weekend':'', large?'large':''].filter(Boolean).join(' ');
+    return `<div class="${cls}" ${titleAttr?`title="${escapeHtml(titleAttr)}"`:''}>
+      <div class="calmonth-daynum">${d.getDate()}</div>
+      ${bodyHtml}
+    </div>`;
+  }).join('');
+  return `<div class="calmonth-block ${large?'calmonth-block-large':''}">
+    <div class="calmonth-title">${CAL_MONTH_NAMES[mi]}</div>
+    <div class="calmonth-grid ${large?'large':''}">${hd}${dayCells}</div>
+  </div>`;
+}
 function renderCalendrierAnnuelTab(){
   const year = calendrierYear;
   const todayKey = toDateInputValue(new Date());
+  const isMoisMode = calendrierViewMode === 'mois';
 
   // Filtre statut : quelles demandes doivent apparaître dans la grille.
   const statutsVoulus = calendrierStatutFilter==='toutes' ? ['approuve','en_attente','refuse']
@@ -6158,11 +6239,13 @@ function renderCalendrierAnnuelTab(){
     : calendrierStatutFilter==='en_attente' ? ['en_attente']
     : ['approuve','en_attente'];
 
-  // Index par jour (AAAA-MM-JJ) -> liste de { username, typeNom, couleur, statut }, une seule fois pour toute l'année.
+  // Index par jour (AAAA-MM-JJ) -> liste de { username, typeNom, couleur, statut }, une seule fois pour toute l'année
+  // (même en vue "mois" : indexer l'année entière ne coûte rien de plus et évite un second chemin de calcul).
   const byDate = {};
   state.leaveRequests.forEach(r => {
     if(!statutsVoulus.includes(r.statut)) return;
     if(calendrierPersonneFilter && r.userId !== calendrierPersonneFilter) return;
+    if(calendrierTypeFilter && r.typeId !== calendrierTypeFilter) return;
     if(!r.debut || !r.fin) return;
     const u = usersList.find(uu=>String(uu.id)===r.userId);
     const t = leaveTypeById(r.typeId);
@@ -6176,48 +6259,40 @@ function renderCalendrierAnnuelTab(){
     }
   });
 
-  const monthsHtml = Array.from({length:12}, (_,mi) => {
-    const first = new Date(year, mi, 1);
-    const gridStart = startOfWeek(first);
-    const cells = []; for(let i=0;i<42;i++){ const d=new Date(gridStart); d.setDate(d.getDate()+i); cells.push(d); }
-    // Une grille de 5 semaines suffit presque toujours ; on ne montre la 6e que si le mois en a réellement besoin.
-    const need6 = cells[34].getMonth()===mi;
-    const shownCells = need6 ? cells : cells.slice(0,35);
-    const hd = ['L','M','M','J','V','S','D'].map(w=>`<div class="calmonth-weekday-hd">${w}</div>`).join('');
-    const dayCells = shownCells.map(d => {
-      const key = toDateInputValue(d);
-      const inMonth = d.getMonth()===mi;
-      const isToday = key===todayKey;
-      const entries = byDate[key] || [];
-      const dotsHtml = entries.slice(0,4).map(en =>
-        `<span class="calmonth-dot ${en.statut==='en_attente'?'pending':''}" style="${en.statut==='en_attente'?`border-color:${en.couleur};`:`background:${en.couleur};`}"></span>`
-      ).join('');
-      const titleAttr = entries.length ? entries.map(en => `${en.username} — ${en.typeNom}${en.statut==='en_attente'?' (en attente)':''}`).join('\n') : '';
-      return `<div class="calmonth-daycell ${inMonth?'':'other-month'} ${isToday?'today':''}" ${titleAttr?`title="${escapeHtml(titleAttr)}"`:''}>
-        <div class="calmonth-daynum">${d.getDate()}</div>
-        <div class="calmonth-dots">${dotsHtml}</div>
-      </div>`;
-    }).join('');
-    const monthNames = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
-    return `<div class="calmonth-block">
-      <div class="calmonth-title">${monthNames[mi]}</div>
-      <div class="calmonth-grid">${hd}${dayCells}</div>
-    </div>`;
-  }).join('');
+  const monthsHtml = isMoisMode
+    ? renderCalMonthBlock(year, calendrierMonth, byDate, todayKey, true)
+    : Array.from({length:12}, (_,mi) => renderCalMonthBlock(year, mi, byDate, todayKey, false)).join('');
 
-  const legend = state.leaveTypes.map(t => `<span class="calyear-legend-item"><span class="machine-swatch" style="background:${t.couleur}"></span>${escapeHtml(t.nom)}</span>`).join('')
+  const legendTypes = calendrierTypeFilter ? state.leaveTypes.filter(t=>t.id===calendrierTypeFilter) : state.leaveTypes;
+  const legend = legendTypes.map(t => `<span class="calyear-legend-item"><span class="machine-swatch" style="background:${t.couleur}"></span>${escapeHtml(t.nom)}</span>`).join('')
     + `<span class="calyear-legend-item"><span class="calmonth-dot pending" style="border-color:var(--text-faint);"></span>En attente</span>`;
+
+  const navHtml = isMoisMode
+    ? `<button class="small" data-action="calmonth-nav" data-dir="-1">‹</button>
+       <strong style="min-width:150px; text-align:center;">${CAL_MONTH_NAMES[calendrierMonth]} ${year}</strong>
+       <button class="small" data-action="calmonth-nav" data-dir="1">›</button>
+       <button class="small" data-action="calmonth-today">Mois en cours</button>`
+    : `<button class="small" data-action="calyear-nav" data-dir="-1">‹</button>
+       <strong style="min-width:50px; text-align:center;">${year}</strong>
+       <button class="small" data-action="calyear-nav" data-dir="1">›</button>
+       <button class="small" data-action="calyear-today">Année en cours</button>`;
 
   return `<section class="panel"><div class="panel-body">
     <div class="search-bar">
-      <button class="small" data-action="calyear-nav" data-dir="-1">‹</button>
-      <strong style="min-width:50px; text-align:center;">${year}</strong>
-      <button class="small" data-action="calyear-nav" data-dir="1">›</button>
-      <button class="small" data-action="calyear-today">Année en cours</button>
+      <div class="view-tabs">
+        <button class="small ${!isMoisMode?'active':''}" data-action="calview-mode" data-mode="annee">Année</button>
+        <button class="small ${isMoisMode?'active':''}" data-action="calview-mode" data-mode="mois">Mois</button>
+      </div>
+      ${navHtml}
       <label class="field" style="margin:0 0 0 12px;">Personne</label>
       <select data-action="calyear-personne-filter" style="width:auto;">
         <option value="">Toutes</option>
         ${usersList.map(u=>`<option value="${u.id}" ${calendrierPersonneFilter===String(u.id)?'selected':''}>${escapeHtml(u.username)}</option>`).join('')}
+      </select>
+      <label class="field" style="margin:0 0 0 12px;">Type</label>
+      <select data-action="calyear-type-filter" style="width:auto;">
+        <option value="">Tous</option>
+        ${state.leaveTypes.map(t=>`<option value="${t.id}" ${calendrierTypeFilter===t.id?'selected':''}>${escapeHtml(t.nom)}</option>`).join('')}
       </select>
       <label class="field" style="margin:0 0 0 12px;">Statut</label>
       <select data-action="calyear-statut-filter" style="width:auto;">
@@ -6228,7 +6303,7 @@ function renderCalendrierAnnuelTab(){
       </select>
     </div>
     <div class="footer-note" style="text-align:left; padding:6px 0 12px; display:flex; gap:14px; flex-wrap:wrap;">${legend}</div>
-    <div class="calyear-months-wrap">${monthsHtml}</div>
+    <div class="${isMoisMode?'calmonth-single-wrap':'calyear-months-wrap'}">${monthsHtml}</div>
     <div class="footer-note" style="text-align:left; padding-top:10px;">Un pastille pleine = congé approuvé. Une pastille au contour = demande encore en attente. Survolez un jour pour voir le détail.</div>
   </div></section>`;
 }
@@ -6273,10 +6348,12 @@ function renderAValiderTab(){
     const soldeApres = bal.remaining; // remaining tient déjà compte de cette demande (comptée dans "pending")
     const impactOpen = leaveImpactPreviewId === r.id;
     const impactRow = impactOpen ? renderLeaveImpactRow(r.id) : '';
+    const conflicts = findLeaveConflicts(r.userId, r.debut, r.fin, r.id);
+    const conflictNote = conflicts.length ? `<div class="footer-note" style="margin:2px 0 0; color:var(--red);" title="${conflicts.map(c=>{ const ct=leaveTypeById(c.typeId); return `${ct?ct.nom:'Congé'} du ${formatDateFr(c.debut)} au ${formatDateFr(c.fin)}`; }).join(' · ')}">⚠ chevauche ${conflicts.length} congé(s) déjà posé(s)</div>` : '';
     return `<tr>
       <td>${requester?escapeHtml(requester.username):'(compte supprimé)'}</td>
       <td><span class="machine-swatch" style="background:${t?t.couleur:'#888'}"></span>${t?escapeHtml(t.nom):'—'}</td>
-      <td>${formatDateFr(r.debut)} → ${formatDateFr(r.fin)}${demiLabel?` <span class="footer-note" style="margin:0;">(${demiLabel})</span>`:''}</td>
+      <td>${formatDateFr(r.debut)} → ${formatDateFr(r.fin)}${demiLabel?` <span class="footer-note" style="margin:0;">(${demiLabel})</span>`:''}${conflictNote}</td>
       <td>${leaveDureeLabel(nbJours)} j</td>
       <td>${isFinite(soldeApres) ? `${leaveDureeLabel(soldeApres)} j <span class="footer-note" style="margin:0;">restant(s) sur ${year} si approuvée</span>` : `<span class="footer-note" style="margin:0;">Illimité</span>`}</td>
       <td>${escapeHtml(r.motif||'—')}</td>
@@ -9721,6 +9798,15 @@ function dispatchClickAction(action, el){
     case 'remove-alternance-periode': alternanceDraft.periodes.splice(Number(el.dataset.idx), 1); render(); break;
     case 'calyear-nav': calendrierYear += Number(el.dataset.dir); render(); break;
     case 'calyear-today': calendrierYear = new Date().getFullYear(); render(); break;
+    case 'calview-mode': calendrierViewMode = el.dataset.mode; render(); break;
+    case 'calmonth-nav': {
+      calendrierMonth += Number(el.dataset.dir);
+      if(calendrierMonth < 0){ calendrierMonth = 11; calendrierYear--; }
+      else if(calendrierMonth > 11){ calendrierMonth = 0; calendrierYear++; }
+      render();
+      break;
+    }
+    case 'calmonth-today': { const t = new Date(); calendrierYear = t.getFullYear(); calendrierMonth = t.getMonth(); render(); break; }
     case 'remove-leave-type': removeLeaveType(el.dataset.typeId); break;
     case 'logout': logout(); break;
     case 'activate-license': activateLicenseKey(); break;
@@ -9844,6 +9930,7 @@ function dispatchChangeAction(el, action){
     }
     case 'calyear-personne-filter': calendrierPersonneFilter = el.value; render(); break;
     case 'calyear-statut-filter': calendrierStatutFilter = el.value; render(); break;
+    case 'calyear-type-filter': calendrierTypeFilter = el.value; render(); break;
     case 'temps-prod-range-debut': tempsProdRangeDebut = el.value; render(); break;
     case 'temps-prod-range-fin': tempsProdRangeFin = el.value; render(); break;
     case 'user-pause-field': updateUserPauseField(el.dataset.userId, el.dataset.pauseId, el.dataset.field, el.value); break;
