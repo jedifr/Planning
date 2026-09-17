@@ -23,8 +23,40 @@ sudo docker compose up -d --build
 
 Accès : `http://<IP-NAS>:3000` (exposé en HTTPS via reverse proxy Synology).
 
-**Après chaque déploiement, forcer le rechargement du navigateur** (Ctrl+Maj+R). Le
-cache a déjà provoqué de fausses pistes de débogage.
+### Rechargement automatique après déploiement
+
+Un Ctrl+Maj+R manuel après chaque déploiement a longtemps été nécessaire (le cache navigateur a
+déjà provoqué de fausses pistes de débogage — une fonctionnalité "manquante" alors qu'elle était
+juste servie par une page restée ouverte, jamais rechargée). Deux mécanismes, ajoutés ensemble,
+rendent ce geste manuel inutile dans le cas courant :
+
+- **`index.html` n'est plus jamais mis en cache sans revalidation** (`Cache-Control: no-cache`, posé
+  par `server.js` aux trois points qui le servent — `express.static`, et la route `*` de secours).
+  Un F5 tout simple (ou n'importe quel rechargement programmatique) obtient donc toujours les octets
+  réellement déployés, sans avoir besoin d'un vidage de cache forcé.
+- **Détection automatique côté client** (`checkAppVersion()`, appelée à chaque `pollRemoteState()` —
+  aucune requête supplémentaire, `APP_VERSION` du code effectivement servi est déjà inclus dans la
+  réponse `/api/state`, lue une seule fois par `server.js` au démarrage directement dans
+  `public/index.html`). Dès qu'un déploiement a eu lieu pendant qu'une page reste ouverte :
+  rechargement immédiat (`location.reload()`) si rien n'est en cours (saisie, glisser-déposer,
+  pop-up Paramètres, sauvegarde en vol — mêmes conditions que celles qui protègent déjà
+  l'application d'un état distant reçu par ce même poll) ; sinon un bandeau discret
+  (`#update-banner`, hors de `#app` — jamais reconstruit par `render()`, donc jamais un risque de
+  couper une saisie en cours) reste affiché avec un bouton "Recharger maintenant", et le
+  rechargement automatique est retenté à chaque poll suivant jusqu'à ce que ce soit sûr.
+- **Portée réelle de la détection automatique : dépend de la survie de la session au redémarrage du
+  conteneur.** `server.js` utilise le `MemoryStore` par défaut d'`express-session` (aucun `store:`
+  configuré) : toute session, quel que soit `SESSION_SECRET`, est perdue à chaque redémarrage du
+  processus — `deploy.sh` en déclenche systématiquement un (`docker compose up -d --build`). Le
+  premier `pollRemoteState()` suivant un déploiement reçoit donc en général un 401 AVANT même
+  d'atteindre `checkAppVersion()` (`if(res.status===401) return;` — volontairement silencieux, pour
+  ne pas arracher l'utilisateur à ce qu'il regarde ; voir plus bas), et l'utilisateur ne sera invité
+  à se reconnecter qu'à sa prochaine action mutante (qui, elle, ramène à l'écran de connexion —
+  lequel charge de toute façon la dernière version). Le rechargement automatique/bandeau ne se
+  déclenche donc de façon fiable que si la session survit (déploiement n'ayant pas redémarré le
+  conteneur, ou session store devenu persistant un jour) — dans le cas courant actuel, c'est surtout
+  le correctif `Cache-Control` ci-dessus qui garantit qu'on ne charge jamais une version périmée,
+  quel que soit le chemin (reconnexion normale ou rechargement déclenché par le bandeau).
 
 ## Architecture
 
@@ -615,15 +647,14 @@ volontairement la même zone (regroupement manuel de petites affaires dans un m�
   d'une commande (`submitNewCommande`, uniquement dans les branches qui créent VRAIMENT une nouvelle
   commande — pas quand des lignes s'ajoutent à une commande déjà existante du même nom, où aucune
   zone n'est réattribuée). L'import (Excel ou personnalisé) n'utilise pas cette pop-up à une seule
-  commande : `commitImportGroups` porte `zoneStockage` sur chaque entrée de `createdNoms`, et
-  `renderExcelImportModal` (déjà partagée par les deux flux d'import) l'affiche dans sa colonne
-  "Zone de stockage" du tableau récapitulatif — plus adapté qu'une pop-up par commande quand un
-  import en crée plusieurs d'un coup.
-  - **Bandeau « 📍 Zones à ranger »** — la colonne du tableau seule ne suffisait pas : petit texte
-    coloré dans la dernière colonne d'un tableau par ailleurs chargé (pièces, échéance, urgence),
-    facile à manquer alors que c'est justement l'information qui demande une action physique
-    immédiate (retour utilisateur réel : "j'aimerais que la zone de stockage soit vraiment très
-    visible"). `renderExcelImportModal` affiche en plus, juste sous la ligne de stats (même
+  commande : `commitImportGroups` porte `zoneStockage` sur chaque entrée de `createdNoms`, affiché
+  dans `renderExcelImportModal` (déjà partagée par les deux flux d'import) via le bandeau ci-dessous
+  — plus adapté qu'une pop-up par commande quand un import en crée plusieurs d'un coup.
+  - **Bandeau « 📍 Zones à ranger »** — un premier essai avait affiché la zone dans une colonne dédiée
+    du tableau récapitulatif, mais celle-ci se perdait facilement dans un tableau par ailleurs chargé
+    (pièces, échéance, urgence), alors que c'est justement l'information qui demande une action
+    physique immédiate (retour utilisateur réel : "j'aimerais que la zone de stockage soit vraiment
+    très visible"). `renderExcelImportModal` affiche donc, juste sous la ligne de stats (même
     emplacement que l'avertissement ambre "échéance provisoire"), un badge par commande **créée**
     ayant réellement reçu une zone (`r.refs.filter(c => c.zoneStockage)`) — gros texte monospace,
     couleur de l'allée (`readableZoneTextColor`), fond teinté (`hexToRgba(couleur, 0.15)`), trié par
@@ -631,8 +662,10 @@ volontairement la même zone (regroupement manuel de petites affaires dans un m�
     `renderNewCommandeZoneNoticeModal` (création manuelle), ici pour potentiellement plusieurs
     commandes d'un coup. Une commande sans zone (toutes occupées) ou simplement **complétée**
     (`updatedRefs`, pas une nouvelle création — aucune zone n'y est réattribuée) n'apparaît jamais
-    dans ce bandeau, seulement dans le tableau détaillé ; entièrement absent (pas d'encart vide) si
-    aucune commande créée n'a reçu de zone.
+    dans ce bandeau ; entièrement absent (pas d'encart vide) si aucune commande créée n'a reçu de
+    zone. **La colonne "Zone de stockage" du tableau récapitulatif a ensuite été retirée**
+    (retour utilisateur réel : doublon visuel avec ce bandeau, désormais le seul point d'affichage
+    de la zone dans cette pop-up) — `zoneCellHtml` (devenue inutile) a été supprimée avec elle.
 - **Casiers désactivés** (`state.config.inactiveStorageZones`, simple tableau de codes comme `"A13"`)
   — un casier cassé/réservé, à sortir de la rotation. `isZoneInactive(st, zone)` : jamais proposé par
   `assignStorageZone` (exclu de la sélection automatique) ni acceptable par `setCommandeZone`
@@ -1430,6 +1463,26 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   lecture plutôt qu'une capture ponctuelle suivie d'une restauration — la capture/restauration ne
   protège que les chemins qui passent par elle, jamais les écritures directes qui existent déjà
   ailleurs dans le code.
+- **Toute session est perdue à chaque redémarrage du conteneur, quel que soit `SESSION_SECRET`.**
+  En travaillant sur la détection automatique de mise à jour (`checkAppVersion`, voir « Rechargement
+  automatique après déploiement »), vérification en conditions réelles (redémarrage du serveur pendant
+  qu'une page reste ouverte) : le premier `pollRemoteState()` suivant reçoit systématiquement un 401,
+  AVANT même d'atteindre la comparaison de version — pas un bug du nouveau mécanisme, mais une
+  conséquence du `MemoryStore` par défaut d'`express-session` (aucun `store:` persistant configuré) :
+  fixer `SESSION_SECRET` (déjà recommandé par le message au démarrage du serveur) évite seulement
+  qu'un secret aléatoire invalide les cookies existants à la prochaine comparaison de signature — les
+  données de session elles-mêmes, en mémoire du process, sont de toute façon détruites par n'importe
+  quel redémarrage, y compris avec `SESSION_SECRET` fixe. `deploy.sh` redémarre systématiquement le
+  conteneur (`docker compose up -d --build`) : aujourd'hui, un déploiement se traduit donc toujours,
+  pour tout le monde, par une session invalidée — silencieusement pour un poste resté inactif (401
+  volontairement ignoré par le poll, voir juste au-dessus), visible seulement à la prochaine action
+  mutante de la personne (`renderLoginScreen('Votre session a expiré...')`). Réflexe pour toute
+  future fonctionnalité qui suppose une session active en continu (comme le rechargement automatique
+  ci-dessus) : vérifier son comportement à travers un VRAI redémarrage du processus serveur, pas
+  seulement un rafraîchissement de `state`, sous peine de la croire fonctionnelle alors qu'elle ne
+  s'exécute en pratique jamais après un déploiement réel. Rendre les sessions persistantes à travers
+  un redémarrage demanderait un store dédié (ex. `connect-sqlite3` sur la même base) — non fait,
+  changement plus large qu'une simple configuration.
 
 ## Conventions
 

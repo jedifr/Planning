@@ -14,6 +14,22 @@ const previsionHistory = require('./previsionHistory');
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'planning.db');
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
+// Numéro de version du code effectivement servi — lu une seule fois au démarrage directement dans
+// public/index.html (APP_VERSION y est la seule source de vérité, voir CLAUDE.md). Un déploiement
+// redémarre toujours le conteneur (deploy.sh), donc cette constante reflète toujours le code
+// réellement en cours d'exécution. Renvoyée à chaque /api/state pour que le client détecte une mise
+// à jour déployée pendant qu'une page reste ouverte, et se recharge automatiquement (voir
+// checkAppVersion() côté client) plutôt que de compter sur un Ctrl+Maj+R manuel.
+const APP_VERSION = (() => {
+  try {
+    const html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+    const m = html.match(/const APP_VERSION\s*=\s*'([^']+)'/);
+    return m ? m[1] : null;
+  } catch (e) {
+    return null;
+  }
+})();
+
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.exec(`
@@ -288,7 +304,7 @@ app.post('/api/notify-user/:id', requireAdmin, requireLicense, async (req, res) 
 // Renvoie l'état courant du planning et sa version
 app.get('/api/state', requireAuth, requireLicense, (req, res) => {
   const row = db.prepare('SELECT data, version FROM app_state WHERE id = 1').get();
-  res.json({ data: JSON.parse(row.data), version: row.version });
+  res.json({ data: JSON.parse(row.data), version: row.version, appVersion: APP_VERSION });
 });
 
 // Enregistre un nouvel état, avec verrouillage optimiste sur la version
@@ -416,8 +432,21 @@ async function checkScheduledBackup(){
 }
 setInterval(checkScheduledBackup, 60000);
 
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+// index.html jamais mis en cache sans revalidation : sans ça, un rechargement (manuel ou déclenché
+// automatiquement par checkAppVersion() côté client) pourrait resservir la MÊME page déjà en cache
+// du navigateur au lieu de récupérer le nouveau code déployé — exactement le piège qui obligeait
+// jusqu'ici à un Ctrl+Maj+R (vidage forcé du cache) après chaque déploiement, voir CLAUDE.md.
+const INDEX_HTML_PATH = path.join(__dirname, 'public', 'index.html');
+function sendIndexHtmlNoCache(req, res){
+  res.set('Cache-Control', 'no-cache');
+  res.sendFile(INDEX_HTML_PATH);
+}
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    if(path.basename(filePath) === 'index.html') res.set('Cache-Control', 'no-cache');
+  }
+}));
+app.get('*', sendIndexHtmlNoCache);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
