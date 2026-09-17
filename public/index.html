@@ -651,7 +651,8 @@
   .calmonth-title{font-size:14px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:var(--text-dim); margin-bottom:8px; text-align:center;}
   .calmonth-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:2px;}
   .calmonth-weekday-hd{font-size:11px; color:var(--text-faint); text-align:center; padding-bottom:4px;}
-  .calmonth-daycell{min-height:38px; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding-top:3px; border-radius:3px;}
+  .calmonth-daycell{min-height:38px; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding-top:3px; border-radius:3px; cursor:pointer;}
+  .calmonth-daycell:hover{outline:1.5px solid var(--accent);}
   .calmonth-daycell.other-month{opacity:0.3;}
   .calmonth-daycell.weekend{background:var(--panel-2);}
   .calmonth-daycell.today .calmonth-daynum{background:var(--accent); color:#fff; border-radius:50%;}
@@ -816,7 +817,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.22.0';
+const APP_VERSION = '1.23.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1146,6 +1147,8 @@ let calendrierViewMode = 'annee'; // 'annee' | 'mois'
 let calendrierPersonneFilter = ''; // '' = toutes les personnes
 let calendrierStatutFilter = 'approuve_attente'; // 'approuve_attente' | 'approuve' | 'en_attente' | 'toutes'
 let calendrierTypeFilter = ''; // '' = tous les types de congé
+let leaveReqPrefillDate = null; // date (AAAA-MM-JJ) à préremplir au prochain rendu de "Mes demandes"
+  // (posée par un clic sur un jour du calendrier annuel), consommée une seule fois puis remise à null
 let viewAnchor = new Date();
 let weekRenderCtx = { days: [] };
 let dragCtx = null;
@@ -6068,6 +6071,7 @@ function renderCongesPage(){
   <section class="panel">
     <div class="panel-body" style="padding-bottom:0;">
       <h2 style="margin:0 0 12px; font-family:'Oswald',sans-serif; font-size:15px; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-dim);">🏖 Congés &amp; RTT</h2>
+      ${absenceBannerHtml([new Date()])}
       <div class="view-tabs">${tabsHtml}</div>
     </div>
   </section>
@@ -6077,6 +6081,11 @@ function renderMesDemandesTab(){
   if(!currentUser) return '';
   const uid_ = String(currentUser.id);
   const year = new Date().getFullYear();
+  // Consommé une seule fois : un clic sur un jour du calendrier annuel pré-remplit Début/Fin ici,
+  // sans quoi un rendu ultérieur (ex. déclenché par une tout autre action) réafficherait sans cesse
+  // la même date et effacerait une saisie faite entre-temps.
+  const prefillDate = leaveReqPrefillDate;
+  leaveReqPrefillDate = null;
   const toConfirm = state.leaveRequests.filter(r=>r.userId===uid_ && r.statut==='a_confirmer');
   const toConfirmBanner = toConfirm.length ? `<div class="modal-section-title" style="margin-top:0;">Propositions à confirmer</div>
     ${toConfirm.map(r => {
@@ -6119,10 +6128,11 @@ function renderMesDemandesTab(){
     <div class="leave-balance-row">${balanceCards || `<div class="footer-note">Aucun type de congé configuré — un administrateur peut en ajouter dans l'onglet "Soldes &amp; types".</div>`}</div>
 
     <div class="modal-section-title" style="margin-top:20px;">Nouvelle demande</div>
+    ${prefillDate ? `<div class="footer-note" style="text-align:left; padding-bottom:6px;">📅 Date pré-remplie depuis le calendrier — modifiez-la au besoin avant d'envoyer.</div>` : ''}
     <div class="commande-top-fields" style="grid-template-columns:1fr 1fr 1fr 1fr 1.2fr auto; align-items:end;">
       <div><label class="field">Type</label><select id="leavereq-type">${state.leaveTypes.map(t=>`<option value="${t.id}">${escapeHtml(t.nom)}</option>`).join('')}</select></div>
-      <div><label class="field">Début</label><input type="date" id="leavereq-debut"></div>
-      <div><label class="field">Fin</label><input type="date" id="leavereq-fin"></div>
+      <div><label class="field">Début</label><input type="date" id="leavereq-debut" value="${prefillDate||''}"></div>
+      <div><label class="field">Fin</label><input type="date" id="leavereq-fin" value="${prefillDate||''}"></div>
       <div><label class="field">Demi-journée</label>${demiJourneeSelectHtml('id="leavereq-demi"')}</div>
       <div><label class="field">Motif (optionnel)</label><input type="text" id="leavereq-motif"></div>
       <button class="primary" data-action="submit-leave-request">Envoyer</button>
@@ -6216,9 +6226,12 @@ function renderCalMonthBlock(year, mi, byDate, todayKey, large){
         `<span class="calmonth-dot ${en.statut==='en_attente'?'pending':''}" style="${en.statut==='en_attente'?`border-color:${en.couleur};`:`background:${en.couleur};`}"></span>`
       ).join('')}</div>`;
     }
-    const titleAttr = entries.length ? entries.map(en => `${en.username} — ${en.typeNom}${en.statut==='en_attente'?' (en attente)':''}`).join('\n') : '';
+    // Cliquer un jour ouvre "Nouvelle demande" (onglet Mes demandes) pré-rempli sur cette date — le
+    // détail (qui est déjà en congé ce jour-là) reste lisible via le même `title`, jamais masqué par
+    // ce raccourci de saisie.
+    const titleAttr = entries.length ? entries.map(en => `${en.username} — ${en.typeNom}${en.statut==='en_attente'?' (en attente)':''}`).join('\n') : 'Cliquer pour poser un congé ce jour';
     const cls = ['calmonth-daycell', inMonth?'':'other-month', isToday?'today':'', (isWeekend||isHoliday)?'weekend':'', large?'large':''].filter(Boolean).join(' ');
-    return `<div class="${cls}" ${titleAttr?`title="${escapeHtml(titleAttr)}"`:''}>
+    return `<div class="${cls}" title="${escapeHtml(titleAttr)}" data-action="calendrier-request-day" data-date="${key}">
       <div class="calmonth-daynum">${d.getDate()}</div>
       ${bodyHtml}
     </div>`;
@@ -6226,6 +6239,24 @@ function renderCalMonthBlock(year, mi, byDate, todayKey, large){
   return `<div class="calmonth-block ${large?'calmonth-block-large':''}">
     <div class="calmonth-title">${CAL_MONTH_NAMES[mi]}</div>
     <div class="calmonth-grid ${large?'large':''}">${hd}${dayCells}</div>
+  </div>`;
+}
+// Solde compact affiché en tête du calendrier annuel — celui de la personne actuellement "au
+// centre" de l'écran : la personne filtrée si un filtre précis est choisi, sinon celle qui regarde
+// (comportement adaptatif, jamais un choix à faire explicitement). Réutilise `computeLeaveBalance`
+// (même donnée que "Mes demandes"/"Soldes & types"), juste une présentation plus compacte, sur une
+// seule ligne, pensée pour ne pas avoir à changer d'onglet pour vérifier un solde en un coup d'œil.
+function renderCalendrierBalanceStrip(year, userId){
+  if(!userId) return '';
+  const u = usersList.find(uu=>String(uu.id)===String(userId));
+  if(!u) return '';
+  const items = state.leaveTypes.map(t => {
+    const bal = computeLeaveBalance(String(userId), t.id, year);
+    const label = t.sansSolde ? 'Illimité' : `${leaveDureeLabel(bal.remaining)} j`;
+    return `<span class="calyear-legend-item"><span class="machine-swatch" style="background:${t.couleur}"></span>${escapeHtml(t.nom)} : <strong>${label}</strong></span>`;
+  }).join('');
+  return `<div class="footer-note" style="text-align:left; padding:0 0 10px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <strong style="color:var(--text-dim);">💼 Solde de ${escapeHtml(u.username)} (${year})</strong>${items}
   </div>`;
 }
 function renderCalendrierAnnuelTab(){
@@ -6302,6 +6333,7 @@ function renderCalendrierAnnuelTab(){
         <option value="toutes" ${calendrierStatutFilter==='toutes'?'selected':''}>Toutes (avec refusées)</option>
       </select>
     </div>
+    ${renderCalendrierBalanceStrip(year, calendrierPersonneFilter || (currentUser?String(currentUser.id):''))}
     <div class="footer-note" style="text-align:left; padding:6px 0 12px; display:flex; gap:14px; flex-wrap:wrap;">${legend}</div>
     <div class="${isMoisMode?'calmonth-single-wrap':'calyear-months-wrap'}">${monthsHtml}</div>
     <div class="footer-note" style="text-align:left; padding-top:10px;">Un pastille pleine = congé approuvé. Une pastille au contour = demande encore en attente. Survolez un jour pour voir le détail.</div>
@@ -8889,6 +8921,7 @@ function renderKanbanView(schedule){
 
   const nbVisibles = kanbanMachineFilters ? state.machines.filter(m=>kanbanMachineFilters.has(m.id)).length : state.machines.length;
   return `<div class="panel-body">
+    ${absenceBannerHtml([new Date()])}
     <div class="kanban-machine-filters">
       <details class="dd-menu" data-dd-key="kanban-postes" ontoggle="openMiniDropdowns['kanban-postes']=this.open" ${openMiniDropdowns['kanban-postes']?'open':''}>
         <summary class="small">Postes affichés (${nbVisibles}/${state.machines.length}) ▾</summary>
@@ -9807,6 +9840,7 @@ function dispatchClickAction(action, el){
       break;
     }
     case 'calmonth-today': { const t = new Date(); calendrierYear = t.getFullYear(); calendrierMonth = t.getMonth(); render(); break; }
+    case 'calendrier-request-day': congesTab = 'mes-demandes'; leaveReqPrefillDate = el.dataset.date; render(); break;
     case 'remove-leave-type': removeLeaveType(el.dataset.typeId); break;
     case 'logout': logout(); break;
     case 'activate-license': activateLicenseKey(); break;

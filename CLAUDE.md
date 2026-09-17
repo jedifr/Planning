@@ -388,7 +388,37 @@ une pastille par jour et par personne en congé, plutôt que la liste tabulaire 
   dans l'appli) — fond légèrement teinté (`.calmonth-daycell.weekend`, réutilise `--panel-2`) sur
   ces jours dans la grille, dans les deux vues — repère visuel rapide pour ne pas confondre un jour
   sans aucun congé posé avec un jour où, de toute façon, personne ne travaille.
-
+- **Poser un congé directement depuis le calendrier** — chaque cellule de jour (`data-action=
+  "calendrier-request-day"`, dans les deux vues) est cliquable : le clic bascule sur l'onglet « Mes
+  demandes » avec Début **et** Fin pré-remplis sur la date cliquée (l'utilisateur ajuste la fin pour
+  une plage de plusieurs jours). `leaveReqPrefillDate` — variable transitoire posée par le clic,
+  **consommée une seule fois** par `renderMesDemandesTab` (lue puis aussitôt remise à `null`) : un
+  rendu ultérieur quelconque (n'importe quelle autre action déclenchant un `render()` pendant que
+  l'onglet est encore ouvert) ne doit jamais réappliquer cette même date par-dessus une saisie déjà
+  en cours — piège symétrique de la « capture/restauration désynchronisée » déjà documenté plus haut
+  pour la recherche de commande, ici résolu par une consommation en un coup plutôt qu'un calcul à la
+  volée (le préremplissage n'a de sens qu'une fois, contrairement à un filtre qui doit rester
+  neutralisé tant qu'une condition dure). Une note (« 📅 Date pré-remplie depuis le calendrier »)
+  s'affiche uniquement au rendu qui consomme effectivement le préremplissage. Le clic reste possible
+  sur n'importe quel jour (y compris un jour déjà couvert par un congé d'un tiers, ou un jour d'un
+  mois adjacent affiché en grisé) — c'est `findLeaveConflicts` (voir plus haut) qui avertit déjà au
+  moment de la confirmation en cas de chevauchement, inutile de dupliquer cette vérification ici.
+- **Solde compact en tête du calendrier** (`renderCalendrierBalanceStrip`) — même donnée que les
+  cartes de solde de « Mes demandes »/le tableau de « Soldes & types » (`computeLeaveBalance`), mais
+  condensée sur une seule ligne pour ne pas avoir à changer d'onglet en consultant le calendrier.
+  Affiche le solde de la personne **actuellement filtrée** (`calendrierPersonneFilter`) si un filtre
+  précis est choisi, sinon celui de la personne connectée — comportement adaptatif, jamais de
+  sélecteur dédié supplémentaire à maintenir en plus du filtre « Personne » déjà présent.
+- **Bandeau « qui est absent aujourd'hui »** (`absenceBannerHtml`, fonction déjà existante — jusque-
+  là utilisée uniquement par les vues Jour/Semaine du planning, voir moteur de planification plus
+  bas) — étendu à deux emplacements qui en étaient dépourvus : la vue **Kanban** du planning
+  (`renderKanbanView`, juste avant la barre de filtres de postes) et la **page Congés dans son
+  ensemble** (`renderCongesPage`, juste sous le titre — donc visible quel que soit l'onglet ouvert,
+  y compris le calendrier annuel). Inspiré d'un outil RH externe (Lucca) montré par l'utilisateur.
+  Aucune donnée ni logique nouvelle : `absenceBannerHtml([new Date()])` réutilise tel quel le même
+  calcul (`absencesForRange`) déjà utilisé pour une plage de jours quelconque, appliqué ici à la
+  seule journée du jour ; entièrement absent (pas d'encart vide) si personne n'est en congé
+  aujourd'hui, comme sur les vues Jour/Semaine.
 
 
 `leaveTypes[]` porte `sansSolde` (bool, `false` par défaut) — un type dont les jours pris ne
