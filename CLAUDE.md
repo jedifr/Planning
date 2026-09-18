@@ -68,6 +68,7 @@ rendent ce geste manuel inutile dans le cas courant :
 | `backup.js` | Sauvegarde automatique par e-mail (nodemailer). |
 | `sessionHistory.js` | Historique des sessions de travail archivées (voir plus bas). |
 | `previsionHistory.js` | Historique des prévisions du moteur avant clôture d'une tâche (voir plus bas). |
+| `autoPauseResume.js` | Reprise automatique de pause déjeuner par personne, tournée côté serveur (voir plus bas). |
 
 Base SQLite, trois tables : `app_state` (l'état entier en JSON + numéro de version), `users`,
 et `session_history` (voir ci-dessous). Volume Docker nommé `planning-data`.
@@ -196,7 +197,8 @@ poste qui déclenche la reprise (qui peut être n'importe quel navigateur en tra
 Horodatage de la session rouverte : `o.autoPausedUntil` (l'heure à laquelle la pause aurait dû
 réellement se terminer, mémorisée dès l'auto-mise en pause), **jamais** l'instant où ce contrôle
 s'exécute réellement — voir le piège dédié plus bas (« Reprise automatique après pause horodatée au
-moment du contrôle, pas à la vraie fin de pause »).
+moment du contrôle, pas à la vraie fin de pause »). Ce même calcul tourne désormais **aussi** côté
+serveur, indépendamment de tout onglet ouvert — voir « Fiabilisation côté serveur » ci-dessous.
 
 **Bannière « tâches en pause depuis la veille ou avant »** (vue superviseur/admin,
 `renderPausedTasksBanner`/`pausedSinceEarlierTasks`) affiche qui travaillait au moment de la mise en
@@ -226,6 +228,64 @@ ouvertes (`.filter(s=>!s.fin).forEach(...)`), jamais une seule (`.find(s=>!s.fin
 session d'un second opérateur resterait ouverte indéfiniment. La reprise automatique après pause
 déjeuner rouvre une session par opérateur qui était en train de travailler (`autoPausedOperators`,
 peuplé à la pause, vidé à la reprise), pas une seule.
+
+### Reprise automatique de pause déjeuner, fiabilisée côté serveur (`autoPauseResume.js`)
+
+Retour utilisateur réel : les salariés n'ont ni les mêmes horaires ni la même durée de pause (ex.
+Romain 7h45-16h30, Sébastien 7h00-17h30, pauses de durées différentes) — déjà couvert par
+`userLunch[userId]` (voir ci-dessus), mais `applyAutoPauseResume` ne s'exécutait jusqu'ici que dans
+la boucle de 60s d'un onglet client ouvert (`startApp`, voir le piège « Reprise automatique après
+pause horodatée au moment du contrôle... » plus bas) : sans personne connecté entre la mise en
+pause et l'heure de reprise d'un salarié (fréquent avec des horaires décalés par personne, ou un
+poste sans surveillance en fin de journée), la reprise n'était constatée qu'à la prochaine
+connexion, potentiellement des heures plus tard.
+
+- **`autoPauseResume.js`** — nouveau module serveur, **portage volontairement dupliqué** (pas
+  partagé/importé) du même calcul déjà présent côté client dans `public/index.html` :
+  `pauseWindowsFor`/`pauseWindowFor` (pauses effectives à un instant donné, plusieurs pauses par
+  personne fusionnées si elles se chevauchent), `applyUserLunchOverride` (horaire et pause propres
+  à une personne, avec le même ratio lun.-jeu./vendredi préservé pour un horaire personnalisé — bug
+  déjà corrigé côté client, voir plus bas), `configForMachineId`/`configForPiece`,
+  `isInPauseWindow`, et `applyAutoPauseResume` lui-même (fermeture de **toutes** les sessions
+  ouvertes, reprise horodatée à la vraie fin de pause `autoPausedUntil`, jamais à l'instant du
+  contrôle — voir « Travail à plusieurs » ci-dessus et le piège dédié plus bas). Aucun mécanisme de
+  partage de code entre le client (une seule balise `<script>`, pas de build, voir Architecture) et
+  le serveur (modules Node classiques) n'existe dans ce projet — introduire un fichier `.js` chargé
+  par le navigateur en plus de `public/index.html` aurait été un changement d'architecture plus
+  large que ce qui était demandé. **Réflexe explicite documenté en tête de `autoPauseResume.js`** :
+  toute évolution de cette logique côté client (`applyUserLunchOverride`, `pauseWindowsFor`, la
+  fermeture de toutes les sessions plutôt qu'une seule...) doit être reportée à l'identique dans ce
+  fichier, sous peine de divergence silencieuse entre les deux copies.
+  - **Simplification assumée** : la version client calcule en plus, dans `effectiveConfig`, les
+    indisponibilités automatiques d'un poste dont tous les opérateurs liés sont en congé
+    (`operatorLeaveIntersection`) — sans aucune incidence ici (`pauseWindowsFor` ne lit jamais
+    `indisponibilites`) et dépendant de `usersList` (uniquement disponible côté client, pour le
+    libellé d'infobulle) : volontairement omise côté serveur plutôt que portée pour un résultat
+    sans effet sur le calcul de pause.
+- **`checkAutoPauseResume()`** (`server.js`, `setInterval` toutes les 60s, même cadence que la
+  boucle client et que `checkScheduledBackup` déjà en place pour les sauvegardes programmées) — lit
+  `app_state`, appelle `applyAutoPauseResume(data, new Date())`, et n'écrit que si `changed` est
+  vrai. Également appelée une fois immédiatement au démarrage du serveur (redémarrage du conteneur
+  après un déploiement), sans attendre le premier tic à 60s.
+- **Aucun risque de conflit de version pour ce job lui-même** : lecture et écriture SQLite sont
+  toutes deux **synchrones** (`better-sqlite3`), sans `await` entre les deux — Node étant
+  mono-thread, aucune requête HTTP concurrente (dont un `PUT /api/state` d'un client) ne peut
+  s'exécuter entre cette lecture et cette écriture. Un `PUT` client réellement concurrent (entre le
+  moment où CE client a lu l'état et celui où il l'enregistre) recevra en revanche un 409 tout à
+  fait normal — déjà géré côté client par `silentSave()`/`saveStateWithReapply()` (rechargement
+  silencieux de la version fraîche, jamais de perte de données), exactement comme pour n'importe
+  quel autre conflit d'écriture concurrente déjà couvert par ce mécanisme (voir le piège « Doubles
+  enregistrements concurrents »).
+- **Idempotent par construction** : rejouer `applyAutoPauseResume` sur un état déjà à jour (ex. le
+  job serveur ET la boucle client qui se déclenchent l'un juste après l'autre sur la même pièce) ne
+  produit aucun changement supplémentaire — chaque branche (`en_cours`→`en_pause`,
+  `en_pause`→`en_cours`) vérifie l'état courant avant d'agir, jamais une simple bascule inconditionnelle.
+  Le client garde donc son propre calcul en plus de celui du serveur (retrait non nécessaire) :
+  retour visuel immédiat dans un onglet resté ouvert, sans attendre le prochain sondage.
+- **Réflexe Dockerfile** (piège déjà documenté plus bas, réappliqué ici) : `autoPauseResume.js` est
+  un nouveau fichier serveur requis par `server.js`, donc ajouté à la fois au `require()` et à la
+  ligne `COPY autoPauseResume.js ./` du `Dockerfile` — vérifié par
+  `grep -oE "require\('\./[a-zA-Z]+'\)" server.js` comparé à `grep "^COPY" Dockerfile`.
 
 ## Historique des prévisions avant clôture (`prevision_history`)
 
@@ -1764,18 +1824,22 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   ratio entre les jours plutôt que d'en écraser un avec la valeur d'un autre, ou de le laisser
   totalement intact en ignorant la surcharge.
 - **Reprise automatique après pause horodatée au moment du contrôle, pas à la vraie fin de pause.**
-  `applyAutoPauseResume` ne s'exécute que quand un onglet est ouvert (`startApp`, puis sa boucle de
-  60s) — jamais par un déclencheur serveur. Si personne n'a l'appli ouverte entre la fin réelle
-  d'une pause et la prochaine connexion (typiquement une pause programmée en fin de journée, ou un
-  poste resté sans surveillance le soir), la reprise n'est constatée qu'à cette prochaine connexion,
-  potentiellement des heures plus tard. Rouvrir la session à `now` (l'instant du contrôle, comme le
-  faisait l'ancien code) horodatait alors la reprise à ce moment-là — ex. une pause déclenchée la
-  veille au soir affichée comme reprise le lendemain matin (bug réel signalé pour un superviseur).
-  Corrigé en mémorisant `o.autoPausedUntil` (l'heure de fin réelle de la pause, `pause.end`, posée
-  dès l'auto-mise en pause) et en l'utilisant comme horodatage de la session rouverte plutôt que
-  `now` — borné à `now` par sécurité (horloge cliente, config changée entre-temps : ne jamais ouvrir
-  une session dans le futur). Réflexe : toute reprise "automatique" différée dans le temps doit
-  horodater l'événement à quand il aurait dû se produire, jamais à quand il a été CONSTATÉ.
+  `applyAutoPauseResume` ne s'exécutait à l'origine que quand un onglet est ouvert (`startApp`, puis
+  sa boucle de 60s) — jamais par un déclencheur serveur (corrigé depuis par `autoPauseResume.js`,
+  voir plus haut « Reprise automatique de pause déjeuner, fiabilisée côté serveur » — mais le piège
+  de fond ci-dessous reste valable pour QUICONQUE recalcule cet horodatage, client ou serveur). Si
+  personne n'a l'appli ouverte entre la fin réelle d'une pause et la prochaine connexion (typiquement
+  une pause programmée en fin de journée, ou un poste resté sans surveillance le soir), la reprise
+  n'est constatée qu'à cette prochaine connexion, potentiellement des heures plus tard. Rouvrir la
+  session à `now` (l'instant du contrôle, comme le faisait l'ancien code) horodatait alors la reprise
+  à ce moment-là — ex. une pause déclenchée la veille au soir affichée comme reprise le lendemain
+  matin (bug réel signalé pour un superviseur). Corrigé en mémorisant `o.autoPausedUntil` (l'heure de
+  fin réelle de la pause, `pause.end`, posée dès l'auto-mise en pause) et en l'utilisant comme
+  horodatage de la session rouverte plutôt que `now` — borné à `now` par sécurité (horloge cliente,
+  config changée entre-temps : ne jamais ouvrir une session dans le futur). Réflexe : toute reprise
+  "automatique" différée dans le temps doit horodater l'événement à quand il aurait dû se produire,
+  jamais à quand il a été CONSTATÉ — y compris dans `autoPauseResume.js`, qui reproduit ce même choix
+  à l'identique côté serveur.
 - **Redessin en cours de frappe dans un champ `type="date"`, comme un ancien bug déjà connu sur
   `type="time"`.** Le navigateur déclenche déjà "change" sur un champ `date` dès qu'un segment
   (jour/mois/année) atteint son nombre de chiffres attendu, sans attendre les autres segments ni la

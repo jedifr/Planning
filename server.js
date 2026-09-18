@@ -10,6 +10,7 @@ const auth = require('./auth');
 const license = require('./license');
 const sessionHistory = require('./sessionHistory');
 const previsionHistory = require('./previsionHistory');
+const autoPauseResume = require('./autoPauseResume');
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'planning.db');
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -431,6 +432,34 @@ async function checkScheduledBackup(){
   }
 }
 setInterval(checkScheduledBackup, 60000);
+
+// Reprise automatique de pause déjeuner, même sans personne devant l'appli dans un navigateur (voir
+// autoPauseResume.js, portage volontairement dupliqué de la même logique côté client). Jusqu'ici,
+// ce contrôle ne s'exécutait que dans la boucle de 60s du client (public/index.html, startApp) : une
+// pause commencée en fin de journée, sans personne connectée ensuite, n'était constatée reprise qu'à
+// la prochaine connexion — potentiellement des heures plus tard, avec un horaire de reprise trompeur
+// avant le correctif `autoPausedUntil` déjà en place (voir CLAUDE.md). Ce job tourne indépendamment
+// de tout onglet ouvert, avec le même calcul horaire par personne (userLunch : horaire de début/fin
+// et pause(s) propres à chacun).
+function checkAutoPauseResume(){
+  try{
+    const row = db.prepare('SELECT data, version FROM app_state WHERE id = 1').get();
+    const data = JSON.parse(row.data);
+    const changed = autoPauseResume.applyAutoPauseResume(data, new Date());
+    if(!changed) return;
+    // Entièrement synchrone (better-sqlite3) : aucune requête client ne peut s'intercaler entre
+    // cette lecture et cette écriture, donc jamais de conflit de version pour CE job lui-même. Un
+    // PUT client concurrent, lui, verra son expectedVersion périmé et recevra un 409 — déjà géré
+    // côté client par silentSave()/saveStateWithReapply() (rechargement silencieux de la version
+    // fraîche, jamais de perte de données), exactement comme pour la sauvegarde programmée ci-dessus.
+    db.prepare('UPDATE app_state SET data = ?, version = ?, updated_at = ? WHERE id = 1')
+      .run(JSON.stringify(data), row.version + 1, nowIso());
+  }catch(err){
+    console.error('Erreur du contrôle automatique de pause/reprise :', err);
+  }
+}
+setInterval(checkAutoPauseResume, 60000);
+checkAutoPauseResume(); // vérifie aussi tout de suite au démarrage (redémarrage du conteneur), sans attendre 60s
 
 // index.html jamais mis en cache sans revalidation : sans ça, un rechargement (manuel ou déclenché
 // automatiquement par checkAppVersion() côté client) pourrait resservir la MÊME page déjà en cache
