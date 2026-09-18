@@ -380,10 +380,9 @@ une pastille par jour et par personne en congé, plutôt que la liste tabulaire 
   indexation `byDate`, seule la richesse d'affichage de chaque case change. Réflexe déjà appliqué
   ailleurs dans l'appli (`ganttBarsHtml`, `ADMIN_ONLY_SECTIONS`...) : factoriser plutôt que dupliquer
   un rendu presque identique entre deux contextes.
-- **Filtre par type de congé** (`calendrierTypeFilter`, `''` = tous) — sélecteur supplémentaire à
-  côté de « Personne »/« Statut », s'applique à la même indexation `byDate` (donc aux deux vues). La
-  légende (`legendTypes`) se réduit au seul type filtré plutôt que de continuer à lister tous les
-  types de l'atelier — éviter de faire croire que les autres couleurs peuvent encore apparaître.
+- **Filtre par type de congé** — au départ un simple sélecteur à côté de « Personne »/« Statut »,
+  **remplacé depuis** par un filtre à cases à cocher partagé avec « Congés de l'équipe »
+  (`visibleLeaveTypeIds`) — voir la section dédiée plus bas, juste après « Ergonomie mobile ».
 - **Week-ends et jours fériés mis en évidence** (`isFrenchPublicHoliday`, déjà utilisée ailleurs
   dans l'appli) — fond légèrement teinté (`.calmonth-daycell.weekend`, réutilise `--panel-2`) sur
   ces jours dans la grille, dans les deux vues — repère visuel rapide pour ne pas confondre un jour
@@ -467,6 +466,66 @@ réel, testé à 390px de large) :
   recevoir un style inline (grille de colonnes personnalisée par formulaire) doit être vérifiée en
   conditions réelles à largeur réduite, pas seulement relue dans le code, sous peine de croire un
   correctif effectif alors qu'il ne s'applique en pratique jamais.
+
+### Filtre par type de congé (cases à cocher, partagé) et menu "Types affichés"
+
+Bug/besoin réel signalé : « Congés de l'équipe » n'avait **aucun** filtre par type, et le rythme
+d'alternance d'un apprenti (voir plus bas, « Génération en masse d'un rythme d'alternance ») y
+génère des dizaines de lignes « Alternance à l'école » qui noient les vraies demandes ponctuelles
+(retour utilisateur réel : Louka/Mathys en alternance rendaient la liste illisible). Au même moment,
+la légende du calendrier annuel faisait doublon avec son sélecteur de type (les deux listaient les
+mêmes couleurs/noms), et l'utilisateur a explicitement demandé une sélection **par case à cocher**
+plutôt qu'un choix unique.
+
+- `visibleLeaveTypeIds` (`Set|null`, `null` = tous les types visibles) — **une seule préférence,
+  partagée** entre « Congés de l'équipe » et « Calendrier annuel » (pas une par onglet) : le besoin
+  est le même des deux côtés (ne pas se laisser noyer par un type prolifique), inutile de la régler
+  deux fois. Même mécanisme et même persistance que `kanbanMachineFilters`
+  (`LEAVE_TYPE_FILTER_STORAGE_KEY`, `loadLeaveTypeFilter`/`saveLeaveTypeFilter`, chargée au démarrage
+  aux côtés de `loadKanbanMachineFilters()`) : décocher UN type matérialise le `Set` complet moins ce
+  type ; recocher le dernier type manquant refait retomber sur `null` (aucun filtre) — jamais un état
+  "tous cochés mais un `Set` quand même" qui se distinguerait sans raison de "pas de filtre du tout".
+  `isLeaveTypeVisible(typeId)`/`toggleLeaveTypeFilter(typeId, checked)`/`setAllLeaveTypeFilter(all)`
+  ("Tout"/"Aucun").
+- `renderLeaveTypeCheckboxItems()` — le contenu (une case à cocher par type, pastille de couleur,
+  puis "Tout"/"Aucun") est une fonction à part, **sans** le `<details>` englobant : réutilisé tel
+  quel à deux endroits qui ont besoin du contenu SANS le dupliquer, mais pas toujours sous la même
+  forme d'enveloppe (voir plus bas, mobile vs desktop). `renderLeaveTypeFilterMenu(ddKey)` l'enrobe
+  dans un `<details class="dd-menu">` complet ("Types affichés (X/Y) ▾"), sur le modèle exact de
+  "Postes affichés" du Kanban — `ddKey` distinct par emplacement (`'equipe-types'`, `'cal-types'`)
+  pour que l'ouverture/fermeture de l'un n'affecte pas l'autre (`openMiniDropdowns`).
+- **« Congés de l'équipe »** (`renderEquipeTab`) — `renderLeaveTypeFilterMenu('equipe-types')`
+  ajouté à côté de Personne/Statut ; la liste (`list`) est filtrée par `isLeaveTypeVisible(r.typeId)`
+  avant affichage. Message d'état vide explicite (« — aucun type de congé sélectionné ») quand
+  `visibleLeaveTypeIds` est un `Set` vide (bouton "Aucun"), pour ne pas laisser croire à un tableau
+  vide par erreur/chargement.
+- **« Calendrier annuel »** (`renderCalendrierAnnuelTab`) — l'ancien sélecteur unique (`<select>`,
+  `calendrierTypeFilter`) est **supprimé**, remplacé par ce même filtre partagé, appliqué au même
+  point qu'avant dans l'indexation `byDate`. La **légende séparée a été retirée entièrement** (plus
+  de `legend`/`legendHtml`/`legendTypes`) : les cases à cocher affichent déjà pastille de couleur +
+  nom, ça n'avait plus de raison d'exister à côté — la seule information de la légende qui n'était
+  PAS un type (« ◦ En attente », le sens du contour vs pastille pleine) était de toute façon déjà
+  répétée en toutes lettres dans le `footer-note` du bas de page, donc rien perdu. `renderCalendrier
+  BalanceStrip` filtre aussi ses lignes par `isLeaveTypeVisible` — masquer un type masque également
+  son solde (souvent "Illimité" pour un type comme l'alternance, qui n'apporte alors rien à afficher).
+  - **Desktop** — `renderLeaveTypeFilterMenu('cal-types')` prend directement la place de l'ancien
+    `<select>`, à côté de Personne/Statut, dans la barre de filtres.
+  - **Mobile** — jamais un `<details>` DANS un `<details>` (peu maniable) : le menu "Filtres ▾"
+    replié (voir « Ergonomie mobile » ci-dessus) inclut directement le contenu nu de
+    `renderLeaveTypeCheckboxItems()` sous un petit titre "Types affichés" (`.dd-panel-title`), pas
+    un second `<details>` imbriqué.
+- **Débordement d'un `dd-menu` positionné au milieu d'une barre qui retombe à la ligne (mobile).**
+  Repéré en vérifiant le menu "Filtres ▾" du calendrier à 390px : son panneau (`position:absolute;
+  left:0` relatif au `<details>`) démarrait où que le `<details>` se soit retrouvé après le retour à
+  la ligne de `.search-bar` — assez loin à droite dans ce cas précis — et débordait donc du bord
+  droit de l'écran (texte "Approuvés + en attente" coupé net). Corrigé en forçant, sous
+  `max-width:720px`, TOUT `details.dd-menu` à occuper `width:100%` de sa ligne : il ne partage alors
+  plus jamais sa ligne avec un autre élément et démarre donc toujours au bord gauche du conteneur,
+  laissant au panneau toute la largeur de l'écran pour s'ouvrir sans déborder. Réflexe : tout
+  nouveau `dd-menu` ajouté à une barre capable de retomber à la ligne sur mobile hérite de ce
+  correctif automatiquement (règle générique sur `details.dd-menu`, pas par instance) — mais à
+  vérifier visuellement à largeur réduite si un jour ce menu doit partager sciemment sa ligne avec
+  autre chose (auquel cas cette règle générique devrait être exclue pour lui).
 
 `leaveTypes[]` porte `sansSolde` (bool, `false` par défaut) — un type dont les jours pris ne
 s'imputent sur aucune allocation annuelle (typiquement un type « École » pour un apprenti en

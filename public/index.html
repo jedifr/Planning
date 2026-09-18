@@ -669,7 +669,21 @@
   .calmonth-names{display:flex; flex-direction:column; gap:2px; margin-top:2px; width:100%;}
   .calmonth-name-pill{font-size:10px; line-height:1.5; padding:0 5px; border-radius:8px; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   .calmonth-name-pill.pending{background:transparent; border:1.3px solid;}
+  .calmonth-more-count{color:var(--text-faint); font-size:11px;}
   .calmonth-dot.pending{background:transparent; border:1.6px solid;}
+  /* Vue "Mois" agrandie sur grand écran (PC) — les valeurs ci-dessus (640px/76px/10px) restent le
+     format compact pensé pour mobile ; au-delà de 900px de large, largement assez de place pour un
+     calendrier bien plus spacieux et lisible. Ne touche jamais la vue "Année" (`.calmonth-block`
+     sans `-large`) ni aucune taille en dessous de ce seuil. */
+  @media screen and (min-width:900px){
+    .calmonth-single-wrap{max-width:1200px;}
+    .calmonth-block-large .calmonth-title{font-size:26px;}
+    .calmonth-daycell.large{min-height:130px; padding:10px 8px;}
+    .calmonth-daycell.large .calmonth-daynum{font-size:20px;}
+    .calmonth-names{gap:4px; margin-top:6px;}
+    .calmonth-daycell.large .calmonth-name-pill{font-size:14px; line-height:1.9; padding:2px 10px; border-radius:10px;}
+    .calmonth-daycell.large .calmonth-more-count{font-size:13px;}
+  }
   .alt-cal{max-width:420px;}
   .alt-cal-head{display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom:8px;}
   .alt-cal-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:3px;}
@@ -790,6 +804,15 @@
     .gantt-row-label{width:110px; flex-basis:110px;}
     .month-daycell{min-height:74px;}
     .calyear-months-wrap{grid-template-columns:1fr;}
+    /* Un dd-menu peut se retrouver n'importe où le long d'une barre de filtres qui retombe à la
+       ligne (`.search-bar{flex-wrap}`) — son panneau (`left:0` relatif à lui-même) débordait alors
+       du bord droit de l'écran selon sa position (ex. "Filtres ▾" du calendrier annuel, repéré en
+       vérifiant à 390px : le texte "Approuvés + en attente" était coupé net). En forçant CE
+       `<details>` précis à occuper toute la largeur de la barre (jamais partagé avec un autre
+       élément sur sa ligne), il démarre toujours au bord gauche du conteneur, laissant toute la
+       largeur de l'écran disponible à son panneau. Réflexe : tout nouveau dd-menu ajouté à une
+       barre qui peut retomber à la ligne sur mobile doit recevoir le même traitement. */
+    details.dd-menu{width:100%;}
   }
   @media screen and (min-width:721px) and (max-width:1400px){
     .calyear-months-wrap{grid-template-columns:repeat(3, 1fr);}
@@ -826,7 +849,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.24.0';
+const APP_VERSION = '1.25.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -959,6 +982,65 @@ function setAllKanbanMachineFilters(all){
 }
 function isKanbanMachineVisible(machineId){
   return !kanbanMachineFilters || kanbanMachineFilters.has(machineId);
+}
+// Filtre par type de congé — partagé entre "Congés de l'équipe" et "Calendrier annuel" (une seule
+// préférence, pas une par onglet : le besoin est le même — ne pas se laisser noyer par un type très
+// prolifique, ex. "Alternance à l'école" générée en masse pour un apprenti — inutile de la régler
+// deux fois). Même mécanisme que `kanbanMachineFilters` (Set|null, `null`=tous visibles), persisté
+// de la même façon.
+let visibleLeaveTypeIds = null;
+const LEAVE_TYPE_FILTER_STORAGE_KEY = 'planning-leave-type-filter';
+function loadLeaveTypeFilter(){
+  try{
+    const raw = localStorage.getItem(LEAVE_TYPE_FILTER_STORAGE_KEY);
+    if(!raw) return;
+    const arr = JSON.parse(raw);
+    if(Array.isArray(arr) && arr.length) visibleLeaveTypeIds = new Set(arr);
+  }catch(e){ /* préférence illisible : on retombe sur "tous les types" */ }
+}
+function saveLeaveTypeFilter(){
+  try{
+    if(visibleLeaveTypeIds && visibleLeaveTypeIds.size) localStorage.setItem(LEAVE_TYPE_FILTER_STORAGE_KEY, JSON.stringify([...visibleLeaveTypeIds]));
+    else localStorage.removeItem(LEAVE_TYPE_FILTER_STORAGE_KEY);
+  }catch(e){ /* stockage indisponible : le filtre reste valable pour la session */ }
+}
+function toggleLeaveTypeFilter(typeId, checked){
+  if(!visibleLeaveTypeIds) visibleLeaveTypeIds = new Set(state.leaveTypes.map(t=>t.id));
+  if(checked) visibleLeaveTypeIds.add(typeId); else visibleLeaveTypeIds.delete(typeId);
+  if(visibleLeaveTypeIds.size === state.leaveTypes.length) visibleLeaveTypeIds = null; // tous = pas de filtre
+  saveLeaveTypeFilter();
+  render();
+}
+function setAllLeaveTypeFilter(all){
+  visibleLeaveTypeIds = all ? null : new Set();
+  saveLeaveTypeFilter();
+  render();
+}
+function isLeaveTypeVisible(typeId){
+  return !visibleLeaveTypeIds || visibleLeaveTypeIds.has(typeId);
+}
+// Contenu (cases à cocher + Tout/Aucun) réutilisé tel quel, que ce soit dans son propre menu
+// déroulant (desktop) ou imbriqué directement dans un autre menu déjà replié (mobile, voir le menu
+// "Filtres" du calendrier annuel) — jamais un `<details>` dans un `<details>`, ce serait maladroit.
+function renderLeaveTypeCheckboxItems(){
+  return state.leaveTypes.map(t => `
+    <label class="dd-panel-check">
+      <input type="checkbox" ${isLeaveTypeVisible(t.id)?'checked':''} data-action="toggle-leave-type-filter" data-id="${t.id}">
+      <span class="machine-dot" style="background:${escapeHtml(t.couleur||'#888')}"></span>${escapeHtml(t.nom)}
+    </label>`).join('') + `
+    <hr>
+    <div class="dd-row">
+      <button class="ghost small" data-action="leave-type-filter-all">Tout</button>
+      <button class="ghost small" data-action="leave-type-filter-none">Aucun</button>
+    </div>`;
+}
+function renderLeaveTypeFilterMenu(ddKey){
+  const nbTotal = state.leaveTypes.length;
+  const nbVisible = visibleLeaveTypeIds ? state.leaveTypes.filter(t=>visibleLeaveTypeIds.has(t.id)).length : nbTotal;
+  return `<details class="dd-menu" data-dd-key="${ddKey}" ontoggle="openMiniDropdowns['${ddKey}']=this.open" ${openMiniDropdowns[ddKey]?'open':''}>
+    <summary class="small">Types affichés (${nbVisible}/${nbTotal}) ▾</summary>
+    <div class="dd-panel">${renderLeaveTypeCheckboxItems()}</div>
+  </details>`;
 }
 function loadKanbanDoneLimitPref(){
   try{
@@ -1156,6 +1238,13 @@ const MOBILE_BREAKPOINT_PX = 720;
 function isNarrowViewport(){
   return typeof window !== 'undefined' && !!window.innerWidth && window.innerWidth <= MOBILE_BREAKPOINT_PX;
 }
+// Même seuil que la règle CSS `@media screen and (min-width:900px)` du calendrier annuel (vue
+// "Mois" agrandie) — au-dessus, la cellule d'un jour est assez haute pour accueillir davantage de
+// noms avant de tronquer en "+N" (voir renderCalMonthBlock).
+const DESKTOP_CAL_BREAKPOINT_PX = 900;
+function isWideViewportForCalendar(){
+  return typeof window !== 'undefined' && !!window.innerWidth && window.innerWidth >= DESKTOP_CAL_BREAKPOINT_PX;
+}
 let calendrierYear = new Date().getFullYear();
 let calendrierMonth = new Date().getMonth(); // 0-11, utilisé seulement en vue "mois"
 // Sur petit écran, une cellule de la vue "Année" (38px, plusieurs pastilles) est trop petite pour
@@ -1166,7 +1255,6 @@ let calendrierMonth = new Date().getMonth(); // 0-11, utilisé seulement en vue 
 let calendrierViewMode = isNarrowViewport() ? 'mois' : 'annee'; // 'annee' | 'mois'
 let calendrierPersonneFilter = ''; // '' = toutes les personnes
 let calendrierStatutFilter = 'approuve_attente'; // 'approuve_attente' | 'approuve' | 'en_attente' | 'toutes'
-let calendrierTypeFilter = ''; // '' = tous les types de congé
 let leaveReqPrefillDate = null; // date (AAAA-MM-JJ) à préremplir au prochain rendu de "Mes demandes"
   // (posée par un clic sur un jour du calendrier annuel), consommée une seule fois puis remise à null
 let calendrierDayDetail = null; // { date } | null — jour dont le détail (qui est en congé) est
@@ -6187,6 +6275,7 @@ function renderEquipeTab(){
   let list = state.leaveRequests.slice();
   if(equipeStatutFilter !== 'toutes') list = list.filter(r => r.statut === equipeStatutFilter);
   if(equipePersonneFilter) list = list.filter(r => r.userId === equipePersonneFilter);
+  list = list.filter(r => isLeaveTypeVisible(r.typeId));
   list.sort((a,b) => a.debut.localeCompare(b.debut));
   const rows = list.map(r => {
     const t = leaveTypeById(r.typeId);
@@ -6222,10 +6311,11 @@ function renderEquipeTab(){
         <option value="refuse" ${equipeStatutFilter==='refuse'?'selected':''}>Refusées</option>
         <option value="toutes" ${equipeStatutFilter==='toutes'?'selected':''}>Toutes</option>
       </select>
+      ${renderLeaveTypeFilterMenu('equipe-types')}
     </div>
     <table class="ops-table">
       <thead><tr><th>Personne</th><th>Type</th><th>Période</th><th>Jours ouvrés</th><th>Solde restant</th><th>Statut</th>${admin?'<th></th>':''}</tr></thead>
-      <tbody>${rows || `<tr><td colspan="${admin?7:6}" style="text-align:center; color:var(--text-faint);">Aucune demande ne correspond à ce filtre</td></tr>`}</tbody>
+      <tbody>${rows || `<tr><td colspan="${admin?7:6}" style="text-align:center; color:var(--text-faint);">Aucune demande ne correspond à ce filtre${visibleLeaveTypeIds && visibleLeaveTypeIds.size===0?' — aucun type de congé sélectionné':''}</td></tr>`}</tbody>
     </table>
     <div class="footer-note" style="text-align:left; padding-top:10px;">Les périodes déjà passées apparaissent en grisé.</div>
   </div></section>`;
@@ -6251,11 +6341,15 @@ function renderCalMonthBlock(year, mi, byDate, todayKey, large){
     const entries = byDate[key] || [];
     let bodyHtml;
     if(large){
-      const shown = entries.slice(0,3);
+      // Cellule bien plus haute sur grand écran (voir la règle @media min-width:900px) : assez de
+      // place pour davantage de noms avant de tronquer en "+N" — jamais plus de 3 sur petit écran,
+      // où la cellule reste volontairement compacte (voir ergonomie mobile).
+      const maxShown = isWideViewportForCalendar() ? 6 : 3;
+      const shown = entries.slice(0, maxShown);
       const rest = entries.length - shown.length;
       bodyHtml = `<div class="calmonth-names">${shown.map(en =>
         `<span class="calmonth-name-pill ${en.statut==='en_attente'?'pending':''}" style="${en.statut==='en_attente'?`border-color:${en.couleur}; color:${en.couleur};`:`background:${en.couleur};`}">${escapeHtml(en.username)}</span>`
-      ).join('')}${rest>0?`<span class="footer-note" style="margin:0;">+${rest}</span>`:''}</div>`;
+      ).join('')}${rest>0?`<span class="calmonth-more-count">+${rest}</span>`:''}</div>`;
     } else {
       bodyHtml = `<div class="calmonth-dots">${entries.slice(0,4).map(en =>
         `<span class="calmonth-dot ${en.statut==='en_attente'?'pending':''}" style="${en.statut==='en_attente'?`border-color:${en.couleur};`:`background:${en.couleur};`}"></span>`
@@ -6285,7 +6379,11 @@ function renderCalendrierBalanceStrip(year, userId){
   if(!userId) return '';
   const u = usersList.find(uu=>String(uu.id)===String(userId));
   if(!u) return '';
-  const items = state.leaveTypes.map(t => {
+  // Un type masqué par le filtre "Types affichés" (voir renderLeaveTypeFilterMenu) n'a pas non plus
+  // sa place ici — cohérent avec le reste de l'onglet, et ça réduit d'autant l'encombrement visé par
+  // ce filtre (un type très prolifique comme "Alternance à l'école" décoché n'affiche alors plus non
+  // plus son solde "Illimité" ici).
+  const items = state.leaveTypes.filter(t => isLeaveTypeVisible(t.id)).map(t => {
     const bal = computeLeaveBalance(String(userId), t.id, year);
     const label = t.sansSolde ? 'Illimité' : `${leaveDureeLabel(bal.remaining)} j`;
     return `<span class="calyear-legend-item"><span class="machine-swatch" style="background:${t.couleur}"></span>${escapeHtml(t.nom)} : <strong>${label}</strong></span>`;
@@ -6338,7 +6436,7 @@ function renderCalendrierAnnuelTab(){
   state.leaveRequests.forEach(r => {
     if(!statutsVoulus.includes(r.statut)) return;
     if(calendrierPersonneFilter && r.userId !== calendrierPersonneFilter) return;
-    if(calendrierTypeFilter && r.typeId !== calendrierTypeFilter) return;
+    if(!isLeaveTypeVisible(r.typeId)) return;
     if(!r.debut || !r.fin) return;
     const u = usersList.find(uu=>String(uu.id)===r.userId);
     const t = leaveTypeById(r.typeId);
@@ -6356,10 +6454,6 @@ function renderCalendrierAnnuelTab(){
     ? renderCalMonthBlock(year, calendrierMonth, byDate, todayKey, true)
     : Array.from({length:12}, (_,mi) => renderCalMonthBlock(year, mi, byDate, todayKey, false)).join('');
 
-  const legendTypes = calendrierTypeFilter ? state.leaveTypes.filter(t=>t.id===calendrierTypeFilter) : state.leaveTypes;
-  const legend = legendTypes.map(t => `<span class="calyear-legend-item"><span class="machine-swatch" style="background:${t.couleur}"></span>${escapeHtml(t.nom)}</span>`).join('')
-    + `<span class="calyear-legend-item"><span class="calmonth-dot pending" style="border-color:var(--text-faint);"></span>En attente</span>`;
-
   const navHtml = isMoisMode
     ? `<button class="small" data-action="calmonth-nav" data-dir="-1">‹</button>
        <strong style="min-width:150px; text-align:center;">${CAL_MONTH_NAMES[calendrierMonth]} ${year}</strong>
@@ -6370,28 +6464,14 @@ function renderCalendrierAnnuelTab(){
        <button class="small" data-action="calyear-nav" data-dir="1">›</button>
        <button class="small" data-action="calyear-today">Année en cours</button>`;
 
-  return `<section class="panel"><div class="panel-body">
-    <div class="search-bar">
-      <div class="view-tabs">
-        <button class="small ${!isMoisMode?'active':''}" data-action="calview-mode" data-mode="annee">Année</button>
-        <button class="small ${isMoisMode?'active':''}" data-action="calview-mode" data-mode="mois">Mois</button>
-      </div>
-      ${navHtml}
-      <span class="search-bar-group">
+  const personneFilterHtml = `<span class="search-bar-group">
         <label class="field" style="margin:0 0 0 12px;">Personne</label>
         <select data-action="calyear-personne-filter" style="width:auto;">
           <option value="">Toutes</option>
           ${usersList.map(u=>`<option value="${u.id}" ${calendrierPersonneFilter===String(u.id)?'selected':''}>${escapeHtml(u.username)}</option>`).join('')}
         </select>
-      </span>
-      <span class="search-bar-group">
-        <label class="field" style="margin:0 0 0 12px;">Type</label>
-        <select data-action="calyear-type-filter" style="width:auto;">
-          <option value="">Tous</option>
-          ${state.leaveTypes.map(t=>`<option value="${t.id}" ${calendrierTypeFilter===t.id?'selected':''}>${escapeHtml(t.nom)}</option>`).join('')}
-        </select>
-      </span>
-      <span class="search-bar-group">
+      </span>`;
+  const statutFilterHtml = `<span class="search-bar-group">
         <label class="field" style="margin:0 0 0 12px;">Statut</label>
         <select data-action="calyear-statut-filter" style="width:auto;">
           <option value="approuve_attente" ${calendrierStatutFilter==='approuve_attente'?'selected':''}>Approuvés + en attente</option>
@@ -6399,10 +6479,41 @@ function renderCalendrierAnnuelTab(){
           <option value="en_attente" ${calendrierStatutFilter==='en_attente'?'selected':''}>En attente uniquement</option>
           <option value="toutes" ${calendrierStatutFilter==='toutes'?'selected':''}>Toutes (avec refusées)</option>
         </select>
-      </span>
+      </span>`;
+
+  // Sur petit écran, trop de contrôles empilés (filtres + solde) repoussaient le calendrier
+  // lui-même très bas dans la page — on ne voyait plus que le haut de la grille avant la fin de
+  // l'écran. Les filtres Personne/Type/Statut rejoignent donc un menu "Filtres ▾" repliable (même
+  // mécanisme `dd-menu` que "Postes affichés" du Kanban — la pop-up flotte par-dessus le contenu,
+  // elle ne prend donc AUCUNE place tant qu'elle n'est pas ouverte) : le calendrier remonte d'autant
+  // dans la page. Le filtre Type lui-même est TOUJOURS un menu à cases à cocher (`renderLeaveType
+  // FilterMenu`), qu'on soit sur petit ou grand écran — seul son imbrication change : sur petit
+  // écran, son contenu (cases + Tout/Aucun) rejoint directement le panneau "Filtres" déjà replié
+  // (jamais un `<details>` DANS un `<details>`, malaisé à utiliser) ; sur grand écran, il garde son
+  // propre menu déroulant, à côté de Personne/Statut. Comportement desktop du reste (Personne/
+  // Statut) strictement inchangé (tout affiché en permanence, comme avant cette fonctionnalité).
+  const narrow = isNarrowViewport();
+  const filtersInlineOrMenu = narrow
+    ? `<details class="dd-menu" data-dd-key="cal-filtres" ontoggle="openMiniDropdowns['cal-filtres']=this.open" ${openMiniDropdowns['cal-filtres']?'open':''}>
+        <summary class="small">🔍 Filtres ▾</summary>
+        <div class="dd-panel" style="display:flex; flex-direction:column; gap:10px;">
+          ${personneFilterHtml}${statutFilterHtml}
+          <div class="dd-panel-title">Types affichés</div>
+          ${renderLeaveTypeCheckboxItems()}
+        </div>
+      </details>`
+    : `${personneFilterHtml}${statutFilterHtml}${renderLeaveTypeFilterMenu('cal-types')}`;
+
+  return `<section class="panel"><div class="panel-body">
+    <div class="search-bar">
+      <div class="view-tabs">
+        <button class="small ${!isMoisMode?'active':''}" data-action="calview-mode" data-mode="annee">Année</button>
+        <button class="small ${isMoisMode?'active':''}" data-action="calview-mode" data-mode="mois">Mois</button>
+      </div>
+      ${navHtml}
+      ${filtersInlineOrMenu}
     </div>
     ${renderCalendrierBalanceStrip(year, calendrierPersonneFilter || (currentUser?String(currentUser.id):''))}
-    <div class="footer-note" style="text-align:left; padding:6px 0 12px; display:flex; gap:14px; flex-wrap:wrap;">${legend}</div>
     <div class="${isMoisMode?'calmonth-single-wrap':'calyear-months-wrap'}">${monthsHtml}</div>
     <div class="footer-note" style="text-align:left; padding-top:10px;">Un pastille pleine = congé approuvé. Une pastille au contour = demande encore en attente. Survolez un jour pour voir le détail.</div>
   </div></section>`;
@@ -10053,7 +10164,9 @@ function dispatchChangeAction(el, action){
     }
     case 'calyear-personne-filter': calendrierPersonneFilter = el.value; render(); break;
     case 'calyear-statut-filter': calendrierStatutFilter = el.value; render(); break;
-    case 'calyear-type-filter': calendrierTypeFilter = el.value; render(); break;
+    case 'toggle-leave-type-filter': toggleLeaveTypeFilter(el.dataset.id, el.checked); break;
+    case 'leave-type-filter-all': setAllLeaveTypeFilter(true); break;
+    case 'leave-type-filter-none': setAllLeaveTypeFilter(false); break;
     case 'temps-prod-range-debut': tempsProdRangeDebut = el.value; render(); break;
     case 'temps-prod-range-fin': tempsProdRangeFin = el.value; render(); break;
     case 'user-pause-field': updateUserPauseField(el.dataset.userId, el.dataset.pauseId, el.dataset.field, el.value); break;
@@ -10872,6 +10985,7 @@ async function startApp(){
   loadActiveCommandesLimitPref();
   loadActiveIdentityPref();
   loadKanbanMachineFilters();
+  loadLeaveTypeFilter();
   loadKanbanGroupedViewPref();
   loadPanelCollapsePref();
   loadColumnsRatioPref();
