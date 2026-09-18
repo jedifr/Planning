@@ -402,6 +402,28 @@ une pastille par jour et par personne en congé, plutôt que la liste tabulaire 
   sur n'importe quel jour (y compris un jour déjà couvert par un congé d'un tiers, ou un jour d'un
   mois adjacent affiché en grisé) — c'est `findLeaveConflicts` (voir plus haut) qui avertit déjà au
   moment de la confirmation en cas de chevauchement, inutile de dupliquer cette vérification ici.
+- **Cliquer une pastille/pilule pour modifier directement le congé concerné** (retour utilisateur
+  réel : « serait-il possible de revenir à la demande de congé en cliquant sur la pastille
+  concernée ? ») — distinct du clic sur la cellule du jour ci-dessus (qui prépare une **nouvelle**
+  demande) : cliquer la pastille (vue Année, `.calmonth-dot`) ou la pilule de nom (vue Mois,
+  `.calmonth-name-pill`) d'une personne déjà en congé ouvre directement la pop-up « Modifier ce
+  congé » (`startEditLeaveRequest`, même formulaire que le bouton « ✎ Modifier » de « Congés de
+  l'équipe ») pour **cette** demande précise — un seul clic, aucun changement d'onglet, plutôt que
+  de devoir la retrouver dans un tableau. `renderCalMonthBlock` calcule `canEditFromPill =
+  canSupervise()` et n'ajoute `data-action="calendrier-edit-leave" data-id="{id de la demande}"`
+  sur la pastille/pilule que si vrai — **aucune nouvelle capacité accordée**, juste un raccourci
+  vers un accès déjà existant (mêmes conditions que "✎ Modifier", jamais ouvert à un simple
+  employé qui verrait alors un congé d'autrui devenir cliquable sans pouvoir le modifier). L'entrée
+  `byDate` construite par `renderCalendrierAnnuelTab` porte désormais `id: r.id` (l'id de la
+  demande, pas seulement les champs déjà affichés) pour permettre ce raccourci. Le `data-action`
+  de la pastille/pilule est capturé par `closest('[data-action]')` avant celui, plus englobant, de
+  la cellule du jour (`calendrier-request-day`) — aucun `stopPropagation()` nécessaire, c'est
+  l'ancêtre-ou-soi-même le plus proche du point de clic qui l'emporte naturellement. Non-admin :
+  aucune pastille cliquable, le clic sur la cellule du jour (poser une nouvelle demande) reste
+  inchangé. **Pop-up agrandie** (`modal-box-wide`, comme les autres grandes pop-up de l'appli —
+  import, regroupement...) suite à un retour direct après la mise en place de ce raccourci : la
+  pop-up « Modifier ce congé » se voulait accessible d'un clic bien visible, pas étriquée dans la
+  largeur de modale par défaut (520px) pensée pour un petit formulaire secondaire.
 - **Solde compact en tête du calendrier** (`renderCalendrierBalanceStrip`) — même donnée que les
   cartes de solde de « Mes demandes »/le tableau de « Soldes & types » (`computeLeaveBalance`), mais
   condensée sur une seule ligne pour ne pas avoir à changer d'onglet en consultant le calendrier.

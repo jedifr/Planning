@@ -668,6 +668,9 @@
   .calmonth-daycell.large .calmonth-daynum{align-self:flex-start; width:auto; height:auto;}
   .calmonth-names{display:flex; flex-direction:column; gap:2px; margin-top:2px; width:100%;}
   .calmonth-name-pill{font-size:10px; line-height:1.5; padding:0 5px; border-radius:8px; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  /* Pastille/pilule qui renvoie directement à sa demande (édition, canSupervise() uniquement — voir
+     renderCalMonthBlock) : léger effet au survol pour la distinguer d'une pastille non cliquable. */
+  .calmonth-name-pill[data-action]:hover, .calmonth-dot[data-action]:hover{filter:brightness(1.25); outline:1.5px solid #fff;}
   .calmonth-name-pill.pending{background:transparent; border:1.3px solid;}
   .calmonth-more-count{color:var(--text-faint); font-size:11px;}
   .calmonth-dot.pending{background:transparent; border:1.6px solid;}
@@ -849,7 +852,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.25.0';
+const APP_VERSION = '1.26.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -3992,7 +3995,7 @@ function renderEditLeaveRequestModal(){
   const requester = usersList.find(u=>String(u.id)===d.userId);
   return `
   <div class="modal-overlay">
-    <div class="modal-box" role="dialog" aria-modal="true">
+    <div class="modal-box modal-box-wide" role="dialog" aria-modal="true">
       <div class="modal-head">
         <h2>Modifier ce congé — ${requester?escapeHtml(requester.username):'(compte supprimé)'}</h2>
         <button class="ghost icon-btn" data-action="cancel-edit-leave-request" title="Fermer">✕</button>
@@ -6339,6 +6342,17 @@ function renderCalMonthBlock(year, mi, byDate, todayKey, large){
     const isWeekend = d.getDay()===0 || d.getDay()===6;
     const isHoliday = isFrenchPublicHoliday(d);
     const entries = byDate[key] || [];
+    // Une pastille/pilule renvoie directement à SA demande (édition), réservé aux personnes qui ont
+    // de toute façon accès à "✎ Modifier" dans "Congés de l'équipe" (canSupervise()) — pas de
+    // nouvelle capacité, juste un raccourci vers un accès déjà existant. Porte son propre
+    // `data-action` : `closest('[data-action]')` s'arrête sur la pastille elle-même, jamais sur le
+    // `data-action="calendrier-request-day"` de la cellule qui l'englobe (pas besoin de
+    // stopPropagation). Pour tout le monde d'autre, la pastille reste sans `data-action` propre et
+    // le clic tombe normalement sur celui de la cellule (poser un congé/détail mobile, inchangé).
+    const canEditFromPill = canSupervise();
+    const pillAction = (en) => canEditFromPill
+      ? `data-action="calendrier-edit-leave" data-id="${en.id}" title="${escapeHtml(`${en.username} — ${en.typeNom} — cliquer pour modifier`)}"`
+      : '';
     let bodyHtml;
     if(large){
       // Cellule bien plus haute sur grand écran (voir la règle @media min-width:900px) : assez de
@@ -6348,11 +6362,11 @@ function renderCalMonthBlock(year, mi, byDate, todayKey, large){
       const shown = entries.slice(0, maxShown);
       const rest = entries.length - shown.length;
       bodyHtml = `<div class="calmonth-names">${shown.map(en =>
-        `<span class="calmonth-name-pill ${en.statut==='en_attente'?'pending':''}" style="${en.statut==='en_attente'?`border-color:${en.couleur}; color:${en.couleur};`:`background:${en.couleur};`}">${escapeHtml(en.username)}</span>`
+        `<span class="calmonth-name-pill ${en.statut==='en_attente'?'pending':''}" ${pillAction(en)} style="${en.statut==='en_attente'?`border-color:${en.couleur}; color:${en.couleur};`:`background:${en.couleur};`}">${escapeHtml(en.username)}</span>`
       ).join('')}${rest>0?`<span class="calmonth-more-count">+${rest}</span>`:''}</div>`;
     } else {
       bodyHtml = `<div class="calmonth-dots">${entries.slice(0,4).map(en =>
-        `<span class="calmonth-dot ${en.statut==='en_attente'?'pending':''}" style="${en.statut==='en_attente'?`border-color:${en.couleur};`:`background:${en.couleur};`}"></span>`
+        `<span class="calmonth-dot ${en.statut==='en_attente'?'pending':''}" ${pillAction(en)} style="${en.statut==='en_attente'?`border-color:${en.couleur};`:`background:${en.couleur};`}"></span>`
       ).join('')}</div>`;
     }
     // Cliquer un jour ouvre "Nouvelle demande" (onglet Mes demandes) pré-rempli sur cette date — le
@@ -6445,7 +6459,7 @@ function renderCalendrierAnnuelTab(){
     let guard = 0;
     while(d <= end && guard++ < 400){
       const key = toDateInputValue(d);
-      (byDate[key] = byDate[key] || []).push({ username: u?u.username:'?', typeNom: t?t.nom:'Congé', couleur: t?t.couleur:'#888', statut: r.statut });
+      (byDate[key] = byDate[key] || []).push({ id: r.id, username: u?u.username:'?', typeNom: t?t.nom:'Congé', couleur: t?t.couleur:'#888', statut: r.statut });
       d.setDate(d.getDate()+1);
     }
   });
@@ -9993,6 +10007,7 @@ function dispatchClickAction(action, el){
     case 'approve-leave-request': decideLeaveRequest(el.dataset.id, 'approuve'); break;
     case 'revoke-leave-request': revokeLeaveRequest(el.dataset.id); break;
     case 'edit-leave-request': startEditLeaveRequest(el.dataset.id); break;
+    case 'calendrier-edit-leave': startEditLeaveRequest(el.dataset.id); break;
     case 'cancel-edit-leave-request': cancelEditLeaveRequest(); break;
     case 'preview-edit-leave-request': previewEditLeaveRequest(); break;
     case 'reject-leave-request': decideLeaveRequest(el.dataset.id, 'refuse'); break;
