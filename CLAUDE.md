@@ -424,6 +424,21 @@ une pastille par jour et par personne en congé, plutôt que la liste tabulaire 
   import, regroupement...) suite à un retour direct après la mise en place de ce raccourci : la
   pop-up « Modifier ce congé » se voulait accessible d'un clic bien visible, pas étriquée dans la
   largeur de modale par défaut (520px) pensée pour un petit formulaire secondaire.
+- **Supprimer un congé directement depuis cette même pop-up** (retour utilisateur réel, juste après
+  la mise en place du raccourci ci-dessus) — bouton « 🗑 Supprimer ce congé » (`.danger-ghost`,
+  séparé à gauche dans `.form-actions` grâce à `justify-content:space-between`, les deux autres
+  boutons regroupés à droite dans un `.toolbar-mini`) dans `renderEditLeaveRequestModal`.
+  `deleteLeaveRequestFromEdit(reqId)` ne duplique **aucune** logique de suppression déjà existante :
+  il redirige vers la fonction adaptée au statut courant de la demande — `revokeLeaveRequest`
+  (`approuve`, avec sa confirmation, sa seconde confirmation si déjà passée, et son e-mail de
+  révocation) ou `withdrawLeaveRequest` (`en_attente`, déjà utilisable par un admin sur la demande
+  de n'importe qui, pas seulement par son auteur) — et ne code en direct qu'un troisième cas resté
+  sans fonction dédiée nulle part ailleurs dans l'appli : une demande `refuse` (simple confirmation,
+  suppression directe, aucun solde ni planning à recalculer puisqu'un congé refusé n'en affecte
+  déjà aucun). Après l'appel, si la demande a effectivement disparu de `state.leaveRequests`
+  (confirmation acceptée) : `editingLeaveRequestDraft = null` referme la pop-up et un `render()`
+  explicite l'efface de l'écran — si la confirmation a été annulée (fonctions existantes comme cas
+  direct ci-dessus), la demande est toujours là et la pop-up reste ouverte sans rien faire de plus.
 - **Solde compact en tête du calendrier** (`renderCalendrierBalanceStrip`) — même donnée que les
   cartes de solde de « Mes demandes »/le tableau de « Soldes & types » (`computeLeaveBalance`), mais
   condensée sur une seule ligne pour ne pas avoir à changer d'onglet en consultant le calendrier.
@@ -1566,6 +1581,15 @@ sont regroupées/exposées.
   `toggle-settings-section` (supprimé) dans `dispatchClickAction`. Repli automatique sur la première
   catégorie visible si `settingsActiveSection` pointe vers une clé absente (ancienne préférence
   enregistrée avant suppression d'une section) — jamais de volet de droite vide.
+- **Pop-up Paramètres agrandie (`modal-box-xl`).** Retour utilisateur réel : restait visuellement
+  petite sur un grand écran même après le passage général des grandes pop-up à `modal-box-wide`
+  (1180px/96vw) — c'est la pop-up la plus dense de l'appli (navigation + contenu, souvent des
+  tableaux par poste/allée côte à côte, voir « Postes de production » ci-dessus), celle qui profite
+  le plus d'espace supplémentaire. `.modal-box-xl{width:min(1560px, 97vw); max-height:92vh;}` —
+  variante dédiée plutôt qu'un simple agrandissement de `.modal-box-wide` (qui reste utilisée telle
+  quelle par les autres grandes pop-up — import, regroupement, édition de congé — qui n'ont pas ce
+  besoin). `.settings-modal-body` (hauteur du corps à deux volets, indépendante du `max-height` du
+  `.modal-box` englobant) suit : `height:min(780px, 84vh)` (était `min(620px, 74vh)`).
 - **`openMiniDropdowns` — état ouvert/fermé des petits menus `<details class="dd-menu">`.** Un
   `render()` complet reconstruit tout le DOM à chaque action (voir le piège "mutation du planning
   sans invalider le cache" plus bas pour le principe général) : un `<details>` sans suivi d'état

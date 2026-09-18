@@ -715,6 +715,10 @@
     width:min(520px, 100%); max-height:85vh; overflow-y:auto; box-shadow:0 12px 32px rgba(0,0,0,0.3);
   }
   .modal-box-wide{width:min(1180px, 96vw);}
+  /* Paramètres est la pop-up la plus dense de l'appli (navigation + contenu, souvent des tableaux
+     par poste/allée) — retour utilisateur réel : restait visuellement petite même après le passage
+     à `modal-box-wide` sur un grand écran. Variante dédiée, plus large et plus haute. */
+  .modal-box-xl{width:min(1560px, 97vw); max-height:92vh;}
   .modal-head{
     display:flex; align-items:center; justify-content:space-between;
     padding:13px 18px; border-bottom:1px solid var(--line-soft); background:var(--panel-2);
@@ -736,7 +740,7 @@
   /* Pop-up Paramètres en deux volets : catégories à gauche (toujours visibles), contenu de la
      catégorie sélectionnée à droite — remplace l'ancien accordéon vertical (une seule section
      ouverte à la fois, plus de long défilement pour atteindre une catégorie du bas). */
-  .settings-modal-body{display:flex; height:min(620px, 74vh); min-height:0;}
+  .settings-modal-body{display:flex; height:min(780px, 84vh); min-height:0;}
   .settings-nav{width:220px; flex-shrink:0; border-right:1px solid var(--line-soft); background:var(--panel-2); overflow-y:auto; padding:8px;}
   .settings-nav-item{display:flex; align-items:center; gap:2px;}
   .settings-reorder{display:flex; flex-direction:column; gap:0;}
@@ -852,7 +856,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.26.0';
+const APP_VERSION = '1.27.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -4014,12 +4018,40 @@ function renderEditLeaveRequestModal(){
         <div style="margin-top:10px;"><label class="field">Motif (optionnel)</label><input value="${escapeHtml(d.motif||'')}" data-action="edit-leave-field" data-field="motif"></div>
         <div class="footer-note" style="text-align:left; padding-top:10px;">La demi-journée ne s'applique qu'à une correction sur un seul jour (début = fin). Le statut actuel n'est pas modifié ici — utilisez Approuver / Refuser / Révoquer pour ça. La personne concernée est prévenue par e-mail du changement.</div>
         <div class="form-actions" style="margin-top:16px;">
-          <button class="ghost" data-action="cancel-edit-leave-request">Annuler</button>
-          <button class="primary" data-action="preview-edit-leave-request">Voir les conséquences →</button>
+          <button class="danger-ghost" data-action="delete-leave-request-from-edit" data-id="${d.id}">🗑 Supprimer ce congé</button>
+          <div class="toolbar-mini">
+            <button class="ghost" data-action="cancel-edit-leave-request">Annuler</button>
+            <button class="primary" data-action="preview-edit-leave-request">Voir les conséquences →</button>
+          </div>
         </div>
       </div>
     </div>
   </div>`;
+}
+// Supprimer directement une demande depuis la pop-up "Modifier ce congé" (retour utilisateur réel :
+// on peut déjà révoquer un congé approuvé ou retirer une demande en attente ailleurs dans l'appli —
+// ce bouton évite de devoir fermer cette pop-up et retrouver la bonne ligne dans le bon onglet pour
+// le faire). Redirige vers la fonction existante adaptée au statut courant plutôt que de dupliquer
+// leur confirmation/notification/suppression : `revokeLeaveRequest` (approuvé, avec e-mail et double
+// confirmation si déjà passé) et `withdrawLeaveRequest` (en attente, sans restriction d'auteur ici —
+// un admin peut retirer la demande de n'importe qui). Un congé `refuse` n'a ni l'une ni l'autre
+// fonction dédiée : suppression directe avec une simple confirmation, ce statut n'ayant plus aucun
+// effet sur le solde ni le planning.
+function deleteLeaveRequestFromEdit(reqId){
+  const req_ = state.leaveRequests.find(r=>r.id===reqId);
+  if(!req_) return;
+  if(req_.statut==='approuve') revokeLeaveRequest(reqId);
+  else if(req_.statut==='en_attente') withdrawLeaveRequest(reqId);
+  else {
+    if(!confirm('Supprimer définitivement cette demande refusée ?')) return;
+    state.leaveRequests = state.leaveRequests.filter(r=>r.id!==reqId);
+    commit();
+  }
+  if(!state.leaveRequests.find(r=>r.id===reqId)){
+    editingLeaveRequestDraft = null;
+    showToast('Congé supprimé.');
+    render();
+  }
 }
 // Un administrateur peut attribuer directement un congé à quelqu'un (déjà approuvé, sans passer
 // par une demande) — utile pour enregistrer un accord donné oralement, ou poser un congé pour une
@@ -8346,7 +8378,7 @@ function renderSettingsModal(){
 
   return `
   <div class="modal-overlay">
-    <div class="modal-box modal-box-wide" role="dialog" aria-modal="true">
+    <div class="modal-box modal-box-xl" role="dialog" aria-modal="true">
       <div class="modal-head">
         <h2>${isAdmin() ? 'Paramètres' : 'Mon compte'}</h2>
         <button class="ghost icon-btn" data-action="close-settings" title="Fermer">✕</button>
@@ -10006,6 +10038,7 @@ function dispatchClickAction(action, el){
     case 'toggle-leave-impact': leaveImpactPreviewId = (leaveImpactPreviewId===el.dataset.id) ? null : el.dataset.id; render(); break;
     case 'approve-leave-request': decideLeaveRequest(el.dataset.id, 'approuve'); break;
     case 'revoke-leave-request': revokeLeaveRequest(el.dataset.id); break;
+    case 'delete-leave-request-from-edit': deleteLeaveRequestFromEdit(el.dataset.id); break;
     case 'edit-leave-request': startEditLeaveRequest(el.dataset.id); break;
     case 'calendrier-edit-leave': startEditLeaveRequest(el.dataset.id); break;
     case 'cancel-edit-leave-request': cancelEditLeaveRequest(); break;
