@@ -243,25 +243,30 @@ connexion, potentiellement des heures plus tard.
 - **`autoPauseResume.js`** — nouveau module serveur, **portage volontairement dupliqué** (pas
   partagé/importé) du même calcul déjà présent côté client dans `public/index.html` :
   `pauseWindowsFor`/`pauseWindowFor` (pauses effectives à un instant donné, plusieurs pauses par
-  personne fusionnées si elles se chevauchent), `applyUserLunchOverride` (horaire et pause propres
-  à une personne, avec le même ratio lun.-jeu./vendredi préservé pour un horaire personnalisé — bug
-  déjà corrigé côté client, voir plus bas), `configForMachineId`/`configForPiece`,
-  `isInPauseWindow`, et `applyAutoPauseResume` lui-même (fermeture de **toutes** les sessions
-  ouvertes, reprise horodatée à la vraie fin de pause `autoPausedUntil`, jamais à l'instant du
-  contrôle — voir « Travail à plusieurs » ci-dessus et le piège dédié plus bas). Aucun mécanisme de
-  partage de code entre le client (une seule balise `<script>`, pas de build, voir Architecture) et
-  le serveur (modules Node classiques) n'existe dans ce projet — introduire un fichier `.js` chargé
-  par le navigateur en plus de `public/index.html` aurait été un changement d'architecture plus
-  large que ce qui était demandé. **Réflexe explicite documenté en tête de `autoPauseResume.js`** :
-  toute évolution de cette logique côté client (`applyUserLunchOverride`, `pauseWindowsFor`, la
-  fermeture de toutes les sessions plutôt qu'une seule...) doit être reportée à l'identique dans ce
-  fichier, sous peine de divergence silencieuse entre les deux copies.
-  - **Simplification assumée** : la version client calcule en plus, dans `effectiveConfig`, les
-    indisponibilités automatiques d'un poste dont tous les opérateurs liés sont en congé
-    (`operatorLeaveIntersection`) — sans aucune incidence ici (`pauseWindowsFor` ne lit jamais
-    `indisponibilites`) et dépendant de `usersList` (uniquement disponible côté client, pour le
-    libellé d'infobulle) : volontairement omise côté serveur plutôt que portée pour un résultat
-    sans effet sur le calcul de pause.
+  personne fusionnées si elles se chevauchent), `dayIntervals`/`dayHoursFor`/`dayStartFor`/
+  `isDateBlocked` (segments de travail réels d'une journée, voir « Hors horaires » ci-dessous),
+  `applyUserLunchOverride` (horaire et pause propres à une personne, avec le même ratio
+  lun.-jeu./vendredi préservé pour un horaire personnalisé — bug déjà corrigé côté client, voir
+  plus bas), `configForMachineId`/`configForPiece`, `isInPauseWindow`, et `applyAutoPauseResume`
+  lui-même (fermeture de **toutes** les sessions ouvertes, reprise horodatée à la vraie fin de
+  pause `autoPausedUntil`, jamais à l'instant du contrôle — voir « Travail à plusieurs » ci-dessus
+  et le piège dédié plus bas). Aucun mécanisme de partage de code entre le client (une seule
+  balise `<script>`, pas de build, voir Architecture) et le serveur (modules Node classiques)
+  n'existe dans ce projet — introduire un fichier `.js` chargé par le navigateur en plus de
+  `public/index.html` aurait été un changement d'architecture plus large que ce qui était demandé.
+  **Réflexe explicite documenté en tête de `autoPauseResume.js`** : toute évolution de cette
+  logique côté client (`applyUserLunchOverride`, `pauseWindowsFor`, `dayIntervals`, la fermeture de
+  toutes les sessions plutôt qu'une seule...) doit être reportée à l'identique dans ce fichier, sous
+  peine de divergence silencieuse entre les deux copies.
+  - **Simplification assumée, partielle depuis « Hors horaires » ci-dessous** : la version client
+    calcule en plus, dans `effectiveConfig`, les indisponibilités automatiques d'un poste dont
+    **tous** les opérateurs liés sont en congé (`operatorLeaveIntersection`) — toujours omise côté
+    serveur (dépend de `usersList`, uniquement disponible côté client, pour le libellé d'infobulle ;
+    sans incidence sur le calcul de pause déjeuner lui-même, `pauseWindowsFor` ne lisant jamais
+    `indisponibilites`). En revanche, `m.indisponibilites` **propre au poste** (saisi à la main dans
+    Paramètres → Postes, ex. maintenance programmée) est désormais reporté par
+    `configForMachineId` — nécessaire à `isDateBlocked`, qui lui a une incidence directe sur la
+    détection « hors horaires ».
 - **`checkAutoPauseResume()`** (`server.js`, `setInterval` toutes les 60s, même cadence que la
   boucle client et que `checkScheduledBackup` déjà en place pour les sauvegardes programmées) — lit
   `app_state`, appelle `applyAutoPauseResume(data, new Date())`, et n'écrit que si `changed` est
@@ -286,6 +291,52 @@ connexion, potentiellement des heures plus tard.
   un nouveau fichier serveur requis par `server.js`, donc ajouté à la fois au `require()` et à la
   ligne `COPY autoPauseResume.js ./` du `Dockerfile` — vérifié par
   `grep -oE "require\('\./[a-zA-Z]+'\)" server.js` comparé à `grep "^COPY" Dockerfile`.
+
+#### Mise en pause automatique « hors horaires » (soir, nuit, week-end) — sans reprise automatique
+
+Retour utilisateur réel : une tâche `en_cours` restait affichée telle quelle tout un week-end si
+personne n'avait pensé à cliquer « Pause » avant de partir — la pause déjeuner automatique
+ci-dessus ne couvre que le créneau de midi, rien ne gérait le reste des horaires non travaillés.
+Distinct **à dessein** de la pause déjeuner sur un point précis, explicitement demandé : **aucune
+reprise automatique** le jour ouvré suivant — contrairement à la pause déjeuner (`autoPausedUntil`
+donne au job de quoi rouvrir tout seul la bonne session à la bonne heure), ici la tâche doit rester
+en pause jusqu'à ce qu'un **opérateur la relance lui-même** (reprendre un travail resté en plan
+toute la nuit peut nécessiter une vérification physique de la pièce, une raison humaine que le
+serveur ne peut pas connaître).
+
+- `pauseKindForRunningTask(op, now, st)` (`autoPauseResume.js`) — point unique qui classe une
+  pièce `en_cours` en `'lunch'` | `'outOfHours'` | `null` (aucune action) à l'instant `now` :
+  calcule d'abord `isWorkDay` (ni samedi/dimanche, ni jour bloqué par `isDateBlocked` — indisponibilité
+  de poste) ; `'lunch'` seulement si `isWorkDay` **et** dans la fenêtre de pause déjeuner ; sinon
+  `'outOfHours'` dès que `now` ne tombe dans aucun segment de travail du jour (`dayIntervals`) —
+  qu'il s'agisse d'un jour non travaillé, d'avant l'ouverture, d'après la fermeture, ou d'un poste
+  bloqué.
+  - **Piège explicitement évité par le garde-fou `isWorkDay` sur la branche `'lunch'`.**
+    `isInPauseWindow` (comme côté client, inchangée) ne regarde que l'heure de la journée, jamais le
+    jour de la semaine — un samedi entre 12h00 et 13h00 correspondrait donc, par pure coïncidence
+    d'horaire, à "en pause déjeuner" si on l'utilisait telle quelle. Sans le garde-fou `isWorkDay`,
+    une tâche restée `en_cours` un samedi midi aurait basculé à tort en pause déjeuner **avec
+    reprise automatique à 13h** — exactement l'inverse de l'effet recherché (le week-end entier
+    aurait dû la mettre en pause, sans reprise, dès la sortie du vendredi soir). Couvert par un test
+    dédié (`test_server_out_of_hours_pause.js`, « samedi midi doit être classé outOfHours »).
+- `pieces[].autoPausedOutOfHours` (bool, `false` par défaut, `migrateState`) — posé à `true` par la
+  branche `'outOfHours'` d'`applyAutoPauseResume`, qui ferme toutes les sessions ouvertes à `now`
+  (comme la pause déjeuner) mais **laisse `autoPaused` à `false`** et `autoPausedUntil`/
+  `autoPausedOperators` à `null` — c'est `autoPaused` (pas `autoPausedOutOfHours`) que la branche de
+  reprise automatique d'`applyAutoPauseResume` regarde pour décider de rouvrir une session ; le
+  laisser à `false` range donc cette pause dans le même panier qu'une pause manuelle, et lui évite
+  tout risque d'être un jour repris automatiquement par mégarde. `autoPausedOutOfHours` lui-même
+  n'est lu par aucun mécanisme de reprise : purement informatif (traçabilité), remis à `false` par
+  `applySingleStatusChange` dès qu'un opérateur relance la tâche manuellement (même endroit que la
+  remise à `false` d'`autoPaused`) ou qu'elle est rouverte via « ↺ Rouvrir ».
+  - **Conséquence gratuite, sans code d'affichage supplémentaire** : `pausedSinceEarlierTasks`
+    (bannière « tâches en pause depuis la veille ou avant », voir plus haut) exclut déjà les tâches
+    `autoPaused` (elles sont censées se résorber seules) — une tâche mise en pause « hors horaires »
+    (`autoPaused=false`) y apparaît donc automatiquement dès qu'elle a passé la nuit, avec son
+    bouton « ▶ Continuer ce travail », sans avoir eu à toucher à cette bannière.
+- `configForMachineId` (voir ci-dessus) reporte désormais `m.indisponibilites` (mais toujours pas
+  `operatorLeaveIntersection`) pour qu'`isDateBlocked` puisse aussi classer en `'outOfHours'` un
+  poste en maintenance programmée un jour par ailleurs ouvré.
 
 ## Historique des prévisions avant clôture (`prevision_history`)
 

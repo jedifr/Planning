@@ -856,7 +856,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.28.0';
+const APP_VERSION = '1.29.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1510,6 +1510,7 @@ function migrateState(st){
       if(o.autoPaused === undefined) o.autoPaused = false;
       if(o.autoPausedOperators === undefined) o.autoPausedOperators = null;
       if(o.autoPausedUntil === undefined) o.autoPausedUntil = null;
+      if(o.autoPausedOutOfHours === undefined) o.autoPausedOutOfHours = false;
       if(!Array.isArray(o.dependances)) o.dependances = [];
       if(o.phase === undefined || o.phase === null || isNaN(Number(o.phase))) o.phase = 1;
       if(o.tempsUnitaireTheorique === undefined || o.tempsUnitaireTheorique === null) o.tempsUnitaireTheorique = o.tempsUnitaire; // référence figée une seule fois (migration : valeur actuelle prise comme référence)
@@ -5073,6 +5074,7 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
       o.sessions.push({ debut: nowStr, fin: null, operatorUserId: activeIdentityId() }); // ouvre une session (démarrage ou reprise après pause)
       o.statut = 'en_cours';
       o.autoPaused = false;
+      o.autoPausedOutOfHours = false; // relancée manuellement — un nouveau contrôle serveur la mettra en pause au prochain "hors horaires" le cas échéant
     }
   } else if(newStatut === 'en_pause'){
     // .forEach, pas .find : plusieurs sessions peuvent être ouvertes en même temps si plusieurs
@@ -5149,6 +5151,7 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
     o.dureeReelleParOperateur = null;
     o.previsionAuDemarrage = null; // un nouveau retard de démarrage sera mesuré au prochain vrai démarrage
     o.autoPaused = false;
+    o.autoPausedOutOfHours = false;
   }
   return null;
 }
