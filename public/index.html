@@ -863,7 +863,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.30.0';
+const APP_VERSION = '1.31.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1300,6 +1300,14 @@ let correctOperatorDraft = null;
 let correctPointageDraft = null;
 // Filtres de la page "Pointages" — purement transitoires (comme searchQuery), jamais persistés.
 let pointagesFilters = { personne:'', poste:'', statut:'toutes', range:'month', search:'' };
+// Correction du DÉTAIL des sessions d'une pièce encore ACTIVE (en_cours/en_pause) depuis "Pointages"
+// — voir CLAUDE.md, section "Onglet Pointages". Distinct de correctPointageDraft (qui corrige les
+// champs agrégés d'une pièce déjà TERMINÉE) : une pièce active tire son temps affiché EN DIRECT de
+// sessions[] (voir isPointageCorrectable) — corriger des champs agrégés n'y aurait aucun effet, il
+// faut éditer sessions[] elle-même. { cid, oid, sessions: [{ orig, debut, fin, operatorUserId, open }] }
+// | null (fermé) — `orig` référence l'entrée réelle de sessions[] (jamais clonée), pour recomposer le
+// tableau final sans dépendre d'une correspondance par indice (une suppression décale les indices).
+let correctSessionsDraft = null;
 let fusionCheckedItems = {}; // clé "posteId|matière|épaisseur" -> Set des id de pièces cochées pour fusion
 // État de l'assistant d'import personnalisé (fichier d'un autre logiciel, colonnes à faire
 // correspondre) — null quand l'assistant est fermé.
@@ -6928,6 +6936,8 @@ function renderPointagesPage(){
     const operatorNames = r.operatorIds.map(uid_ => { const u = usersList.find(uu=>String(uu.id)===String(uid_)); return u?u.username:null; }).filter(Boolean);
     const correctBtn = isPointageCorrectable(r.cid, r.oid)
       ? `<button class="ghost small" data-action="open-correct-pointage" data-cid="${r.cid}" data-oid="${r.oid}">✎ Corriger</button>` : '';
+    const sessionsBtn = isSessionsCorrectable(r.cid, r.oid)
+      ? `<button class="ghost small" data-action="open-correct-sessions" data-cid="${r.cid}" data-oid="${r.oid}">🕘 Sessions</button>` : '';
     return `<tr>
       <td>${escapeHtml(r.commandeNom)}</td>
       <td>${escapeHtml(pieceLabel)}${lotSuffix}</td>
@@ -6938,7 +6948,7 @@ function renderPointagesPage(){
       <td>${r.finReel ? formatDT(new Date(r.finReel)) : '—'}</td>
       <td>${durationLabel(r.dureePrevueH)}</td>
       <td>${r.dureeReelleH!=null ? durationLabel(r.dureeReelleH) : '—'}</td>
-      <td style="white-space:nowrap;">${correctBtn}</td>
+      <td style="white-space:nowrap;">${correctBtn}${sessionsBtn}</td>
     </tr>`;
   }).join('');
 
@@ -7074,6 +7084,120 @@ function renderCorrectPointageModal(){
         <div class="form-actions" style="margin-top:16px;">
           <button class="ghost" data-action="close-correct-pointage">Annuler</button>
           <button class="primary" data-action="submit-correct-pointage">✓ Enregistrer la correction</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+// Une pièce encore ACTIVE (en_cours/en_pause) tire son temps affiché EN DIRECT de sessions[]
+// (opElapsedHours/computeProductionTimeByUser) : corriger debutReel/finReel/dureeReelleH n'y aurait
+// donc aucun effet visible tant qu'elle n'est pas clôturée — d'où ce second outil, qui édite
+// sessions[] elle-même plutôt que des champs agrégés (voir CLAUDE.md, "Onglet Pointages"). Motivé
+// par le bug de fuseau horaire serveur (voir CLAUDE.md, piège dédié) qui a pu laisser des sessions
+// fermées avec une fin antérieure à leur début sur des tâches encore actives. Exclue pour une pièce
+// fusionnée : chaque membre d'un groupe porte sa PROPRE sessions[] (contrairement à dureeOverrideH,
+// qui lui est bien partagé) — les propager correctement à tout le lot est un problème différent,
+// plus large que ce qui est demandé ici ; corriger un seul membre laisserait les autres diverger
+// silencieusement, pire que de ne rien proposer. Exclue aussi si aucune session n'existe (rien à
+// éditer) — une pièce sans session encore ouverte via Démarrer/Reprendre n'a rien à corriger ici.
+function isSessionsCorrectable(cid, oid){
+  const found = findPieceAnywhere(cid, oid);
+  if(!found) return false;
+  const { o } = found;
+  return (o.statut==='en_cours' || o.statut==='en_pause') && !o.fusionGroupId && (o.sessions||[]).length > 0;
+}
+function openCorrectSessions(cid, oid){
+  const found = findPieceAnywhere(cid, oid); if(!found) return;
+  const { o } = found;
+  correctSessionsDraft = {
+    cid, oid,
+    sessions: (o.sessions||[]).map(s => ({
+      orig: s, // référence réelle, jamais clonée — voir la déclaration de correctSessionsDraft
+      debut: s.debut || '', fin: s.fin || '',
+      operatorUserId: s.operatorUserId || o.operatorUserId || '',
+      open: !s.fin,
+    })),
+  };
+  render();
+}
+function closeCorrectSessions(){ correctSessionsDraft = null; render(); }
+function updateCorrectSessionField(idx, field, value){
+  if(!correctSessionsDraft) return;
+  const s = correctSessionsDraft.sessions[idx]; if(!s || s.open) return; // une session ouverte n'est pas éditable ici
+  s[field] = value;
+  render();
+}
+// Une session encore OUVERTE (personne en train de travailler dessus à l'instant même) n'est
+// délibérément ni modifiable ni supprimable depuis cet écran : y toucher pourrait interférer avec
+// le décompte en direct de quelqu'un actuellement au travail, une raison humaine que cet outil de
+// correction, pensé pour rattraper des horodatages passés, n'a pas à évaluer. Elle reste seulement
+// affichée (lecture seule) pour qu'on voie l'état complet de la pièce.
+function removeCorrectSessionRow(idx){
+  if(!correctSessionsDraft) return;
+  const s = correctSessionsDraft.sessions[idx]; if(!s) return;
+  if(s.open){ alert('Une session actuellement ouverte ne peut pas être supprimée depuis cet écran.'); return; }
+  if(!confirm('Supprimer définitivement cette session ? Cette action ne peut pas être annulée.')) return;
+  correctSessionsDraft.sessions.splice(idx, 1);
+  render();
+}
+function submitCorrectSessions(){
+  const d = correctSessionsDraft; if(!d) return;
+  const found = findPieceAnywhere(d.cid, d.oid); if(!found) return;
+  const { o } = found;
+  for(const s of d.sessions){
+    if(s.open) continue; // jamais éditée : contrôlée plus haut, exclue de toute validation ici
+    if(!s.debut){ alert('Chaque session doit avoir un début renseigné.'); return; }
+    if(s.fin && s.fin < s.debut){ alert('La fin d\'une session doit être postérieure ou égale à son début.'); return; }
+  }
+  if(!confirm('Enregistrer ces corrections de sessions ? Cette action ne peut pas être annulée.')) return;
+  o.sessions = d.sessions.map(s => s.open ? s.orig : { debut: s.debut, fin: s.fin || null, operatorUserId: s.operatorUserId || null });
+  correctSessionsDraft = null;
+  commit();
+  showToast('Sessions corrigées.');
+}
+function renderCorrectSessionsModal(){
+  const d = correctSessionsDraft;
+  if(!d) return '';
+  const found = findPieceAnywhere(d.cid, d.oid);
+  if(!found) return '';
+  const { c, o } = found;
+  const label = [o.piece, o.etape].filter(Boolean).join(' / ') || '(sans nom)';
+  const rows = d.sessions.map((s, idx) => {
+    if(s.open){
+      const opUser = usersList.find(u=>String(u.id)===String(s.operatorUserId));
+      return `<tr>
+        <td colspan="2" class="footer-note" style="text-align:left;">▶ Session actuellement ouverte (en cours) — non modifiable ici</td>
+        <td>${opUser ? escapeHtml(opUser.username) : '—'}</td>
+        <td></td>
+      </tr>`;
+    }
+    const operatorOptions = usersList.map(u=>`<option value="${u.id}" ${String(s.operatorUserId)===String(u.id)?'selected':''}>${escapeHtml(u.username)}</option>`).join('');
+    return `<tr>
+      <td><input type="datetime-local" value="${s.debut}" data-action="correct-session-field" data-idx="${idx}" data-field="debut"></td>
+      <td><input type="datetime-local" value="${s.fin}" data-action="correct-session-field" data-idx="${idx}" data-field="fin"></td>
+      <td><select data-action="correct-session-field" data-idx="${idx}" data-field="operatorUserId">
+        <option value="">—</option>${operatorOptions}
+      </select></td>
+      <td><button class="ghost icon-btn danger-ghost" data-action="remove-correct-session-row" data-idx="${idx}" title="Supprimer cette session">🗑</button></td>
+    </tr>`;
+  }).join('');
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>Corriger les sessions</h2>
+        <button class="ghost icon-btn" data-action="close-correct-sessions" title="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="footer-note" style="text-align:left; margin-bottom:10px;">${escapeHtml(c.nom)} — ${escapeHtml(label)} (${pointageStatutBadge(o.statut)})</div>
+        <table class="ops-table">
+          <thead><tr><th>Début</th><th>Fin</th><th>Opérateur</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div class="footer-note" style="text-align:left; padding-top:10px;">Corrige directement le détail Démarrer/Pause/Reprendre de cette tâche encore active — utile pour rattraper une session aux horodatages faux (ex. le bug de fuseau horaire serveur). La session actuellement ouverte n'est jamais modifiable ni supprimable ici. Sans effet sur une pièce déjà terminée : voir plutôt "✎ Corriger" pour celle-ci.</div>
+        <div class="form-actions" style="margin-top:16px;">
+          <button class="ghost" data-action="close-correct-sessions">Annuler</button>
+          <button class="primary" data-action="submit-correct-sessions">✓ Enregistrer</button>
         </div>
       </div>
     </div>
@@ -10122,6 +10246,7 @@ function render(){
       renderHeader(),
       renderPointagesPage(),
       renderCorrectPointageModal(),
+      renderCorrectSessionsModal(),
       renderSettingsModal(),
       renderToast()
     ].join('');
@@ -10320,6 +10445,10 @@ function dispatchClickAction(action, el){
     case 'open-correct-pointage': openCorrectPointage(el.dataset.cid, el.dataset.oid); break;
     case 'close-correct-pointage': closeCorrectPointage(); break;
     case 'submit-correct-pointage': submitCorrectPointage(); break;
+    case 'open-correct-sessions': openCorrectSessions(el.dataset.cid, el.dataset.oid); break;
+    case 'close-correct-sessions': closeCorrectSessions(); break;
+    case 'submit-correct-sessions': submitCorrectSessions(); break;
+    case 'remove-correct-session-row': removeCorrectSessionRow(Number(el.dataset.idx)); break;
     case 'conges-tab': congesTab = el.dataset.tab; render(); break;
     case 'temps-prod-mode': tempsProdPeriodMode = el.dataset.mode; render(); break;
     case 'temps-prod-nav': navigateTempsProdPeriod(el.dataset.dir); break;
@@ -10567,6 +10696,7 @@ function dispatchChangeAction(el, action){
     case 'correct-operator-select': updateCorrectOperatorField(el.dataset.field, el.value); break;
     case 'pointages-filter': updatePointagesFilter(el.dataset.field, el.value); break;
     case 'correct-pointage-field': updateCorrectPointageField(el.dataset.field, el.value); break;
+    case 'correct-session-field': updateCorrectSessionField(Number(el.dataset.idx), el.dataset.field, el.value); break;
     case 'user-machines': {
       const selected = Array.from(el.selectedOptions).map(o => o.value);
       updateUserMachines(el.dataset.userId, selected);

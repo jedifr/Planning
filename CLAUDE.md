@@ -1017,8 +1017,59 @@ le bouton « ✎ Opérateur ».
   `app_state` (`debutReel`/`finReel`/`dureeReelleH`/`dureeReelleParOperateur`), synchronisés par le
   mécanisme habituel (`commit()`) — pas de `PUT`/`PATCH` dédié sur `session_history` (table
   d'archive, append-only par conception, voir plus haut). Corriger le DÉTAIL par session archivée
-  (plusieurs sessions de la même pièce) resterait hors périmètre de cet onglet : ce qui compte pour
-  le temps de production et la présence théorique, ce sont les champs agrégés édités ici.
+  dans `session_history` elle-même resterait hors périmètre de cet onglet : ce qui compte pour le
+  temps de production et la présence théorique d'une pièce déjà terminée, ce sont les champs
+  agrégés édités ici. Pour une pièce encore active, voir le mécanisme distinct ci-dessous.
+
+### Correction du détail des sessions d'une pièce encore active
+
+Retour utilisateur réel, posé directement après la mise en place de l'onglet ci-dessus : « est-il
+envisageable de corriger une étape en pause (non terminée) ? » — motivé par le bug de fuseau
+horaire serveur (voir le piège dédié plus bas) qui a laissé, sur des tâches encore `en_cours`/
+`en_pause`, des sessions fermées avec une fin antérieure à leur propre début. `✎ Corriger`
+(ci-dessus) ne peut structurellement rien faire pour une pièce pas encore `termine` :
+`computeProductionTimeByUser`/`opElapsedHours` lisent `sessions[]` **en direct** tant que la pièce
+n'est pas clôturée (voir `isPointageCorrectable`) — corriger `debutReel`/`dureeReelleH` n'aurait
+aucun effet visible. Il faut donc un second outil qui édite `sessions[]` **elle-même**.
+
+- `isSessionsCorrectable(cid, oid)` — vrai pour une pièce `en_cours`/`en_pause`, avec au moins une
+  session, **et sans `fusionGroupId`**. Exclusion volontaire des pièces fusionnées : chaque membre
+  d'un groupe porte sa PROPRE `sessions[]` (contrairement à `dureeOverrideH`, réellement partagé —
+  voir « Regroupement » plus bas), et `propagateFusionGroupFields` (`Object.assign` d'un champ
+  scalaire sur chaque membre) ne convient pas à un tableau : lui passer `sessions` ferait partager
+  la **même référence** d'array à tous les membres, un futur `joinOpSession`/pause sur l'un
+  corromprait alors silencieusement tous les autres. Propager correctement (une copie profonde par
+  membre) est un problème plus large que celui posé ici — hors périmètre, bouton simplement absent
+  pour une pièce fusionnée plutôt qu'une correction à moitié fiable.
+- Bouton « 🕘 Sessions » dans le tableau de la page Pointages (à côté de « ✎ Corriger », les deux
+  pouvant apparaître sur des lignes différentes mais jamais sur la même — un statut ne peut être à
+  la fois `termine` et `en_cours`/`en_pause`).
+- `correctSessionsDraft` (`{ cid, oid, sessions: [{ orig, debut, fin, operatorUserId, open }] } |
+  null`) — chaque entrée du draft garde `orig`, la **référence réelle** vers l'entrée de
+  `sessions[]` (jamais un clone) : `submitCorrectSessions()` reconstruit `o.sessions` entièrement à
+  partir du draft plutôt que de raccorder par indice à l'ancien tableau, pour rester correct même
+  après une suppression (qui décale les indices suivants).
+- **Session actuellement ouverte (`fin: null`) : jamais éditable, jamais supprimable.**
+  `updateCorrectSessionField`/`removeCorrectSessionRow` refusent tout net (silencieusement pour
+  l'édition — le champ est simplement absent du formulaire pour cette ligne ; avec une alerte
+  explicite pour la suppression) sur une entrée marquée `open`. Une session encore en cours est
+  celle de quelqu'un actuellement au travail : y toucher depuis un écran de correction pensé pour
+  rattraper des horodatages **passés** pourrait interférer avec le décompte en direct de cette
+  personne — hors de portée de ce que cet outil doit décider. `submitCorrectSessions()` la reporte
+  strictement telle quelle (`s.orig`) dans le résultat final.
+- `removeCorrectSessionRow(idx)` — demande confirmation (`confirm()`, destructif et définitif,
+  aucun brouillon de récupération) avant de retirer une ligne du draft ; utile pour une session
+  totalement aberrante (ex. le bug de fuseau horaire a aussi pu créer des sessions à durée nulle,
+  `debut === fin`, lors d'allers-retours rapides Reprendre/Pause pendant l'incident).
+- `submitCorrectSessions()` — valide chaque session non ouverte (début renseigné, fin absente ou
+  postérieure/égale au début) **avant** toute confirmation ; une seule ligne invalide bloque
+  l'ensemble de l'enregistrement (pas de sauvegarde partielle), avec le message d'erreur pointant
+  clairement la règle violée. `operatorUserId` : préremplie par `openCorrectSessions` avec la
+  valeur déjà résolue (celle de la session, ou l'opérateur assigné de la pièce en repli — même
+  priorité que partout ailleurs dans l'appli), mais toujours réécrite explicitement sur la session
+  au moment d'enregistrer, même si non modifiée — un repli implicite devient une valeur explicite,
+  sans effet visible ailleurs (`computeSessionsHoursByOperator`/`computeProductionTimeByUser`
+  appliquent de toute façon le même repli si le champ venait à nouveau à manquer).
 
 ## Zones de stockage
 
