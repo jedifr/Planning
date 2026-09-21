@@ -1971,6 +1971,59 @@ sont regroupées/exposées.
   nouveau menu déroulant du planning doit réutiliser ce même mécanisme (`class="dd-menu"`,
   `data-dd-key`, `ontoggle`) plutôt qu'en inventer un troisième.
 
+## Planning sur téléphone
+
+Retour utilisateur réel : les vues du planning principal (Jour, Semaine, Mois, Année — Gantt fin ou
+grille calendaire dense, navigation temporelle ‹ › à viser au doigt) ne sont pas exploitables sur un
+écran de téléphone. Demande explicite : les retirer entièrement sous 720px (même seuil que
+`MOBILE_BREAKPOINT_PX`/`isNarrowViewport()`, déjà utilisé pour le calendrier de congés — voir plus
+haut), et adapter le Kanban lui-même (sa grille à 4 colonnes n'est pas plus utilisable qu'un Gantt
+sur un écran étroit). Trois maquettes visuelles ont été proposées pour le Kanban (onglets de statut /
+accordéon vertical / défilement horizontal à accroche) ; l'utilisateur a choisi les **onglets**.
+
+- **`effectivePlanningView()`** — point unique qui décide de la vue RÉELLEMENT affichée : identique à
+  `currentView`, sauf sous 720px où une vue datée (`jour`/`semaine`/`mois`/`annee`) devient `kanban`.
+  Fonction pure, sur le modèle exact d'`effectiveDueFilterRange()`/`isPanelEffectivelyCollapsed()`
+  (voir « Recherche/isolement de commande » plus haut) : ne mute **jamais** `currentView` lui-même,
+  recalculée à chaque rendu à partir de `isNarrowViewport()`. Conséquence directe de ce choix (plutôt
+  qu'une capture/restauration ou une réécriture de `currentView`) : la préférence réelle — celle
+  choisie à la main sur grand écran, ou `userDefaultPlanningView` (voir plus haut) — n'est jamais
+  perdue ni écrasée ; elle redevient effective d'elle-même dès que la fenêtre s'élargit à nouveau
+  (session Bureau/Continuity, fenêtre redimensionnée...), sans code de restauration à écrire.
+  `renderPlanningToolbar()` et `renderPlanningSection()` lisent toutes deux `effectivePlanningView()`
+  au lieu de `currentView` directement — les deux DOIVENT rester synchronisées (l'onglet actif affiché
+  doit toujours correspondre à la vue réellement rendue), réflexe à vérifier pour toute future
+  modification de l'une des deux fonctions.
+- `renderPlanningToolbar()` — sous 720px, les boutons `Jour`/`Semaine`/`Mois`/`Année` ne sont même
+  plus générés (pas seulement masqués en CSS) : seuls `Kanban`/`Liste` restent proposés. Le bloc
+  `.view-nav` (‹ › Aujourd'hui) ne s'affiche que pour une vue **effectivement** datée
+  (`effectivePlanningView()`), donc jamais sur mobile — `dated` en dépend directement, pas de
+  condition séparée à maintenir.
+- **Kanban mobile (`renderKanbanView`)** — sous 720px, un **onglet de statut à la fois** (segmented
+  control : À faire / En cours / En pause / Terminée, avec le nombre de tâches par statut) remplace
+  la grille `.kanban-board` à 4 colonnes, illisible sur un écran étroit. Le contenu de chaque colonne
+  (cartes, compteur — construit dans `colObjs`, une passe commune aux deux présentations) est
+  strictement identique à la version bureau : **seule la mise en page change**, jamais la logique de
+  filtrage/tri/limite déjà en place (filtre par poste, limite "À faire"/"Terminée", vue groupée des
+  fusions...), qui reste, elle, affichée en tête de page sur les deux formats sans changement.
+  - `kanbanMobileStatusTab` (`'a_faire'|'en_cours'|'en_pause'|'termine'`, défaut `'en_cours'`) — état
+    purement transitoire côté client (comme `congesTab`), jamais persisté : reprend `'en_cours'` (le
+    plus souvent pertinent d'un coup d'œil) à chaque rechargement plutôt que de mémoriser le dernier
+    onglet consulté. Une valeur devenue invalide (ancien onglet supprimé, jamais le cas actuellement)
+    retombe silencieusement sur le premier statut plutôt que de planter — même réflexe défensif que
+    `settingsActiveSection`.
+  - Bouton `data-action="kanban-mobile-tab" data-tab="<statut>"` — dispatch trivial (`kanbanMobileStatusTab
+    = el.dataset.tab; render();`), aucun `commit()` : ce n'est qu'un choix d'affichage, pas une donnée
+    de `state`.
+  - Le conteneur de cartes de l'onglet actif garde la classe `kanban-col-body` (en plus de
+    `kanban-mobile-body`, pour le style) et son `data-col-key` — `captureKanbanScroll()`/
+    `restoreKanbanScroll()` (voir le piège plus bas sur les ascenseurs de colonne) continuent donc de
+    fonctionner sans modification sur ce conteneur unique.
+- **Non traité par cette fonctionnalité** (hors périmètre de la demande) : le reste de l'en-tête
+  (rangée de pages `Planning`/`Congés`/`Temps de production`/...), les filtres/le "Postes affichés"
+  au-dessus du Kanban, et les autres pages (Congés, Temps de production, Zones, Risques, Pointages)
+  ne sont pas retouchés ici — seules les vues du planning principal étaient en cause.
+
 ## Tests
 
 Il n'y a pas de framework de test. La méthode utilisée, efficace sur ce projet :

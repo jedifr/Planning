@@ -324,6 +324,21 @@
   @media screen and (max-width:900px){
     .kanban-board{grid-template-columns:repeat(2, 1fr);}
   }
+  /* Kanban mobile (voir CLAUDE.md, "Kanban mobile") : un onglet de statut à la fois plutôt que les
+     4 colonnes côte à côte de .kanban-board (jamais affiché ensemble avec .kanban-mobile-tabs — les
+     deux mises en page sont mutuellement exclusives selon isNarrowViewport()). */
+  .kanban-mobile-tabs{display:flex; gap:4px; margin-bottom:10px; flex-wrap:wrap;}
+  .kanban-mobile-tabs button{
+    flex:1; min-width:0; font-family:'IBM Plex Sans',sans-serif; font-size:11px; font-weight:600;
+    padding:7px 4px; border-radius:2px; border:1px solid var(--line); background:var(--panel); color:var(--text-dim); cursor:pointer;
+  }
+  .kanban-mobile-tabs button.active{background:var(--text); border-color:var(--text); color:var(--bg);}
+  .kanban-mobile-tab-count{
+    display:inline-block; min-width:14px; margin-left:3px; padding:0 3px; border-radius:8px;
+    background:rgba(0,0,0,.12); font-size:9.5px;
+  }
+  .kanban-mobile-tabs button.active .kanban-mobile-tab-count{background:rgba(255,255,255,.25);}
+  .kanban-mobile-body{max-height:none;}
 
   @media print{
     @page{ size:A4 portrait; margin:12mm; }
@@ -882,7 +897,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.34.0';
+const APP_VERSION = '1.35.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1125,6 +1140,11 @@ function activeIdentityUsername(){
 }
 const KANBAN_GROUPED_VIEW_KEY = 'planning-atelier-kanban-grouped-view';
 let kanbanGroupedView = false; // true = les pièces fusionnées n'affichent qu'une seule carte groupée
+// Onglet de statut actif dans le Kanban mobile (voir renderKanbanView/isNarrowViewport) — une seule
+// colonne affichée à la fois sous 720px, un poste tactile étant trop étroit pour 4 colonnes côte à
+// côte. Purement transitoire côté client (comme congesTab), jamais persisté : repart de "en_cours"
+// (le plus souvent pertinent d'un coup d'œil) à chaque rechargement.
+let kanbanMobileStatusTab = 'en_cours';
 function loadKanbanGroupedViewPref(){
   try{ kanbanGroupedView = localStorage.getItem(KANBAN_GROUPED_VIEW_KEY) === '1'; }
   catch(e){ /* préférence absente ou indisponible */ }
@@ -9060,10 +9080,22 @@ function rangeLabel(){
   return String(viewAnchor.getFullYear());
 }
 
+// Vues Jour/Semaine/Mois/Année : trop denses (navigation temporelle, Gantt fin) pour un écran de
+// téléphone (retour utilisateur réel) — sur mobile, seules Kanban/Liste (vues non datées, déjà
+// pensées pour un survol rapide) restent proposées. Fonction pure, jamais de mutation de
+// `currentView` lui-même : mêmes principes qu'`effectiveDueFilterRange` (voir CLAUDE.md, "Recherche
+// de commande") — la préférence réelle (`userDefaultPlanningView`, ou une vue choisie sur grand
+// écran) reste intacte, seul l'AFFICHAGE bascule sur Kanban tant que la fenêtre est étroite.
+function effectivePlanningView(){
+  if(isNarrowViewport() && (currentView==='jour' || currentView==='semaine' || currentView==='mois' || currentView==='annee')) return 'kanban';
+  return currentView;
+}
 function renderPlanningToolbar(){
   const labels={jour:'Jour',semaine:'Semaine',mois:'Mois',annee:'Année',kanban:'Kanban',liste:'Liste'};
-  const tabs = ['jour','semaine','mois','annee','kanban','liste'].map(v=>`<button class="${currentView===v?'active':''}" data-action="set-view" data-view="${v}">${labels[v]}</button>`).join('');
-  const dated = currentView!=='kanban' && currentView!=='liste';
+  const allViews = isNarrowViewport() ? ['kanban','liste'] : ['jour','semaine','mois','annee','kanban','liste'];
+  const effView = effectivePlanningView();
+  const tabs = allViews.map(v=>`<button class="${effView===v?'active':''}" data-action="set-view" data-view="${v}">${labels[v]}</button>`).join('');
+  const dated = effView!=='kanban' && effView!=='liste';
   return `<div class="planning-toolbar">
     <div class="view-tabs">${tabs}</div>
     ${dated ? `<div class="view-nav">
@@ -9649,13 +9681,14 @@ function renderFusionPanel(){
 }
 function renderPlanningSection(schedule){
   const hasOps = schedule.some(c=>c.pieces.some(o=>o.start));
+  const view = effectivePlanningView(); // jamais currentView directement : voir isNarrowViewport() ci-dessus
   let body;
-  if(currentView==='kanban') body = renderKanbanView(schedule);
-  else if(currentView==='liste') body = renderListeView(schedule);
+  if(view==='kanban') body = renderKanbanView(schedule);
+  else if(view==='liste') body = renderListeView(schedule);
   else if(!hasOps){ body = `<div class="gantt-empty">Aucune opération planifiée. Ajoutez une commande ci-dessous pour voir apparaître le planning.</div>`; }
-  else if(currentView==='jour') body = `<div class="panel-body" style="padding:0 0 4px;">${renderDayView(schedule)}</div>`;
-  else if(currentView==='semaine') body = `<div class="panel-body" style="padding:0 0 4px;">${renderWeekView(schedule)}</div>`;
-  else if(currentView==='mois') body = `<div class="panel-body">${renderMonthView(schedule)}</div>`;
+  else if(view==='jour') body = `<div class="panel-body" style="padding:0 0 4px;">${renderDayView(schedule)}</div>`;
+  else if(view==='semaine') body = `<div class="panel-body" style="padding:0 0 4px;">${renderWeekView(schedule)}</div>`;
+  else if(view==='mois') body = `<div class="panel-body">${renderMonthView(schedule)}</div>`;
   else body = renderYearView(schedule);
   return `<section class="panel" id="planning-section">
     <div class="panel-head panel-head-clickable" data-action="toggle-panel-collapse" data-key="planning">
@@ -9690,7 +9723,11 @@ function renderKanbanView(schedule){
   });
 
   const doneCutoff = doneFilterCutoff(doneFilterRange);
-  const colsHtml = cols.map(col => {
+  // colObjs plutôt qu'un HTML pré-assemblé par colonne : le contenu de chaque colonne (cartes,
+  // compteur) est strictement le même sur mobile et sur ordinateur, seule la MISE EN PAGE change
+  // (4 colonnes côte à côte vs un onglet de statut à la fois, voir plus bas) — calculé une seule
+  // fois, jamais dupliqué entre les deux présentations.
+  const colObjs = cols.map(col => {
     let ops = allOps.filter(o => o.statut===col.key);
     if(kanbanGroupedView) ops = mergeFusedOpsForDisplay(ops); // une seule carte par groupe fusionné, comptée comme telle dans les limites/compteurs ci-dessous
     let totalAvantLimite = ops.length;
@@ -9797,11 +9834,27 @@ function renderKanbanView(schedule){
     const limited = (col.key==='a_faire' || col.key==='termine');
     const countLabel = (limited && totalAvantLimite>ops.length)
       ? `(${ops.length} sur ${totalAvantLimite})` : `(${ops.length})`;
-    return `<div class="kanban-col">
-      <div class="kanban-col-head">${col.label} <span class="collapse-count">${countLabel}</span></div>
-      <div class="kanban-col-body" data-col-key="${col.key}">${cards || `<div class="kanban-empty">Aucune tâche</div>`}</div>
-    </div>`;
-  }).join('');
+    return { key: col.key, label: col.label, count: ops.length, countLabel, cardsHtml: cards || `<div class="kanban-empty">Aucune tâche</div>` };
+  });
+
+  // Sur téléphone (voir isNarrowViewport/CLAUDE.md, "Kanban mobile") : 4 colonnes côte à côte sont
+  // illisibles au doigt — un onglet de statut à la fois (segmented control), sur le même principe
+  // que les onglets déjà utilisés ailleurs dans l'appli (Congés, Paramètres), plutôt qu'un
+  // défilement horizontal ou un accordéon (options écartées après retour utilisateur). Le contenu
+  // (cartes, compteur) est strictement identique à la version bureau, voir colObjs ci-dessus.
+  let boardHtml;
+  if(isNarrowViewport()){
+    const activeKey = colObjs.some(c=>c.key===kanbanMobileStatusTab) ? kanbanMobileStatusTab : colObjs[0].key;
+    const tabsHtml = colObjs.map(c => `<button class="${activeKey===c.key?'active':''}" data-action="kanban-mobile-tab" data-tab="${c.key}">${c.label}<span class="kanban-mobile-tab-count">${c.count}</span></button>`).join('');
+    const active = colObjs.find(c => c.key===activeKey);
+    boardHtml = `<div class="kanban-mobile-tabs">${tabsHtml}</div>
+      <div class="kanban-col-body kanban-mobile-body" data-col-key="${active.key}">${active.cardsHtml}</div>`;
+  } else {
+    boardHtml = `<div class="kanban-board">${colObjs.map(c => `<div class="kanban-col">
+      <div class="kanban-col-head">${c.label} <span class="collapse-count">${c.countLabel}</span></div>
+      <div class="kanban-col-body" data-col-key="${c.key}">${c.cardsHtml}</div>
+    </div>`).join('')}</div>`;
+  }
 
   const nbVisibles = kanbanMachineFilters ? state.machines.filter(m=>kanbanMachineFilters.has(m.id)).length : state.machines.length;
   return `<div class="panel-body">
@@ -9844,7 +9897,7 @@ function renderKanbanView(schedule){
       </label>
       <button class="small" style="margin-left:14px;" data-action="open-quick-pointage" title="Démarrer tout de suite une tâche qui n'était pas planifiée">➕ Pointage rapide</button>
     </div>
-    <div class="kanban-board">${colsHtml}</div>
+    ${boardHtml}
     <div class="footer-note" style="text-align:left; padding-top:10px;">Cliquez sur une carte pour isoler sa commande ; clic droit pour ouvrir le menu (Démarrer / Mettre en pause / Terminer). "À faire" garde en priorité les tâches les plus proches dans le temps ; "Terminée" garde les plus récentes et respecte aussi le filtre de période choisi dans le tableau des tâches terminées. "En cours" et "En pause" ne sont jamais limitées (bornées naturellement par votre nombre de postes).</div>
   </div>`;
 }
@@ -10813,6 +10866,7 @@ function dispatchClickAction(action, el){
     case 'add-draft-op': addDraftOp(); break;
     case 'kanban-machines-all': setAllKanbanMachineFilters(true); break;
     case 'kanban-machines-none': setAllKanbanMachineFilters(false); break;
+    case 'kanban-mobile-tab': kanbanMobileStatusTab = el.dataset.tab; render(); break;
     case 'close-fusion-detail': closeFusionGroupDetail(); break;
     case 'dissociate-fusion-group': dissociateFusionGroup(el.dataset.group); break;
     case 'unpin-fusion-group': unpinFusionGroup(el.dataset.group); break;
