@@ -1,12 +1,13 @@
 // Bascule automatiquement en pause les tâches en_cours dont l'opérateur assigné entre dans sa
-// pause déjeuner (avec reprise automatique), ou sort des horaires de travail — week-end, avant
-// l'ouverture, après la fermeture (SANS reprise automatique, voir plus bas). Portage volontairement
-// minimal du même calcul déjà présent côté client (public/index.html : pauseWindowsFor/
-// pauseWindowFor/dayIntervals/applyUserLunchOverride/effectiveConfig/configForMachineId/
-// configForPiece/isInPauseWindow/applyAutoPauseResume), nécessaire pour que ce contrôle tourne même
-// quand personne n'a l'appli ouverte dans un navigateur (voir CLAUDE.md, piège « Reprise automatique
-// après pause horodatée au moment du contrôle, pas à la vraie fin de pause » — jusqu'ici, ce calcul
-// ne s'exécutait que dans la boucle de 60s de startApp()).
+// pause déjeuner, ou sort des horaires de travail — week-end, avant l'ouverture, après la fermeture.
+// AUCUNE reprise automatique dans les deux cas (retirée pour la pause déjeuner aussi depuis CLAUDE.md,
+// « Pop-up de retour de pause déjeuner » — un cas réel de sessions dupliquées, dû à ce même job
+// serveur et au navigateur qui se rouvraient/refermaient mutuellement la même tâche pendant que
+// leurs horloges divergeaient, a montré qu'une reprise sans confirmation humaine n'est pas fiable).
+// Portage volontairement minimal du même calcul déjà présent côté client (public/index.html :
+// pauseWindowsFor/pauseWindowFor/dayIntervals/applyUserLunchOverride/effectiveConfig/
+// configForMachineId/configForPiece/isInPauseWindow/applyAutoPauseResume), nécessaire pour que ce
+// contrôle tourne même quand personne n'a l'appli ouverte dans un navigateur.
 //
 // RÉFLEXE : toute modification de la logique de résolution d'horaire par personne côté client
 // (applyUserLunchOverride, pauseWindowsFor, dayIntervals, la fermeture de TOUTES les sessions
@@ -163,9 +164,11 @@ function pauseKindForRunningTask(op, now, st){
 
 // Identique à applyAutoPauseResume (public/index.html) — voir là-bas pour le détail des choix déjà
 // documentés dans CLAUDE.md : fermer TOUTES les sessions ouvertes (`.filter`, jamais `.find`, voir
-// « Travail à plusieurs sur une même pièce ») et rouvrir la session de la pause déjeuner à l'heure
-// RÉELLE de fin de pause (`autoPausedUntil`), jamais à l'instant où ce contrôle s'exécute. `now`
-// injectable pour les tests, sinon l'heure serveur actuelle.
+// « Travail à plusieurs sur une même pièce »). N'EFFECTUE PLUS la reprise automatique de la pause
+// déjeuner (retirée des deux côtés, client et serveur — voir CLAUDE.md, « Pop-up de retour de pause
+// déjeuner ») : `autoPausedUntil`/`autoPausedOperators`, posés ci-dessous, ne sont plus lus que par
+// le nouveau rappel (renderPauseReminderModal côté client), jamais pour rouvrir une session tout
+// seul. `now` injectable pour les tests, sinon l'heure serveur actuelle.
 function applyAutoPauseResume(st, now){
   now = now || new Date();
   let changed = false;
@@ -188,30 +191,17 @@ function applyAutoPauseResume(st, now){
           const openSessions = (o.sessions||[]).filter(s => !s.fin);
           openSessions.forEach(s => { s.fin = toInputValue(now); });
           o.statut = 'en_pause';
-          // Jamais autoPaused=true ici : ce flag est ce qui déclenche la reprise automatique
-          // ci-dessous (branche "en_pause"/"autoPaused") — le laisser à false range cette pause
-          // hors horaires dans le même panier qu'une pause manuelle, et donc visible telle quelle
-          // dans la bannière "tâches en pause depuis la veille ou avant" (pausedSinceEarlierTasks,
-          // qui exclut justement autoPaused) sans code d'affichage supplémentaire à écrire.
+          // Jamais autoPaused=true ici : ce flag route vers le rappel de retour de pause déjeuner
+          // (voir pendingPauseReminders côté client) — le laisser à false range cette pause hors
+          // horaires dans le même panier qu'une pause manuelle, et donc visible telle quelle dans la
+          // bannière "tâches en pause depuis la veille ou avant" (pausedSinceEarlierTasks) sans code
+          // d'affichage supplémentaire à écrire.
           o.autoPaused = false;
           o.autoPausedOutOfHours = true; // informatif — jamais lu par un mécanisme de reprise
           o.autoPausedOperators = null;
           o.autoPausedUntil = null;
           changed = true;
         }
-      } else if(o.statut === 'en_pause' && o.autoPaused && !isInPauseWindow(o, now, st)){
-        if(!o.sessions) o.sessions = [];
-        const operators = (o.autoPausedOperators && o.autoPausedOperators.length)
-          ? o.autoPausedOperators
-          : [ (o.sessions[o.sessions.length-1]||{}).operatorUserId || o.operatorUserId || null ];
-        const resumeDate = o.autoPausedUntil ? new Date(o.autoPausedUntil) : now;
-        const resumeStr = toInputValue(resumeDate < now ? resumeDate : now);
-        operators.forEach(opId => o.sessions.push({ debut: resumeStr, fin: null, operatorUserId: opId }));
-        o.autoPausedOperators = null;
-        o.autoPausedUntil = null;
-        o.statut = 'en_cours';
-        o.autoPaused = false;
-        changed = true;
       }
     });
   });

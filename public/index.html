@@ -727,6 +727,24 @@
      par poste/allée) — retour utilisateur réel : restait visuellement petite même après le passage
      à `modal-box-wide` sur un grand écran. Variante dédiée, plus large et plus haute. */
   .modal-box-xl{width:min(1560px, 97vw); max-height:92vh;}
+  /* Pop-up de rappel de retour de pause déjeuner (voir CLAUDE.md, « Pop-up de retour de pause
+     déjeuner ») — plus large qu'un modal-box par défaut pour que le nom de la commande/pièce et le
+     bouton "Reprendre" restent sur une seule ligne même avec plusieurs tâches listées. */
+  .pause-reminder-box{width:min(640px, 100%);}
+  .pause-reminder-head{display:flex; align-items:center; gap:14px; padding:16px 20px 4px;}
+  .pause-reminder-head .pr-icon{
+    width:44px; height:44px; border-radius:50%; flex:none; background:var(--accent); color:#fff;
+    display:flex; align-items:center; justify-content:center; font-size:21px;
+  }
+  .pause-reminder-task{
+    display:flex; align-items:center; gap:12px; background:var(--panel-2); border:1px solid var(--line-soft);
+    border-radius:var(--radius); padding:10px 12px; margin-bottom:10px;
+  }
+  .pause-reminder-task .pr-info{flex:1; min-width:0;}
+  .pause-reminder-task .pr-cmd{font-size:11px; color:var(--text-faint); font-family:'Oswald',sans-serif; letter-spacing:0.3px;}
+  .pause-reminder-task .pr-piece{font-size:14px; font-weight:600; margin:2px 0;}
+  .pause-reminder-task .pr-meta{font-size:11.5px; color:var(--text-faint);}
+  .pause-reminder-snooze{display:flex; align-items:center; gap:6px; flex-wrap:wrap;}
   .modal-head{
     display:flex; align-items:center; justify-content:space-between;
     padding:13px 18px; border-bottom:1px solid var(--line-soft); background:var(--panel-2);
@@ -864,7 +882,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.33.0';
+const APP_VERSION = '1.34.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1535,6 +1553,11 @@ function migrateState(st){
       if(o.autoPausedOperators === undefined) o.autoPausedOperators = null;
       if(o.autoPausedUntil === undefined) o.autoPausedUntil = null;
       if(o.autoPausedOutOfHours === undefined) o.autoPausedOutOfHours = false;
+      // Report du rappel de retour de pause déjeuner (voir renderPauseReminderModal), PAR opérateur
+      // concerné ({ [operatorUserId]: horodatage jusqu'auquel ne pas re-proposer } | null) — la
+      // reprise n'est plus automatique (voir CLAUDE.md), donc jamais purgé par un job serveur : purgé
+      // uniquement à la reprise réelle de l'opérateur concerné (voir applyResumeFromPauseReminder).
+      if(o.pauseReminderSnoozeUntil === undefined) o.pauseReminderSnoozeUntil = null;
       if(!Array.isArray(o.dependances)) o.dependances = [];
       if(o.phase === undefined || o.phase === null || isNaN(Number(o.phase))) o.phase = 1;
       if(o.tempsUnitaireTheorique === undefined || o.tempsUnitaireTheorique === null) o.tempsUnitaireTheorique = o.tempsUnitaire; // référence figée une seule fois (migration : valeur actuelle prise comme référence)
@@ -4921,8 +4944,15 @@ function isInPauseWindow(op, now, st){
   const pause = pauseWindowFor(now, cfg);
   return !!(pause && now >= pause.start && now < pause.end);
 }
-// Bascule automatiquement en pause les tâches en cours dont le poste entre en pause déjeuner,
-// et reprend automatiquement celles qui avaient été mises en pause de cette façon (jamais les pauses manuelles).
+// Bascule automatiquement en pause les tâches en cours dont le poste entre en pause déjeuner.
+// N'EFFECTUE PLUS la reprise automatique (retirée — voir CLAUDE.md, « Pop-up de retour de pause
+// déjeuner ») : reprendre une session toute seule, sans confirmation humaine, a produit un cas réel
+// de sessions dupliquées (job serveur et navigateur qui se rouvraient/refermaient mutuellement la
+// même tâche pendant que leurs horloges divergeaient — voir le piège de fuseau horaire). La reprise
+// passe désormais toujours par une confirmation explicite de l'opérateur concerné, voir
+// pendingPauseReminders()/renderPauseReminderModal()/resumeFromPauseReminder() : `autoPausedUntil`/
+// `autoPausedOperators`, posés ici, ne sont plus jamais lus par un mécanisme de reprise automatique,
+// seulement par ce nouveau rappel.
 function applyAutoPauseResume(st){
   let changed = false;
   const now = new Date();
@@ -4935,53 +4965,131 @@ function applyAutoPauseResume(st){
         const pause = pauseWindowFor(now, cfg);
         // .filter, pas .find : plusieurs opérateurs peuvent travailler en parallèle sur cette pièce
         // (voir joinOpSession) — toutes leurs sessions ouvertes doivent être refermées, et on retient
-        // qui elles étaient pour les rouvrir individuellement à la reprise ci-dessous.
+        // qui elles étaient pour proposer le rappel de retour à chacune d'elles individuellement.
         const openSessions = (o.sessions||[]).filter(s => !s.fin);
         openSessions.forEach(s => { s.fin = toInputValue(pause.start); });
         o.autoPausedOperators = openSessions.map(s => s.operatorUserId || null);
-        // Mémorise l'heure de fin RÉELLE de cette pause (voir plus bas, à la reprise) : cette
-        // fonction n'est rejouée que quand un onglet est ouvert (démarrage ou boucle de 60s dans
-        // startApp), jamais par un déclencheur serveur — un poste resté sans personne devant
-        // l'appli après la pause (fin de journée, ex. une pause programmée juste avant la fermeture)
-        // ne sera constaté "sorti de pause" qu'à la prochaine connexion, potentiellement bien plus
-        // tard (le lendemain matin).
+        // Mémorise l'heure de fin RÉELLE de cette pause — sert désormais à savoir QUAND proposer le
+        // rappel de retour (voir pendingPauseReminders), plus à rouvrir quoi que ce soit toute seule.
         o.autoPausedUntil = toInputValue(pause.end);
         o.statut = 'en_pause';
         o.autoPaused = true;
-        changed = true;
-      } else if(o.statut === 'en_pause' && o.autoPaused && !inPause){
-        if(!o.sessions) o.sessions = [];
-        // Reprise automatique (pas un clic de quelqu'un) : on garde les mêmes opérateurs que les
-        // sessions qu'on vient de refermer plutôt que l'identité active de ce poste-ci — sinon le
-        // travail des personnes d'avant la pause serait crédité à qui que ce soit dont le
-        // navigateur a déclenché la reprise. Une session rouverte par opérateur mis en pause.
-        const operators = (o.autoPausedOperators && o.autoPausedOperators.length)
-          ? o.autoPausedOperators
-          : [ (o.sessions[o.sessions.length-1]||{}).operatorUserId || o.operatorUserId || null ];
-        // Piège corrigé : rouvrir la session à `now` (l'instant où CE contrôle s'exécute) plutôt qu'à
-        // l'heure où la pause aurait réellement dû se terminer (`o.autoPausedUntil`) faisait
-        // apparaître une reprise à l'heure de la prochaine connexion — ex. une pause auto déclenchée
-        // en fin de journée, personne devant l'appli ensuite : reprise constatée seulement le
-        // lendemain matin, avec un horaire de reprise trompeur (« reprise ce matin » au lieu de
-        // l'heure réelle de fin de pause, la veille au soir). On borne à `now` par sécurité (horloge
-        // client, config modifiée entre-temps) : ne jamais ouvrir une session dans le futur.
-        const resumeDate = o.autoPausedUntil ? new Date(o.autoPausedUntil) : now;
-        const resumeStr = toInputValue(resumeDate < now ? resumeDate : now);
-        operators.forEach(opId => o.sessions.push({ debut: resumeStr, fin: null, operatorUserId: opId }));
-        o.autoPausedOperators = null;
-        o.autoPausedUntil = null;
-        o.statut = 'en_cours';
-        o.autoPaused = false;
         changed = true;
       }
     });
   });
   return changed;
 }
-// Garde-fou : repère les pièces mises en pause MANUELLEMENT (jamais les pauses déjeuner
-// automatiques, qui se résorbent déjà seules) et toujours en pause un jour calendaire plus tard —
-// un travail interrompu la veille (ou avant) qu'on a pu oublier de reprendre. Recalculé à chaque
-// connexion/rechargement ; filtré à l'opérateur assigné pour un non-admin, vue complète pour un admin.
+// Tâches en pause déjeuner automatique dont l'heure théorique de retour (`autoPausedUntil`) est
+// déjà passée, pour L'IDENTITÉ ACTIVE de ce poste (`activeIdentityId()`) — alimente
+// renderPauseReminderModal(). Ne regarde jamais `o.statut` directement (voir applyResumeFromPauseReminder
+// : sur une pièce fusionnée ou travaillée à plusieurs, la pièce peut déjà être repassée `en_cours`
+// pour un premier opérateur pendant qu'un second reste attendu) — seule la présence de l'identité
+// active dans `autoPausedOperators` fait foi. Dédupliquée par `fusionGroupId` (un seul membre
+// représente tout le groupe, comme ailleurs dans l'appli — voir CLAUDE.md,
+// « Temps de production vs présence théorique ») : resumeFromPauseReminder propage de toute façon la
+// reprise à tous les membres du groupe.
+function pendingPauseReminders(){
+  const aid = activeIdentityId();
+  if(!aid) return [];
+  const now = new Date();
+  const seenGroups = new Set();
+  const results = [];
+  state.commandes.forEach(c => c.pieces.forEach(o => {
+    if(!(o.autoPausedOperators||[]).some(id => String(id) === String(aid))) return;
+    if(!o.autoPausedUntil || new Date(o.autoPausedUntil) > now) return;
+    const snoozeUntil = o.pauseReminderSnoozeUntil && o.pauseReminderSnoozeUntil[aid];
+    if(snoozeUntil && new Date(snoozeUntil) > now) return;
+    if(o.fusionGroupId){
+      if(seenGroups.has(o.fusionGroupId)) return;
+      seenGroups.add(o.fusionGroupId);
+    }
+    results.push({ c, o });
+  }));
+  return results;
+}
+// Mutation pure (aucun commit()) — réutilisée par resumeFromPauseReminder (une seule tâche) et
+// resumeAllPauseReminders (plusieurs à la fois) pour n'émettre qu'un seul commit() au lieu d'un par
+// tâche (voir CLAUDE.md, piège des doubles enregistrements concurrents). Propage à tout le groupe
+// fusionné le cas échéant (comme setOpStatut) : ouvre une session pour `aid` (jamais pour qui que ce
+// soit d'autre — chaque opérateur confirme lui-même son propre retour), repasse la pièce `en_cours`,
+// et retire `aid` de la liste d'attente. Si la pièce est déjà `en_cours` (un autre opérateur du même
+// poste partagé a déjà cliqué "Reprendre" avant nous), on rejoint simplement sans revenir sur le
+// statut — une session de plus, comme joinOpSession, mais sans son avertissement de chevauchement :
+// ce n'est pas la découverte surprise que quelqu'un d'autre est déjà dessus, c'est justement la
+// personne qu'on attendait. Si le statut a changé entre-temps pour autre chose (terminée, remise à
+// faire — intervention d'un tiers pendant la pause), on ne rouvre rien : on se contente de retirer
+// `aid` de la liste d'attente, ce rappel n'a plus lieu d'être.
+function applyResumeFromPauseReminder(o, aid){
+  const group = [];
+  if(o.fusionGroupId){
+    state.commandes.forEach(cc => cc.pieces.forEach(oo => { if(oo.fusionGroupId === o.fusionGroupId) group.push(oo); }));
+  } else {
+    group.push(o);
+  }
+  let didSomething = false;
+  group.forEach(oo => {
+    if(!(oo.autoPausedOperators||[]).some(id => String(id) === String(aid))) return;
+    if(oo.statut === 'en_pause' || oo.statut === 'en_cours'){
+      if(!oo.sessions) oo.sessions = [];
+      oo.sessions.push({ debut: toInputValue(new Date()), fin: null, operatorUserId: aid });
+      oo.statut = 'en_cours';
+      oo.autoPaused = false;
+    }
+    oo.autoPausedOperators = oo.autoPausedOperators.filter(id => String(id) !== String(aid));
+    if(oo.pauseReminderSnoozeUntil) delete oo.pauseReminderSnoozeUntil[aid];
+    if(!oo.autoPausedOperators.length){
+      oo.autoPausedOperators = null;
+      oo.autoPausedUntil = null;
+    }
+    didSomething = true;
+  });
+  return didSomething;
+}
+function resumeFromPauseReminder(cid, oid){
+  const c = state.commandes.find(cc=>cc.id===cid); if(!c) return;
+  const o = c.pieces.find(oo=>oo.id===oid); if(!o) return;
+  const aid = activeIdentityId();
+  if(!aid) return;
+  if(applyResumeFromPauseReminder(o, aid)) commit();
+}
+// "Reprendre les N tâches" (bouton global de la pop-up) — un seul commit() pour tout le lot, jamais
+// un par tâche (voir applyResumeFromPauseReminder).
+function resumeAllPauseReminders(){
+  const aid = activeIdentityId();
+  if(!aid) return;
+  const list = pendingPauseReminders();
+  if(!list.length) return;
+  let changed = false;
+  list.forEach(({ o }) => { if(applyResumeFromPauseReminder(o, aid)) changed = true; });
+  if(changed) commit();
+}
+// "Plus tard" (bouton global de la pop-up) — reporte le rappel de X minutes, pour L'IDENTITÉ ACTIVE
+// uniquement (jamais pour un autre opérateur attendu sur la même pièce, poste partagé), pour
+// TOUTES les tâches actuellement affichées à cette personne. Ne touche ni au statut ni à
+// `autoPausedUntil` (l'heure théorique de retour reste la même, seul le prochain AFFICHAGE de la
+// pop-up pour cette personne est repoussé) : un enregistrement transitoire (`pauseReminderSnoozeUntil`),
+// pas une nouvelle heure de reprise.
+function snoozeAllPauseReminders(minutes){
+  const aid = activeIdentityId();
+  if(!aid || !minutes) return;
+  const list = pendingPauseReminders();
+  if(!list.length) return;
+  const until = toInputValue(new Date(Date.now() + minutes*60000));
+  list.forEach(({ o }) => {
+    if(!o.pauseReminderSnoozeUntil) o.pauseReminderSnoozeUntil = {};
+    o.pauseReminderSnoozeUntil[aid] = until;
+  });
+  commit();
+}
+// Garde-fou : repère les pièces toujours en pause un jour calendaire plus tard — un travail
+// interrompu la veille (ou avant) qu'on a pu oublier de reprendre. Recalculé à chaque
+// connexion/rechargement ; filtré à l'opérateur assigné pour un non-admin, vue complète pour un
+// admin. N'exclut plus les pauses déjeuner automatiques (`o.autoPaused`, autrefois exclues car
+// censées se résorber seules) : depuis le retrait de la reprise automatique (voir CLAUDE.md, « Pop-up
+// de retour de pause déjeuner »), une pause déjeuner non confirmée par l'opérateur ne se résorbe
+// plus toute seule — si elle traîne jusqu'au lendemain, c'est justement le filet de sécurité que
+// cette bannière doit fournir, plutôt que d'inventer un second mécanisme dédié.
 function pausedSinceEarlierTasks(){
   const todayKey = toDateInputValue(new Date());
   const admin = canSupervise(); // un Superviseur a la même vue complète qu'un Administrateur ici
@@ -4989,7 +5097,7 @@ function pausedSinceEarlierTasks(){
   const seenGroups = new Set();
   const results = [];
   state.commandes.forEach(c => c.pieces.forEach(o => {
-    if(o.statut !== 'en_pause' || o.autoPaused) return;
+    if(o.statut !== 'en_pause') return;
     if(!admin && String(o.operatorUserId||'') !== myId) return;
     if(o.fusionGroupId){
       // Un groupe fusionné se met en pause et reprendra en bloc (setOpStatut le fait déjà) : une
@@ -5027,6 +5135,58 @@ function dismissPausedBanner(){
   pausedBannerDismissedDate = toDateInputValue(new Date());
   try{ localStorage.setItem(PAUSED_BANNER_DISMISS_KEY, pausedBannerDismissedDate); }catch(e){}
   render();
+}
+// Pop-up "retour de pause déjeuner" — remplace l'ancienne reprise automatique (voir CLAUDE.md,
+// « Pop-up de retour de pause déjeuner ») : dès que l'heure théorique de fin de pause est dépassée
+// pour une tâche où l'identité active est attendue, on demande une confirmation explicite plutôt que
+// de rouvrir la session toute seule. `otherModalOpen` : jamais affichée par-dessus une autre pop-up
+// déjà ouverte (Paramètres, correction de pointage...) pour ne pas empiler deux fenêtres modales —
+// elle réapparaîtra au rendu suivant, une fois cette autre pop-up refermée (voir render(), qui
+// détecte `otherModalOpen` via `.modal-box:not(.pause-reminder-box)` AVANT de reconstruire le DOM).
+function renderPauseReminderModal(otherModalOpen){
+  if(otherModalOpen) return '';
+  const list = pendingPauseReminders();
+  if(!list.length) return '';
+  const rows = list.map(({ c, o }) => {
+    const m = state.machines.find(mm=>mm.id===o.machineId);
+    const pieceLabel = o.fusionGroupId
+      ? `🔗 ${escapeHtml([o.piece,o.etape].filter(Boolean).join(' / ')||'(sans nom)')} <span class="footer-note" style="display:inline; margin:0;">(+ lot fusionné)</span>`
+      : escapeHtml([o.piece, o.etape].filter(Boolean).join(' / ') || '(sans nom)');
+    return `<div class="pause-reminder-task">
+      <div class="pr-info">
+        <div class="pr-cmd">${escapeHtml(c.nom)}</div>
+        <div class="pr-piece">${pieceLabel}</div>
+        <div class="pr-meta">${m?escapeHtml(m.nom):'poste supprimé'} — pause depuis ${formatDT(new Date(o.autoPausedUntil))}</div>
+      </div>
+      <button class="primary" data-action="resume-pause-reminder" data-cid="${c.id}" data-oid="${o.id}">▶ Reprendre</button>
+    </div>`;
+  }).join('');
+  const allBtnLabel = list.length > 1 ? `✔ Reprendre les ${list.length} tâches` : '✔ Reprendre cette tâche';
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box pause-reminder-box" role="dialog" aria-modal="true">
+      <div class="pause-reminder-head">
+        <div class="pr-icon">🍽️</div>
+        <div>
+          <h2 style="margin:0 0 3px; font-family:'Oswald',sans-serif; font-size:15px; font-weight:600; letter-spacing:0.5px; text-transform:uppercase;">Retour de pause déjeuner</h2>
+          <div class="footer-note" style="margin:0;">L'heure théorique de reprise est passée pour ${list.length>1?'ces tâches':'cette tâche'} :</div>
+        </div>
+      </div>
+      <div class="modal-body" style="padding-top:8px;">
+        ${rows}
+        <div class="footer-note" style="margin:10px 0 14px;">ℹ️ Ces tâches ne reprendront pas toutes seules — la reprise automatique a été retirée pour éviter tout double comptage du temps de travail (voir CLAUDE.md). Clique "Reprendre" quand tu es prêt à t'y remettre, ou reporte le rappel.</div>
+        <div class="form-actions">
+          <div class="pause-reminder-snooze">
+            <span class="footer-note" style="margin:0;">Plus tard :</span>
+            <button class="ghost small" data-action="snooze-pause-reminders" data-minutes="15">15 min</button>
+            <button class="ghost small" data-action="snooze-pause-reminders" data-minutes="30">30 min</button>
+            <button class="ghost small" data-action="snooze-pause-reminders" data-minutes="60">1 h</button>
+          </div>
+          <button class="primary" data-action="resume-all-pause-reminders">${allBtnLabel}</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
 }
 function renderPausedTasksBanner(){
   if(pausedBannerDismissedDate === toDateInputValue(new Date())) return '';
@@ -10259,6 +10419,12 @@ function render(){
   // position de défilement à chaque validation — on la mémorise juste avant, on la réapplique juste après.
   const openModal = document.querySelector('.modal-box');
   const modalScrollTop = openModal ? openModal.scrollTop : null;
+  // La pop-up de retour de pause déjeuner (renderPauseReminderModal) ne doit jamais s'empiler
+  // par-dessus une autre pop-up déjà ouverte (Paramètres, correction de pointage...) — elle
+  // réapparaîtra au rendu suivant, une fois cette autre pop-up refermée. Calculé sur le DOM d'AVANT
+  // ce rendu (comme modalScrollTop/focusRef juste au-dessus) : sa propre pop-up (`.pause-reminder-box`)
+  // ne doit pas compter comme "une autre pop-up", sinon elle se bloquerait elle-même d'un rendu à l'autre.
+  const otherModalOpen = !!document.querySelector('.modal-box:not(.pause-reminder-box)');
   // Même principe pour le focus : un champ (ex. un horaire "hh:mm") peut déclencher son événement
   // de changement dès la première partie saisie (heures) sur certains navigateurs — sans cette
   // restauration, le redessin qui s'ensuit fait perdre le focus au milieu de la saisie.
@@ -10281,6 +10447,7 @@ function render(){
       renderEditLeaveRequestModal(),
       renderLeaveRequestPreviewModal(),
       renderCalendrierDayDetailModal(),
+      renderPauseReminderModal(otherModalOpen),
       renderToast()
     ].join('');
     restoreModalScroll(modalScrollTop);
@@ -10295,6 +10462,7 @@ function render(){
       renderQuickPointageModal(),
       renderCorrectOperatorModal(),
       renderSettingsModal(),
+      renderPauseReminderModal(otherModalOpen),
       renderToast()
     ].join('');
     restoreModalScroll(modalScrollTop);
@@ -10306,6 +10474,7 @@ function render(){
       renderHeader(),
       renderZonesPage(),
       renderSettingsModal(),
+      renderPauseReminderModal(otherModalOpen),
       renderToast()
     ].join('');
     restoreModalScroll(modalScrollTop);
@@ -10317,6 +10486,7 @@ function render(){
       renderHeader(),
       renderRisquesPage(),
       renderSettingsModal(),
+      renderPauseReminderModal(otherModalOpen),
       renderToast()
     ].join('');
     restoreModalScroll(modalScrollTop);
@@ -10330,6 +10500,7 @@ function render(){
       renderCorrectPointageModal(),
       renderCorrectSessionsModal(),
       renderSettingsModal(),
+      renderPauseReminderModal(otherModalOpen),
       renderToast()
     ].join('');
     restoreModalScroll(modalScrollTop);
@@ -10357,6 +10528,7 @@ function render(){
     renderCorrectOperatorModal(),
     renderQuickPointageModal(),
     renderContextMenu(),
+    renderPauseReminderModal(otherModalOpen),
     renderToast()
   ].join('');
   appEl.innerHTML = html;
@@ -10690,6 +10862,9 @@ function dispatchClickAction(action, el){
     case 'resume-paused-task': setOpStatut(el.dataset.cid, el.dataset.oid, 'en_cours'); break;
     case 'dismiss-paused-banner': dismissPausedBanner(); break;
     case 'show-paused-banner': pausedBannerDismissedDate = null; render(); break;
+    case 'resume-pause-reminder': resumeFromPauseReminder(el.dataset.cid, el.dataset.oid); break;
+    case 'resume-all-pause-reminders': resumeAllPauseReminders(); break;
+    case 'snooze-pause-reminders': snoozeAllPauseReminders(Number(el.dataset.minutes)); break;
   }
 }
 

@@ -105,8 +105,8 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
   (minutes), `quantite`, `statut`, `phase`, `manualStart`, `dureeOverrideH`,
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
   `fusionGroupId`, `fusionPinned`, `sousTraitance`, `dateDebutPossible`,
-  `autoPausedOperators`, `autoPausedUntil`, `numeroLigne`, `previsionAvantCloture`, `horsPlanning`,
-  `dureeReelleH`, `dureeReelleParOperateur` (voir sections
+  `autoPausedOperators`, `autoPausedUntil`, `pauseReminderSnoozeUntil`, `numeroLigne`,
+  `previsionAvantCloture`, `horsPlanning`, `dureeReelleH`, `dureeReelleParOperateur` (voir sections
   dédiées plus bas)
   - `sousTraitance` se coche **automatiquement** (jamais décoché automatiquement) dès que le poste
     choisi pour la ligne a un nom contenant "sous-traitance"/"sous traitance"
@@ -240,22 +240,25 @@ de spécial à faire : ils somment déjà chaque session indépendamment par son
 Conséquence sur tout code qui ferme une session : `applySingleStatusChange` (pause/clôture) et
 `applyAutoPauseResume` (pause déjeuner automatique) doivent fermer **toutes** les sessions
 ouvertes (`.filter(s=>!s.fin).forEach(...)`), jamais une seule (`.find(s=>!s.fin)`) — sinon la
-session d'un second opérateur resterait ouverte indéfiniment. La reprise automatique après pause
-déjeuner rouvre une session par opérateur qui était en train de travailler (`autoPausedOperators`,
-peuplé à la pause, vidé à la reprise), pas une seule.
+session d'un second opérateur resterait ouverte indéfiniment. `autoPausedOperators` (peuplé à la
+mise en pause, un id par opérateur dont une session vient d'être fermée) sert désormais à savoir
+**qui** doit confirmer son retour dans la pop-up de rappel — voir « Pop-up de retour de pause
+déjeuner » plus bas — jamais à rouvrir une session tout seul.
 
-### Reprise automatique de pause déjeuner, fiabilisée côté serveur (`autoPauseResume.js`)
+### Mise en pause automatique de la pause déjeuner, fiabilisée côté serveur (`autoPauseResume.js`)
 
 Retour utilisateur réel : les salariés n'ont ni les mêmes horaires ni la même durée de pause (ex.
 Romain 7h45-16h30, Sébastien 7h00-17h30, pauses de durées différentes) — déjà couvert par
 `userLunch[userId]` (voir ci-dessus), mais `applyAutoPauseResume` ne s'exécutait jusqu'ici que dans
-la boucle de 60s d'un onglet client ouvert (`startApp`, voir le piège « Reprise automatique après
-pause horodatée au moment du contrôle... » plus bas) : sans personne connecté entre la mise en
-pause et l'heure de reprise d'un salarié (fréquent avec des horaires décalés par personne, ou un
-poste sans surveillance en fin de journée), la reprise n'était constatée qu'à la prochaine
-connexion, potentiellement des heures plus tard.
+la boucle de 60s d'un onglet client ouvert (`startApp`) : sans personne connecté au moment où la
+pause déjeuner démarre (fréquent avec des horaires décalés par personne, ou un poste sans
+surveillance), la mise en pause n'était constatée qu'à la prochaine connexion.
 
-- **`autoPauseResume.js`** — nouveau module serveur, **portage volontairement dupliqué** (pas
+**Ne couvre plus que la mise en pause (entrée en pause), jamais la reprise** — la reprise
+automatique qui existait ici a été retirée, voir « Pop-up de retour de pause déjeuner » juste après
+(un cas réel de sessions dupliquées, provoqué par ce même job côté serveur, en a démontré le risque).
+
+- **`autoPauseResume.js`** — module serveur, **portage volontairement dupliqué** (pas
   partagé/importé) du même calcul déjà présent côté client dans `public/index.html` :
   `pauseWindowsFor`/`pauseWindowFor` (pauses effectives à un instant donné, plusieurs pauses par
   personne fusionnées si elles se chevauchent), `dayIntervals`/`dayHoursFor`/`dayStartFor`/
@@ -263,16 +266,15 @@ connexion, potentiellement des heures plus tard.
   `applyUserLunchOverride` (horaire et pause propres à une personne, avec le même ratio
   lun.-jeu./vendredi préservé pour un horaire personnalisé — bug déjà corrigé côté client, voir
   plus bas), `configForMachineId`/`configForPiece`, `isInPauseWindow`, et `applyAutoPauseResume`
-  lui-même (fermeture de **toutes** les sessions ouvertes, reprise horodatée à la vraie fin de
-  pause `autoPausedUntil`, jamais à l'instant du contrôle — voir « Travail à plusieurs » ci-dessus
-  et le piège dédié plus bas). Aucun mécanisme de partage de code entre le client (une seule
-  balise `<script>`, pas de build, voir Architecture) et le serveur (modules Node classiques)
-  n'existe dans ce projet — introduire un fichier `.js` chargé par le navigateur en plus de
-  `public/index.html` aurait été un changement d'architecture plus large que ce qui était demandé.
-  **Réflexe explicite documenté en tête de `autoPauseResume.js`** : toute évolution de cette
-  logique côté client (`applyUserLunchOverride`, `pauseWindowsFor`, `dayIntervals`, la fermeture de
-  toutes les sessions plutôt qu'une seule...) doit être reportée à l'identique dans ce fichier, sous
-  peine de divergence silencieuse entre les deux copies.
+  lui-même (fermeture de **toutes** les sessions ouvertes — voir « Travail à plusieurs » ci-dessus).
+  Aucun mécanisme de partage de code entre le client (une seule balise `<script>`, pas de build,
+  voir Architecture) et le serveur (modules Node classiques) n'existe dans ce projet — introduire un
+  fichier `.js` chargé par le navigateur en plus de `public/index.html` aurait été un changement
+  d'architecture plus large que ce qui était demandé. **Réflexe explicite documenté en tête de
+  `autoPauseResume.js`** : toute évolution de cette logique côté client (`applyUserLunchOverride`,
+  `pauseWindowsFor`, `dayIntervals`, la fermeture de toutes les sessions plutôt qu'une seule...) doit
+  être reportée à l'identique dans ce fichier, sous peine de divergence silencieuse entre les deux
+  copies.
   - **Simplification assumée, partielle depuis « Hors horaires » ci-dessous** : la version client
     calcule en plus, dans `effectiveConfig`, les indisponibilités automatiques d'un poste dont
     **tous** les opérateurs liés sont en congé (`operatorLeaveIntersection`) — toujours omise côté
@@ -298,26 +300,95 @@ connexion, potentiellement des heures plus tard.
   enregistrements concurrents »).
 - **Idempotent par construction** : rejouer `applyAutoPauseResume` sur un état déjà à jour (ex. le
   job serveur ET la boucle client qui se déclenchent l'un juste après l'autre sur la même pièce) ne
-  produit aucun changement supplémentaire — chaque branche (`en_cours`→`en_pause`,
-  `en_pause`→`en_cours`) vérifie l'état courant avant d'agir, jamais une simple bascule inconditionnelle.
-  Le client garde donc son propre calcul en plus de celui du serveur (retrait non nécessaire) :
-  retour visuel immédiat dans un onglet resté ouvert, sans attendre le prochain sondage.
+  produit aucun changement supplémentaire — la branche `en_cours`→`en_pause` vérifie l'état courant
+  avant d'agir, jamais une simple bascule inconditionnelle. Le client garde donc son propre calcul en
+  plus de celui du serveur (retrait non nécessaire) : bascule visuelle immédiate dans un onglet resté
+  ouvert, sans attendre le prochain sondage.
 - **Réflexe Dockerfile** (piège déjà documenté plus bas, réappliqué ici) : `autoPauseResume.js` est
   un nouveau fichier serveur requis par `server.js`, donc ajouté à la fois au `require()` et à la
   ligne `COPY autoPauseResume.js ./` du `Dockerfile` — vérifié par
   `grep -oE "require\('\./[a-zA-Z]+'\)" server.js` comparé à `grep "^COPY" Dockerfile`.
+
+### Pop-up de retour de pause déjeuner (reprise non automatique)
+
+Demande utilisateur directe, suite à un cas réel de sessions dupliquées sur une pièce active (voir
+le piège « Job serveur qui interprète les horaires dans le fuseau de l'hôte » plus bas — le job
+serveur et le navigateur, horloges divergentes le temps de l'incident, se sont mis à rouvrir/
+refermer la même tâche en boucle) : *« pour éviter tout risque de travaux en double, je souhaite ne
+plus avoir de redémarrage automatique à la fin des pauses, mais qu'une grosse pop-up s'ouvre au
+retour théorique des pauses »*. La reprise automatique de la pause déjeuner (client ET serveur,
+`applyAutoPauseResume`) a donc été **retirée** — seule la mise en pause automatique subsiste (voir
+juste au-dessus) — et remplacée par une confirmation explicite de l'opérateur.
+
+- `pieces[].pauseReminderSnoozeUntil` (`{ [operatorUserId]: horodatage } | null`) — seul nouveau
+  champ introduit par cette fonctionnalité (`migrateState` l'initialise à `null`) : report du
+  rappel, PAR opérateur concerné (jamais pour les autres opérateurs attendus sur la même pièce, voir
+  « Travail à plusieurs » plus haut). `autoPausedUntil`/`autoPausedOperators` (déjà existants) sont
+  réutilisés tels quels — ils ne servent plus qu'à savoir QUAND et POUR QUI proposer ce rappel,
+  jamais à rouvrir quoi que ce soit tout seul.
+- `pendingPauseReminders()` — la liste des pièces à proposer à **l'identité active de ce poste**
+  (`activeIdentityId()`, jamais le compte réellement connecté si une autre identité a été choisie —
+  voir modèle de données) : `autoPausedUntil` déjà dépassé, `activeIdentityId()` présent dans
+  `autoPausedOperators`, et pas de report en cours (`pauseReminderSnoozeUntil[aid]` absent ou déjà
+  expiré). Ne regarde jamais `o.statut` directement (une pièce fusionnée ou travaillée à plusieurs
+  peut déjà être repassée `en_cours` pour un premier opérateur pendant qu'un second reste attendu —
+  voir plus bas) : seule la présence dans `autoPausedOperators` fait foi. Dédupliquée par
+  `fusionGroupId` (un seul membre représente tout le groupe, même convention que
+  `sumDedupedByFusionGroup` — voir « Temps de production vs présence théorique »).
+- `renderPauseReminderModal(otherModalOpen)` — grande pop-up (`.pause-reminder-box`), une carte par
+  tâche en attente (commande, pièce/étape, poste, « pause depuis {heure théorique} »), bouton
+  « ▶ Reprendre » par tâche et « ✔ Reprendre les N tâches »/« ✔ Reprendre cette tâche » global, plus
+  trois boutons de report (15 min / 30 min / 1 h). `otherModalOpen` (calculé dans `render()` via
+  `document.querySelector('.modal-box:not(.pause-reminder-box)')`, sur le DOM D'AVANT le rendu, comme
+  `modalScrollTop`/`focusRef` juste au-dessus) : cette pop-up ne s'affiche jamais par-dessus une
+  autre déjà ouverte (Paramètres, correction de pointage...) — elle réapparaît au rendu suivant, une
+  fois l'autre refermée. Ajoutée à la composition de **chaque** page (`render()`), pas seulement au
+  planning — un rappel de pause déjeuner n'a aucune raison de dépendre de l'onglet ouvert.
+- `resumeFromPauseReminder(cid, oid)` / `resumeAllPauseReminders()` — délèguent à
+  `applyResumeFromPauseReminder(o, aid)` (mutation pure, sans `commit()`, réutilisée par les deux
+  pour n'émettre **qu'un seul** `commit()` par action — voir le piège des doubles enregistrements
+  concurrents) : ouvre une session pour `aid` (**jamais** pour qui que ce soit d'autre — chaque
+  opérateur confirme lui-même son propre retour, contrairement à l'ancienne reprise automatique qui
+  rouvrait tout le monde d'un coup), horodatée à **l'instant du clic** (pas à `autoPausedUntil`) :
+  c'est justement une confirmation humaine explicite, la meilleure information disponible sur le
+  moment réel du retour — contrairement à l'ancien mécanisme automatique, qui n'avait que l'heure
+  théorique à défaut de mieux. Propage à tout le groupe fusionné le cas échéant (comme `setOpStatut`).
+  - **Poste partagé (deux opérateurs attendus sur la même pièce)** : le premier qui confirme repasse
+    la pièce `en_cours` et ouvre sa session ; le second reste dans `autoPausedOperators` (et voit
+    donc toujours son propre rappel, indépendamment du statut désormais `en_cours` — voir
+    `pendingPauseReminders` ci-dessus) jusqu'à ce qu'il confirme à son tour, auquel cas il rejoint
+    simplement (une session de plus, comme `joinOpSession`, mais **sans** son avertissement de
+    chevauchement — ce n'est pas la découverte surprise que quelqu'un d'autre est déjà dessus, c'est
+    justement la personne qu'on attendait). `autoPausedUntil`/`autoPausedOperators` ne sont vidés
+    qu'une fois **tous** les opérateurs attendus confirmés.
+  - **Statut changé entre-temps** (ex. un superviseur a clôturé la pièce pendant la pause) : ne
+    rouvre jamais de session sur une pièce qui n'est plus `en_pause`/`en_cours` — se contente de
+    retirer l'opérateur de la liste d'attente, ce rappel n'ayant plus lieu d'être.
+- `snoozeAllPauseReminders(minutes)` — reporte, pour l'identité active uniquement, toutes les tâches
+  actuellement affichées dans la pop-up (bouton global, pas un report par tâche). Ne touche ni au
+  statut ni à `autoPausedUntil` : un simple enregistrement transitoire
+  (`pauseReminderSnoozeUntil[aid]`), le rappel réapparaît de lui-même une fois le report expiré.
+- **`pausedSinceEarlierTasks` (bannière « tâches en pause depuis la veille ou avant ») n'exclut plus
+  les pauses déjeuner automatiques.** Avant ce correctif, `o.autoPaused` en excluait les pièces
+  (censées se résorber seules) ; puisqu'une pause déjeuner non confirmée ne se résorbe plus jamais
+  toute seule, elle doit pouvoir y apparaître si elle traîne jusqu'au lendemain — filet de sécurité
+  demandé explicitement par l'utilisateur, en réutilisant un mécanisme déjà existant plutôt que
+  d'en inventer un second. Le garde-fou de date (`toDateInputValue(last.fin) >= todayKey`) évite
+  tout chevauchement avec la pop-up le jour même : une pause déjeuner du jour reste seulement dans
+  `pendingPauseReminders`, jamais aussi dans cette bannière tant que minuit n'est pas passé.
 
 #### Mise en pause automatique « hors horaires » (soir, nuit, week-end) — sans reprise automatique
 
 Retour utilisateur réel : une tâche `en_cours` restait affichée telle quelle tout un week-end si
 personne n'avait pensé à cliquer « Pause » avant de partir — la pause déjeuner automatique
 ci-dessus ne couvre que le créneau de midi, rien ne gérait le reste des horaires non travaillés.
-Distinct **à dessein** de la pause déjeuner sur un point précis, explicitement demandé : **aucune
-reprise automatique** le jour ouvré suivant — contrairement à la pause déjeuner (`autoPausedUntil`
-donne au job de quoi rouvrir tout seul la bonne session à la bonne heure), ici la tâche doit rester
-en pause jusqu'à ce qu'un **opérateur la relance lui-même** (reprendre un travail resté en plan
-toute la nuit peut nécessiter une vérification physique de la pièce, une raison humaine que le
-serveur ne peut pas connaître).
+Distinct de la pause déjeuner sur un point précis, explicitement demandé dès l'origine : **aucune
+reprise automatique** le jour ouvré suivant, ni même une pop-up de rappel comme pour la pause
+déjeuner (voir plus haut) — la tâche doit rester en pause jusqu'à ce qu'un **opérateur la relance
+lui-même**, de sa propre initiative (reprendre un travail resté en plan toute la nuit peut
+nécessiter une vérification physique de la pièce, une raison humaine que le serveur ne peut pas
+connaître). Elle reste néanmoins visible dans la bannière « tâches en pause depuis la veille ou
+avant » dès qu'elle a passé la nuit (voir `pausedSinceEarlierTasks`, qui ne l'a jamais exclue).
 
 - `pauseKindForRunningTask(op, now, st)` (`autoPauseResume.js`) — point unique qui classe une
   pièce `en_cours` en `'lunch'` | `'outOfHours'` | `null` (aucune action) à l'instant `now` :
@@ -2076,6 +2147,15 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   "automatique" différée dans le temps doit horodater l'événement à quand il aurait dû se produire,
   jamais à quand il a été CONSTATÉ — y compris dans `autoPauseResume.js`, qui reproduit ce même choix
   à l'identique côté serveur.
+  **Ce correctif est devenu sans objet : la reprise automatique de la pause déjeuner a depuis été
+  retirée entièrement** (voir « Pop-up de retour de pause déjeuner » plus haut) — un cas réel de
+  sessions dupliquées (le piège de fuseau horaire serveur ci-dessous) a montré qu'une reprise sans
+  confirmation humaine n'est pas fiable. La reprise passe désormais toujours par un clic explicite
+  de l'opérateur (`resumeFromPauseReminder`), horodaté à l'instant réel de ce clic — plus besoin de
+  deviner "à quand l'événement aurait dû se produire" puisqu'il y a désormais une confirmation
+  humaine directe. Ce paragraphe reste documenté pour le réflexe général (toute FUTURE reprise
+  différée dans le temps, si le produit en réintroduit une un jour, doit s'en souvenir), pas parce
+  que le code qu'il décrivait existe encore.
 - **Redessin en cours de frappe dans un champ `type="date"`, comme un ancien bug déjà connu sur
   `type="time"`.** Le navigateur déclenche déjà "change" sur un champ `date` dès qu'un segment
   (jour/mois/année) atteint son nombre de chiffres attendu, sans attendre les autres segments ni la
