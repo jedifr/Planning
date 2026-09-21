@@ -1097,6 +1097,31 @@ aucun effet visible. Il faut donc un second outil qui édite `sessions[]` **elle
     `commit()` — la fusion reste annulable en fermant la pop-up sans cliquer « Enregistrer ». Le
     compte de sessions affiché en tête de la pop-up (« N sessions ») permet de voir immédiatement
     l'effet de la fusion avant de valider.
+  - **Doublons EXACTS fusionnés même sur un intervalle invalide.** Retour utilisateur réel, sur un
+    cas concret : plusieurs sessions identiques `debut`/`fin`/opérateur, mais avec `fin < debut`
+    (voir « Ligne invalide » ci-dessous) — la fusion par intervalles seule ne les regroupait pas
+    (elle suppose un intervalle bien formé pour décider d'un chevauchement, ce qui n'a pas de sens
+    ici). `mergeOverlappingCorrectSessions()` élimine donc d'abord, par une passe séparée, les
+    doublons dont `operatorUserId`/`debut`/`fin` sont **identiques**, avant la fusion par
+    intervalles habituelle — aucune ambiguïté sur ce qu'il faut faire dans ce cas précis (une pure
+    répétition de la même ligne), contrairement à deux sessions invalides mais non identiques
+    (même horaire un autre jour, par exemple), jamais fusionnées à l'aveugle faute de certitude.
+- **Ligne invalide (fin < début) surlignée, nommée dans l'erreur, et bouton « ⇄ » pour l'inverser.**
+  Retour utilisateur réel : avec plusieurs dizaines de sessions dans le tableau, le message d'erreur
+  générique de validation ne disait pas LAQUELLE posait problème — fastidieux à repérer à l'œil.
+  - `renderCorrectSessionsModal` calcule `invalid = s.debut && s.fin && s.fin < s.debut` par ligne :
+    fond rouge pâle sur toute la ligne (`.correct-session-invalid-row`), badge « ⚠ fin < début »
+    à côté du champ Fin, et bouton « ⇄ » (`swapCorrectSessionRow(idx)`, échange `debut`/`fin` de
+    cette ligne) affiché **uniquement** sur une ligne invalide — jamais proposé sur une ligne déjà
+    correcte, où l'inverser la casserait plutôt que la corriger.
+  - `submitCorrectSessions()` cite désormais l'horaire exact de la session fautive dans l'alerte
+    (« La session commençant le {debut} a une fin ({fin}) antérieure à son début... ») plutôt qu'un
+    message générique — permet de la retrouver immédiatement dans le tableau, en plus du surlignage.
+  - Ce genre de ligne (`fin`/`debut` très exactement inversés) se rencontre typiquement quand les
+    deux valeurs correspondent à des bornes de configuration réelles (ex. les horaires de pause
+    déjeuner d'une personne) — un signe que le couple a probablement été enregistré à l'envers plutôt
+    qu'avec des valeurs arbitrairement fausses ; le bouton « ⇄ » couvre directement ce cas courant
+    sans obliger à retaper les deux champs à la main.
 
 ## Zones de stockage
 

@@ -514,6 +514,7 @@
   .badge.red.badge-overdue{color:#fff; background:var(--red); font-weight:700;}
   .badge.neutral{color:var(--blue); border-color:var(--blue); background:rgba(49,111,152,0.1);}
   .badge.done{color:var(--text-faint); border-color:var(--line);}
+  .correct-session-invalid-row td{background:rgba(178,58,48,0.08);}
 
   table.ops-table{width:100%; border-collapse:collapse;}
   /* Largeurs de colonnes fixes (via <colgroup>), pas dépendantes du contenu : sans ça, chaque
@@ -863,7 +864,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.32.0';
+const APP_VERSION = '1.33.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -7144,16 +7145,34 @@ function submitCorrectSessions(){
   const d = correctSessionsDraft; if(!d) return;
   const found = findPieceAnywhere(d.cid, d.oid); if(!found) return;
   const { o } = found;
-  for(const s of d.sessions){
+  for(let i=0;i<d.sessions.length;i++){
+    const s = d.sessions[i];
     if(s.open) continue; // jamais éditée : contrôlée plus haut, exclue de toute validation ici
-    if(!s.debut){ alert('Chaque session doit avoir un début renseigné.'); return; }
-    if(s.fin && s.fin < s.debut){ alert('La fin d\'une session doit être postérieure ou égale à son début.'); return; }
+    // Le message nomme la ligne fautive (par son début) plutôt qu'un message générique : sur une
+    // liste de plusieurs dizaines de sessions (ex. l'avalanche laissée par le bug de fuseau horaire
+    // serveur), chercher à l'œil laquelle ne respecte pas la règle serait autrement pénible — les
+    // lignes fautives sont de toute façon déjà surlignées en rouge dans le tableau (voir
+    // renderCorrectSessionsModal), ce message ne fait que pointer précisément vers l'une d'elles.
+    if(!s.debut){ alert(`La session n°${i+1} doit avoir un début renseigné.`); return; }
+    if(s.fin && s.fin < s.debut){ alert(`La session commençant le ${formatDT(new Date(s.debut))} a une fin (${formatDT(new Date(s.fin))}) antérieure à son début — corrige-la ou utilise le bouton "⇄" pour inverser début et fin.`); return; }
   }
   if(!confirm('Enregistrer ces corrections de sessions ? Cette action ne peut pas être annulée.')) return;
   o.sessions = d.sessions.map(s => s.open ? s.orig : { debut: s.debut, fin: s.fin || null, operatorUserId: s.operatorUserId || null });
   correctSessionsDraft = null;
   commit();
   showToast('Sessions corrigées.');
+}
+// Inverse début et fin d'une session — raccourci pour le cas très courant où les deux ont été
+// enregistrés à l'envers (ex. une session de pause déjeuner stockée [fin, début] au lieu de
+// [début, fin] : voir CLAUDE.md, l'avalanche de sessions laissée par le bug de fuseau horaire
+// serveur en a produit plusieurs, souvent reconnaissables à des horaires correspondant exactement
+// aux bornes de pause configurées, juste inversées). N'est jamais proposé pour une session déjà
+// valide (fin ≥ début) — voir le bouton conditionnel dans renderCorrectSessionsModal.
+function swapCorrectSessionRow(idx){
+  if(!correctSessionsDraft) return;
+  const s = correctSessionsDraft.sessions[idx]; if(!s || s.open) return;
+  const tmp = s.debut; s.debut = s.fin; s.fin = tmp;
+  render();
 }
 // Fusionne, PAR OPÉRATEUR, les sessions fermées qui se chevauchent ou se touchent en une seule —
 // pour rattraper d'un coup une avalanche de sessions quasi identiques (ex. celle laissée par le bug
@@ -7165,13 +7184,30 @@ function submitCorrectSessions(){
 // PERSONNES en parallèle) ; des sessions qui se chevauchent pour la MÊME personne gonflent donc à
 // tort son temps de production compté sur cette tâche. Une session encore OUVERTE n'est jamais
 // concernée (jamais fusionnée, jamais réordonnée) — voir le garde-fou déjà en place ailleurs dans
-// ce fichier pour les sessions ouvertes.
+// ce fichier pour les sessions ouvertes. Élimine aussi, en amont, les doublons EXACTS (même
+// opérateur, même début, même fin) — utile pour une session déjà invalide (fin < début) répétée
+// plusieurs fois : la fusion par intervalles ci-dessous ne les détecterait pas dans ce cas (elle
+// suppose un intervalle bien formé), alors qu'ici il n'y a aucune ambiguïté sur ce qu'il faut faire.
 function mergeOverlappingCorrectSessions(){
   if(!correctSessionsDraft) return;
   const open = correctSessionsDraft.sessions.filter(s => s.open);
   const closed = correctSessionsDraft.sessions.filter(s => !s.open);
+  // Doublons EXACTS (même opérateur, même début, même fin) : toujours fusionnables même si
+  // l'intervalle est par ailleurs invalide (fin < début) — la fusion par balayage d'intervalles
+  // ci-dessous ne les détecte pas dans ce cas (elle suppose un intervalle bien formé, "début ≤ fin
+  // du précédent" ne dit rien d'utile quand fin < début), alors qu'ici il n'y a AUCUNE ambiguïté
+  // sur ce qu'il faut fusionner : ce sont littéralement des répétitions de la même ligne (retour
+  // utilisateur réel : trois sessions identiques 13:30→11:50, résidu du bug de fuseau horaire).
+  const seenExact = new Set();
+  const deduped = [];
+  closed.forEach(s => {
+    const key = `${s.operatorUserId||''}|${s.debut}|${s.fin}`;
+    if(seenExact.has(key)) return;
+    seenExact.add(key);
+    deduped.push(s);
+  });
   const byOperator = {};
-  closed.forEach(s => { const key = s.operatorUserId || ''; (byOperator[key] = byOperator[key] || []).push(s); });
+  deduped.forEach(s => { const key = s.operatorUserId || ''; (byOperator[key] = byOperator[key] || []).push(s); });
   let merged = [];
   Object.keys(byOperator).forEach(key => {
     // Comparaison directe des chaînes "AAAA-MM-JJTHH:mm" : triables lexicographiquement telles
@@ -7209,13 +7245,19 @@ function renderCorrectSessionsModal(){
       </tr>`;
     }
     const operatorOptions = usersList.map(u=>`<option value="${u.id}" ${String(s.operatorUserId)===String(u.id)?'selected':''}>${escapeHtml(u.username)}</option>`).join('');
-    return `<tr>
+    // Fin antérieure au début : signale visuellement la ligne fautive plutôt que de laisser
+    // l'utilisateur la chercher à l'œil parmi d'éventuelles dizaines de lignes — c'est justement le
+    // genre d'anomalie que cet outil sert à corriger (voir CLAUDE.md, bug de fuseau horaire serveur).
+    const invalid = !!(s.debut && s.fin && s.fin < s.debut);
+    const swapBtn = invalid
+      ? `<button class="ghost icon-btn" data-action="swap-correct-session-row" data-idx="${idx}" title="Inverser début et fin">⇄</button>` : '';
+    return `<tr${invalid ? ' class="correct-session-invalid-row"' : ''}>
       <td><input type="datetime-local" value="${s.debut}" data-action="correct-session-field" data-idx="${idx}" data-field="debut"></td>
-      <td><input type="datetime-local" value="${s.fin}" data-action="correct-session-field" data-idx="${idx}" data-field="fin"></td>
+      <td><input type="datetime-local" value="${s.fin}" data-action="correct-session-field" data-idx="${idx}" data-field="fin">${invalid ? ' <span class="badge red" style="margin-left:4px;">⚠ fin < début</span>' : ''}</td>
       <td><select data-action="correct-session-field" data-idx="${idx}" data-field="operatorUserId">
         <option value="">—</option>${operatorOptions}
       </select></td>
-      <td><button class="ghost icon-btn danger-ghost" data-action="remove-correct-session-row" data-idx="${idx}" title="Supprimer cette session">🗑</button></td>
+      <td style="white-space:nowrap;">${swapBtn}<button class="ghost icon-btn danger-ghost" data-action="remove-correct-session-row" data-idx="${idx}" title="Supprimer cette session">🗑</button></td>
     </tr>`;
   }).join('');
   return `
@@ -10490,6 +10532,7 @@ function dispatchClickAction(action, el){
     case 'submit-correct-sessions': submitCorrectSessions(); break;
     case 'remove-correct-session-row': removeCorrectSessionRow(Number(el.dataset.idx)); break;
     case 'merge-correct-sessions': mergeOverlappingCorrectSessions(); break;
+    case 'swap-correct-session-row': swapCorrectSessionRow(Number(el.dataset.idx)); break;
     case 'conges-tab': congesTab = el.dataset.tab; render(); break;
     case 'temps-prod-mode': tempsProdPeriodMode = el.dataset.mode; render(); break;
     case 'temps-prod-nav': navigateTempsProdPeriod(el.dataset.dir); break;
