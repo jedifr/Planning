@@ -448,6 +448,13 @@
     white-space:normal; overflow-wrap:anywhere; text-align:center;
   }
   .zone-cell-occupant:hover{text-decoration:underline;}
+  .zone-cell-release{
+    display:block; width:100%; margin-top:2px; background:var(--amber-dim); border:1px solid var(--amber);
+    border-radius:2px; padding:1px 3px; cursor:pointer;
+    font-family:'IBM Plex Sans',sans-serif; font-size:9.5px; font-weight:600; color:var(--text-dim);
+    white-space:normal; overflow-wrap:anywhere; text-align:center;
+  }
+  .zone-cell-release:hover{background:var(--amber); color:#fff;}
   .search-bar{display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; row-gap:8px;}
   /* Un label+select ne doit jamais être séparé sur deux lignes quand la barre déborde (mobile) —
      voir CLAUDE.md, ergonomie mobile de la barre de filtres du calendrier annuel. */
@@ -856,7 +863,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.29.0';
+const APP_VERSION = '1.30.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1220,7 +1227,7 @@ function manualArchiveNow(){
   showToast(`${nb} commande${nb>1?'s':''} archivée${nb>1?'s':''}.`);
 }
 let currentView = 'semaine'; // 'semaine' | 'mois' | 'annee'
-let currentPage = 'planning'; // 'planning' | 'conges' | 'tempsProd' | 'zones'
+let currentPage = 'planning'; // 'planning' | 'conges' | 'tempsProd' | 'zones' | 'risques' | 'pointages'
 let congesTab = 'mes-demandes'; // 'mes-demandes' | 'equipe' | 'calendrier' | 'a-valider' | 'soldes'
 let equipeStatutFilter = 'approuve'; // filtre de l'onglet "Congés de l'équipe"
 let leaveImpactPreviewId = null; // id de la demande dont on affiche l'aperçu d'impact, dans "À valider"
@@ -1285,6 +1292,14 @@ let quickPointageDraft = null;
 // "X h réellement passé", superviseur/admin uniquement — voir CLAUDE.md) — { cid, oid,
 // operatorUserId } | null (fermé).
 let correctOperatorDraft = null;
+// Correction plus complète (début/fin réels, durée totale réellement passée, et éventuellement
+// l'opérateur crédité) depuis la page "Pointages" (admin/superviseur — voir CLAUDE.md) — { cid, oid,
+// debutReel, finReel, dureeReelleH, operatorUserId } | null (fermé). Volontairement un draft/modal
+// séparé de correctOperatorDraft ci-dessus (formes éditées différentes) plutôt qu'une extension du
+// même outil, déjà utilisé et testé tel quel depuis "Temps de production".
+let correctPointageDraft = null;
+// Filtres de la page "Pointages" — purement transitoires (comme searchQuery), jamais persistés.
+let pointagesFilters = { personne:'', poste:'', statut:'toutes', range:'month', search:'' };
 let fusionCheckedItems = {}; // clé "posteId|matière|épaisseur" -> Set des id de pièces cochées pour fusion
 // État de l'assistant d'import personnalisé (fichier d'un autre logiciel, colonnes à faire
 // correspondre) — null quand l'assistant est fermé.
@@ -1372,7 +1387,7 @@ function migrateState(st){
   if(!Array.isArray(st.commandesArchivees)) st.commandesArchivees = []; // commandes entièrement terminées depuis longtemps, écartées du moteur de planification pour garder l'appli réactive — toujours incluses dans l'export complet
   if(!st.userMachines) st.userMachines = {}; // { [userId]: [machineId, ...] } — lien plusieurs-à-plusieurs
   if(!Array.isArray(st.hiddenTempsProdUserIds)) st.hiddenTempsProdUserIds = []; // salariés exclus de l'onglet Temps de production (superviseur) — voir isHiddenFromTempsProd
-  if(!st.userDefaultPage) st.userDefaultPage = {}; // { [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques' } — page affichée à la connexion, voir applyUserDefaultPageOnStart
+  if(!st.userDefaultPage) st.userDefaultPage = {}; // { [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques'|'pointages' } — page affichée à la connexion, voir applyUserDefaultPageOnStart
   if(!st.userDefaultPlanningView) st.userDefaultPlanningView = {}; // { [userId]: 'jour'|'semaine'|'mois'|'annee'|'kanban'|'liste' } — vue du planning appliquée à la connexion quand la page d'accueil est Planning, voir applyUserDefaultPageOnStart
   if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
   Object.keys(st.userLunch).forEach(uid_ => {
@@ -5102,18 +5117,19 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
         }
       }
     } else {
-      // Le temps réellement passé est désormais figé (dureePasseeH le relira depuis dureeReelleH) :
-      // le détail des sessions (chaque démarrage/pause/reprise) ne sert plus à rien une fois la
-      // pièce terminée, et ne fait qu'accumuler indéfiniment sur une pièce reprise plusieurs fois.
-      // Mais QUI a réellement travaillé (operatorUserId de chaque session, pas forcément l'opérateur
-      // assigné de la pièce — voir CLAUDE.md) doit être figé AVANT de vider sessions[], sinon
-      // computeProductionTimeByUser n'aurait plus que l'opérateur assigné à créditer et lui
-      // attribuerait à tort tout le temps réellement passé par quelqu'un d'autre (bug réel corrigé :
-      // sur un poste partagé, la personne qui réalise vraiment la tâche voyait son temps décompté sur
-      // la personne assignée).
+      // Le temps réellement passé est désormais figé (dureePasseeH le relira depuis dureeReelleH) —
+      // mais QUI a réellement travaillé (operatorUserId de chaque session, pas forcément l'opérateur
+      // assigné de la pièce — voir CLAUDE.md) doit AUSSI être figé ici, dès la clôture, sans attendre
+      // que sessions[] soit vidé par l'archivage : sinon computeProductionTimeByUser n'aurait plus que
+      // l'opérateur assigné à créditer et lui attribuerait à tort tout le temps réellement passé par
+      // quelqu'un d'autre (bug réel corrigé : sur un poste partagé, la personne qui réalise vraiment
+      // la tâche voyait son temps décompté sur la personne assignée).
       o.dureeReelleH = elapsedH;
       o.dureeReelleParOperateur = computeSessionsHoursByOperator(o, state);
-      o.sessions = [];
+      // sessions[] n'est PAS vidé ici (piège corrigé, voir CLAUDE.md « Archivage des sessions
+      // déclenché dès la clôture ») : archiveOldSessions() s'en charge, et ne le vide qu'une fois le
+      // détail confirmé enregistré côté serveur (session_history) — setOpStatut la déclenche juste
+      // après ce commit(), sans attendre le prochain démarrage de l'appli.
     }
     const m = state.machines.find(m=>m.id===o.machineId);
     if(!o.debutReel){
@@ -5247,6 +5263,14 @@ function setOpStatut(cid, oid, newStatut){
     showToast(`Terminée ${durationLabel(maxAdvanceH)} en avance — les tâches non figées viennent de se recaler automatiquement.`);
   }
   commit();
+  // Déclenche l'archivage des sessions dès cette clôture (plutôt que d'attendre le prochain
+  // démarrage de l'appli, seul moment où archiveOldSessions() tournait jusqu'ici) : sessions[] ne
+  // vient justement plus d'être vidé par applySingleStatusChange (voir CLAUDE.md), donc le détail
+  // est encore là à archiver. Fire-and-forget, comme les autres tâches de fond de startApp — la
+  // pièce reste utilisable normalement pendant que l'archivage se fait en arrière-plan.
+  if(newStatut === 'termine'){
+    archiveOldSessions(state).then(changed => { if(changed) queueSilentSave(); });
+  }
 }
 // Permet à un second (ou troisième…) opérateur de se signaler comme travaillant, en parallèle, sur
 // une pièce déjà en_cours — cas réel d'un travail à plusieurs mains sur la même ligne (à distinguer
@@ -6173,6 +6197,7 @@ function renderHeader(){
       <button class="page-switch-btn ${currentPage==='tempsProd'?'active':''}" data-action="goto-temps-prod">⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}</button>
       <button class="page-switch-btn ${currentPage==='zones'?'active':''}" data-action="goto-zones">📍 Zones de stockage</button>
       ${(() => { const n = getSchedule().filter(c => (c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine')) && isCommandeAtRisk(c)).length; return `<button class="page-switch-btn ${currentPage==='risques'?'active':''}" data-action="goto-risques">⚠️ Risques de retard${n>0?` <span class="pending-count-badge">${n}</span>`:''}</button>`; })()}
+      ${canSupervise() ? `<button class="page-switch-btn ${currentPage==='pointages'?'active':''}" data-action="goto-pointages">🕘 Pointages</button>` : ''}
     </div>`;
   return `
   <header class="top">
@@ -6740,7 +6765,15 @@ function renderSoldesTab(){
 function renderZonesPage(){
   // Plusieurs commandes actives peuvent partager la même zone (regroupement manuel volontaire, voir
   // setCommandeZone) — byZone liste donc TOUTES les occupantes de chaque zone, pas une seule.
-  const activeCommandes = state.commandes.filter(c => !isCommandeFullyDone(c));
+  // isCommandeReadyToFreeZone (pas isCommandeFullyDone) : bug réel corrigé — cette page utilisait
+  // encore isCommandeFullyDone directement, contrairement à occupiedStorageZones/commandesInZone
+  // (déjà migrées) : avec le module "Libération manuelle du casier" actif, une commande en attente
+  // de nettoyage/conditionnement (bandeau "🧹 Nettoyage/conditionnement en cours" sur sa carte,
+  // voir renderCommandeCard) apparaissait à tort comme "Libre" ici, alors qu'elle reste bel et bien
+  // occupante partout ailleurs — retour utilisateur réel : pas simple de retrouver, dans les tâches
+  // terminées, quelle commande a ce bandeau pour libérer son casier.
+  const expeditionGateActive = !!(state.config.modules && state.config.modules.expedition);
+  const activeCommandes = state.commandes.filter(c => !isCommandeReadyToFreeZone(state, c));
   const byZone = {};
   activeCommandes.forEach(c => { if(c.zoneStockage){ (byZone[c.zoneStockage] = byZone[c.zoneStockage] || []).push(c); } });
   const zonesInfo = computeStorageZones(state);
@@ -6759,7 +6792,17 @@ function renderZonesPage(){
         const labelTxt = inactive ? '🚫 Désactivée' : 'Libre';
         return `<button class="${cls}" data-action="toggle-zone-active" data-zone="${z}" title="${title}"><div class="zone-cell-code">${z}</div><div class="zone-cell-label">${labelTxt}</div></button>`;
       }
-      const namesHtml = occupants.map(o => `<button class="zone-cell-occupant" data-action="isolate-commande-goto-planning" data-cid="${o.id}" title="Isoler « ${escapeHtml(o.nom)} » dans le planning">${escapeHtml(o.nom)}</button>`).join('');
+      const namesHtml = occupants.map(o => {
+        const nameBtn = `<button class="zone-cell-occupant" data-action="isolate-commande-goto-planning" data-cid="${o.id}" title="Isoler « ${escapeHtml(o.nom)} » dans le planning">${escapeHtml(o.nom)}</button>`;
+        // Nettoyage/conditionnement en cours (voir renderCommandeCard) : plutôt que d'obliger à
+        // retrouver cette commande dans les tâches terminées pour son bandeau, le même bouton de
+        // libération est proposé ici directement — retour utilisateur réel.
+        const pendingExpedition = expeditionGateActive && isCommandeFullyDone(o) && !o.pretExpedition;
+        const releaseBtn = pendingExpedition
+          ? `<button class="zone-cell-release" data-action="mark-pret-expedition" data-cid="${o.id}" title="Marquer « ${escapeHtml(o.nom)} » prête à expédier — libère ce casier">🧹 Prêt à expédier</button>`
+          : '';
+        return nameBtn + releaseBtn;
+      }).join('');
       return `<div class="zone-cell zone-cell-occupied" style="border-color:${allee.couleur}; background:${hexToRgba(allee.couleur,0.14)};">
         <div class="zone-cell-code" style="color:${readableZoneTextColor(allee.couleur)};">${z}</div><div class="zone-cell-label">${namesHtml}</div>
       </div>`;
@@ -6789,6 +6832,252 @@ function renderZonesPage(){
       <div class="footer-note" style="text-align:left; padding-top:10px;">Une zone est attribuée automatiquement à la création d'une commande (première libre disponible) et se libère automatiquement dès que toutes ses pièces sont Terminées — pas besoin de la vider à la main. Pour changer la zone d'une commande, utilisez son badge "📍 Zone" dans le planning ; plusieurs commandes peuvent volontairement partager le même casier. Cliquez une case libre pour désactiver un casier indisponible (cassé, réservé...), recliquez pour le réactiver. Les allées se règlent dans Paramètres → Zones de stockage.</div>
     </div>
   </section>`;
+}
+
+/* ---------------- Pointages (admin/superviseur) ----------------
+   Retour utilisateur réel : besoin d'un endroit unique pour voir tous les pointages (qui a fait
+   quoi, quand) et les corriger, sans avoir à rouvrir chaque commande une par une. Réservée à
+   canSupervise() (bouton d'en-tête masqué sinon, voir renderHeader) — même principe que "✎
+   Modifier"/"✎ Opérateur" ailleurs dans l'appli : un raccourci d'accès, pas une nouvelle capacité. */
+// Liste à plat de tous les pointages ayant réellement produit quelque chose (tout statut sauf
+// "à faire"), tous postes/personnes confondus. Parcourt commandes actives ET archivées (comme
+// computeProductionTimeByUser), dédupliqué par fusionGroupId (un seul membre représente tout le
+// lot — même réflexe que partout ailleurs dans l'appli où une durée peut être sommée/listée sur
+// plusieurs pièces, voir CLAUDE.md « Temps de production vs présence théorique »).
+function computeAllPointages(st){
+  const rows = [];
+  const fusionCounts = {};
+  const allPieces = [];
+  [st.commandes||[], st.commandesArchivees||[]].forEach(list => list.forEach(c => c.pieces.forEach(o => {
+    allPieces.push({ c, o });
+    if(o.fusionGroupId) fusionCounts[o.fusionGroupId] = (fusionCounts[o.fusionGroupId]||0) + 1;
+  })));
+  const seenFusionGroups = new Set();
+  allPieces.forEach(({ c, o }) => {
+    if(o.statut === 'a_faire') return;
+    if(o.fusionGroupId){
+      if(seenFusionGroups.has(o.fusionGroupId)) return;
+      seenFusionGroups.add(o.fusionGroupId);
+    }
+    const isDone = o.statut === 'termine';
+    // Une pièce terminée sans dureeReelleH n'a jamais été réellement pointée (temps saisi jamais
+    // renseigné à la clôture, voir applySingleStatusChange) — rien d'utile à montrer/corriger ici.
+    const hasData = isDone ? (o.dureeReelleH != null && o.dureeReelleH > 0) : ((o.sessions||[]).length > 0);
+    if(!hasData) return;
+    const m = st.machines.find(mm=>mm.id===o.machineId);
+    const operatorIds = (o.dureeReelleParOperateur && Object.keys(o.dureeReelleParOperateur).length)
+      ? Object.keys(o.dureeReelleParOperateur)
+      : (o.operatorUserId ? [o.operatorUserId] : []);
+    rows.push({
+      cid: c.id, oid: o.id, commandeNom: c.nom,
+      piece: o.piece, etape: o.etape, fusionCount: o.fusionGroupId ? (fusionCounts[o.fusionGroupId]||1) : 1,
+      machineId: o.machineId, machineNom: m ? m.nom : '',
+      statut: o.statut, operatorIds,
+      debutReel: o.debutReel, finReel: o.finReel,
+      dureePrevueH: dureePrevueH(o), dureeReelleH: isDone ? o.dureeReelleH : opElapsedHours(o, st),
+    });
+  });
+  return rows;
+}
+// Fenêtre de récence pour les pointages déjà TERMINÉS uniquement (une tâche encore en cours/en
+// pause reste toujours visible, quelle que soit la fenêtre choisie — même principe que
+// doneFilterRange sur la liste "Tâches terminées" du planning) : au-delà d'un atelier avec quelques
+// mois d'historique, "toutes" produirait une liste bien trop longue à parcourir par défaut.
+function pointagesRangeCutoff(range){
+  if(range === 'all') return null;
+  const days = range === 'week' ? 7 : range === 'quarter' ? 90 : 30;
+  const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate() - days);
+  return d;
+}
+function updatePointagesFilter(field, value){
+  pointagesFilters[field] = value;
+  render();
+}
+function pointageStatutBadge(statut){
+  if(statut === 'termine') return `<span class="badge done">Terminée</span>`;
+  if(statut === 'en_cours') return `<span class="badge green">▶ En cours</span>`;
+  if(statut === 'en_pause') return `<span class="badge neutral">⏸ En pause</span>`;
+  return `<span class="badge neutral">${escapeHtml(statut)}</span>`;
+}
+function renderPointagesPage(){
+  const all = computeAllPointages(state);
+  const cutoff = pointagesRangeCutoff(pointagesFilters.range);
+  const searchQ = pointagesFilters.search.trim().toLowerCase();
+  let list = all.filter(r => {
+    if(pointagesFilters.personne && !r.operatorIds.map(String).includes(pointagesFilters.personne)) return false;
+    if(pointagesFilters.poste && String(r.machineId) !== pointagesFilters.poste) return false;
+    if(pointagesFilters.statut !== 'toutes' && r.statut !== pointagesFilters.statut) return false;
+    if(cutoff && r.statut === 'termine'){
+      const refStr = r.finReel || r.debutReel;
+      if(refStr && new Date(refStr) < cutoff) return false;
+    }
+    if(searchQ){
+      const hay = `${r.commandeNom} ${r.piece||''} ${r.etape||''}`.toLowerCase();
+      if(!hay.includes(searchQ)) return false;
+    }
+    return true;
+  });
+  // Le plus récent en premier — fin réelle si connue (tâche terminée), sinon début réel (tâche
+  // encore active) : ce qui s'est terminé/a démarré le plus récemment remonte en tête, comme pour
+  // la liste "Tâches terminées" du planning.
+  list.sort((a,b) => (b.finReel||b.debutReel||'').localeCompare(a.finReel||a.debutReel||''));
+
+  const rows = list.map(r => {
+    const pieceLabel = [r.piece, r.etape].filter(Boolean).join(' / ') || '(sans nom)';
+    const lotSuffix = r.fusionCount > 1 ? ` <span class="footer-note" style="margin:0;">(+${r.fusionCount-1} pièce${r.fusionCount-1>1?'s':''} du même lot)</span>` : '';
+    const operatorNames = r.operatorIds.map(uid_ => { const u = usersList.find(uu=>String(uu.id)===String(uid_)); return u?u.username:null; }).filter(Boolean);
+    const correctBtn = isPointageCorrectable(r.cid, r.oid)
+      ? `<button class="ghost small" data-action="open-correct-pointage" data-cid="${r.cid}" data-oid="${r.oid}">✎ Corriger</button>` : '';
+    return `<tr>
+      <td>${escapeHtml(r.commandeNom)}</td>
+      <td>${escapeHtml(pieceLabel)}${lotSuffix}</td>
+      <td>${escapeHtml(r.machineNom)}</td>
+      <td>${operatorNames.length ? escapeHtml(operatorNames.join(', ')) : '—'}</td>
+      <td>${pointageStatutBadge(r.statut)}</td>
+      <td>${r.debutReel ? formatDT(new Date(r.debutReel)) : '—'}</td>
+      <td>${r.finReel ? formatDT(new Date(r.finReel)) : '—'}</td>
+      <td>${durationLabel(r.dureePrevueH)}</td>
+      <td>${r.dureeReelleH!=null ? durationLabel(r.dureeReelleH) : '—'}</td>
+      <td style="white-space:nowrap;">${correctBtn}</td>
+    </tr>`;
+  }).join('');
+
+  const personneOptions = usersList.map(u=>`<option value="${u.id}" ${pointagesFilters.personne===String(u.id)?'selected':''}>${escapeHtml(u.username)}</option>`).join('');
+  const posteOptions = state.machines.map(m=>`<option value="${m.id}" ${pointagesFilters.poste===String(m.id)?'selected':''}>${escapeHtml(m.nom)}</option>`).join('');
+
+  return `<section class="panel"><div class="panel-head">
+      <h2>🕘 Pointages</h2>
+      <span class="footer-note" style="margin:0;">${list.length} pointage${list.length>1?'s':''} affiché${list.length>1?'s':''}</span>
+    </div>
+    <div class="panel-body">
+    <div class="search-bar">
+      <span class="search-bar-group"><label class="field" style="margin:0;">Personne</label>
+      <select data-action="pointages-filter" data-field="personne" style="width:auto;">
+        <option value="">Toutes</option>${personneOptions}
+      </select></span>
+      <span class="search-bar-group"><label class="field" style="margin:0;">Poste</label>
+      <select data-action="pointages-filter" data-field="poste" style="width:auto;">
+        <option value="">Tous</option>${posteOptions}
+      </select></span>
+      <span class="search-bar-group"><label class="field" style="margin:0;">Statut</label>
+      <select data-action="pointages-filter" data-field="statut" style="width:auto;">
+        <option value="toutes" ${pointagesFilters.statut==='toutes'?'selected':''}>Tous</option>
+        <option value="termine" ${pointagesFilters.statut==='termine'?'selected':''}>Terminée</option>
+        <option value="en_cours" ${pointagesFilters.statut==='en_cours'?'selected':''}>En cours</option>
+        <option value="en_pause" ${pointagesFilters.statut==='en_pause'?'selected':''}>En pause</option>
+      </select></span>
+      <span class="search-bar-group"><label class="field" style="margin:0;">Période</label>
+      <select data-action="pointages-filter" data-field="range" style="width:auto;">
+        <option value="week" ${pointagesFilters.range==='week'?'selected':''}>7 derniers jours</option>
+        <option value="month" ${pointagesFilters.range==='month'?'selected':''}>30 derniers jours</option>
+        <option value="quarter" ${pointagesFilters.range==='quarter'?'selected':''}>90 derniers jours</option>
+        <option value="all" ${pointagesFilters.range==='all'?'selected':''}>Toutes</option>
+      </select></span>
+      <input type="text" id="pointages-search-input" placeholder="Rechercher une commande ou une pièce..." value="${escapeHtml(pointagesFilters.search)}" style="width:auto; flex:1; min-width:160px;">
+    </div>
+    <table class="ops-table">
+      <thead><tr><th>Commande</th><th>Pièce / Étape</th><th>Poste</th><th>Opérateur(s)</th><th>Statut</th><th>Début réel</th><th>Fin réelle</th><th>Prévu</th><th>Réel</th><th></th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="10" style="text-align:center; color:var(--text-faint);">Aucun pointage ne correspond à ce filtre.</td></tr>`}</tbody>
+    </table>
+    <div class="footer-note" style="text-align:left; padding-top:10px;">La période ne masque jamais une tâche encore en cours ou en pause, seulement les tâches déjà terminées plus anciennes que la fenêtre choisie. "Prévu"/"Réel" d'un lot fusionné représentent le lot entier (une seule ligne, jamais comptée plusieurs fois). Corriger un pointage remplace intégralement son début réel, sa fin réelle et sa durée réellement passée.</div>
+    </div>
+  </section>`;
+}
+// Recherche une pièce dans les commandes actives ET archivées (contrairement à
+// isCorrectableProductionEntry/correctOperatorDraft, limités à state.commandes) : une pièce à
+// corriger depuis "Pointages" a d'autant plus de chances d'avoir été archivée entre-temps (voir
+// archiveOldCommandes) que la correction porte souvent sur un pointage déjà ancien.
+function findPieceAnywhere(cid, oid){
+  const lists = [state.commandes||[], state.commandesArchivees||[]];
+  for(const list of lists){
+    const c = list.find(cc=>cc.id===cid);
+    if(c){ const o = c.pieces.find(oo=>oo.id===oid); if(o) return { c, o }; }
+  }
+  return null;
+}
+// Même garde-fou qu'isCorrectableProductionEntry (une pièce encore en_cours/en_pause a toujours
+// sessions[] qui prime dans computeProductionTimeByUser — corriger ces champs n'y aurait alors
+// aucun effet visible), étendu aux commandes archivées.
+function isPointageCorrectable(cid, oid){
+  const found = findPieceAnywhere(cid, oid);
+  return !!(found && found.o.statut==='termine' && found.o.dureeReelleH!=null && found.o.dureeReelleH>0);
+}
+function openCorrectPointage(cid, oid){
+  const found = findPieceAnywhere(cid, oid); if(!found) return;
+  const { o } = found;
+  const currentIds = o.dureeReelleParOperateur ? Object.keys(o.dureeReelleParOperateur) : [];
+  const defaultId = currentIds.length === 1 ? currentIds[0] : (o.operatorUserId || '');
+  correctPointageDraft = {
+    cid, oid, operatorUserId: defaultId,
+    debutReel: o.debutReel || '', finReel: o.finReel || '',
+    dureeReelleH: o.dureeReelleH!=null ? String(Math.round(o.dureeReelleH*100)/100) : '',
+  };
+  render();
+}
+function closeCorrectPointage(){ correctPointageDraft = null; render(); }
+function updateCorrectPointageField(field, value){
+  if(!correctPointageDraft) return;
+  correctPointageDraft[field] = value;
+  render();
+}
+// Remplace intégralement début réel/fin réelle/durée réellement passée d'une pièce terminée — et,
+// si un opérateur est choisi, réattribue tout ce temps à cette seule personne (même sémantique que
+// submitCorrectOperator : pas de répartition partielle, le cas visé est "tout ce temps était en
+// fait celui de quelqu'un d'autre", pas un partage à corriger finement). Propagé à tout le lot
+// fusionné le cas échéant (propagateFusionGroupFields) — ces champs sont partagés par construction
+// entre les membres d'un même groupe (voir setOpStatut/CLAUDE.md, section Regroupement).
+function submitCorrectPointage(){
+  const d = correctPointageDraft; if(!d) return;
+  const found = findPieceAnywhere(d.cid, d.oid); if(!found) return;
+  const { o } = found;
+  if(!d.debutReel || !d.finReel){ alert('Merci de renseigner un début et une fin réels.'); return; }
+  if(d.finReel < d.debutReel){ alert('La fin réelle doit être postérieure ou égale au début réel.'); return; }
+  const dureeH = Number(String(d.dureeReelleH).replace(',','.'));
+  if(isNaN(dureeH) || dureeH <= 0){ alert('Merci de renseigner une durée réellement passée valide (en heures).'); return; }
+  if(!confirm('Corriger ce pointage ? Le début, la fin et la durée réellement passée enregistrés seront remplacés par les valeurs saisies.')) return;
+  const fields = { debutReel: d.debutReel, finReel: d.finReel, dureeReelleH: dureeH };
+  if(d.operatorUserId) fields.dureeReelleParOperateur = { [d.operatorUserId]: dureeH };
+  Object.assign(o, fields);
+  propagateFusionGroupFields(o, fields);
+  correctPointageDraft = null;
+  commit();
+  showToast('Pointage corrigé.');
+}
+function renderCorrectPointageModal(){
+  const d = correctPointageDraft;
+  if(!d) return '';
+  const found = findPieceAnywhere(d.cid, d.oid);
+  if(!found) return '';
+  const { c, o } = found;
+  const label = [o.piece, o.etape].filter(Boolean).join(' / ') || '(sans nom)';
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>Corriger ce pointage</h2>
+        <button class="ghost icon-btn" data-action="close-correct-pointage" title="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="footer-note" style="text-align:left; margin-bottom:10px;">${escapeHtml(c.nom)} — ${escapeHtml(label)}${o.fusionGroupId?' — lot fusionné : la correction s’appliquera à tout le lot':''}</div>
+        <div><label class="field">Opérateur crédité pour la totalité du temps</label>
+          <select data-action="correct-pointage-field" data-field="operatorUserId">
+            <option value="">— Ne pas modifier l'attribution actuelle —</option>
+            ${usersList.map(u=>`<option value="${u.id}" ${String(d.operatorUserId)===String(u.id)?'selected':''}>${escapeHtml(u.username)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="commande-top-fields" style="grid-template-columns:1fr 1fr 1fr; margin-top:10px;">
+          <div><label class="field">Début réel</label><input type="datetime-local" value="${d.debutReel}" data-action="correct-pointage-field" data-field="debutReel"></div>
+          <div><label class="field">Fin réelle</label><input type="datetime-local" value="${d.finReel}" data-action="correct-pointage-field" data-field="finReel"></div>
+          <div><label class="field">Durée réelle (h)</label><input type="number" min="0" step="0.05" value="${d.dureeReelleH}" data-action="correct-pointage-field" data-field="dureeReelleH"></div>
+        </div>
+        <div class="footer-note" style="text-align:left; padding-top:10px;">Remplace intégralement le début, la fin et la durée réellement passée enregistrés pour cette tâche. Choisir un opérateur réattribue l'intégralité de ce temps à cette seule personne (pas de répartition partielle) ; laisser "Ne pas modifier" conserve l'attribution actuelle.</div>
+        <div class="form-actions" style="margin-top:16px;">
+          <button class="ghost" data-action="close-correct-pointage">Annuler</button>
+          <button class="primary" data-action="submit-correct-pointage">✓ Enregistrer la correction</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
 }
 
 /* ---------------- Risques de retard ----------------
@@ -8178,6 +8467,7 @@ function renderSettingsModal(){
         <option value="tempsProd" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='tempsProd'?'selected':''}>⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}</option>
         <option value="zones" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='zones'?'selected':''}>📍 Zones de stockage</option>
         <option value="risques" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='risques'?'selected':''}>⚠️ Risques de retard</option>
+        ${canSupervise() ? `<option value="pointages" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='pointages'?'selected':''}>🕘 Pointages</option>` : ''}
       </select>
       <div class="footer-note" style="text-align:left; padding-top:6px;">Page affichée automatiquement à la connexion, à la place du Planning. Propre à ce compte : chacun peut choisir la sienne.</div>
       ${!(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')] ? `
@@ -9827,6 +10117,18 @@ function render(){
     restoreFocusRef(focusRef);
     return;
   }
+  if(currentPage === 'pointages'){
+    appEl.innerHTML = [
+      renderHeader(),
+      renderPointagesPage(),
+      renderCorrectPointageModal(),
+      renderSettingsModal(),
+      renderToast()
+    ].join('');
+    restoreModalScroll(modalScrollTop);
+    restoreFocusRef(focusRef);
+    return;
+  }
   const schedule = getSchedule();
   const html = [
     renderHeader(),
@@ -10014,6 +10316,10 @@ function dispatchClickAction(action, el){
     case 'goto-temps-prod': currentPage = 'tempsProd'; render(); break;
     case 'goto-zones': currentPage = 'zones'; render(); break;
     case 'goto-risques': currentPage = 'risques'; render(); break;
+    case 'goto-pointages': currentPage = 'pointages'; render(); break;
+    case 'open-correct-pointage': openCorrectPointage(el.dataset.cid, el.dataset.oid); break;
+    case 'close-correct-pointage': closeCorrectPointage(); break;
+    case 'submit-correct-pointage': submitCorrectPointage(); break;
     case 'conges-tab': congesTab = el.dataset.tab; render(); break;
     case 'temps-prod-mode': tempsProdPeriodMode = el.dataset.mode; render(); break;
     case 'temps-prod-nav': navigateTempsProdPeriod(el.dataset.dir); break;
@@ -10259,6 +10565,8 @@ function dispatchChangeAction(el, action){
     case 'toggle-op-hors-planning': toggleOpHorsPlanning(el.dataset.cid, el.dataset.oid, el.checked); break;
     case 'quick-pointage-select': updateQuickPointageField(el.dataset.field, el.value); break;
     case 'correct-operator-select': updateCorrectOperatorField(el.dataset.field, el.value); break;
+    case 'pointages-filter': updatePointagesFilter(el.dataset.field, el.value); break;
+    case 'correct-pointage-field': updateCorrectPointageField(el.dataset.field, el.value); break;
     case 'user-machines': {
       const selected = Array.from(el.selectedOptions).map(o => o.value);
       updateUserMachines(el.dataset.userId, selected);
@@ -10705,6 +11013,12 @@ document.addEventListener('input', (e) => {
     const el = document.getElementById('archive-search-input');
     if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
   }
+  if(e.target.id === 'pointages-search-input'){
+    pointagesFilters.search = e.target.value;
+    render();
+    const el = document.getElementById('pointages-search-input');
+    if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
+  }
 });
 document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && showSettingsModal){ closeSettingsModal(); }
@@ -11025,7 +11339,8 @@ function applyUserDefaultPageOnStart(){
     return;
   }
   if(pref === 'conges' && !(state.config.modules && state.config.modules.conges)) return; // module désactivé depuis : on garde Planning plutôt que d'ouvrir une page indisponible
-  if(['conges','tempsProd','zones','risques'].includes(pref)) currentPage = pref;
+  if(pref === 'pointages' && !canSupervise()) return; // rôle rétrogradé depuis (n'est plus superviseur/admin) : page devenue inaccessible, on garde Planning
+  if(['conges','tempsProd','zones','risques','pointages'].includes(pref)) currentPage = pref;
 }
 async function startApp(){
   loadLoginBranding(); // en tâche de fond : alimente l'écran de connexion si la session a expiré

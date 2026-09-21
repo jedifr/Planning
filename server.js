@@ -1,3 +1,15 @@
+// Fixe le fuseau horaire du processus AVANT tout require() qui pourrait manipuler des dates — cette
+// application ne sert qu'un seul client français (Découpe H2O, interface entièrement en français,
+// jours fériés déjà codés en dur pour la France) : autant ne jamais dépendre du fuseau horaire du
+// système hôte (le NAS Synology tourne par défaut en UTC dans son conteneur Docker, sans réglage
+// TZ explicite dans docker-compose.yml). Sans ce correctif, `new Date()` et le parsing des horaires
+// naïfs "AAAA-MM-JJTHH:mm" (sessions[], debutReel/finReel...) sur le SERVEUR étaient décalés de
+// l'écart UTC/Europe-Paris courant (2h en heure d'été) par rapport à l'heure réelle du navigateur —
+// bug réel signalé : une tâche reprise par un opérateur en pleine journée de travail se remettait en
+// pause automatiquement quelques secondes plus tard, le job serveur "hors horaires" (voir
+// autoPauseResume.js/CLAUDE.md) croyant à tort être avant l'ouverture de l'atelier. Voir aussi
+// docker-compose.yml (TZ ajoutée par prudence en complément, sans dépendre de ce seul réglage).
+process.env.TZ = 'Europe/Paris';
 const express = require('express');
 const path = require('path');
 const fs = require('fs');

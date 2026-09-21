@@ -23,6 +23,21 @@ sudo docker compose up -d --build
 
 Accès : `http://<IP-NAS>:3000` (exposé en HTTPS via reverse proxy Synology).
 
+### Fuseau horaire
+
+`server.js` fixe `process.env.TZ = 'Europe/Paris'` tout en tête du fichier, avant le moindre
+`require()` — cette application ne sert qu'un seul client français (interface entièrement en
+français, jours fériés déjà codés en dur pour la France), il n'y a donc jamais de raison de
+dépendre du fuseau horaire de l'hôte. Un conteneur Docker sans `TZ` explicite tourne par défaut en
+UTC : sans ce correctif, `new Date()` et le parsing des horaires naïfs `"AAAA-MM-JJTHH:mm"`
+(`sessions[]`, `debutReel`/`finReel`...) étaient décalés côté serveur de l'écart UTC/Europe-Paris
+courant (2h en heure d'été) par rapport à l'heure réelle du navigateur — voir le piège dédié plus
+bas (« Job serveur qui interprète les horaires dans le fuseau de l'hôte, pas celui de la France »).
+`docker-compose.yml` porte aussi `TZ: "Europe/Paris"` en complément (documente l'intention, couvre
+ce qui ne passerait pas par `server.js`, ex. horodatages des logs Docker) — mais ne pas s'y fier
+seul : c'est le `process.env.TZ` de `server.js` qui fait foi, justement pour ne jamais dépendre d'un
+réglage d'environnement qu'on pourrait oublier lors d'un futur redéploiement.
+
 ### Rechargement automatique après déploiement
 
 Un Ctrl+Maj+R manuel après chaque déploiement a longtemps été nécessaire (le cache navigateur a
@@ -942,6 +957,69 @@ habituels et ne retrouvait plus son propre pointage rapide).
   "toggle-kanban-machine"` que les postes (aucun nouveau cas de dispatch nécessaire, `machineId` y
   est traité comme une clé opaque) : « 📋 Sans poste (moi) » et « 📋 Sans poste (tout) ».
 
+## Onglet « Pointages »
+
+Retour utilisateur réel : jusqu'ici, voir/corriger un pointage demandait de retrouver la bonne
+commande dans le planning (active ou archivée) puis, pour une correction, de passer par le bouton
+« ✎ Opérateur » de la page « Temps de production » — suffisant pour rattraper QUI a réellement
+travaillé (voir « Correction manuelle » plus haut), mais pas pour corriger un début/une fin/une
+durée réellement fausse. Nouvel onglet (`currentPage==='pointages'`, bouton `"🕘 Pointages"` dans
+`renderHeader`, **`canSupervise()` uniquement** — jamais visible d'un simple employé) qui réunit
+tous les pointages (actifs ET archivés) dans un même tableau, avec une correction plus complète que
+le bouton « ✎ Opérateur ».
+
+- `computeAllPointages(st)` — balaie `st.commandes` **et** `st.commandesArchivees` (contrairement à
+  `computeProductionTimeByUser`, qui ne regarde que les commandes actives + `commandesArchivees`
+  pour son propre besoin ; ici le même balayage est refait à plat, une ligne par pointage plutôt
+  qu'agrégé par salarié). Ignore les pièces `a_faire` et celles sans aucune donnée exploitable
+  (`termine` sans `dureeReelleH` positif — jamais réellement pointée, ex. import déjà terminé sans
+  temps saisi ; ou pas encore démarrée). Déduplique par `fusionGroupId` (même convention que
+  `computeProductionTimeByUser`/`sumDedupedByFusionGroup` — voir « Temps de production vs présence
+  théorique » plus haut) : un lot fusionné n'apparaît qu'une fois, avec son `fusionCount` réel.
+  `operatorIds` = les clés de `dureeReelleParOperateur` si posé (qui a RÉELLEMENT travaillé),
+  sinon repli sur `operatorUserId` (opérateur assigné) — même priorité que
+  `computeProductionTimeByUser`.
+- `pointagesRangeCutoff(range)` (`'week'`\|`'month'`\|`'quarter'`\|`'all'`) — fenêtre de récence
+  appliquée **uniquement** aux pointages déjà `termine` (une tâche encore `en_cours`/`en_pause`
+  reste toujours visible, quelle que soit la fenêtre choisie) : même principe que `doneFilterRange`
+  sur la liste "Tâches terminées" du planning, pour ne pas noyer la liste sous des mois d'historique
+  par défaut (`'month'`).
+- Filtres (`pointagesFilters` — personne, poste, statut, période, recherche texte) : purement
+  transitoires, jamais persistés (comme `searchQuery`). La recherche texte réutilise le mécanisme
+  de saisie "live" déjà en place pour `#commande-search-input`/`#archive-search-input` (id dédié
+  `#pointages-search-input`, géré par le même `document.addEventListener('input', ...)`) plutôt que
+  `data-action` + événement `change` (qui n'aurait redessiné qu'à la perte du focus) — cohérent avec
+  les autres barres de recherche de l'appli.
+- **Correction (`✎ Corriger`)** — visible uniquement si `isPointageCorrectable(cid, oid)` : une
+  pièce `termine` avec `dureeReelleH` positif, retrouvée via `findPieceAnywhere(cid, oid)` (balaie
+  `state.commandes` **et** `state.commandesArchivees` — plus large que
+  `isCorrectableProductionEntry`, limité aux commandes actives, car une correction depuis cet onglet
+  vise plus souvent un pointage déjà ancien). Une pièce `en_cours`/`en_pause` n'est jamais
+  corrigeable : `sessions[]` y prime toujours dans `computeProductionTimeByUser`, corriger
+  `dureeReelleH` n'y aurait aucun effet visible tant que la tâche n'est pas clôturée — même
+  garde-fou que le bouton « ✎ Opérateur ».
+  - `correctPointageDraft` (`{ cid, oid, debutReel, finReel, dureeReelleH, operatorUserId } | null`)
+    — volontairement un draft/modal **séparé** de `correctOperatorDraft`/`renderCorrectOperatorModal`
+    (formulaire édité différent : ici début/fin/durée en plus de l'opérateur) plutôt qu'une extension
+    du même outil, déjà en place et testé tel quel depuis "Temps de production" — pas de raison de
+    risquer une régression sur un outil qui fonctionne pour en faire un troisième usage.
+  - `submitCorrectPointage()` — remplace **intégralement** `debutReel`/`finReel`/`dureeReelleH`
+    (jamais de fusion partielle), valide (début et fin renseignés, fin ≥ début, durée > 0) avant
+    toute confirmation (`confirm()`). Si un opérateur est choisi dans le sélecteur, réattribue
+    **l'intégralité** du temps à cette seule personne (`dureeReelleParOperateur = { [id]: dureeH }`)
+    — même sémantique que `submitCorrectOperator` (pas de répartition partielle, voir « Correction
+    manuelle » plus haut) ; laisser "Ne pas modifier l'attribution actuelle" (valeur vide) conserve
+    `dureeReelleParOperateur` tel quel. Propagé à tout le lot fusionné via
+    `propagateFusionGroupFields` (déjà utilisée ailleurs pour ce même besoin), pour qu'une pièce
+    fusionnée corrigée entraîne ses partenaires — cohérent avec le fait que `dureeOverrideH`/les
+    horodatages d'un lot sont déjà partagés entre ses membres.
+- Aucun nouveau point serveur : cette correction n'édite que des champs déjà présents dans
+  `app_state` (`debutReel`/`finReel`/`dureeReelleH`/`dureeReelleParOperateur`), synchronisés par le
+  mécanisme habituel (`commit()`) — pas de `PUT`/`PATCH` dédié sur `session_history` (table
+  d'archive, append-only par conception, voir plus haut). Corriger le DÉTAIL par session archivée
+  (plusieurs sessions de la même pièce) resterait hors périmètre de cet onglet : ce qui compte pour
+  le temps de production et la présence théorique, ce sont les champs agrégés édités ici.
+
 ## Zones de stockage
 
 Emplacements physiques où sont entreposées les pièces d'une commande pendant sa production.
@@ -1584,13 +1662,17 @@ zone à la création) — **jamais** aux usages en fond (`background`, déjà à
 
 ## Page d'accueil par défaut (par utilisateur)
 
-`state.userDefaultPage` (`{ [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques' }`) — chaque
-personne choisit, dans Paramètres → **Mon compte** (section accessible à tout rôle, pas seulement à
-un administrateur — voir `ADMIN_ONLY_SECTIONS`), la page affichée automatiquement à sa connexion, à
-la place du Planning. Même principe que `userMachines`/`userLunch` : un réglage propre à une
-personne, rangé dans `state` et synchronisé par le mécanisme habituel (`commit()`), **pas** une
-préférence de navigateur comme le dernier profil d'import (`LAST_IMPORT_PROFILE_KEY`) — l'utilisateur
-doit retrouver sa page d'accueil quel que soit le poste depuis lequel il se connecte.
+`state.userDefaultPage` (`{ [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques'|'pointages' }`)
+— chaque personne choisit, dans Paramètres → **Mon compte** (section accessible à tout rôle, pas
+seulement à un administrateur — voir `ADMIN_ONLY_SECTIONS`), la page affichée automatiquement à sa
+connexion, à la place du Planning. Même principe que `userMachines`/`userLunch` : un réglage propre
+à une personne, rangé dans `state` et synchronisé par le mécanisme habituel (`commit()`), **pas**
+une préférence de navigateur comme le dernier profil d'import (`LAST_IMPORT_PROFILE_KEY`) —
+l'utilisateur doit retrouver sa page d'accueil quel que soit le poste depuis lequel il se connecte.
+L'option `'pointages'` (voir « Onglet Pointages » plus bas) n'est proposée dans le sélecteur, et
+n'a d'effet dans `applyUserDefaultPageOnStart`, que pour `canSupervise()` — un employé qui aurait eu
+cette préférence enregistrée puis perdu son rôle superviseur/admin retombe sur Planning, comme pour
+`'conges'` quand le module correspondant est désactivé.
 
 - **Bug réel corrigé : "Mon compte" documentée accessible à tout rôle, mais inatteignable pour un
   non-admin.** Le bouton "⚙ Paramétrer" de l'en-tête (`renderHeader`) et le dispatch
@@ -1902,17 +1984,24 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   et plus généralement tout `<input>` dont la valeur peut être "complète" avant que l'utilisateur ait
   fini d'y saisir quelque chose) doit passer par ce même mécanisme de redessin différé.
 - **Vider `sessions[]` à la clôture avant que l'opérateur réel n'ait été extrait ailleurs.**
-  `applySingleStatusChange` (branche `termine`) vide `sessions[]` immédiatement après avoir figé
-  `dureeReelleH` — sans attendre l'archivage serveur, contrairement à `archiveOldSessions`. Ajouter
-  un nouveau calcul qui a besoin du détail des sessions (qui a réellement travaillé, quand, etc.)
-  APRÈS ce point ne verrait plus qu'un tableau vide : bug réel corrigé (`computeProductionTimeByUser`
-  retombait sur l'opérateur ASSIGNÉ de la pièce pour tout `dureeReelleH`, quel que soit qui avait
-  réellement ouvert les sessions — une tâche assignée à Sébastien mais réalisée par Romain créditait
-  Sébastien une fois clôturée). Corrigé en figeant `pieces[].dureeReelleParOperateur` (répartition par
-  opérateur) au même instant que `dureeReelleH`, **avant** que `sessions[]` ne soit vidé — voir
-  `computeSessionsHoursByOperator`. Réflexe : tout ce qui doit survivre à la clôture d'une pièce et
-  qui se déduit de `sessions[]` (pas seulement le total déjà couvert par `dureeReelleH`) doit être
-  calculé et figé à ce même endroit, jamais après.
+  `applySingleStatusChange` (branche `termine`) vidait autrefois `sessions[]` immédiatement après
+  avoir figé `dureeReelleH` — sans attendre l'archivage serveur, contrairement à
+  `archiveOldSessions`. Ajouter un nouveau calcul qui a besoin du détail des sessions (qui a
+  réellement travaillé, quand, etc.) APRÈS ce point ne verrait plus qu'un tableau vide : bug réel
+  corrigé (`computeProductionTimeByUser` retombait sur l'opérateur ASSIGNÉ de la pièce pour tout
+  `dureeReelleH`, quel que soit qui avait réellement ouvert les sessions — une tâche assignée à
+  Sébastien mais réalisée par Romain créditait Sébastien une fois clôturée). Corrigé en figeant
+  `pieces[].dureeReelleParOperateur` (répartition par opérateur) au même instant que `dureeReelleH`,
+  **avant** que `sessions[]` ne soit vidé — voir `computeSessionsHoursByOperator`. Réflexe : tout ce
+  qui doit survivre à la clôture d'une pièce et qui se déduit de `sessions[]` (pas seulement le
+  total déjà couvert par `dureeReelleH`) doit être calculé et figé à ce même endroit, jamais après.
+  **Ce correctif a depuis été rendu inutile par un second, plus radical : `sessions[]` n'est
+  aujourd'hui plus vidée du tout à cet endroit** — voir « Archivage des sessions déclenché dès la
+  clôture » plus bas, qui laisse `sessions[]` en place jusqu'à ce qu'`archiveOldSessions` confirme
+  l'avoir bien enregistrée côté serveur. Ce correctif-ci reste documenté : le principe (figer AVANT
+  qu'une donnée dérivée de `sessions[]` ne disparaisse) est le même, et `dureeReelleParOperateur`
+  reste indispensable pour toute pièce dont `sessions[]` a fini par être vidée (une fois l'archivage
+  confirmé, ou une pièce ancienne close avant l'introduction de ce mécanisme).
 - **Fin d'une tâche `en_cours`/`en_pause` calculée comme « début + durée totale », sans jamais tenir
   compte des pauses.** L'ancien `stretchIfOverdueRunning` ne corrigeait un dépassement que pour le
   statut `en_cours`, jamais `en_pause` — une pièce interrompue plusieurs jours (opérateur qui alterne
@@ -2048,6 +2137,66 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   sous peine de croire un correctif effectif alors qu'il ne s'applique en pratique jamais. Si la
   vérification révèle le problème, ajouter `!important` à la règle mobile (même remède que
   `.commandes-columns`).
+- **Job serveur qui interprète les horaires dans le fuseau de l'hôte, pas celui de la France.** Bug
+  réel signalé (Romain, commande C025-1071) : une tâche reprise en pleine matinée de travail se
+  remettait automatiquement en pause quelques dizaines de secondes plus tard, sans intervention de
+  personne. Cause : le NAS (conteneur Docker) tourne par défaut en UTC, sans `TZ` explicite —
+  `autoPauseResume.js` (job serveur `checkAutoPauseResume`, toutes les 60s, voir plus haut) lisait
+  `new Date()` et les horaires naïfs `"AAAA-MM-JJTHH:mm"` (`sessions[]`, `debutReel`...) selon le
+  fuseau LOCAL DU PROCESSUS — en UTC, une reprise à 08h54 heure française (CEST, UTC+2 en septembre)
+  était donc lue comme 06h54, avant l'ouverture de l'atelier, et classée à tort "hors horaires" (voir
+  « Mise en pause automatique hors horaires » plus haut) — avec en prime un horodatage de fin de
+  session lui-même décalé de 2h trop tôt (`sessions[].fin` antérieur à `sessions[].debut` dans les
+  données). Le calcul CLIENT (navigateur) n'a jamais ce problème : `new Date()` y utilise déjà le
+  fuseau réel de l'utilisateur. Seul le job SERVEUR, qui tourne dans le conteneur, était concerné.
+  Corrigé en fixant `process.env.TZ = 'Europe/Paris'` tout en tête de `server.js`, avant le moindre
+  `require()` — cette application ne sert qu'un seul client français (comme les jours fériés déjà
+  codés en dur), il n'y a jamais de raison de dépendre du fuseau de l'hôte. Une simple variable
+  d'environnement `TZ` dans `docker-compose.yml` aurait aussi suffi, mais dépend d'un réglage qu'on
+  pourrait oublier de reporter sur un futur redéploiement/nouvelle installation — le fixer en dur
+  dans le code protège contre cet oubli (la variable est quand même ajoutée aussi à
+  `docker-compose.yml`, en complément, jamais en remplacement). Réflexe : tout nouveau calcul
+  SERVEUR qui lit `new Date()` ou parse un horaire naïf sans fuseau doit se rappeler que le résultat
+  dépend du fuseau du PROCESSUS, jamais supposé aligné avec celui des utilisateurs — vérifié ici en
+  testant explicitement le scénario avec `process.env.TZ` réassigné à `'UTC'` puis à
+  `'Europe/Paris'` sur le même instant réel, pas seulement en relisant le code (voir
+  `test_server_timezone_bug.js`). Une pièce déjà mise en pause à tort par ce bug avant le correctif
+  ne reprend jamais automatiquement (comportement volontaire de la pause "hors horaires", voir plus
+  haut) : l'opérateur doit cliquer "▶ Continuer" une fois le correctif déployé.
+- **Archivage des sessions déclenché dès la clôture, pas seulement au prochain démarrage de
+  l'appli.** `session_history` (voir plus haut) était devenue effectivement morte pour toute pièce
+  close depuis l'introduction du correctif précédent (« Vider `sessions[]` à la clôture... ») :
+  `applySingleStatusChange` vidait `sessions[]` IMMÉDIATEMENT à la clôture, avant même
+  qu'`archiveOldSessions()` — qui ne tourne qu'au démarrage de l'appli (`startApp`) — n'ait eu la
+  moindre chance de la lire. Toute pièce close après ce point n'avait donc plus jamais de détail de
+  session archivé (la pop-up « Détail des horaires » retombait systématiquement sur
+  `debutReel`/`finReel`/`dureeReelleH`, jamais sur le détail par session). Corrigé en deux temps :
+  `applySingleStatusChange` ne vide plus `sessions[]` du tout à la clôture (seuls `dureeReelleH`/
+  `dureeReelleParOperateur` y sont encore figés, comme avant) ; `setOpStatut` déclenche désormais
+  lui-même `archiveOldSessions(state)` juste après son `commit()`, dès qu'une pièce passe `termine`
+  — sans attendre le prochain démarrage. `archiveOldSessions` elle-même est inchangée (toujours
+  asynchrone, ne vide `sessions[]` qu'une fois le serveur confirmé, idempotente côté serveur) : ce
+  correctif ne fait que la déclencher plus tôt, à l'endroit où elle aurait toujours dû l'être.
+  Réflexe : un mécanisme d'archivage différé (« vider une fois confirmé ») doit être DÉCLENCHÉ au
+  bon moment, pas seulement correctement implémenté — un vidage prématuré ailleurs dans le code peut
+  le rendre inoffensif en apparence (pas de perte de données visible) mais totalement inopérant.
+- **Occupation d'une zone de stockage qui ignore le module "Libération manuelle du casier".** Bug
+  réel signalé (retour utilisateur, page "Zones de stockage") : une commande entièrement terminée
+  mais pas encore marquée "Prêt à expédier" (module `config.modules.expedition` actif — voir
+  « Libération manuelle du casier » plus haut) affichait pourtant son casier comme "Libre" sur cette
+  page, alors qu'`occupiedStorageZones`/`commandesInZone` la considéraient bien occupée ailleurs
+  (badge de la commande, refus de désactiver le casier...) — `renderZonesPage` avait été oublié lors
+  de l'introduction de ce module : elle filtrait encore les commandes actives avec l'ancien
+  `isCommandeFullyDone(c)` au lieu d'`isCommandeReadyToFreeZone(state, c)`. Corrigé en alignant
+  `renderZonesPage` sur cette dernière, comme les deux autres fonctions. À cette occasion, un bouton
+  "🧹 Prêt à expédier" a été ajouté directement sur chaque casier occupé par une commande terminée en
+  attente (module actif) — retour utilisateur : il fallait jusque-là aller chercher, dans "Tâches
+  terminées" du Planning, la commande portant le bandeau orange équivalent, pas toujours évident à
+  repérer dans une longue liste. Réutilise `markCommandePretExpedition` tel quel (aucune nouvelle
+  action de dispatch), simplement rendu à un second endroit. Réflexe : toute nouvelle page/vue qui
+  affiche "occupé/libre" pour une zone de stockage doit passer par `isCommandeReadyToFreeZone`,
+  jamais directement par `isCommandeFullyDone` — les trois points existants (`occupiedStorageZones`,
+  `commandesInZone`, l'avertissement de `removeStorageAllee`) donnent le bon modèle à suivre.
 
 ## Conventions
 
