@@ -1070,6 +1070,33 @@ aucun effet visible. Il faut donc un second outil qui édite `sessions[]` **elle
   au moment d'enregistrer, même si non modifiée — un repli implicite devient une valeur explicite,
   sans effet visible ailleurs (`computeSessionsHoursByOperator`/`computeProductionTimeByUser`
   appliquent de toute façon le même repli si le champ venait à nouveau à manquer).
+- **« 🧩 Fusionner les sessions qui se chevauchent ».** Cas réel signalé juste après la mise en
+  place de l'outil ci-dessus : une pièce avait accumulé ~18 sessions ouvertes à une minute
+  d'intervalle, toutes fermées ensemble à l'heure de la pause déjeuner de l'opérateur — conséquence
+  probable du bug de fuseau horaire serveur (voir le piège dédié plus bas) : le job de reprise
+  automatique de pause déjeuner (serveur, horloge alors faussée) et le navigateur (horloge correcte)
+  se sont mis à rouvrir/refermer la même tâche l'un après l'autre pendant que leurs horloges
+  divergeaient, jusqu'à ce que la vraie pause déjeuner ferme tout ce tas d'un coup. Pas qu'un
+  problème d'affichage : `computeProductionTimeByUser`/`opElapsedHours` somment CHAQUE session
+  indépendamment (c'est précisément ce qui permet de compter deux personnes en parallèle, voir
+  « Travail à plusieurs » plus haut) — des sessions qui se chevauchent pour la MÊME personne
+  gonflaient donc à tort son temps de production compté sur cette tâche. Les supprimer une par une
+  (`🗑`) aurait été long sur une telle avalanche.
+  - `mergeOverlappingCorrectSessions()` — regroupe les sessions **fermées** du draft **par
+    opérateur** (jamais entre deux opérateurs différents, même sur un créneau identique — voir
+    « Travail à plusieurs » : additionner leur temps à deux est le comportement voulu, pas un
+    doublon à corriger), trie chacune par `debut` (comparaison directe des chaînes
+    `"AAAA-MM-JJTHH:mm"`, triables telles quelles), puis fusionne par balayage d'intervalles :
+    deux sessions qui se chevauchent OU se touchent exactement (`debut` de l'une ≤ `fin` de la
+    précédente déjà fusionnée) deviennent une seule, bornée du `debut` le plus ancien au `fin` le
+    plus tardif ; des sessions disjointes (un vrai trou entre les deux) restent des lignes
+    séparées. Une session encore **ouverte** n'est jamais concernée (ni fusionnée, ni réordonnée) —
+    même garde-fou que pour l'édition/suppression individuelle ci-dessus.
+  - Bouton dans la pop-up « Corriger les sessions » (au-dessus du tableau, visible même sur une
+    longue liste) : agit uniquement sur le **draft** (`correctSessionsDraft.sessions`), aucun
+    `commit()` — la fusion reste annulable en fermant la pop-up sans cliquer « Enregistrer ». Le
+    compte de sessions affiché en tête de la pop-up (« N sessions ») permet de voir immédiatement
+    l'effet de la fusion avant de valider.
 
 ## Zones de stockage
 

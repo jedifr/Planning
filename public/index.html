@@ -863,7 +863,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.31.0';
+const APP_VERSION = '1.32.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -7155,6 +7155,43 @@ function submitCorrectSessions(){
   commit();
   showToast('Sessions corrigées.');
 }
+// Fusionne, PAR OPÉRATEUR, les sessions fermées qui se chevauchent ou se touchent en une seule —
+// pour rattraper d'un coup une avalanche de sessions quasi identiques (ex. celle laissée par le bug
+// de fuseau horaire serveur : le job de reprise automatique de pause déjeuner et le navigateur se
+// sont mis à rouvrir/refermer la même tâche toutes les minutes tant que leurs horloges divergeaient
+// — voir CLAUDE.md, piège dédié), plutôt que de les supprimer une par une. Ce n'est pas qu'un
+// nettoyage visuel : `computeProductionTimeByUser`/`opElapsedHours` SOMMENT chaque session
+// indépendamment (voir « Travail à plusieurs » — c'est précisément ce qui permet de compter deux
+// PERSONNES en parallèle) ; des sessions qui se chevauchent pour la MÊME personne gonflent donc à
+// tort son temps de production compté sur cette tâche. Une session encore OUVERTE n'est jamais
+// concernée (jamais fusionnée, jamais réordonnée) — voir le garde-fou déjà en place ailleurs dans
+// ce fichier pour les sessions ouvertes.
+function mergeOverlappingCorrectSessions(){
+  if(!correctSessionsDraft) return;
+  const open = correctSessionsDraft.sessions.filter(s => s.open);
+  const closed = correctSessionsDraft.sessions.filter(s => !s.open);
+  const byOperator = {};
+  closed.forEach(s => { const key = s.operatorUserId || ''; (byOperator[key] = byOperator[key] || []).push(s); });
+  let merged = [];
+  Object.keys(byOperator).forEach(key => {
+    // Comparaison directe des chaînes "AAAA-MM-JJTHH:mm" : triables lexicographiquement telles
+    // quelles, pas besoin de les reconvertir en Date pour ce tri/cette comparaison.
+    const list = byOperator[key].slice().sort((a,b) => (a.debut < b.debut ? -1 : a.debut > b.debut ? 1 : 0));
+    const mergedForOperator = [];
+    list.forEach(s => {
+      const last = mergedForOperator[mergedForOperator.length-1];
+      if(last && s.debut <= last.fin){
+        if(s.fin > last.fin) last.fin = s.fin;
+      } else {
+        mergedForOperator.push({ debut: s.debut, fin: s.fin, operatorUserId: s.operatorUserId, open: false });
+      }
+    });
+    merged = merged.concat(mergedForOperator);
+  });
+  merged.sort((a,b) => (a.debut < b.debut ? -1 : a.debut > b.debut ? 1 : 0));
+  correctSessionsDraft.sessions = merged.concat(open);
+  render();
+}
 function renderCorrectSessionsModal(){
   const d = correctSessionsDraft;
   if(!d) return '';
@@ -7189,12 +7226,15 @@ function renderCorrectSessionsModal(){
         <button class="ghost icon-btn" data-action="close-correct-sessions" title="Fermer">✕</button>
       </div>
       <div class="modal-body">
-        <div class="footer-note" style="text-align:left; margin-bottom:10px;">${escapeHtml(c.nom)} — ${escapeHtml(label)} (${pointageStatutBadge(o.statut)})</div>
+        <div class="footer-note" style="text-align:left; margin-bottom:10px;">${escapeHtml(c.nom)} — ${escapeHtml(label)} (${pointageStatutBadge(o.statut)}) — ${d.sessions.length} session${d.sessions.length>1?'s':''}</div>
+        <div class="toolbar-mini" style="margin-bottom:10px;">
+          <button class="ghost small" data-action="merge-correct-sessions">🧩 Fusionner les sessions qui se chevauchent</button>
+        </div>
         <table class="ops-table">
           <thead><tr><th>Début</th><th>Fin</th><th>Opérateur</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
-        <div class="footer-note" style="text-align:left; padding-top:10px;">Corrige directement le détail Démarrer/Pause/Reprendre de cette tâche encore active — utile pour rattraper une session aux horodatages faux (ex. le bug de fuseau horaire serveur). La session actuellement ouverte n'est jamais modifiable ni supprimable ici. Sans effet sur une pièce déjà terminée : voir plutôt "✎ Corriger" pour celle-ci.</div>
+        <div class="footer-note" style="text-align:left; padding-top:10px;">Corrige directement le détail Démarrer/Pause/Reprendre de cette tâche encore active — utile pour rattraper une session aux horodatages faux (ex. le bug de fuseau horaire serveur). "Fusionner" regroupe, par opérateur, les sessions qui se chevauchent ou se touchent en une seule (sans quoi leur temps se cumule à tort — voir "Travail à plusieurs" dans CLAUDE.md). La session actuellement ouverte n'est jamais modifiable, supprimable ni fusionnée ici. Sans effet sur une pièce déjà terminée : voir plutôt "✎ Corriger" pour celle-ci.</div>
         <div class="form-actions" style="margin-top:16px;">
           <button class="ghost" data-action="close-correct-sessions">Annuler</button>
           <button class="primary" data-action="submit-correct-sessions">✓ Enregistrer</button>
@@ -10449,6 +10489,7 @@ function dispatchClickAction(action, el){
     case 'close-correct-sessions': closeCorrectSessions(); break;
     case 'submit-correct-sessions': submitCorrectSessions(); break;
     case 'remove-correct-session-row': removeCorrectSessionRow(Number(el.dataset.idx)); break;
+    case 'merge-correct-sessions': mergeOverlappingCorrectSessions(); break;
     case 'conges-tab': congesTab = el.dataset.tab; render(); break;
     case 'temps-prod-mode': tempsProdPeriodMode = el.dataset.mode; render(); break;
     case 'temps-prod-nav': navigateTempsProdPeriod(el.dataset.dir); break;
