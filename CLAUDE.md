@@ -424,6 +424,58 @@ avant » dès qu'elle a passé la nuit (voir `pausedSinceEarlierTasks`, qui ne l
   `operatorLeaveIntersection`) pour qu'`isDateBlocked` puisse aussi classer en `'outOfHours'` un
   poste en maintenance programmée un jour par ailleurs ouvré.
 
+#### Exception « 🕐 Je travaille maintenant » (venir travailler hors horaires normaux)
+
+Retour utilisateur réel, question directe : *« si je viens travailler en dehors des heures de
+travail normales, est-ce que je peux lancer ou redémarrer une tâche ? »* — la réponse initiale
+(rien n'empêche de cliquer Démarrer/Continuer) s'est révélée incomplète : le contrôle serveur
+"hors horaires" ci-dessus (`checkAutoPauseResume`, toutes les 60s) ne fait aucune différence entre
+une tâche oubliée `en_cours` depuis la veille et une tâche que quelqu'un vient réellement de
+démarrer/reprendre pour travailler ce soir-là — il compare uniquement l'horloge à la configuration,
+sans connaître la présence réelle. Sans exception, une tâche démarrée un soir se retrouverait donc
+remise en pause automatiquement à la prochaine passe du job, au plus tard 60 secondes après. Option
+retenue parmi trois proposées (bouton décidé sur le moment, vs. exception planifiée sur un poste,
+vs. exception planifiée sur une personne) : **un bouton, décidé sur le moment par l'opérateur**,
+sans aucune configuration préalable — demande explicite : applicable aussi bien à une tâche déjà
+`en_cours` qu'à une tâche encore `a_faire`.
+
+- `pieces[].workHoursExceptionUntil` (`"AAAA-MM-JJTHH:mm" | null`, `migrateState`) — borne haute
+  **exclusive** (minuit du jour du clic, `nextDayStart(new Date())`), jamais une durée fixe depuis
+  l'instant du clic : plus simple à comprendre pour l'opérateur ("jusqu'à ce soir minuit", pas
+  "jusqu'à telle heure précise à calculer de tête"), et se désactive de lui-même une fois minuit
+  passé — comme `pauseReminderSnoozeUntil`, aucun code n'a besoin de le réinitialiser après coup.
+- `setWorkHoursException(cid, oid)` — pose ce champ et `commit()` une seule fois ; propage la même
+  valeur à tout le groupe fusionné via `propagateFusionGroupFields` — nécessaire car
+  `applyAutoPauseResume`/`pauseKindForRunningTask` (serveur) évaluent **chaque pièce
+  indépendamment** via sa propre `sessions[]` (voir « Travail à plusieurs sur une même pièce »),
+  même quand tout le groupe a démarré strictement en même temps : sans cette propagation, un membre
+  du groupe resterait mis en pause malgré l'exception posée sur un autre.
+- **Disponible à la fois sur une tâche `a_faire` et `en_cours`** (menu contextuel, clic droit sur
+  une carte/barre — `renderContextMenu`, action `ctx-work-exception`), **jamais** sur `en_pause`
+  (la reprise d'une pause a déjà son propre mécanisme, voir « Pop-up de retour de pause déjeuner »
+  et « hors horaires » ci-dessus) ni sur `termine`. Le proposer dès `a_faire` couvre une course
+  possible sinon : cliquer "Démarrer" d'abord, puis "🕐 Je travaille maintenant" ensuite, laisse une
+  fenêtre où le contrôle des 60s pourrait s'exécuter entre les deux et remettre la tâche en pause
+  avant même que l'exception n'ait eu le temps d'être posée. Poser l'exception AVANT de démarrer
+  évite entièrement cette course : le champ est déjà présent sur la pièce quand `setOpStatut` la
+  fait passer `en_cours`, sans qu'aucun code de transition n'ait à s'en préoccuper.
+- **Le serveur seul en tient compte** (`pauseKindForRunningTask`, `autoPauseResume.js`) : contrairement
+  à la pause déjeuner, la branche "hors horaires" n'a jamais eu de mirroir client (elle n'a pas
+  besoin d'un retour visuel instantané dans un onglet resté ouvert — voir plus haut, "Simplification
+  assumée" — c'est le job serveur des 60s qui fait foi). L'exception est donc vérifiée uniquement
+  côté serveur, **après** le test `withinSegment` normal et seulement pour la branche `'outOfHours'`
+  (jamais `'lunch'`) : `if(op.workHoursExceptionUntil && now < new Date(op.workHoursExceptionUntil))
+  return null;`. Une pause déjeuner normale un jour ouvré continue donc de s'appliquer même avec une
+  exception active — les deux répondent à des besoins distincts (pas question de bloquer la vraie
+  pause de midi juste parce qu'on a coché "je travaille ce soir").
+- `workHoursExceptionBadgeHtml(o)` — petit badge (« 🕐 Exception hors horaires active »), visible
+  tant que la borne n'est pas dépassée, sur le tableau des tâches (`renderOpsRow`, dans la note
+  d'écoulement d'une tâche `en_cours`/`en_pause`) et sur la carte Kanban (colonnes "À faire"/"En
+  cours" uniquement) — traçabilité pour un superviseur qui retrouverait lundi matin une tâche restée
+  `en_cours` tout le week-end : sans ce badge, aucun moyen de distinguer "quelqu'un est
+  réellement venu travailler dessus, en connaissance de cause" d'"elle a été oubliée et le job
+  serveur a un problème".
+
 ## Historique des prévisions avant clôture (`prevision_history`)
 
 Une fois une pièce marquée `termine`, `computeSchedule` ancre définitivement `start`/`end` sur ses

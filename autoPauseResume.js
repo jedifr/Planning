@@ -159,7 +159,14 @@ function pauseKindForRunningTask(op, now, st){
   const isWorkDay = dow !== 0 && dow !== 6 && !isDateBlocked(now, cfg);
   if(isWorkDay && isInPauseWindow(op, now, st)) return 'lunch';
   const withinSegment = isWorkDay && dayIntervals(now, cfg).some(([s,e]) => now >= s && now < e);
-  return withinSegment ? null : 'outOfHours';
+  if(withinSegment) return null;
+  // Exception "🕐 Je travaille maintenant" (voir CLAUDE.md, « Exception hors horaires ») — décidée
+  // par l'opérateur lui-même (sur la pièce, avant ou après avoir cliqué Démarrer), jamais par ce
+  // job : `workHoursExceptionUntil` est une borne haute EXCLUSIVE (minuit du jour du clic, posée
+  // côté client par setWorkHoursException) au-delà de laquelle ce garde-fou redevient inactif de
+  // lui-même, sans qu'aucun code n'ait besoin de le réinitialiser explicitement.
+  if(op.workHoursExceptionUntil && now < new Date(op.workHoursExceptionUntil)) return null;
+  return 'outOfHours';
 }
 
 // Identique à applyAutoPauseResume (public/index.html) — voir là-bas pour le détail des choix déjà
