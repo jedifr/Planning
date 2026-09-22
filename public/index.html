@@ -897,7 +897,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.38.0';
+const APP_VERSION = '1.39.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1577,9 +1577,15 @@ function migrateState(st){
       if(o.autoPausedOutOfHours === undefined) o.autoPausedOutOfHours = false;
       // Exception "Je travaille maintenant" (voir CLAUDE.md, « Exception hors horaires ») — décidée
       // par l'opérateur au moment même, sur une tâche à_faire (avant de démarrer) ou en_cours (déjà
-      // démarrée) : borne haute exclusive (minuit du jour du clic) au-delà de laquelle la mise en
-      // pause automatique "hors horaires" (autoPauseResume.js) redevient effective normalement.
+      // démarrée) : borne haute exclusive (la prochaine pause programmée, ou minuit si aucune ne
+      // survient avant) au-delà de laquelle la mise en pause automatique "hors horaires"
+      // (autoPauseResume.js) redevient effective normalement.
       if(o.workHoursExceptionUntil === undefined) o.workHoursExceptionUntil = null;
+      // Exception "🍽 Je travaille pendant la pause" (voir CLAUDE.md, « Temps masqué pendant la
+      // pause déjeuner ») — mécanisme volontairement SÉPARÉ du précédent (portée et intention
+      // différentes) : borne haute exclusive (la fin de la pause en cours/à venir aujourd'hui)
+      // au-delà de laquelle la mise en pause automatique de la pause déjeuner redevient effective.
+      if(o.lunchExceptionUntil === undefined) o.lunchExceptionUntil = null;
       // Report du rappel de retour de pause déjeuner (voir renderPauseReminderModal), PAR opérateur
       // concerné ({ [operatorUserId]: horodatage jusqu'auquel ne pas re-proposer } | null) — la
       // reprise n'est plus automatique (voir CLAUDE.md), donc jamais purgé par un job serveur : purgé
@@ -4784,24 +4790,35 @@ function toggleOpHorsPlanning(cid, oid, checked){
   o.horsPlanning = !!checked;
   commit();
 }
+// Borne haute EXCLUSIVE de l'exception "🕐 Je travaille maintenant" — retour utilisateur réel,
+// juste après la mise en place de ce bouton : plutôt que d'aller systématiquement jusqu'à minuit,
+// elle doit s'arrêter à la PROCHAINE pause programmée aujourd'hui (si elle survient avant minuit) —
+// une reprise après une vraie pause mérite sa propre confirmation explicite, cohérent avec le reste
+// de l'appli (aucune reprise automatique/silencieuse sans clic humain, voir « Pop-up de retour de
+// pause déjeuner »). Sans pause à venir avant minuit (cas le plus courant : rester après la fin de
+// la journée normale, ou un week-end sans aucune pause programmée), retombe sur minuit comme avant.
+function workHoursExceptionEndFor(op, now, st){
+  const cfg = configForPiece(op, st);
+  const midnight = nextDayStart(now);
+  const windows = pauseWindowsFor(now, cfg).filter(w => w.start > now && w.start < midnight);
+  return windows.length ? windows[0].start : midnight;
+}
 // Exception "🕐 Je travaille maintenant" (voir CLAUDE.md, « Exception hors horaires ») — décidée sur
 // le moment par l'opérateur, disponible aussi bien sur une tâche "à faire" (avant de cliquer
 // Démarrer, pour éviter que le contrôle serveur des 60s suivant ne la remette en pause avant même
-// qu'on ait pu cliquer ce bouton) que sur une tâche "en cours" (déjà démarrée). Pose une borne
-// haute EXCLUSIVE (minuit du jour du clic, `nextDayStart`) au-delà de laquelle la mise en pause
-// automatique "hors horaires" redevient effective normalement — jamais une durée fixe depuis
-// maintenant, pour rester simple à comprendre ("jusqu'à ce soir minuit", pas "jusqu'à telle heure
-// précise à calculer de tête"). Se propage au groupe fusionné le cas échéant : `applyAutoPauseResume`
-// (serveur) évalue chaque pièce indépendamment via sa propre `sessions[]`, même quand tout le groupe
-// a démarré en même temps — sans propagation, un membre du groupe resterait mis en pause.
+// qu'on ait pu cliquer ce bouton) que sur une tâche "en cours" (déjà démarrée). Se propage au
+// groupe fusionné le cas échéant : `applyAutoPauseResume` (serveur) évalue chaque pièce
+// indépendamment via sa propre `sessions[]`, même quand tout le groupe a démarré en même temps —
+// sans propagation, un membre du groupe resterait mis en pause.
 function setWorkHoursException(cid, oid){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
   const o = c.pieces.find(o=>o.id===oid); if(!o) return;
-  const until = toInputValue(nextDayStart(new Date()));
+  const endDate = workHoursExceptionEndFor(o, new Date(), state);
+  const until = toInputValue(endDate);
   o.workHoursExceptionUntil = until;
   propagateFusionGroupFields(o, { workHoursExceptionUntil: until });
   commit();
-  showToast('🕐 Exception activée : cette tâche ne sera pas remise en pause automatiquement d\'ici minuit.');
+  showToast(`🕐 Exception activée : cette tâche ne sera pas remise en pause automatiquement jusqu'à ${formatDT(endDate)}.`);
 }
 // Traçabilité : sans ce badge, un superviseur retrouvant lundi matin une tâche restée `en_cours`
 // tout le week-end n'aurait aucun moyen de distinguer "quelqu'un est réellement venu travailler
@@ -4810,7 +4827,36 @@ function setWorkHoursException(cid, oid){
 function workHoursExceptionBadgeHtml(o){
   if(!o.workHoursExceptionUntil) return '';
   if(new Date() >= new Date(o.workHoursExceptionUntil)) return '';
-  return `<div class="footer-note" style="margin:2px 0 0; color:var(--accent);" title="Cette tâche ne sera pas remise en pause automatiquement par le contrôle serveur avant minuit">🕐 Exception hors horaires active</div>`;
+  return `<div class="footer-note" style="margin:2px 0 0; color:var(--accent);" title="Cette tâche ne sera pas remise en pause automatiquement par le contrôle serveur jusqu'à ${formatDT(new Date(o.workHoursExceptionUntil))}">🕐 Exception hors horaires active</div>`;
+}
+// Exception "🍽 Je travaille pendant la pause" (voir CLAUDE.md, « Temps masqué pendant la pause
+// déjeuner ») — retour utilisateur réel : gérer le cas d'un opérateur qui travaille délibérément
+// PENDANT la pause déjeuner (dépannage ponctuel), distinct de "Je travaille maintenant" ci-dessus
+// (venir un soir/week-end) — mécanisme volontairement SÉPARÉ (bouton, champ, portée propres) plutôt
+// qu'une fusion des deux : la mise en pause "hors horaires" (soir/nuit/week-end) et la mise en pause
+// "pause déjeuner" répondent à des questions différentes, et rien ne demandait de les confondre.
+// Borne haute EXCLUSIVE = la fin de la pause en cours/à venir aujourd'hui (`pauseWindowsFor`,
+// premier créneau dont la fin est encore à venir) : au-delà, l'horaire normal reprend de toute
+// façon, l'exception n'a alors plus aucun effet à faire perdurer.
+function lunchExceptionEndFor(op, now, st){
+  const cfg = configForPiece(op, st);
+  const windows = pauseWindowsFor(now, cfg).filter(w => w.end > now);
+  return windows.length ? windows[0].end : nextDayStart(now);
+}
+function setLunchException(cid, oid){
+  const c = state.commandes.find(c=>c.id===cid); if(!c) return;
+  const o = c.pieces.find(o=>o.id===oid); if(!o) return;
+  const endDate = lunchExceptionEndFor(o, new Date(), state);
+  const until = toInputValue(endDate);
+  o.lunchExceptionUntil = until;
+  propagateFusionGroupFields(o, { lunchExceptionUntil: until });
+  commit();
+  showToast(`🍽 Exception activée : cette tâche ne sera pas mise en pause pour la pause déjeuner jusqu'à ${formatDT(endDate)}.`);
+}
+function lunchExceptionBadgeHtml(o){
+  if(!o.lunchExceptionUntil) return '';
+  if(new Date() >= new Date(o.lunchExceptionUntil)) return '';
+  return `<div class="footer-note" style="margin:2px 0 0; color:var(--accent);" title="Cette tâche ne sera pas mise en pause pour la pause déjeuner jusqu'à ${formatDT(new Date(o.lunchExceptionUntil))}">🍽 Exception pause déjeuner active</div>`;
 }
 function updateOpDuree(cid, oid, value){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
@@ -5015,7 +5061,14 @@ function applyAutoPauseResume(st){
     c.pieces.forEach(o => {
       if(!o.machineId) return;
       const inPause = isInPauseWindow(o, now, st);
-      if(o.statut === 'en_cours' && inPause){
+      // Exception "🍽 Je travaille pendant la pause" (voir CLAUDE.md, « Temps masqué pendant la
+      // pause déjeuner ») — vérifiée ICI, côté client, en plus du serveur (contrairement à
+      // l'exception "hors horaires", jamais mirée côté client) : cette pause-là a bien un mirroir
+      // client (retour instantané dans un onglet resté ouvert), donc les deux copies doivent
+      // connaître le même champ sous peine de divergence (le client la remettrait en pause malgré
+      // l'exception, avant même que le serveur n'ait eu à intervenir).
+      const lunchExcepted = o.lunchExceptionUntil && now < new Date(o.lunchExceptionUntil);
+      if(o.statut === 'en_cours' && inPause && !lunchExcepted){
         const cfg = configForPiece(o, st);
         const pause = pauseWindowFor(now, cfg);
         // .filter, pas .find : plusieurs opérateurs peuvent travailler en parallèle sur cette pièce
@@ -8755,12 +8808,14 @@ function renderContextMenu(){
       : {action:'ctx-pin', label:'📌 Figer à cet horaire'});
     if(isTempsModified(o)) items.push({action:'reset-temps-unitaire', label:'⏱ Revenir au temps théorique'});
     items.push({action:'ctx-work-exception', label:'🕐 Je travaille maintenant (hors horaires)'});
+    items.push({action:'ctx-lunch-exception', label:'🍽 Je travaille pendant la pause'});
   }
   if(o.statut==='en_cours'){
     items.push({action:'ctx-pause', label:'⏸ Mettre en pause'});
     items.push({action:'ctx-finish', label:'✔ Terminer'});
     items.push({action:'ctx-join', label:'➕ Travailler aussi sur cette tâche'});
     items.push({action:'ctx-work-exception', label:'🕐 Je travaille maintenant (hors horaires)'});
+    items.push({action:'ctx-lunch-exception', label:'🍽 Je travaille pendant la pause'});
   }
   if(o.statut==='en_pause'){
     items.push({action:'ctx-resume', label:'▶ Reprendre'});
@@ -9907,7 +9962,7 @@ function renderKanbanView(schedule){
       })() : '';
       // Même badge que le tableau des tâches (workHoursExceptionBadgeHtml) — uniquement sur À
       // faire/En cours (statuts où l'exception a un effet réel), jamais sur En pause/Terminée.
-      const workExceptionLineK = (col.key==='a_faire'||col.key==='en_cours') ? workHoursExceptionBadgeHtml(o) : '';
+      const workExceptionLineK = (col.key==='a_faire'||col.key==='en_cours') ? (workHoursExceptionBadgeHtml(o) + lunchExceptionBadgeHtml(o)) : '';
       return `<div class="kanban-card ${hlClsK}" data-action="card-isolate" data-cid="${o.cid}" data-oid="${o.id}" data-fusion-group="${o._fusionMembers ? o.fusionGroupId : ''}" style="border-left:3px solid ${urgBorder};" title="Clic : isoler la commande — clic droit : menu de statut">
         <div class="kanban-card-main">
           <div class="kanban-card-title">${escapeHtml(label)}</div>
@@ -10148,7 +10203,7 @@ function renderOpsRow(o, c){
   const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (o.tempsUnitaire*o.quantite)/60;
   const overridden = isPositionPinned(o);
   const elapsedNote = running
-    ? `<div class="elapsed-note">${durationLabel(opElapsedHours(o, state))} écoulé${o.statut==='en_pause'?(o.autoPaused?' (pause déjeuner)':' (en pause)'):''}</div>${workHoursExceptionBadgeHtml(o)}`
+    ? `<div class="elapsed-note">${durationLabel(opElapsedHours(o, state))} écoulé${o.statut==='en_pause'?(o.autoPaused?' (pause déjeuner)':' (en pause)'):''}</div>${workHoursExceptionBadgeHtml(o)}${lunchExceptionBadgeHtml(o)}`
     : (done && dureePasseeH(o, state)
         ? `<div class="elapsed-note">${durationLabel(dureePasseeH(o, state))} réellement passé</div>`
         : '');
@@ -11007,6 +11062,7 @@ function dispatchClickAction(action, el){
     case 'ctx-join': contextMenu = null; joinOpSession(el.dataset.cid, el.dataset.oid); break;
     case 'ctx-reopen': contextMenu = null; setOpStatut(el.dataset.cid, el.dataset.oid, 'a_faire'); break;
     case 'ctx-work-exception': contextMenu = null; setWorkHoursException(el.dataset.cid, el.dataset.oid); break;
+    case 'ctx-lunch-exception': contextMenu = null; setLunchException(el.dataset.cid, el.dataset.oid); break;
     case 'resume-paused-task': setOpStatut(el.dataset.cid, el.dataset.oid, 'en_cours'); break;
     case 'dismiss-paused-banner': dismissPausedBanner(); break;
     case 'show-paused-banner': pausedBannerDismissedDate = null; render(); break;

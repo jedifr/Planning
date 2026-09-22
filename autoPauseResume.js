@@ -157,14 +157,25 @@ function pauseKindForRunningTask(op, now, st){
   const cfg = configForPiece(op, st);
   const dow = now.getDay();
   const isWorkDay = dow !== 0 && dow !== 6 && !isDateBlocked(now, cfg);
-  if(isWorkDay && isInPauseWindow(op, now, st)) return 'lunch';
+  if(isWorkDay && isInPauseWindow(op, now, st)){
+    // Exception "🍽 Je travaille pendant la pause" (voir CLAUDE.md, « Temps masqué pendant la pause
+    // déjeuner ») — mécanisme SÉPARÉ de "Je travaille maintenant" ci-dessous (portées distinctes :
+    // celle-ci ne vise QUE la branche 'lunch', jamais 'outOfHours'). `lunchExceptionUntil` est une
+    // borne haute EXCLUSIVE (fin de la pause en cours/à venir, posée côté client par
+    // setLunchException) — identique au principe de `workHoursExceptionUntil`, mais IMPORTANT :
+    // contrairement à cette dernière, la pause déjeuner a un mirroir CLIENT (applyAutoPauseResume,
+    // public/index.html) qui doit vérifier ce même champ, sous peine de divergence (voir CLAUDE.md).
+    if(op.lunchExceptionUntil && now < new Date(op.lunchExceptionUntil)) return null;
+    return 'lunch';
+  }
   const withinSegment = isWorkDay && dayIntervals(now, cfg).some(([s,e]) => now >= s && now < e);
   if(withinSegment) return null;
   // Exception "🕐 Je travaille maintenant" (voir CLAUDE.md, « Exception hors horaires ») — décidée
   // par l'opérateur lui-même (sur la pièce, avant ou après avoir cliqué Démarrer), jamais par ce
-  // job : `workHoursExceptionUntil` est une borne haute EXCLUSIVE (minuit du jour du clic, posée
-  // côté client par setWorkHoursException) au-delà de laquelle ce garde-fou redevient inactif de
-  // lui-même, sans qu'aucun code n'ait besoin de le réinitialiser explicitement.
+  // job : `workHoursExceptionUntil` est une borne haute EXCLUSIVE (la prochaine pause programmée,
+  // ou minuit si aucune ne survient avant, posée côté client par setWorkHoursException) au-delà de
+  // laquelle ce garde-fou redevient inactif de lui-même, sans qu'aucun code n'ait besoin de le
+  // réinitialiser explicitement.
   if(op.workHoursExceptionUntil && now < new Date(op.workHoursExceptionUntil)) return null;
   return 'outOfHours';
 }

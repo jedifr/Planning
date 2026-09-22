@@ -440,10 +440,19 @@ sans aucune configuration préalable — demande explicite : applicable aussi bi
 `en_cours` qu'à une tâche encore `a_faire`.
 
 - `pieces[].workHoursExceptionUntil` (`"AAAA-MM-JJTHH:mm" | null`, `migrateState`) — borne haute
-  **exclusive** (minuit du jour du clic, `nextDayStart(new Date())`), jamais une durée fixe depuis
-  l'instant du clic : plus simple à comprendre pour l'opérateur ("jusqu'à ce soir minuit", pas
-  "jusqu'à telle heure précise à calculer de tête"), et se désactive de lui-même une fois minuit
-  passé — comme `pauseReminderSnoozeUntil`, aucun code n'a besoin de le réinitialiser après coup.
+  **exclusive**, jamais une durée fixe depuis l'instant du clic. `workHoursExceptionEndFor(op, now,
+  st)` la calcule : la **prochaine pause programmée aujourd'hui** si elle survient avant minuit
+  (`pauseWindowsFor(now, cfg)`, premier créneau dont le début est encore à venir), sinon minuit
+  (`nextDayStart(now)`) — retour utilisateur réel, juste après la mise en place de ce bouton :
+  plutôt que d'aller systématiquement jusqu'à minuit (comportement d'origine), une reprise après une
+  vraie pause mérite sa propre confirmation explicite, cohérent avec le reste de l'appli (aucune
+  reprise automatique/silencieuse sans clic humain, voir « Pop-up de retour de pause déjeuner »).
+  Concrètement : posée tôt le matin avant l'ouverture, l'exception s'arrête à la pause déjeuner (pas
+  besoin d'aller plus loin, les horaires normaux reprenant de toute façon entre-temps — l'exception
+  n'a alors plus aucun effet visible jusqu'au soir) ; posée en soirée après la fermeture, sans autre
+  pause à venir avant minuit, elle va bien jusqu'à minuit comme avant ce correctif. Se désactive de
+  lui-même une fois la borne dépassée — comme `pauseReminderSnoozeUntil`, aucun code n'a besoin de
+  le réinitialiser après coup.
 - `setWorkHoursException(cid, oid)` — pose ce champ et `commit()` une seule fois ; propage la même
   valeur à tout le groupe fusionné via `propagateFusionGroupFields` — nécessaire car
   `applyAutoPauseResume`/`pauseKindForRunningTask` (serveur) évaluent **chaque pièce
@@ -475,6 +484,48 @@ sans aucune configuration préalable — demande explicite : applicable aussi bi
   `en_cours` tout le week-end : sans ce badge, aucun moyen de distinguer "quelqu'un est
   réellement venu travailler dessus, en connaissance de cause" d'"elle a été oubliée et le job
   serveur a un problème".
+
+#### Temps masqué pendant la pause déjeuner — exception SÉPARÉE « 🍽 Je travaille pendant la pause »
+
+Retour utilisateur réel, juste après la mise en place de l'exception ci-dessus : comment gérer un
+opérateur qui travaille délibérément **pendant** la pause déjeuner (dépannage ponctuel), plutôt que
+« hors horaires » (soir/nuit/week-end) ? Trois pistes proposées (étendre l'exception existante à la
+pause déjeuner / un second bouton dédié et indépendant / aucune prévention, correction a posteriori
+via les outils déjà existants de la page Pointages) — **option retenue : un second bouton, dédié et
+indépendant** — les deux mises en pause automatiques (« hors horaires » et « pause déjeuner »)
+répondent déjà à des questions différentes dans ce document depuis leur introduction ; leur donner
+chacune leur propre exception, plutôt que de fusionner les deux sous un même bouton, évite qu'activer
+l'une affecte l'autre par surprise (ex. cocher « je travaille ce soir » n'a jamais eu vocation à
+neutraliser aussi la pause de midi du lendemain).
+
+- `pieces[].lunchExceptionUntil` (`"AAAA-MM-JJTHH:mm" | null`, `migrateState`) — même principe de
+  borne haute exclusive que `workHoursExceptionUntil`, mais calculée différemment :
+  `lunchExceptionEndFor(op, now, st)` retient la **fin** de la pause en cours ou à venir aujourd'hui
+  (`pauseWindowsFor(now, cfg)`, premier créneau dont la fin n'est pas encore passée — couvre aussi
+  bien un clic juste avant le début de la pause qu'un clic pendant la pause elle-même), jamais la
+  fin de journée : une fois la pause réellement terminée, les horaires normaux reprennent de toute
+  façon, l'exception n'a plus aucune raison de perdurer au-delà.
+- `setLunchException(cid, oid)` — pose ce champ et `commit()` une seule fois, propage au groupe
+  fusionné via `propagateFusionGroupFields` (même raison que pour l'exception « hors horaires » :
+  `sessions[]` propre à chaque membre). Disponible sur `a_faire` **et** `en_cours` (menu contextuel,
+  action `ctx-lunch-exception`), jamais sur `en_pause`/`termine` — mêmes raisons que l'exception
+  « hors horaires » (dont la course évitée en la proposant dès `a_faire`).
+- **Vérifiée à la fois côté serveur ET côté client**, contrairement à l'exception « hors horaires » :
+  la mise en pause « pause déjeuner » a, elle, un mirroir client (`applyAutoPauseResume`,
+  `public/index.html`, boucle de 60s d'un onglet ouvert — retour visuel immédiat) — les DEUX copies
+  doivent connaître ce nouveau champ, sous peine de la même divergence silencieuse déjà documentée
+  pour toute évolution de cette logique (voir « Mise en pause automatique de la pause déjeuner,
+  fiabilisée côté serveur » plus haut) : le client vérifierait sinon la pause via `isInPauseWindow`
+  et la remettrait en pause malgré l'exception, avant même que le serveur n'ait eu à intervenir.
+  `pauseKindForRunningTask` (`autoPauseResume.js`) vérifie `op.lunchExceptionUntil` **à l'intérieur**
+  de la branche `isInPauseWindow` (donc uniquement pertinente pour `'lunch'`, jamais `'outOfHours'`)
+  — symétrique de l'exception « hors horaires », qui elle ne vérifie son propre champ qu'après avoir
+  écarté `'lunch'`. Les deux champs sont donc structurellement indépendants : aucune combinaison des
+  deux ne peut faire interférer une exception avec la branche de l'autre.
+- `lunchExceptionBadgeHtml(o)` — badge séparé (« 🍽 Exception pause déjeuner active »), même
+  emplacements que `workHoursExceptionBadgeHtml` (tableau des tâches + carte Kanban, "À faire"/"En
+  cours"), les deux badges pouvant coexister sur une même ligne/carte si les deux exceptions sont
+  actives en même temps.
 
 ## Historique des prévisions avant clôture (`prevision_history`)
 
