@@ -897,7 +897,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.39.0';
+const APP_VERSION = '1.39.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -8820,6 +8820,8 @@ function renderContextMenu(){
   if(o.statut==='en_pause'){
     items.push({action:'ctx-resume', label:'▶ Reprendre'});
     items.push({action:'ctx-finish', label:'✔ Terminer'});
+    items.push({action:'ctx-work-exception', label:'🕐 Je travaille maintenant (hors horaires)'});
+    items.push({action:'ctx-lunch-exception', label:'🍽 Je travaille pendant la pause'});
   }
   if(o.statut==='termine') items.push({action:'ctx-reopen', label:'↺ Rouvrir (À faire)'});
   const label = [c.nom, o.piece, o.etape].filter(Boolean).join(' · ');
@@ -9962,7 +9964,7 @@ function renderKanbanView(schedule){
       })() : '';
       // Même badge que le tableau des tâches (workHoursExceptionBadgeHtml) — uniquement sur À
       // faire/En cours (statuts où l'exception a un effet réel), jamais sur En pause/Terminée.
-      const workExceptionLineK = (col.key==='a_faire'||col.key==='en_cours') ? (workHoursExceptionBadgeHtml(o) + lunchExceptionBadgeHtml(o)) : '';
+      const workExceptionLineK = (col.key==='a_faire'||col.key==='en_cours'||col.key==='en_pause') ? (workHoursExceptionBadgeHtml(o) + lunchExceptionBadgeHtml(o)) : '';
       return `<div class="kanban-card ${hlClsK}" data-action="card-isolate" data-cid="${o.cid}" data-oid="${o.id}" data-fusion-group="${o._fusionMembers ? o.fusionGroupId : ''}" style="border-left:3px solid ${urgBorder};" title="Clic : isoler la commande — clic droit : menu de statut">
         <div class="kanban-card-main">
           <div class="kanban-card-title">${escapeHtml(label)}</div>

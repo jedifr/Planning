@@ -459,15 +459,23 @@ sans aucune configuration préalable — demande explicite : applicable aussi bi
   indépendamment** via sa propre `sessions[]` (voir « Travail à plusieurs sur une même pièce »),
   même quand tout le groupe a démarré strictement en même temps : sans cette propagation, un membre
   du groupe resterait mis en pause malgré l'exception posée sur un autre.
-- **Disponible à la fois sur une tâche `a_faire` et `en_cours`** (menu contextuel, clic droit sur
-  une carte/barre — `renderContextMenu`, action `ctx-work-exception`), **jamais** sur `en_pause`
-  (la reprise d'une pause a déjà son propre mécanisme, voir « Pop-up de retour de pause déjeuner »
-  et « hors horaires » ci-dessus) ni sur `termine`. Le proposer dès `a_faire` couvre une course
-  possible sinon : cliquer "Démarrer" d'abord, puis "🕐 Je travaille maintenant" ensuite, laisse une
-  fenêtre où le contrôle des 60s pourrait s'exécuter entre les deux et remettre la tâche en pause
-  avant même que l'exception n'ait eu le temps d'être posée. Poser l'exception AVANT de démarrer
-  évite entièrement cette course : le champ est déjà présent sur la pièce quand `setOpStatut` la
-  fait passer `en_cours`, sans qu'aucun code de transition n'ait à s'en préoccuper.
+- **Disponible sur `a_faire`, `en_cours` et `en_pause`** (menu contextuel, clic droit sur une
+  carte/barre — `renderContextMenu`, action `ctx-work-exception`), **jamais** sur `termine`. Le
+  proposer dès `a_faire` couvre une course possible sinon : cliquer "Démarrer" d'abord, puis "🕐 Je
+  travaille maintenant" ensuite, laisse une fenêtre où le contrôle des 60s pourrait s'exécuter entre
+  les deux et remettre la tâche en pause avant même que l'exception n'ait eu le temps d'être posée.
+  Poser l'exception AVANT de démarrer évite entièrement cette course : le champ est déjà présent sur
+  la pièce quand `setOpStatut` la fait passer `en_cours`, sans qu'aucun code de transition n'ait à
+  s'en préoccuper. **Même raisonnement pour `en_pause`** (ajouté après coup, retour utilisateur
+  réel : rien ne distinguait initialement ce cas de `a_faire`, alors que la même course existe entre
+  cliquer "▶ Reprendre" et poser l'exception ensuite) — l'exception posée sur une pièce encore
+  `en_pause` n'a par construction aucun effet tant que la pièce n'est pas relancée (le job serveur
+  n'évalue `pauseKindForRunningTask` que sur une pièce `en_cours`), mais elle est déjà en place dès
+  que « ▶ Reprendre »/la pop-up de retour de pause la fait redevenir `en_cours`, sans fenêtre de
+  risque entre les deux clics. Ne dispense pas pour autant du mécanisme dédié à la reprise de pause
+  déjeuner (« Pop-up de retour de pause déjeuner ») — les deux répondent à des questions différentes,
+  qui peuvent se combiner (reprendre une pause déjeuner ET poser l'exception hors-horaires pour la
+  suite de la soirée sur la même pièce, par exemple).
 - **Le serveur seul en tient compte** (`pauseKindForRunningTask`, `autoPauseResume.js`) : contrairement
   à la pause déjeuner, la branche "hors horaires" n'a jamais eu de mirroir client (elle n'a pas
   besoin d'un retour visuel instantané dans un onglet resté ouvert — voir plus haut, "Simplification
@@ -480,10 +488,10 @@ sans aucune configuration préalable — demande explicite : applicable aussi bi
 - `workHoursExceptionBadgeHtml(o)` — petit badge (« 🕐 Exception hors horaires active »), visible
   tant que la borne n'est pas dépassée, sur le tableau des tâches (`renderOpsRow`, dans la note
   d'écoulement d'une tâche `en_cours`/`en_pause`) et sur la carte Kanban (colonnes "À faire"/"En
-  cours" uniquement) — traçabilité pour un superviseur qui retrouverait lundi matin une tâche restée
-  `en_cours` tout le week-end : sans ce badge, aucun moyen de distinguer "quelqu'un est
-  réellement venu travailler dessus, en connaissance de cause" d'"elle a été oubliée et le job
-  serveur a un problème".
+  cours"/"En pause" — pas "Terminée", même portée que le menu contextuel ci-dessus) — traçabilité
+  pour un superviseur qui retrouverait lundi matin une tâche restée `en_cours` tout le week-end :
+  sans ce badge, aucun moyen de distinguer "quelqu'un est réellement venu travailler dessus, en
+  connaissance de cause" d'"elle a été oubliée et le job serveur a un problème".
 
 #### Temps masqué pendant la pause déjeuner — exception SÉPARÉE « 🍽 Je travaille pendant la pause »
 
@@ -507,9 +515,10 @@ neutraliser aussi la pause de midi du lendemain).
   façon, l'exception n'a plus aucune raison de perdurer au-delà.
 - `setLunchException(cid, oid)` — pose ce champ et `commit()` une seule fois, propage au groupe
   fusionné via `propagateFusionGroupFields` (même raison que pour l'exception « hors horaires » :
-  `sessions[]` propre à chaque membre). Disponible sur `a_faire` **et** `en_cours` (menu contextuel,
-  action `ctx-lunch-exception`), jamais sur `en_pause`/`termine` — mêmes raisons que l'exception
-  « hors horaires » (dont la course évitée en la proposant dès `a_faire`).
+  `sessions[]` propre à chaque membre). Disponible sur `a_faire`, `en_cours` **et** `en_pause` (menu
+  contextuel, action `ctx-lunch-exception`), jamais sur `termine` — mêmes raisons que l'exception
+  « hors horaires » (dont la course évitée en la proposant dès `a_faire`, et étendue à `en_pause`
+  pour la même course entre « ▶ Reprendre » et le clic sur l'exception).
 - **Vérifiée à la fois côté serveur ET côté client**, contrairement à l'exception « hors horaires » :
   la mise en pause « pause déjeuner » a, elle, un mirroir client (`applyAutoPauseResume`,
   `public/index.html`, boucle de 60s d'un onglet ouvert — retour visuel immédiat) — les DEUX copies
