@@ -2051,10 +2051,43 @@ accordéon vertical / défilement horizontal à accroche) ; l'utilisateur a choi
   `planning` (le Kanban lui-même, qu'on veut au contraire voir tout de suite), ni `archives` (déjà
   repliée par défaut de toute façon, sur petit comme grand écran).
 - **Non traité par cette fonctionnalité** (hors périmètre de la demande) : les filtres/le "Postes
-  affichés" au-dessus du Kanban, la barre `toolbar-mini` de droite de l'en-tête (import, "Mon
-  compte", identité active, déconnexion), et les autres pages (Congés, Temps de production, Zones,
-  Risques, Pointages) elles-mêmes ne sont pas retouchées ici — seules les vues du planning principal
-  et la largeur/hauteur de la page d'accueil du planning étaient en cause.
+  affichés" au-dessus du Kanban, et les autres pages (Congés, Temps de production, Zones, Risques,
+  Pointages) elles-mêmes ne sont pas retouchées ici — seules les vues du planning principal et la
+  largeur/hauteur de la page d'accueil du planning étaient en cause.
+
+### Bandeau `.toolbar-mini` encore débordant malgré la réduction du bandeau de pages
+
+Retour utilisateur réel, capture d'écran d'un vrai téléphone prise juste après le déploiement du
+correctif ci-dessus (v1.36.0) : la rangée de pages était bien réduite à 3 boutons comme prévu, mais
+la page s'étirait **encore** en largeur — cette fois à cause de la **seconde** rangée de l'en-tête
+(`.toolbar-mini` : badge "Poste en cours/Hors horaires · heure", badge "Synchronisé · heure",
+bouton "N en pause", "Importer", "⚙ Paramétrer"/"Mon compte", sélecteur d'identité active, nom
+d'utilisateur, "Déconnexion"), jamais couverte par le correctif précédent (explicitement listée
+"non traité" ci-dessus à l'époque). `.toolbar-mini{display:flex; gap:8px; align-items:center;}`
+n'avait jamais reçu de `flex-wrap` (contrairement à `.title-block`, qui l'a depuis toujours) — sur
+un écran étroit, ses ~8 éléments restaient forcés sur une seule ligne, provoquant le débordement
+horizontal exactement comme `.title-block` en aurait souffert sans son propre `flex-wrap`.
+
+- `flex-wrap:wrap` ajouté à `.toolbar-mini` — filet de sécurité générique, quel que soit le contenu
+  affiché par ailleurs.
+- **En plus du simple retour à la ligne** : les deux badges purement informatifs (`shift-badge`
+  "Poste en cours/Hors horaires · heure" et `renderSyncBadge()` "Synchronisé · heure" — aucun des
+  deux n'est cliquable, contrairement à tout le reste de cette barre) sont désormais masqués sur
+  téléphone (`mobileHeader`, déjà calculé par `renderHeader()` pour le bandeau de pages ci-dessus,
+  réutilisé tel quel ici). Ce sont précisément ces deux badges que l'utilisateur a qualifiés
+  d'« informations techniques » dans son retour — contrairement à "Importer"/"⚙ Paramétrer"/
+  l'identité active/le nom d'utilisateur/"Déconnexion", qui restent tous des actions réelles
+  nécessaires sur n'importe quel appareil et ne sont donc jamais masqués. Un simple retour à la
+  ligne (sans rien masquer) aurait suffi à éliminer le débordement horizontal, mais aurait laissé
+  une seconde ligne entière d'informations à faible valeur ajoutée sur un écran déjà contraint en
+  hauteur — cohérent avec le principe déjà appliqué au bandeau de pages juste au-dessus (« ce sont
+  des pages qui restent parfaitement valides... seul le raccourci disparaît sur petit écran ») :
+  masquer ce qui n'est pas actionnable plutôt que de le laisser encombrer l'écran.
+- Le compteur "N en pause" (bouton actionnable, pas un simple badge) reste affiché sur mobile
+  comme sur bureau : il déclenche `show-paused-banner`, ce n'est pas de la même nature que les deux
+  badges purement informatifs ci-dessus.
+- Vérifié à 390px (Playwright) : `document.documentElement.scrollWidth === clientWidth` après
+  connexion, plus aucun débordement horizontal.
 
 ## Tests
 

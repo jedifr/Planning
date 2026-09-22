@@ -727,7 +727,7 @@
   .alt-cal-periode-chip{display:inline-flex; align-items:center; gap:6px; background:var(--bg); border:1px solid var(--line-soft); border-radius:20px; padding:3px 8px; font-size:12px; color:var(--text-dim);}
   .alt-cal-periode-remove{border:none; background:transparent; cursor:pointer; color:var(--text-faint); font-size:12px; line-height:1; padding:0;}
   .alt-cal-periode-remove:hover{color:var(--red);}
-  .toolbar-mini{display:flex; gap:8px; align-items:center;}
+  .toolbar-mini{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
 
   .modal-overlay{
     position:fixed; inset:0; background:rgba(20,22,20,0.5); z-index:1000;
@@ -897,7 +897,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.36.0';
+const APP_VERSION = '1.36.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -6403,8 +6403,8 @@ function renderHeader(){
       ${pageSwitcher}
     </div>
     <div class="toolbar-mini">
-      <div class="shift-badge ${on?'on':'off'}"><span class="shift-dot"></span>${on?'Poste en cours':'Hors horaires'} · ${new Date().toLocaleString('fr-FR',{weekday:'short',hour:'2-digit',minute:'2-digit'})}</div>
-      ${renderSyncBadge()}
+      ${!mobileHeader ? `<div class="shift-badge ${on?'on':'off'}"><span class="shift-dot"></span>${on?'Poste en cours':'Hors horaires'} · ${new Date().toLocaleString('fr-FR',{weekday:'short',hour:'2-digit',minute:'2-digit'})}</div>` : ''}
+      ${!mobileHeader ? renderSyncBadge() : ''}
       ${(() => { const n = pausedSinceEarlierTasks().length; return n>0 ? `<button class="small" data-action="show-paused-banner" title="Revoir les tâches en pause depuis la veille ou avant">⏸ ${n} en pause</button>` : ''; })()}
       ${currentPage!=='conges' ? `
       <button class="small" data-action="trigger-import" title="Recharger un fichier .json exporté précédemment">Importer</button>
