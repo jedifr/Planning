@@ -2019,10 +2019,42 @@ accordéon vertical / défilement horizontal à accroche) ; l'utilisateur a choi
     `kanban-mobile-body`, pour le style) et son `data-col-key` — `captureKanbanScroll()`/
     `restoreKanbanScroll()` (voir le piège plus bas sur les ascenseurs de colonne) continuent donc de
     fonctionner sans modification sur ce conteneur unique.
-- **Non traité par cette fonctionnalité** (hors périmètre de la demande) : le reste de l'en-tête
-  (rangée de pages `Planning`/`Congés`/`Temps de production`/...), les filtres/le "Postes affichés"
-  au-dessus du Kanban, et les autres pages (Congés, Temps de production, Zones, Risques, Pointages)
-  ne sont pas retouchés ici — seules les vues du planning principal étaient en cause.
+- **Bandeau d'en-tête réduit (`renderHeader`).** Retour utilisateur direct, juste après la
+  fonctionnalité ci-dessus : la rangée de pages (`page-switcher`) débordait encore en largeur sur un
+  téléphone. Sous 720px (`mobileHeader = isNarrowViewport()`, calculé une fois par rendu), seuls
+  `Planning`/`Congés` (si le module est actif)/`Zones de stockage` restent affichés — `Temps de
+  production`, `Risques de retard` et `Pointages` ne sont plus générés du tout dans le bandeau
+  (comme les onglets de vue Jour/Semaine/Mois/Année ci-dessus, pas seulement masqués en CSS, y
+  compris le calcul du badge "N à risque" de `Risques de retard`, jamais exécuté sur mobile).
+  **Ce sont des pages qui restent parfaitement valides et accessibles** (`currentPage` peut très
+  bien pointer dessus, ex. via `userDefaultPage` — voir plus haut) : seul le raccourci direct depuis
+  l'en-tête disparaît sur petit écran, aucune page n'est bloquée ni son contenu modifié. Une
+  personne dont la page d'accueil par défaut est "Temps de production" continue donc d'y atterrir
+  normalement sur son téléphone ; elle n'a simplement plus de bouton pour y revenir depuis Planning
+  sans repasser par un écran plus large (compromis assumé : la demande portait sur la largeur du
+  bandeau, pas sur l'accessibilité de ces pages en elles-mêmes).
+- **Sections "Tâches en cours"/"Tâches terminées" repliées par défaut sur téléphone
+  (`loadPanelCollapsePref`).** Même demande, même motivation (la page s'étirait en hauteur avant
+  même d'atteindre le Kanban). Contrairement à `effectivePlanningView()` ci-dessus (fonction pure,
+  recalculée à *chaque* rendu), ceci est une **valeur initiale posée une seule fois**, sur le même
+  principe que `calendrierViewMode = isNarrowViewport() ? 'mois' : 'annee'` (voir « Ergonomie mobile
+  du calendrier annuel ») : `loadPanelCollapsePref()` (appelée une fois dans `startApp`, avant le
+  tout premier rendu) ne force `panelCollapsed.active`/`.done` à `true` que si **aucune préférence
+  n'est encore enregistrée** dans le `localStorage` de cet appareil (`raw` absent) **et** que la
+  fenêtre est étroite à cet instant — jamais recalculé à chaque rendu, contrairement à
+  `effectivePlanningView()`, car on ne veut PAS re-refermer une section qu'un opérateur vient de
+  déplier lui-même sur son téléphone. Une fois cette section rouverte manuellement, `togglePanelCollapse`
+  persiste aussitôt le choix dans ce même `localStorage` (mécanisme déjà existant, inchangé) : au
+  chargement suivant, `raw` existe déjà et ce repli par défaut ne s'applique plus jamais — c'est bien
+  la dernière action explicite de la personne qui l'emporte, jamais ce réglage automatique. Seules
+  `active`/`done` sont concernées (les deux sections nommées "Tâches..." dans l'interface) — ni
+  `planning` (le Kanban lui-même, qu'on veut au contraire voir tout de suite), ni `archives` (déjà
+  repliée par défaut de toute façon, sur petit comme grand écran).
+- **Non traité par cette fonctionnalité** (hors périmètre de la demande) : les filtres/le "Postes
+  affichés" au-dessus du Kanban, la barre `toolbar-mini` de droite de l'en-tête (import, "Mon
+  compte", identité active, déconnexion), et les autres pages (Congés, Temps de production, Zones,
+  Risques, Pointages) elles-mêmes ne sont pas retouchées ici — seules les vues du planning principal
+  et la largeur/hauteur de la page d'accueil du planning étaient en cause.
 
 ## Tests
 

@@ -897,7 +897,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.35.0';
+const APP_VERSION = '1.36.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -6379,14 +6379,19 @@ function renderHeader(){
   const logoHtml = state.config.logoDataUrl ? `<img src="${state.config.logoDataUrl}" class="app-logo" alt="Logo">` : '';
   const congesActif = state.config.modules && state.config.modules.conges;
   const pendingCount = congesActif ? state.leaveRequests.filter(r=>r.statut==='en_attente').length : 0;
+  // Sur téléphone, seuls Planning/Congés/Zones de stockage restent dans le bandeau (retour
+  // utilisateur réel : la rangée de pages débordait en largeur sur un écran étroit) — Temps de
+  // production/Risques de retard/Pointages restent des pages valides (currentPage peut toujours y
+  // pointer, ex. via userDefaultPage), simplement sans raccourci direct depuis l'en-tête sur mobile.
+  const mobileHeader = isNarrowViewport();
   const pageSwitcher = `
     <div class="page-switcher">
       <button class="page-switch-btn ${currentPage==='planning'?'active':''}" data-action="goto-planning">Planning</button>
       ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
-      <button class="page-switch-btn ${currentPage==='tempsProd'?'active':''}" data-action="goto-temps-prod">⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}</button>
+      ${!mobileHeader ? `<button class="page-switch-btn ${currentPage==='tempsProd'?'active':''}" data-action="goto-temps-prod">⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}</button>` : ''}
       <button class="page-switch-btn ${currentPage==='zones'?'active':''}" data-action="goto-zones">📍 Zones de stockage</button>
-      ${(() => { const n = getSchedule().filter(c => (c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine')) && isCommandeAtRisk(c)).length; return `<button class="page-switch-btn ${currentPage==='risques'?'active':''}" data-action="goto-risques">⚠️ Risques de retard${n>0?` <span class="pending-count-badge">${n}</span>`:''}</button>`; })()}
-      ${canSupervise() ? `<button class="page-switch-btn ${currentPage==='pointages'?'active':''}" data-action="goto-pointages">🕘 Pointages</button>` : ''}
+      ${!mobileHeader ? (() => { const n = getSchedule().filter(c => (c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine')) && isCommandeAtRisk(c)).length; return `<button class="page-switch-btn ${currentPage==='risques'?'active':''}" data-action="goto-risques">⚠️ Risques de retard${n>0?` <span class="pending-count-badge">${n}</span>`:''}</button>`; })() : ''}
+      ${(canSupervise() && !mobileHeader) ? `<button class="page-switch-btn ${currentPage==='pointages'?'active':''}" data-action="goto-pointages">🕘 Pointages</button>` : ''}
     </div>`;
   return `
   <header class="top">
@@ -9381,7 +9386,20 @@ let archiveSearchQuery = '';
 function loadPanelCollapsePref(){
   try{
     const raw = localStorage.getItem(PANEL_COLLAPSE_STORAGE_KEY);
-    if(raw){ const parsed = JSON.parse(raw); Object.keys(panelCollapsed).forEach(k => { if(typeof parsed[k]==='boolean') panelCollapsed[k]=parsed[k]; }); }
+    if(raw){
+      const parsed = JSON.parse(raw);
+      Object.keys(panelCollapsed).forEach(k => { if(typeof parsed[k]==='boolean') panelCollapsed[k]=parsed[k]; });
+    } else if(isNarrowViewport()){
+      // Première visite sur ce téléphone (rien encore enregistré dans le localStorage de CET
+      // appareil) : "Tâches en cours"/"Tâches terminées" démarrent repliées — retour utilisateur
+      // réel, la page s'étirait sinon sur toute la hauteur avant même d'atteindre le Kanban. Un
+      // calcul UNE SEULE FOIS au démarrage, jamais réappliqué ensuite (même principe que
+      // `calendrierViewMode`/`userDefaultPlanningView`) : déplier la section à la main reste
+      // possible, et ce choix est aussitôt persisté par `togglePanelCollapse` — au prochain
+      // chargement, `raw` existera et ce repli par défaut ne sera plus jamais appliqué.
+      panelCollapsed.active = true;
+      panelCollapsed.done = true;
+    }
   }catch(e){ /* préférence absente ou indisponible */ }
 }
 function togglePanelCollapse(key){
