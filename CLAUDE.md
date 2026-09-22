@@ -1924,18 +1924,59 @@ un retard de démarrage tient à la disponibilité du poste et à l'ordonnanceme
 l'occupait, une urgence est passée devant), pas à qui a fini par exécuter la tâche une fois prise en
 main.
 
-- `pieces[].previsionAuDemarrage` (`{ debut } | null`) — posé par `applySingleStatusChange`
-  **au moment précis** de la transition `a_faire → en_cours` (le tout premier « Démarrer », jamais
-  une reprise après pause), à partir du planning d'AVANT cette mutation (`getSchedule()` appelé par
-  `setOpStatut`, même principe que `previsionAvantCloture` — voir plus haut — mais à la transition
-  symétrique : ici on fige le DÉBUT juste avant qu'il devienne réel, là-bas la FIN). Remis à `null`
-  à la réouverture (`↺ Rouvrir`), comme `dureeReelleH` — un nouveau retard sera mesuré au prochain
-  vrai démarrage. `migrateState` l'initialise à `null` sur les pièces existantes. Champ purement
+**La prévision est figée à la CRÉATION de la pièce, jamais à son démarrage.** Version d'origine du
+suivi : `previsionAuDemarrage` était posée juste avant le clic « Démarrer », à partir du planning
+calculé à cet instant précis. Retour utilisateur réel, après constat qu'aucun retard n'était jamais
+mesuré en pratique sur une vraie installation (des dizaines de pièces démarrées, aucune au-dessus du
+seuil d'affichage) : ce choix ne pouvait structurellement montrer qu'un écart proche de zéro — le
+moteur replace en permanence une tâche prête à démarrer à « maintenant » dès qu'elle devient la
+suivante sur son poste, donc toute la congestion/les urgences passées devant sont déjà absorbées
+dans cette dernière prévision au moment où on la fige. Seule une prévision figée dès la création
+(avant que la tâche n'ait jamais pu bouger dans la file) peut révéler la dérive réelle due à
+l'ordonnancement.
+
+- `capturePrevisionAuDemarrage(targetState, pieceIds)` — point unique qui fige, pour chaque id
+  fourni, la position de début que le moteur projette À CET INSTANT (`computeSchedule(targetState)`)
+  sur `pieces[].previsionAuDemarrage`. N'agit que sur une pièce encore `a_faire` **et** sans valeur
+  déjà posée (idempotent : un rejeu après conflit d'enregistrement, ou un second appel sur les mêmes
+  ids, ne recalcule jamais une prévision différente de la première) — une pièce sans `.start` projeté
+  (hors planning, poste introuvable) est silencieusement ignorée, jamais un plantage.
+- **Appelée à chaque point de création réelle de pièce**, jamais à son démarrage :
+  - `submitNewCommande()` — les deux branches (nouvelle commande, ou lignes ajoutées à une commande
+    déjà existante), appelée sur `state` **après** `applyDraftFusionGroups(...)` : une pièce
+    regroupée manuellement (bouton « Regrouper les lignes du même poste ») doit être projetée avec
+    la durée du groupe entier, pas sa seule durée isolée — capturer avant la fusion aurait figé une
+    prévision basée sur une durée qui n'est déjà plus la bonne.
+  - `commitImportGroups(targetState, groups)` (partagée par les deux imports) — retourne désormais
+    `createdPieceIds` (ids de TOUTES les pièces réellement ajoutées, nouvelle commande **et** lignes
+    fusionnées dans une commande existante) : `processExcelImportRows` l'appelle directement (pas de
+    fusion sur l'import standard, voir « Regroupement ») ; `confirmCustomImport` l'appelle **après**
+    le regroupement manuel (case « Regrouper », `performFusionOnState`) et le nettoyage des étiquettes
+    temporaires, pour la même raison que `submitNewCommande` ci-dessus. Piège propre à cette fonction :
+    contrairement à `submitNewCommande` (qui réutilise les mêmes objets pièce d'un appel à l'autre,
+    capturés par closure), `commitImportGroups` recrée des **copies fraîches** des pièces à CHAQUE
+    appel (`{...p}`) — l'appel à `capturePrevisionAuDemarrage` doit donc être fait à l'intérieur du
+    `applyFn` rejouable, jamais une seule fois après le tout premier appel, sous peine de perdre la
+    prévision d'un rejeu après conflit d'enregistrement.
+  - **Jamais `submitQuickPointage()`** : ses pièces naissent déjà `en_cours` (voir « Pointage
+    rapide » plus haut), donc n'ont structurellement rien à figer — elles n'ont jamais été « en
+    attente de démarrer ». `capturePrevisionAuDemarrage` l'exclut de toute façon via son garde-fou
+    `statut === 'a_faire'`.
+  - **Jamais `simulateImportStarts()`** (aperçu d'import, simulation jetable sur une copie de
+    `state`) : appeler `capturePrevisionAuDemarrage` là figerait une fausse prévision avant même que
+    l'import ne soit confirmé — seuls les points qui enregistrent réellement doivent y toucher.
+- `pieces[].previsionAuDemarrage` (`{ debut } | null`, `migrateState` l'initialise à `null`) — une
+  fois posé, **n'est plus jamais réécrit ni effacé par aucune transition de statut** : ni un
+  démarrage réel (`setOpStatut`, qui ne touche plus ce champ du tout), ni une reprise après pause,
+  ni même un « ↺ Rouvrir » (`termine → a_faire`) — contrairement à `dureeReelleH`/
+  `dureeReelleParOperateur`, remis à `null` à la réouverture pour être reconstitués à la prochaine
+  clôture : `previsionAuDemarrage` n'a, lui, rien de nouveau à figer à la place, puisqu'il ne se
+  fige plus qu'à la naissance de la pièce, pas à un « nouveau » démarrage. Champ purement
   transitoire côté client au sens où il n'est jamais réaffiché tel quel : seul `retardDemarrageJours`
   le lit.
 - `retardDemarrageJours(o)` — écart en jours entre `previsionAuDemarrage.debut` et `debutReel` ;
   positif = démarrée en retard, négatif = en avance. `null` si l'un des deux horodatages manque
-  (pièce jamais démarrée via l'appli, ou démarrée avant l'introduction de ce suivi) — **aucune
+  (pièce jamais démarrée via l'appli, ou créée avant l'introduction de ce suivi) — **aucune
   donnée rétroactive**, exactement comme `previsionAvantCloture`.
 - `retardDemarrageBadgeHtml(o)` — badge discret (🕓, rouge) sur la ligne d'une pièce, dans le tableau
   des tâches (`renderOpsRow`/`datesCell`, branches « Terminée » et « volante/en cours »), affiché
@@ -2628,6 +2669,28 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   affiche "occupé/libre" pour une zone de stockage doit passer par `isCommandeReadyToFreeZone`,
   jamais directement par `isCommandeFullyDone` — les trois points existants (`occupiedStorageZones`,
   `commandesInZone`, l'avertissement de `removeStorageAllee`) donnent le bon modèle à suivre.
+- **Une prévision figée juste avant l'événement qu'elle doit mesurer ne mesure plus rien.**
+  `previsionAuDemarrage` (voir « Retard de démarrage » plus haut) était à l'origine posée juste
+  avant le clic « Démarrer », à partir du planning calculé à cet instant précis — symétrique de
+  `previsionAvantCloture`, qui fige elle aussi la dernière position juste avant la mutation qu'elle
+  documente. Ça fonctionne pour `previsionAvantCloture` (la fin d'une tâche déjà en cours ne bouge
+  plus beaucoup juste avant sa clôture), mais pas pour un DÉBUT : le moteur replace en permanence une
+  tâche encore `a_faire` à "maintenant" dès qu'elle devient la suivante sur son poste — c'est
+  précisément ce qui la fait passer en tête de file. Figer la prévision à cet instant-là revient donc
+  à comparer le réel à une prévision qui vient tout juste d'être recalculée pour dire "maintenant",
+  absorbant par construction toute la congestion et les urgences passées devant plus tôt dans la vie
+  de la pièce. Résultat (bug réel constaté sur une vraie installation, retour utilisateur direct) :
+  sur des dizaines de pièces démarrées, aucune n'affichait jamais de retard mesurable — la
+  fonctionnalité existait, tournait sans erreur, mais ne pouvait structurellement rien détecter.
+  Corrigé en déplaçant la capture à la CRÉATION de la pièce (`capturePrevisionAuDemarrage`, appelée
+  par `submitNewCommande`/`commitImportGroups`, jamais par `setOpStatut`) — avant que la tâche n'ait
+  jamais eu la moindre chance de bouger dans la file, seul point où la prévision a encore quelque
+  chose à perdre face à la réalité. Réflexe : avant de figer une prévision "juste avant" un
+  événement pour la comparer après coup au réel, vérifier que le moteur ne recalcule pas justement
+  cette même valeur à chaque tour pour refléter l'état présent — si c'est le cas (une position de
+  DÉBUT pour une tâche pas encore commencée, contrairement à une position de FIN pour une tâche déjà
+  bien avancée), la seule prévision qui garde un sens est celle prise au tout début de la vie de la
+  chose mesurée, pas juste avant la mesure elle-même.
 
 ## Conventions
 

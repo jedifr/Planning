@@ -897,7 +897,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.39.1';
+const APP_VERSION = '1.40.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1602,7 +1602,7 @@ function migrateState(st){
       if(o.epaisseur === undefined) o.epaisseur = '';
       if(o.numeroLigne === undefined) o.numeroLigne = null;
       if(o.previsionAvantCloture === undefined) o.previsionAvantCloture = null;
-      if(o.previsionAuDemarrage === undefined) o.previsionAuDemarrage = null; // voir applySingleStatusChange/CLAUDE.md, section "Retard de démarrage"
+      if(o.previsionAuDemarrage === undefined) o.previsionAuDemarrage = null; // voir capturePrevisionAuDemarrage/CLAUDE.md, section "Retard de démarrage"
       if(o.fusionGroupId === undefined) o.fusionGroupId = null;
       if(o.fusionPinned === undefined){
         // Migration unique : jusqu'ici, un groupe fusionné était TOUJOURS figé (manualStart) une
@@ -4450,6 +4450,9 @@ function submitNewCommande(){
     invalidateSchedule();
     const fusionGroupsToApply = draft._fusionGroups || [];
     applyDraftFusionGroups(fusionGroupsToApply);
+    // Figé APRÈS la fusion éventuelle (voir capturePrevisionAuDemarrage) : une pièce regroupée
+    // manuellement doit être projetée avec la durée du groupe entier, pas sa seule durée isolée.
+    capturePrevisionAuDemarrage(state, toAdd.map(p=>p.id));
     draft = newDraft(); showNewForm = false;
     render();
     saveStateWithReapply(applyFn, 3);
@@ -4492,6 +4495,9 @@ function submitNewCommande(){
   invalidateSchedule();
   const fusionGroupsToApply = draft._fusionGroups || [];
   applyDraftFusionGroups(fusionGroupsToApply);
+  // Figé APRÈS la fusion éventuelle (voir capturePrevisionAuDemarrage) : une pièce regroupée
+  // manuellement doit être projetée avec la durée du groupe entier, pas sa seule durée isolée.
+  capturePrevisionAuDemarrage(state, newCmd.pieces.map(p=>p.id));
   draft = newDraft(); showNewForm = false;
   render();
   saveStateWithReapply(applyFn, 3);
@@ -4884,13 +4890,46 @@ function isPositionPinned(o){
   if(o.fusionGroupId) return !!o.fusionPinned;
   return !!(o.manualStart || o.dureeOverrideH);
 }
-// Retard de démarrage : écart entre la position que le moteur donnait à cette pièce juste avant son
-// démarrage réel (previsionAuDemarrage, figé une seule fois au premier "Démarrer" — voir
-// applySingleStatusChange) et ce démarrage réel (debutReel). Contrairement à l'écart de durée
-// (computeProductionTimeByUser, prévu vs réellement passé) : volontairement PAS attribué à un
-// opérateur, ni affiché dans "Temps de production" — un retard de démarrage tient à la disponibilité
-// du poste / à l'ordonnancement, pas à qui a fini par exécuter la tâche une fois prise en main.
-// `null` si l'un des deux horodatages manque (pièce jamais démarrée via l'appli, ou démarrée avant
+// Fige, à la CRÉATION d'une pièce "à faire" (jamais à son démarrage), la position de début que le
+// moteur projetait à cet instant — voir CLAUDE.md, "Retard de démarrage". Retour utilisateur réel,
+// après constat qu'aucun retard n'était jamais mesuré en pratique : figer cette prévision juste
+// avant le clic "Démarrer" (ancien comportement) ne pouvait structurellement montrer qu'un écart
+// proche de zéro, puisque le moteur replace en permanence une tâche prête à démarrer à "maintenant"
+// — la congestion/les urgences passées devant sont déjà absorbées dans cette dernière prévision, qui
+// n'a donc plus rien à comparer. Seule une prévision figée dès la création (avant que la tâche
+// n'ait jamais pu bouger dans la file) peut révéler la dérive réelle due à l'ordonnancement.
+// N'écrase jamais une valeur déjà posée (idempotent : un rejeu après conflit d'enregistrement, ou un
+// second appel sur les mêmes ids, ne doit jamais recalculer une prévision différente de la première),
+// et ne concerne qu'une pièce encore `a_faire` : une pièce créée déjà `en_cours` (pointage rapide,
+// voir CLAUDE.md) n'a structurellement rien à figer, elle n'a jamais été "en attente de démarrer".
+// Couvre tous les points de création de pièce : `submitNewCommande` (nouvelle commande ou lignes
+// ajoutées à une commande existante), et les deux imports via `commitImportGroups` (voir ses
+// appelants `processExcelImportRows`/`confirmCustomImport`) — jamais `submitQuickPointage`, dont les
+// pièces naissent `en_cours`. `simulateImportStarts` (aperçu d'import, purement une simulation
+// jetable) n'appelle JAMAIS cette fonction : seuls les points qui enregistrent réellement le state
+// doivent y toucher.
+function capturePrevisionAuDemarrage(targetState, pieceIds){
+  if(!pieceIds || pieceIds.length === 0) return;
+  const idSet = new Set(pieceIds);
+  const schedule = computeSchedule(targetState);
+  schedule.forEach(c => {
+    c.pieces.forEach(o => {
+      if(!idSet.has(o.id) || !o.start) return;
+      const realC = targetState.commandes.find(cc => cc.id === c.id);
+      const realPiece = realC && realC.pieces.find(p => p.id === o.id);
+      if(realPiece && realPiece.statut === 'a_faire' && !realPiece.previsionAuDemarrage){
+        realPiece.previsionAuDemarrage = { debut: toInputValue(o.start) };
+      }
+    });
+  });
+}
+// Retard de démarrage : écart entre la position que le moteur projetait pour cette pièce dès sa
+// création (previsionAuDemarrage, voir capturePrevisionAuDemarrage) et son démarrage réel
+// (debutReel). Contrairement à l'écart de durée (computeProductionTimeByUser, prévu vs réellement
+// passé) : volontairement PAS attribué à un opérateur, ni affiché dans "Temps de production" — un
+// retard de démarrage tient à la disponibilité du poste / à l'ordonnancement, pas à qui a fini par
+// exécuter la tâche une fois prise en main.
+// `null` si l'un des deux horodatages manque (pièce jamais démarrée via l'appli, ou créée avant
 // l'introduction de ce suivi — aucune donnée rétroactive, comme previsionAvantCloture).
 function retardDemarrageJours(o){
   if(!o.previsionAuDemarrage || !o.previsionAuDemarrage.debut || !o.debutReel) return null;
@@ -5335,7 +5374,7 @@ function renderPausedTasksBanner(){
 // archivePrevisionHistory) — sans elle, cette estimation serait perdue dès que le moteur ancre
 // start/end sur les horaires réels. Les deux sont pré-calculés par l'appelant, sur le planning
 // d'AVANT la mutation.
-function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, previsionAvant, previsionAuDemarrage){
+function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, previsionAvant){
   const prev = o.statut;
   if(!o.sessions) o.sessions = [];
 
@@ -5343,11 +5382,10 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
     if(prev === 'a_faire'){
       o.debutReel = nowStr;
       o.manualStart = nowStr; // la tâche démarre réellement maintenant : on fige son début
-      // Fige la dernière position de DÉBUT que le moteur calculait pour cette pièce juste avant ce
-      // démarrage réel — permet de mesurer après coup un retard de démarrage (voir CLAUDE.md,
-      // section "Retard de démarrage"). Jamais réécrit ensuite (une pause/reprise n'est pas un
-      // nouveau démarrage) ; absent si la pièce a été démarrée avant l'introduction de ce suivi.
-      if(previsionAuDemarrage) o.previsionAuDemarrage = { debut: toInputValue(previsionAuDemarrage) };
+      // previsionAuDemarrage n'est PLUS touché ici : depuis capturePrevisionAuDemarrage (voir
+      // CLAUDE.md, "Retard de démarrage"), il est figé une seule fois à la CRÉATION de la pièce,
+      // jamais à son démarrage — le figer ici l'aurait de toute façon écrasé avec la dernière
+      // prévision (biaisée, voir capturePrevisionAuDemarrage) plutôt que la prévision d'origine.
       // Tague automatiquement l'opérateur si personne ne l'a fait à la création (poste partagé :
       // voir activeIdentityId) — jamais d'écrasement si un opérateur était déjà choisi.
       if(!o.operatorUserId){ const aid = activeIdentityId(); if(aid) o.operatorUserId = aid; }
@@ -5442,7 +5480,9 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
     o.sessions = [];
     o.dureeReelleH = null; // le temps réellement passé sera reconstitué à la prochaine clôture
     o.dureeReelleParOperateur = null;
-    o.previsionAuDemarrage = null; // un nouveau retard de démarrage sera mesuré au prochain vrai démarrage
+    // previsionAuDemarrage n'est PLUS effacé ici (contrairement à avant capturePrevisionAuDemarrage) :
+    // c'est la prévision figée à la CRÉATION de la pièce, jamais recréée à un autre moment — un
+    // "↺ Rouvrir" n'est pas une nouvelle création, il n'y a donc rien de nouveau à figer à la place.
     o.autoPaused = false;
     o.autoPausedOutOfHours = false;
   }
@@ -5514,26 +5554,15 @@ function setOpStatut(cid, oid, newStatut){
       if((oo.statut === 'en_cours' || oo.statut === 'en_pause') && opBefore && opBefore.end) plannedEndsBefore[oo.id] = opBefore.end;
     });
   }
-  // Dernière position de DÉBUT calculée par le moteur juste avant qu'une pièce "à faire" ne démarre
-  // réellement — transition symétrique de previsionsAvant ci-dessus (qui fige la fin juste avant la
-  // clôture) : sert uniquement à mesurer, après coup, un retard de démarrage (voir CLAUDE.md, section
-  // "Retard de démarrage" et applySingleStatusChange). Seules les pièces encore "à faire" sont
-  // concernées — une reprise après pause (en_pause -> en_cours) n'est pas un nouveau démarrage.
-  const previsionsAuDemarrage = {};
-  if(newStatut === 'en_cours'){
-    const scheduleBeforeStart = getSchedule();
-    group.forEach(({cc, oo}) => {
-      if(oo.statut !== 'a_faire') return;
-      const cBefore = scheduleBeforeStart.find(x=>x.id===cc.id);
-      const opBefore = cBefore && cBefore.pieces.find(p=>p.id===oo.id);
-      if(opBefore && opBefore.start) previsionsAuDemarrage[oo.id] = opBefore.start;
-    });
-  }
+  // Plus de calcul de "prévision au démarrage" ici : depuis capturePrevisionAuDemarrage (voir
+  // CLAUDE.md, "Retard de démarrage"), previsionAuDemarrage est figé une seule fois à la CRÉATION de
+  // la pièce, jamais au moment de son démarrage réel — cette transition n'a donc plus rien à calculer
+  // pour ce champ (seul l'ancien mécanisme, retiré, en avait besoin ici).
 
   const nowStr = toInputValue(new Date());
   let maxAdvanceH = 0;
   group.forEach(({cc, oo}) => {
-    const diffH = applySingleStatusChange(cc, oo, newStatut, nowStr, plannedEndsBefore[oo.id], previsionsAvant[oo.id], previsionsAuDemarrage[oo.id]);
+    const diffH = applySingleStatusChange(cc, oo, newStatut, nowStr, plannedEndsBefore[oo.id], previsionsAvant[oo.id]);
     if(diffH && diffH > maxAdvanceH) maxAdvanceH = diffH;
   });
   if(maxAdvanceH > 0){
@@ -5929,10 +5958,18 @@ function buildImportGroups(rows, kRef, kDate, kUrg, kPoste, kPiece, kEtape, kTU,
 // sur une version fraîche en cas de conflit d'enregistrement — comme pour la création manuelle
 // d'une commande. Retrouve "g.existing" par son nom DANS l'état cible, plutôt que de se fier à une
 // référence figée au moment de l'analyse du fichier (qui deviendrait obsolète après un rejeu).
+// `createdPieceIds` (retour) — ids de TOUTES les pièces réellement ajoutées à targetState par cet
+// appel (nouvelle commande ou lignes ajoutées à une commande existante) : sert à l'appelant pour
+// capturePrevisionAuDemarrage (voir CLAUDE.md, "Retard de démarrage") — chaque appel de cette
+// fonction crée des COPIES fraîches des pièces (`{...p}`), jamais les mêmes objets qu'un appel
+// précédent (contrairement à `submitNewCommande`) : l'appelant doit donc rappeler
+// capturePrevisionAuDemarrage à CHAQUE invocation (y compris un rejeu après conflit), jamais une
+// seule fois après le premier appel.
 function commitImportGroups(targetState, groups){
   let sansEcheance = 0;
   const createdNoms = [];
   const updatedNoms = [];
+  const createdPieceIds = [];
   Object.keys(groups).forEach(ref => {
     const g = groups[ref];
     if(g.pieces.length===0) return; // toutes les lignes de cette référence étaient des doublons
@@ -5944,6 +5981,7 @@ function commitImportGroups(targetState, groups){
       const existingMaxPhase = existing.pieces.reduce((mx,p) => Math.max(mx, Number(p.phase)||1), 1);
       const toAdd = newOnes.map(p => ({ ...p, phase: (Number(p.phase)||1) + existingMaxPhase })); // s'ajoute strictement après les phases déjà en place
       existing.pieces.push(...toAdd);
+      createdPieceIds.push(...toAdd.map(p=>p.id));
       updatedNoms.push({ nom: ref, nbAjoutees: toAdd.length });
       return;
     }
@@ -5955,9 +5993,10 @@ function commitImportGroups(targetState, groups){
     const importedCmd = { id: uid('c'), nom: ref, refClient: g.refClient||'', dateBesoin: g.dateBesoin, urgence: g.urgence, pieces: g.pieces.map(p=>({...p})), zoneStockage: null };
     targetState.commandes.push(importedCmd);
     assignStorageZone(targetState, importedCmd);
+    createdPieceIds.push(...importedCmd.pieces.map(p=>p.id));
     createdNoms.push({ nom: ref, dateBesoin: g.dateBesoin, urgence: g.urgence, nbPieces: g.pieces.length, zoneStockage: importedCmd.zoneStockage });
   });
-  return { createdNoms, updatedNoms, sansEcheance };
+  return { createdNoms, updatedNoms, sansEcheance, createdPieceIds };
 }
 // Date de début "au mieux" pour chaque pièce d'un import, calculée AVANT de confirmer quoi que ce
 // soit : simule l'ajout de ces groupes sur une copie jetable de l'état réel, puis lit la position que
@@ -6019,7 +6058,10 @@ function processExcelImportRows(rows){
     return;
   }
 
-  const { createdNoms, updatedNoms, sansEcheance } = commitImportGroups(state, groups);
+  const { createdNoms, updatedNoms, sansEcheance, createdPieceIds } = commitImportGroups(state, groups);
+  // Aucun mécanisme de "Regrouper" sur l'import Excel standard (case réservée à l'import personnalisé,
+  // voir CLAUDE.md "Regroupement") : rien à attendre avant de figer la prévision de démarrage ici.
+  capturePrevisionAuDemarrage(state, createdPieceIds);
 
   commit();
 
@@ -6368,6 +6410,12 @@ function confirmCustomImport(){
         if(realPiece) delete realPiece._importGroupTag;
       });
     });
+    // Figé APRÈS le regroupement manuel ci-dessus (voir capturePrevisionAuDemarrage) : une pièce
+    // rejoignant un groupe doit être projetée avec la durée du groupe entier, pas sa seule durée
+    // isolée. Rappelé à CHAQUE invocation de applyFn (voir le commentaire de commitImportGroups) —
+    // jamais une seule fois après le tout premier appel, puisque commitImportGroups recrée des
+    // copies de pièces distinctes à chaque rejeu.
+    capturePrevisionAuDemarrage(targetState, result.createdPieceIds);
     // Profil de correspondance, enregistré sur ce même état — survit donc lui aussi à un rejeu.
     if(!targetState.importProfiles) targetState.importProfiles = [];
     const profileData = { map: { ...cs.map }, posteMapping: { ...cs.posteMapping }, groupByValue: { ...cs.groupByValue }, sousTraitanceByValue: { ...cs.sousTraitanceByValue } };
