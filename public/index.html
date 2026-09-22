@@ -897,7 +897,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.36.1';
+const APP_VERSION = '1.37.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1338,7 +1338,9 @@ let correctOperatorDraft = null;
 // même outil, déjà utilisé et testé tel quel depuis "Temps de production".
 let correctPointageDraft = null;
 // Filtres de la page "Pointages" — purement transitoires (comme searchQuery), jamais persistés.
-let pointagesFilters = { personne:'', poste:'', statut:'toutes', range:'month', search:'' };
+// customFrom/customTo (AAAA-MM-JJ) ne servent qu'en range==='custom' (Plage personnalisée) —
+// voir pointagesRangeBounds().
+let pointagesFilters = { personne:'', poste:'', statut:'toutes', range:'thisMonth', search:'', customFrom:null, customTo:null };
 // Correction du DÉTAIL des sessions d'une pièce encore ACTIVE (en_cours/en_pause) depuis "Pointages"
 // — voir CLAUDE.md, section "Onglet Pointages". Distinct de correctPointageDraft (qui corrige les
 // champs agrégés d'une pièce déjà TERMINÉE) : une pièce active tire son temps affiché EN DIRECT de
@@ -7073,15 +7075,38 @@ function computeAllPointages(st){
   });
   return rows;
 }
-// Fenêtre de récence pour les pointages déjà TERMINÉS uniquement (une tâche encore en cours/en
-// pause reste toujours visible, quelle que soit la fenêtre choisie — même principe que
-// doneFilterRange sur la liste "Tâches terminées" du planning) : au-delà d'un atelier avec quelques
-// mois d'historique, "toutes" produirait une liste bien trop longue à parcourir par défaut.
-function pointagesRangeCutoff(range){
-  if(range === 'all') return null;
-  const days = range === 'week' ? 7 : range === 'quarter' ? 90 : 30;
-  const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate() - days);
-  return d;
+// Bornes [start, end[ de la fenêtre de récence pour les pointages déjà TERMINÉS uniquement (une
+// tâche encore en cours/en pause reste toujours visible, quelle que soit la fenêtre choisie — même
+// principe que doneFilterRange sur la liste "Tâches terminées" du planning) : au-delà d'un atelier
+// avec quelques mois d'historique, "Toutes" produirait une liste bien trop longue à parcourir par
+// défaut. 'today'/'thisWeek'/'thisMonth'/'custom' sont des fenêtres CALENDAIRES (`end` exclusif,
+// même convention que `dueFilterBounds`/`tempsProdPeriodBounds`) ; 'week' reste une fenêtre
+// GLISSANTE de 7 jours (comportement préexistant conservé tel quel, sans borne haute) — les deux
+// répondent à des questions différentes ("depuis lundi" vs "les 7 derniers jours").
+function pointagesRangeBounds(range){
+  if(range === 'all') return { start:null, end:null };
+  const now = new Date();
+  if(range === 'today'){
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0);
+    return { start, end: new Date(start.getFullYear(), start.getMonth(), start.getDate()+1, 0,0,0,0) };
+  }
+  if(range === 'thisWeek'){
+    const start = startOfWeek(now); start.setHours(0,0,0,0);
+    return { start, end: new Date(start.getFullYear(), start.getMonth(), start.getDate()+7, 0,0,0,0) };
+  }
+  if(range === 'thisMonth'){
+    const start = new Date(now.getFullYear(), now.getMonth(), 1, 0,0,0,0);
+    return { start, end: new Date(now.getFullYear(), now.getMonth()+1, 1, 0,0,0,0) };
+  }
+  if(range === 'custom'){
+    if(!pointagesFilters.customFrom || !pointagesFilters.customTo) return { start:null, end:null };
+    const start = new Date(pointagesFilters.customFrom+'T00:00:00');
+    const finDay = new Date(pointagesFilters.customTo+'T00:00:00');
+    return { start, end: new Date(finDay.getFullYear(), finDay.getMonth(), finDay.getDate()+1, 0,0,0,0) };
+  }
+  // 'week' — fenêtre glissante de 7 jours, comportement préexistant.
+  const start = new Date(); start.setHours(0,0,0,0); start.setDate(start.getDate() - 7);
+  return { start, end:null };
 }
 function updatePointagesFilter(field, value){
   pointagesFilters[field] = value;
@@ -7095,15 +7120,19 @@ function pointageStatutBadge(statut){
 }
 function renderPointagesPage(){
   const all = computeAllPointages(state);
-  const cutoff = pointagesRangeCutoff(pointagesFilters.range);
+  const { start: rangeStart, end: rangeEnd } = pointagesRangeBounds(pointagesFilters.range);
   const searchQ = pointagesFilters.search.trim().toLowerCase();
   let list = all.filter(r => {
     if(pointagesFilters.personne && !r.operatorIds.map(String).includes(pointagesFilters.personne)) return false;
     if(pointagesFilters.poste && String(r.machineId) !== pointagesFilters.poste) return false;
     if(pointagesFilters.statut !== 'toutes' && r.statut !== pointagesFilters.statut) return false;
-    if(cutoff && r.statut === 'termine'){
+    if((rangeStart || rangeEnd) && r.statut === 'termine'){
       const refStr = r.finReel || r.debutReel;
-      if(refStr && new Date(refStr) < cutoff) return false;
+      if(refStr){
+        const refDate = new Date(refStr);
+        if(rangeStart && refDate < rangeStart) return false;
+        if(rangeEnd && refDate >= rangeEnd) return false;
+      }
     }
     if(searchQ){
       const hay = `${r.commandeNom} ${r.piece||''} ${r.etape||''}`.toLowerCase();
@@ -7164,11 +7193,18 @@ function renderPointagesPage(){
       </select></span>
       <span class="search-bar-group"><label class="field" style="margin:0;">Période</label>
       <select data-action="pointages-filter" data-field="range" style="width:auto;">
+        <option value="today" ${pointagesFilters.range==='today'?'selected':''}>Aujourd'hui</option>
         <option value="week" ${pointagesFilters.range==='week'?'selected':''}>7 derniers jours</option>
-        <option value="month" ${pointagesFilters.range==='month'?'selected':''}>30 derniers jours</option>
-        <option value="quarter" ${pointagesFilters.range==='quarter'?'selected':''}>90 derniers jours</option>
+        <option value="thisWeek" ${pointagesFilters.range==='thisWeek'?'selected':''}>Cette semaine</option>
+        <option value="thisMonth" ${pointagesFilters.range==='thisMonth'?'selected':''}>Ce mois</option>
         <option value="all" ${pointagesFilters.range==='all'?'selected':''}>Toutes</option>
+        <option value="custom" ${pointagesFilters.range==='custom'?'selected':''}>Plage personnalisée</option>
       </select></span>
+      ${pointagesFilters.range==='custom' ? `
+      <span class="search-bar-group"><label class="field" style="margin:0;">Du</label>
+      <input type="date" data-action="pointages-filter" data-field="customFrom" value="${pointagesFilters.customFrom||''}" style="width:auto;"></span>
+      <span class="search-bar-group"><label class="field" style="margin:0;">Au</label>
+      <input type="date" data-action="pointages-filter" data-field="customTo" value="${pointagesFilters.customTo||''}" style="width:auto;"></span>` : ''}
       <input type="text" id="pointages-search-input" placeholder="Rechercher une commande ou une pièce..." value="${escapeHtml(pointagesFilters.search)}" style="width:auto; flex:1; min-width:160px;">
     </div>
     <table class="ops-table">

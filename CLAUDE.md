@@ -1050,11 +1050,29 @@ le bouton « ✎ Opérateur ».
   `operatorIds` = les clés de `dureeReelleParOperateur` si posé (qui a RÉELLEMENT travaillé),
   sinon repli sur `operatorUserId` (opérateur assigné) — même priorité que
   `computeProductionTimeByUser`.
-- `pointagesRangeCutoff(range)` (`'week'`\|`'month'`\|`'quarter'`\|`'all'`) — fenêtre de récence
-  appliquée **uniquement** aux pointages déjà `termine` (une tâche encore `en_cours`/`en_pause`
-  reste toujours visible, quelle que soit la fenêtre choisie) : même principe que `doneFilterRange`
-  sur la liste "Tâches terminées" du planning, pour ne pas noyer la liste sous des mois d'historique
-  par défaut (`'month'`).
+- `pointagesRangeBounds(range)` (`'today'`\|`'week'`\|`'thisWeek'`\|`'thisMonth'`\|`'all'`\|`'custom'`)
+  — bornes `[start, end[` de la fenêtre de récence appliquée **uniquement** aux pointages déjà
+  `termine` (une tâche encore `en_cours`/`en_pause` reste toujours visible, quelle que soit la
+  fenêtre choisie) : même principe que `doneFilterRange` sur la liste "Tâches terminées" du
+  planning, pour ne pas noyer la liste sous des mois d'historique par défaut (`'thisMonth'`).
+  Remplace l'ancienne `pointagesRangeCutoff` (`'week'`\|`'month'`\|`'quarter'`\|`'all'`, une seule
+  borne basse) — retour utilisateur réel : "30 derniers jours"/"90 derniers jours" (fenêtres
+  **glissantes**, ancrées sur l'instant présent) ne répondaient pas à "cette semaine"/"ce mois"
+  (fenêtres **calendaires**, ancrées sur lundi/le 1er du mois), et il manquait "Aujourd'hui" ainsi
+  qu'une plage entre deux dates choisies à la main.
+  - `'today'`/`'thisWeek'`/`'thisMonth'`/`'custom'` sont calendaires (`end` exclusif, même
+    convention que `dueFilterBounds`/`tempsProdPeriodBounds`) : `'thisWeek'` démarre au lundi
+    (`startOfWeek`, déjà utilisé ailleurs dans l'appli), `'thisMonth'` au 1er du mois.
+  - `'week'` (« 7 derniers jours ») est **conservée telle quelle** (fenêtre glissante, sans borne
+    haute) — seules "30 derniers jours"/"90 derniers jours" ont été retirées, pas "7 derniers
+    jours" : rien ne demandait son retrait, et une fenêtre glissante courte reste utile pour
+    "qu'est-ce qui s'est passé récemment", une question différente de "cette semaine civile".
+  - `'custom'` lit `pointagesFilters.customFrom`/`customTo` (`"AAAA-MM-JJ"`, deux `<input
+    type="date">` affichés uniquement quand `range==='custom'`, sur le modèle exact de
+    `tempsProdRangeDebut`/`Fin` côté "Temps de production") — sans les deux dates renseignées :
+    aucune borne, pas de plantage. Bénéficie automatiquement du redessin différé jusqu'au
+    `focusout` (`isDeferredTimeField`, générique à tout `type="date"`/`"time"` porteur d'un
+    `data-action` — voir Pièges), aucun code supplémentaire nécessaire.
 - Filtres (`pointagesFilters` — personne, poste, statut, période, recherche texte) : purement
   transitoires, jamais persistés (comme `searchQuery`). La recherche texte réutilise le mécanisme
   de saisie "live" déjà en place pour `#commande-search-input`/`#archive-search-input` (id dédié
