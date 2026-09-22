@@ -897,7 +897,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.40.0';
+const APP_VERSION = '1.41.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -4403,7 +4403,25 @@ function submitNewCommande(){
   });
 
   const nomTrim = draft.nom.trim();
-  const existing = state.commandes.find(c => c.nom.trim().toLowerCase() === nomTrim.toLowerCase());
+  let existing = state.commandes.find(c => c.nom.trim().toLowerCase() === nomTrim.toLowerCase());
+  // Aucune commande ACTIVE du même nom : avant de conclure qu'il n'y a rien, vérifie les commandes
+  // archivées — sans ça, recréer une commande sous un numéro déjà archivé (cas réel : le client
+  // rajoute des pièces sur une référence déjà entièrement livrée) crée silencieusement une SECONDE
+  // commande au même nom, sans aucun lien avec l'historique/la zone de l'ancienne (voir CLAUDE.md,
+  // « Recréer une commande sous un nom déjà archivé »). Un simple avertissement, jamais bloquant :
+  // refuser garde le comportement d'origine (commande indépendante), pour le cas où c'est vraiment
+  // voulu (référence réutilisée pour une affaire sans rapport).
+  let mergeArchivedId = null;
+  if(!existing){
+    const archived = (state.commandesArchivees||[]).find(c => c.nom.trim().toLowerCase() === nomTrim.toLowerCase());
+    if(archived){
+      const msg = `Une commande "${archived.nom}" existe déjà, mais elle est archivée (déjà entièrement terminée).\n\nDésarchiver cette commande pour y ajouter la/les nouvelle(s) ligne(s), plutôt que de créer une commande séparée portant le même nom ?\n\n(Annuler pour créer quand même une commande indépendante.)`;
+      if(confirm(msg)){
+        existing = archived;
+        mergeArchivedId = archived.id;
+      }
+    }
+  }
 
   if(existing){
     const seenExisting = new Set(existing.pieces.map(p => pieceDupKey(p.piece, p.etape, p.machineId, p.numeroLigne)));
@@ -4427,7 +4445,9 @@ function submitNewCommande(){
       alert(`Toutes les lignes saisies existent déjà sur la commande "${existing.nom}" — rien à ajouter.`);
       return;
     }
-    let msg = `Une commande "${existing.nom}" existe déjà.\n\n${toAdd.length} nouvelle(s) ligne(s) seront ajoutées à cette commande existante (rien n'est dupliqué).`;
+    let msg = mergeArchivedId
+      ? `${toAdd.length} nouvelle(s) ligne(s) seront ajoutées à la commande désarchivée "${existing.nom}" (elle redevient active).`
+      : `Une commande "${existing.nom}" existe déjà.\n\n${toAdd.length} nouvelle(s) ligne(s) seront ajoutées à cette commande existante (rien n'est dupliqué).`;
     if(skippedNames.length) msg += `\n${skippedNames.length} ligne(s) déjà présente(s), ignorée(s) : ${skippedNames.join(', ')}.`;
     msg += `\n\nConfirmer ?`;
     if(!confirm(msg)) return;
@@ -4435,7 +4455,19 @@ function submitNewCommande(){
     // on retrouve la commande par son nom, et on n'ajoute que les lignes qui n'y seraient pas déjà
     // (protège aussi contre une double-application si une tentative précédente avait déjà réussi).
     const applyFn = (targetState) => {
-      const target = targetState.commandes.find(c => c.nom.trim().toLowerCase() === nomTrim.toLowerCase());
+      let target = targetState.commandes.find(c => c.nom.trim().toLowerCase() === nomTrim.toLowerCase());
+      if(!target && mergeArchivedId){
+        // Rejoue le désarchivage sur l'état cible — idempotent : si un rejeu précédent avait déjà
+        // réussi, la commande est déjà dans `commandes`, ce `findIndex` ne la retrouve plus ici et
+        // on retombe sur la branche `target` juste au-dessus. Conserve zoneStockage/pieces telles
+        // quelles (aucun champ réinitialisé) : la commande retrouve sa zone d'origine sans repasser
+        // par assignStorageZone, contrairement à une commande réellement nouvelle.
+        const idx = (targetState.commandesArchivees||[]).findIndex(c => c.id === mergeArchivedId);
+        if(idx >= 0){
+          [target] = targetState.commandesArchivees.splice(idx, 1);
+          targetState.commandes.push(target);
+        }
+      }
       if(target){
         const already = new Set(target.pieces.map(p=>p.id));
         toAdd.forEach(p => { if(!already.has(p.id)) target.pieces.push(p); });

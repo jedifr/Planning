@@ -1445,6 +1445,55 @@ volontairement la même zone (regroupement manuel de petites affaires dans un m�
   - `assignStorageZone`/`setCommandeZone` n'ont pas besoin d'être modifiés : ils lisent déjà
     `occupiedStorageZones`/`commandesInZone`, qui portent maintenant la nouvelle règle.
 
+## Recréer une commande sous un nom déjà archivé
+
+Question utilisateur réelle : que se passe-t-il si on recrée une commande (formulaire « Nouvelle
+commande ») sous le même numéro qu'une commande **déjà archivée** — cas réel : le client rajoute des
+pièces sur une référence déjà entièrement livrée/archivée ? Réponse constatée avant ce correctif :
+rien ne relie les deux — `submitNewCommande()` (comme `commitImportGroups()`, voir plus bas) ne
+cherchait un doublon que dans `state.commandes` (actives), **jamais** dans `state.commandesArchivees`
+— une SECONDE commande, avec un nouvel id mais le même nom affiché, était donc créée silencieusement,
+sans aucun lien avec l'historique de l'ancienne : pas de zone de stockage reprise (`assignStorageZone`
+lui attribue la première zone libre, pas forcément celle de l'archive), et surtout aucune dépendance
+de phase entre les deux (`resolveEffectiveDeps` ne raisonne que sur les `pieces[]` d'**une seule**
+commande — voir « Dépendances de phase » plus haut — la nouvelle commande ne « voit » donc jamais le
+travail déjà terminé sur l'ancienne, même sur la même pièce).
+
+- **`submitNewCommande()` vérifie désormais aussi `state.commandesArchivees`**, mais seulement si
+  aucune commande **active** du même nom n'a déjà été trouvée (une commande active homonyme continue
+  de primer, comportement inchangé — l'archive n'est jamais consultée dans ce cas). Un simple
+  avertissement (`confirm()`), **jamais bloquant** : « Une commande "{nom}" existe déjà, mais elle
+  est archivée... Désarchiver cette commande... plutôt que de créer une commande séparée du même
+  nom ? ». Refuser préserve exactement le comportement d'origine (commande active indépendante créée
+  à côté de l'archive, jamais modifiée) — un numéro de référence légitimement réutilisé pour une
+  affaire sans rapport reste possible, la personne garde la main.
+- **Accepter réutilise la commande archivée telle quelle** : elle est retirée de
+  `commandesArchivees` et repoussée dans `commandes` (même objet, même id — pas une copie), puis les
+  nouvelles lignes lui sont ajoutées exactement comme pour une commande active existante homonyme
+  (même décalage de phase après `existingMaxPhase`, même déduplication `pieceDupKey` des lignes déjà
+  présentes). **Aucun champ n'est réinitialisé** : `zoneStockage` reste celui d'origine (jamais
+  réattribué via `assignStorageZone`, contrairement à une commande réellement nouvelle) — la
+  commande retrouve exactement son ancien emplacement physique, plus fidèle à la réalité qu'une zone
+  fraîchement piochée. Les pièces déjà `termine` de l'archive restent telles quelles : les nouvelles
+  lignes, elles, redeviennent visibles au moteur de planification en même temps que toute la commande
+  redevient active — les dépendances de phase (même pièce, phase supérieure) fonctionnent donc
+  désormais correctement entre l'ancien et le nouveau travail, puisque tout vit à nouveau dans le
+  même tableau `pieces[]`.
+- Le désarchivage lui-même est rejoué **à l'intérieur** de `applyFn` (rejouable en cas de conflit
+  d'enregistrement, comme le reste de `submitNewCommande`) — pas fait une seule fois avant : sur un
+  rejeu après conflit, `applyFn` retrouve d'abord la commande dans `commandes` (déjà désarchivée par
+  la tentative précédente) avant de chercher dans `commandesArchivees`, jamais l'inverse — idempotent,
+  aucun risque de la désarchiver deux fois ni de la dupliquer.
+- **Import (Excel et personnalisé) : non traité par ce correctif, réflexe restant à appliquer.**
+  `commitImportGroups()` a exactement le même angle mort (`targetState.commandes.find(...)`, jamais
+  `commandesArchivees`) — un import qui recrée une référence déjà archivée créera donc toujours une
+  commande séparée, sans avertissement. Non corrigé ici : les deux flux d'import n'ont pas de point
+  d'interruption par commande adapté à un `confirm()` (l'import Excel standard est direct, sans
+  aperçu ; l'import personnalisé a un aperçu mais porte sur des dizaines de lignes d'un coup, un
+  `confirm()` par référence archivée détectée serait intrusif) — traiter ce cas correctement (bandeau
+  d'avertissement dans l'aperçu plutôt qu'un `confirm()` bloquant, par exemple) est un changement de
+  portée plus large que celui demandé ici.
+
 ## Numéro de ligne, doublons et éclatement en campagnes à l'import
 
 Certains GPAO clients (ex. export "CodeOF" du type `C026-0721/001`) numérotent chaque ligne d'une
@@ -2691,6 +2740,20 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   DÉBUT pour une tâche pas encore commencée, contrairement à une position de FIN pour une tâche déjà
   bien avancée), la seule prévision qui garde un sens est celle prise au tout début de la vie de la
   chose mesurée, pas juste avant la mesure elle-même.
+- **Détection de doublon de commande qui ne regarde que les commandes actives, jamais les
+  archivées.** `submitNewCommande()`/`commitImportGroups()` cherchaient une commande homonyme
+  uniquement dans `state.commandes` (`c.nom.trim().toLowerCase() === nomTrim...`) — une commande déjà
+  **archivée** portant le même nom était invisible à cette recherche. Question utilisateur réelle qui
+  a révélé le trou : recréer une commande sous un numéro déjà archivé (le client rajoute des pièces
+  sur une référence déjà livrée) créait donc silencieusement une SECONDE commande homonyme, sans
+  aucun lien avec l'historique/la zone de l'ancienne — voir « Recréer une commande sous un nom déjà
+  archivé » plus haut pour le correctif complet (avertissement + fusion optionnelle par désarchivage,
+  côté `submitNewCommande` seulement — les deux imports restent concernés, non traités, portée jugée
+  trop large pour cette demande). Réflexe : toute recherche de "cette commande existe-t-elle déjà ?"
+  par nom doit se demander si elle doit aussi couvrir `state.commandesArchivees`, pas seulement
+  `state.commandes` — une commande archivée reste une commande bien réelle, juste écartée du moteur
+  de planification pour la performance (voir « Zones de stockage »/`archiveOldCommandes`), pas
+  supprimée.
 
 ## Conventions
 
