@@ -1681,6 +1681,54 @@ devait alors être recorrigée à la main, une par une, après coup.
   autre commande — ce réglage ne fait que choisir la valeur de départ la plus utile pour un fichier
   qui n'en fournit pas.
 
+**Désactivation sans suppression (case « Utiliser cette valeur par défaut »).** Retour utilisateur
+réel, juste après la mise en place du réglage ci-dessus : pouvoir neutraliser `map.urgenceDefaut`
+sans perdre la valeur déjà choisie, plutôt que devoir la reposer sur "Normale" à la main pour
+revenir au comportement d'origine.
+
+- `map.urgenceDefautActif` (bool, `true` par défaut) — coché par défaut (comportement inchangé pour
+  quiconque n'y touche pas). Case à cocher juste sous le sélecteur (`data-action=
+  "toggle-custom-import-urgence-defaut-actif"`) : décochée, le `<select>` "Urgence par défaut" est
+  **désactivé** (`disabled`, jamais retiré du DOM ni du `state` — la valeur choisie reste
+  affichée et mémorisée, prête à se réappliquer dès qu'on recoche) et `transformCustomRow` ignore
+  `map.urgenceDefaut`, repliant directement sur `'normale'` pour toute ligne sans valeur exploitable
+  dans le fichier — même repli qu'un import qui n'aurait jamais eu ce réglage. `applyImportProfile`
+  porte le même garde-fou que les autres champs (`if(customImportState.map.urgenceDefautActif ===
+  undefined) customImportState.map.urgenceDefautActif = true;`) pour un profil enregistré avant
+  l'ajout de cette case.
+- N'affecte jamais une vraie valeur venant du fichier (colonne associée et cellule non vide) : la
+  case ne fait que choisir CE QUI REMPLACE une valeur absente, jamais un filtre sur les valeurs déjà
+  présentes.
+
+**Dernier ajustement possible à l'aperçu, juste avant de confirmer.** Retour utilisateur réel :
+choisir un défaut pour tout l'import (ci-dessus) ne permet pas de corriger une commande précise
+sans retoucher tout le fichier — contrairement à poste/opérateur/date de début possible, déjà
+ajustables ligne par ligne dans l'aperçu (`renderCustomImportModal`, étape `'preview'`, voir « Date
+de début « au mieux » à l'aperçu » plus haut).
+
+- `updateImportPreviewUrgence(groupKey, value)` — **contrairement** à `updateImportPreviewPoste`/
+  `updateImportPreviewOperateur`/`updateImportPreviewDateDebutPossible` (des champs de PIÈCE,
+  recherchés par `oid` à travers tous les groupes), l'urgence est un champ de COMMANDE (voir modèle
+  de données) : `buildImportGroups` la fige une seule fois par groupe (`g.urgence`), jamais par
+  pièce. La fonction écrit donc directement `cs.preview.groups[groupKey].urgence`, indexée par la
+  clé du groupe (la référence, éventuellement suffixée d'une date de campagne — voir « Éclatement en
+  campagnes » plus haut), jamais par un id de pièce.
+- Sélecteur (`data-action="update-import-preview-urgence" data-ref="{clé du groupe}"`) sur la ligne
+  d'en-tête de chaque commande de l'aperçu, à côté de son nom — préchargé sur la valeur déjà résolue
+  par `transformCustomRow` (fichier, ou `urgenceDefaut` si actif, ou `'normale'`), donc jamais vide
+  ni sur une valeur surprenante à l'ouverture de l'aperçu.
+- **Absent pour un groupe qui fusionne dans une commande EXISTANTE** (`g.existing`) : `g.urgence`
+  y est bien calculé par `buildImportGroups` comme pour toute autre référence, mais
+  `commitImportGroups` ne le lit **jamais** dans la branche de fusion (seules les nouvelles pièces
+  sont ajoutées ; `existing.urgence` n'est pas touché) — un sélecteur y serait trompeur puisque le
+  modifier n'aurait aucun effet réel. Comportement cohérent avec le reste de l'aperçu : la commande
+  existante garde son urgence déjà en place, modifiable comme n'importe quelle autre commande active
+  après l'import, pas depuis cet écran.
+- Comme la colonne "Début au mieux", recalculée à chaque rendu de l'étape preview — mais ici sans
+  aucun recalcul de simulation à faire : `g.urgence` est simplement relu tel quel dans le `state`
+  transitoire de l'aperçu (`customImportState.preview.groups`), la valeur choisie survivant donc à
+  toute correction de poste/opérateur qui redéclencherait un rendu.
+
 ## Dates flexibles à l'import
 
 `parseFlexibleDate(raw)` accepte, en plus d'un objet `Date` déjä résolu (cellule Excel réellement
