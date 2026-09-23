@@ -1645,6 +1645,42 @@ pas démarrer avant l'arrivée d'une matière première, connue au moment de pr�
   (`isDeferredTimeField`, voir Pièges) — aucun code supplémentaire nécessaire, le mécanisme est
   générique à tout champ `type="date"`/`"time"` porteur d'un `data-action`.
 
+### Urgence par défaut à l'import personnalisé
+
+Retour utilisateur réel, capture d'écran à l'appui (export GPAO client, colonne "Urgence" laissée
+sur « — aucune — ») : de nombreux fichiers clients n'ont tout simplement **aucune** colonne
+Urgence. Sans association possible, `buildImportGroups` (partagée avec l'import Excel standard)
+retombait silencieusement sur `'normale'` en dur, sans que l'utilisateur ne puisse choisir une
+autre valeur pour tout l'import — une commande réellement urgente importée depuis un tel fichier
+devait alors être recorrigée à la main, une par une, après coup.
+
+- `map.urgenceDefaut` (`'normale'` par défaut) — nouveau champ de `customImportState.map`,
+  **propre à l'import personnalisé**, choisi une fois pour tout l'import plutôt que ligne par
+  ligne (comme `defaultMachineId`, voir « Import personnalisé » plus haut, pas un second mécanisme
+  de préférence à inventer). `applyImportProfile` porte le même garde-fou que `dateDebutPossible`/
+  `reference2`/`refClient` (`if(customImportState.map.urgenceDefaut === undefined)
+  customImportState.map.urgenceDefaut = 'normale';`) pour un profil enregistré avant l'ajout de ce
+  champ.
+- Sélecteur « Urgence par défaut » (Normale/Importante/Urgente), à côté de « Poste par défaut »
+  dans la section « Valeurs par défaut (si absentes du fichier) » de l'étape mapping
+  (`data-action="custom-import-default-urgence"`) — même emplacement, même esprit que le poste par
+  défaut : une valeur de repli, jamais un remplacement forcé de ce que le fichier fournit
+  réellement.
+- **Appliqué entièrement dans `transformCustomRow`, jamais dans `buildImportGroups`.**
+  `buildImportGroups` reste strictement inchangé (et continue de retomber sur `'normale'` en dur
+  pour l'import Excel standard, qui n'a pas cette notion de défaut choisi) — `transformCustomRow`
+  résout l'urgence de chaque ligne **avant** de la lui transmettre : la valeur du fichier prime
+  dès qu'elle est présente et non vide sur cette ligne précise (même invalide — laissée telle
+  quelle à la charge de `buildImportGroups`, comme avant cette fonctionnalité), sinon
+  `map.urgenceDefaut` s'applique. Couvre donc aussi bien l'absence totale de colonne associée
+  qu'une colonne associée mais dont la cellule est vide sur une ligne particulière d'un fichier par
+  ailleurs rempli — les deux cas retombent sur le même réglage, jamais sur `'normale'` en dur dans
+  un cas et le défaut choisi dans l'autre.
+- Aucun effet rétroactif ni sur l'import Excel standard : une commande importée garde de toute
+  façon sa propre case "Urgence", modifiable individuellement après import comme n'importe quelle
+  autre commande — ce réglage ne fait que choisir la valeur de départ la plus utile pour un fichier
+  qui n'en fournit pas.
+
 ## Dates flexibles à l'import
 
 `parseFlexibleDate(raw)` accepte, en plus d'un objet `Date` déjä résolu (cellule Excel réellement
@@ -2754,6 +2790,19 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   `state.commandes` — une commande archivée reste une commande bien réelle, juste écartée du moteur
   de planification pour la performance (voir « Zones de stockage »/`archiveOldCommandes`), pas
   supprimée.
+- **Une valeur de repli codée en dur, sans façon pour l'utilisateur de la changer, pour un champ
+  absent d'un fichier source.** `buildImportGroups` (partagée par les deux imports) retombait sur
+  `'normale'` en dur dès qu'aucune colonne "Urgence" n'était mappée — correct comme dernier filet
+  de sécurité, mais aucun moyen de choisir une autre valeur pour un fichier qui n'a structurellement
+  pas cette colonne (retour utilisateur réel, capture d'écran d'un export GPAO client sans colonne
+  Urgence). Corrigé en ajoutant `map.urgenceDefaut` (import personnalisé uniquement, voir « Urgence
+  par défaut à l'import personnalisé » plus haut), résolu dans `transformCustomRow` **avant**
+  `buildImportGroups` plutôt que dans la fonction partagée elle-même — pour ne pas complexifier
+  l'import Excel standard avec une notion de défaut qu'il n'a pas. Réflexe : un repli en dur dans une
+  fonction partagée par plusieurs flux d'import n'est pas forcément un bug en soi, mais dès qu'un
+  utilisateur a besoin de le personnaliser pour UN SEUL de ces flux, résoudre la valeur en amont
+  (dans le flux concerné) plutôt que d'ajouter un paramètre optionnel à la fonction partagée —
+  garde cette dernière simple et inchangée pour les flux qui n'ont pas ce besoin.
 
 ## Conventions
 

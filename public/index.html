@@ -897,7 +897,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.41.0';
+const APP_VERSION = '1.42.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -6132,7 +6132,7 @@ function handleCustomImportFile(e){
         profileId: null, profileName: '',
         map: { reference:'', referenceSplitSlash:true, reference2:'', reference2Sep:' ', refClient:'', dateBesoin:'', urgence:'', poste:'', piece:'', etape:'',
                quantite:'', dureeMode:'unitaire', dureeColonne:'', phase:'', operateur:'', matiere:'', epaisseur:'', dateDebutPossible:'',
-               defaultMachineId:'', defaultOperatorByMachine:{} },
+               defaultMachineId:'', defaultOperatorByMachine:{}, urgenceDefaut:'normale' },
         posteValues: [], posteMapping: {}, groupByValue: {}, sousTraitanceByValue: {}, profileMapSnapshot: null, preview: null
       };
       let lastProfileId = null;
@@ -6162,6 +6162,7 @@ function applyImportProfile(profileId){
   if(customImportState.map.reference2Sep === undefined) customImportState.map.reference2Sep = ' ';
   if(customImportState.map.refClient === undefined) customImportState.map.refClient = '';         // profil créé avant la réf. commande client
   if(customImportState.map.dateDebutPossible === undefined) customImportState.map.dateDebutPossible = ''; // profil créé avant la date de début possible
+  if(customImportState.map.urgenceDefaut === undefined) customImportState.map.urgenceDefaut = 'normale'; // profil créé avant l'urgence par défaut
   // Reclasse les clés du profil (valeurs brutes du fichier) selon la même normalisation que le
   // reste de l'import — un profil enregistré avant l'ajout de cette normalisation avait ses clés
   // dans la casse d'origine, ce qui les rendait invisibles aux comparaisons normalisées actuelles.
@@ -6292,12 +6293,20 @@ function transformCustomRow(row, map, posteMapping, groupByValue, sousTraitanceB
     const defaultUser = usersList.find(u=>String(u.id)===map.defaultOperatorByMachine[machineId]);
     if(defaultUser) operateurNom = defaultUser.username;
   }
+  // Urgence : celle du fichier si la colonne est associée ET que la cellule n'est pas vide sur cette
+  // ligne précise, sinon la valeur choisie une fois pour tout l'import (map.urgenceDefaut, voir
+  // CLAUDE.md « Urgence par défaut à l'import personnalisé ») — pas seulement quand aucune colonne
+  // n'est associée : une cellule vide au milieu d'un fichier par ailleurs rempli doit retomber sur ce
+  // même réglage, jamais sur "normale" en dur (buildImportGroups, lui, reste inchangé : il continue
+  // de retomber sur "normale" pour l'import Excel standard, qui n'a pas cette notion de défaut choisi).
+  let urgenceRaw = map.urgence ? String(row[map.urgence]||'').trim() : '';
+  if(!urgenceRaw) urgenceRaw = map.urgenceDefaut || 'normale';
   return {
     'Référence commande': ref,
     'NumeroLigne': numeroLigne,
     'Réf commande client': map.refClient ? row[map.refClient] : '',
     'Date de besoin (JJ/MM/AAAA)': map.dateBesoin ? row[map.dateBesoin] : '',
-    'Urgence': map.urgence ? row[map.urgence] : '',
+    'Urgence': urgenceRaw,
     'Poste': machine ? machine.nom : '', // vide si non associé -> buildImportGroups la rejette proprement, avec un message clair
     'Pièce': map.piece ? row[map.piece] : '',
     'Étape': map.etape ? row[map.etape] : '',
@@ -8561,13 +8570,21 @@ function renderCustomImportModal(){
       </div>
       <div class="footer-note" style="text-align:left;">Matière et épaisseur alimentent la détection de regroupements possibles sur les postes fusionnables (Paramètres → Postes) — laissez sur "— aucune —" si votre fichier ne les distingue pas. Date de début possible : optionnelle, pour une pièce qui ne peut pas démarrer avant l'arrivée d'une matière — modifiable ligne par ligne dans l'aperçu qui suit, même sans colonne dédiée dans le fichier.</div>
       <div class="modal-section-title">Valeurs par défaut (si absentes du fichier)</div>
-      <div class="commande-top-fields" style="grid-template-columns:1fr;">
+      <div class="commande-top-fields" style="grid-template-columns:1fr 1fr;">
         <div><label class="field">Poste par défaut</label>
           <select data-action="custom-import-default-poste">
             <option value="">— aucun (ignorer si non reconnu) —</option>
             ${state.machines.map(m=>`<option value="${m.id}" ${cs.map.defaultMachineId===m.id?'selected':''}>${escapeHtml(m.nom)}</option>`).join('')}
           </select>
           <div class="footer-note" style="text-align:left; margin-top:4px;">Pré-rempli pour tout poste du fichier non reconnu, à l'étape suivante — reste modifiable au cas par cas. L'opérateur par défaut, lui, se règle poste par poste à l'étape suivante.</div>
+        </div>
+        <div><label class="field">Urgence par défaut</label>
+          <select data-action="custom-import-default-urgence">
+            <option value="normale" ${(cs.map.urgenceDefaut||'normale')==='normale'?'selected':''}>Normale</option>
+            <option value="importante" ${cs.map.urgenceDefaut==='importante'?'selected':''}>Importante</option>
+            <option value="urgente" ${cs.map.urgenceDefaut==='urgente'?'selected':''}>Urgente</option>
+          </select>
+          <div class="footer-note" style="text-align:left; margin-top:4px;">Utilisée pour toute ligne sans colonne "Urgence" associée ci-dessus (ou dont la cellule est vide) — chaque commande garde sa propre case "Urgence", modifiable individuellement après import comme n'importe quelle autre commande.</div>
         </div>
       </div>
       ${cs.map.reference && cs.rows[0] ? (() => {
@@ -11254,6 +11271,7 @@ function dispatchChangeAction(el, action){
     case 'custom-import-ref2-sep': if(customImportState){ customImportState.map.reference2Sep = el.value; render(); } break;
     case 'custom-import-duree-mode': setCustomImportDureeMode(el.value); break;
     case 'custom-import-default-poste': if(customImportState){ customImportState.map.defaultMachineId = el.value; render(); } break;
+    case 'custom-import-default-urgence': if(customImportState){ customImportState.map.urgenceDefaut = el.value; render(); } break;
     case 'custom-import-default-operator-for-machine': if(customImportState){
       if(el.value) customImportState.map.defaultOperatorByMachine[el.dataset.machine] = el.value;
       else delete customImportState.map.defaultOperatorByMachine[el.dataset.machine];
