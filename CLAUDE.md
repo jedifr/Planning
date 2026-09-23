@@ -1717,6 +1717,16 @@ de début « au mieux » à l'aperçu » plus haut).
   d'en-tête de chaque commande de l'aperçu, à côté de son nom — préchargé sur la valeur déjà résolue
   par `transformCustomRow` (fichier, ou `urgenceDefaut` si actif, ou `'normale'`), donc jamais vide
   ni sur une valeur surprenante à l'ouverture de l'aperçu.
+  - **Visibilité** (retour utilisateur réel, juste après la mise en place du sélecteur ci-dessus) :
+    un `<select>` nu, dans une ligne d'en-tête déjà chargée (nom de commande, "nouvelle commande"/
+    "fusion", « — début au mieux : {date} »), se perdait visuellement. Reprend désormais le même
+    style que le sélecteur d'urgence de la carte commande du planning (`class="urgency-select"`,
+    pastille colorée pleine — fond/texte/bordure calculés par `urgencyColorFor(g.urgence)`, comme
+    `renderCommandeCard`, jamais une nouvelle palette de couleurs à inventer), précédé d'un petit
+    libellé « URGENCE : » en majuscules pour que l'œil le repère d'un coup avant même de lire la
+    valeur choisie. Réflexe : un contrôle ajouté à un endroit déjà dense de l'interface doit
+    reprendre le langage visuel (couleur, forme) déjà établi ailleurs pour la même donnée, pas un
+    style neutre par défaut qui le fond dans le décor.
 - **Absent pour un groupe qui fusionne dans une commande EXISTANTE** (`g.existing`) : `g.urgence`
   y est bien calculé par `buildImportGroups` comme pour toute autre référence, mais
   `commitImportGroups` ne le lit **jamais** dans la branche de fusion (seules les nouvelles pièces

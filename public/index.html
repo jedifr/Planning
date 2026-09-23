@@ -897,7 +897,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.43.0';
+const APP_VERSION = '1.43.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -8689,11 +8689,19 @@ function renderCustomImportModal(){
         </tr>`;
       }).join('');
       const refHeadSuffix = refEarliest ? ` <span class="footer-note" style="margin:0;">— début au mieux : ${formatDT(refEarliest)}</span>` : '';
-      const urgenceSelect = `<select data-action="update-import-preview-urgence" data-ref="${escapeHtml(ref)}" style="width:auto; display:inline-block; margin-left:10px;">
-        <option value="normale" ${(g.urgence||'normale')==='normale'?'selected':''}>Normale</option>
-        <option value="importante" ${g.urgence==='importante'?'selected':''}>Importante</option>
-        <option value="urgente" ${g.urgence==='urgente'?'selected':''}>Urgente</option>
-      </select>`;
+      // Même style que le sélecteur d'urgence de la carte commande du planning (`.urgency-select`,
+      // pastille colorée pleine) plutôt qu'un `<select>` nu — repéré comme peu visible, perdu dans
+      // une ligne d'en-tête déjà chargée (nom, "nouvelle commande"/"fusion", début au mieux).
+      const urgSelUCol = urgencyColorFor(g.urgence || 'normale');
+      const urgSelStyle = urgSelUCol ? `background:${hexToRgba(urgSelUCol,0.16)};color:${urgSelUCol};border-color:${urgSelUCol};` : '';
+      const urgenceSelect = `<span style="display:inline-flex; align-items:center; gap:6px; margin-left:14px;">
+        <strong style="font-size:11px; text-transform:uppercase; letter-spacing:0.03em;">Urgence :</strong>
+        <select class="urgency-select" style="${urgSelStyle}" data-action="update-import-preview-urgence" data-ref="${escapeHtml(ref)}">
+          <option value="normale" ${(g.urgence||'normale')==='normale'?'selected':''}>Normale</option>
+          <option value="importante" ${g.urgence==='importante'?'selected':''}>Importante</option>
+          <option value="urgente" ${g.urgence==='urgente'?'selected':''}>Urgente</option>
+        </select>
+      </span>`;
       return `<tr><td colspan="6" style="background:var(--panel-2); font-weight:600;">${escapeHtml(ref)} — ${g.existing?'fusion dans commande existante':'nouvelle commande'}${refHeadSuffix}${g.existing?'':urgenceSelect}</td></tr>${pieceRows}`;
     }).join('');
     body = `
