@@ -519,6 +519,8 @@
   .search-bar input.search-active{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent);}
   .temps-prod-commande-link{cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px;}
   .temps-prod-commande-link:hover{color:var(--accent);}
+  .pointages-ref-link{background:none; border:none; padding:0; font:inherit; color:inherit; font-weight:600; cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px;}
+  .pointages-ref-link:hover{color:var(--accent);}
   .temps-prod-pause-row td{color:var(--text-faint); font-style:italic; background:var(--panel-2); text-align:center; font-size:11.5px;}
   .active-identity-select{font-size:11.5px; padding:4px 6px; width:auto;}
   .active-identity-select.active{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); font-weight:600;}
@@ -897,7 +899,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.43.1';
+const APP_VERSION = '1.44.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1341,6 +1343,9 @@ let correctPointageDraft = null;
 // customFrom/customTo (AAAA-MM-JJ) ne servent qu'en range==='custom' (Plage personnalisée) —
 // voir pointagesRangeBounds().
 let pointagesFilters = { personne:'', poste:'', statut:'toutes', range:'thisMonth', search:'', customFrom:null, customTo:null };
+// Vue "Liste" (une ligne par pointage, historique) vs "Par référence" (regroupée par pièce, voir
+// computePointagesByReference) — purement transitoire, jamais persistée (comme pointagesFilters).
+let pointagesViewMode = 'liste';
 // Correction du DÉTAIL des sessions d'une pièce encore ACTIVE (en_cours/en_pause) depuis "Pointages"
 // — voir CLAUDE.md, section "Onglet Pointages". Distinct de correctPointageDraft (qui corrige les
 // champs agrégés d'une pièce déjà TERMINÉE) : une pièce active tire son temps affiché EN DIRECT de
@@ -7269,6 +7274,31 @@ function computeAllPointages(st){
   });
   return rows;
 }
+// Regroupe des pointages déjà filtrés (mêmes filtres personne/poste/statut/période/recherche que
+// la vue "Liste", voir renderPointagesPage) par référence de pièce — nom exact, normalisé comme le
+// rapprochement par pièce des dépendances de phase (trim + insensible à la casse, voir CLAUDE.md
+// « Dépendances de phase »), toutes commandes ET toutes étapes confondues pour cette référence.
+// Répond à une question différente de la liste à plat : "combien de temps a-t-on passé sur CETTE
+// pièce, au total, dans le temps ?", pas "quand a eu lieu chaque pointage". `list` est déjà
+// dédupliquée par fusionGroupId (héritée de computeAllPointages) : un lot fusionné ne compte donc
+// qu'une fois ici aussi, pas une fois par membre.
+function computePointagesByReference(list){
+  const byKey = {};
+  list.forEach(r => {
+    const label = (r.piece||'').trim();
+    if(!label) return; // pas de référence exploitable (pointage sans nom de pièce) — rien à grouper
+    const key = label.toLowerCase();
+    if(!byKey[key]) byKey[key] = { key, label, count:0, dureePrevueH:0, dureeReelleH:0, lastDate:null };
+    const g = byKey[key];
+    g.count++;
+    g.dureePrevueH += r.dureePrevueH || 0;
+    g.dureeReelleH += r.dureeReelleH || 0;
+    const refDate = r.finReel || r.debutReel;
+    if(refDate && (!g.lastDate || refDate > g.lastDate)) g.lastDate = refDate;
+  });
+  // Plus récente activité en tête — même convention que la liste à plat (finReel/debutReel).
+  return Object.values(byKey).sort((a,b) => (b.lastDate||'').localeCompare(a.lastDate||''));
+}
 // Bornes [start, end[ de la fenêtre de récence pour les pointages déjà TERMINÉS uniquement (une
 // tâche encore en cours/en pause reste toujours visible, quelle que soit la fenêtre choisie — même
 // principe que doneFilterRange sur la liste "Tâches terminées" du planning) : au-delà d'un atelier
@@ -7364,12 +7394,36 @@ function renderPointagesPage(){
   const personneOptions = usersList.map(u=>`<option value="${u.id}" ${pointagesFilters.personne===String(u.id)?'selected':''}>${escapeHtml(u.username)}</option>`).join('');
   const posteOptions = state.machines.map(m=>`<option value="${m.id}" ${pointagesFilters.poste===String(m.id)?'selected':''}>${escapeHtml(m.nom)}</option>`).join('');
 
+  const isRefMode = pointagesViewMode === 'reference';
+  // Regroupée sur la même liste déjà filtrée que la vue "Liste" (personne/poste/statut/période/
+  // recherche) — chercher "Platine" restreint donc déjà aux références concernées avant de les
+  // agréger, plutôt que de recalculer un second jeu de filtres.
+  const byRef = isRefMode ? computePointagesByReference(list) : [];
+  const refRowsHtml = byRef.map(g => {
+    const ecart = g.dureeReelleH - g.dureePrevueH;
+    return `<tr>
+      <td><button class="pointages-ref-link" data-action="pointages-view-reference" data-piece="${escapeHtml(g.label)}">${escapeHtml(g.label)}</button></td>
+      <td>${g.count}</td>
+      <td>${durationLabel(g.dureePrevueH)}</td>
+      <td>${durationLabel(g.dureeReelleH)}</td>
+      <td>${formatEcart(ecart)}</td>
+      <td>${g.lastDate ? formatDT(new Date(g.lastDate)) : '—'}</td>
+    </tr>`;
+  }).join('');
+  const countNote = isRefMode
+    ? `${byRef.length} référence${byRef.length>1?'s':''} affichée${byRef.length>1?'s':''}`
+    : `${list.length} pointage${list.length>1?'s':''} affiché${list.length>1?'s':''}`;
+
   return `<section class="panel"><div class="panel-head">
       <h2>🕘 Pointages</h2>
-      <span class="footer-note" style="margin:0;">${list.length} pointage${list.length>1?'s':''} affiché${list.length>1?'s':''}</span>
+      <span class="footer-note" style="margin:0;">${countNote}</span>
     </div>
     <div class="panel-body">
     <div class="search-bar">
+      <div class="view-tabs">
+        <button class="small ${!isRefMode?'active':''}" data-action="pointages-view-mode" data-mode="liste">Liste</button>
+        <button class="small ${isRefMode?'active':''}" data-action="pointages-view-mode" data-mode="reference">Par référence</button>
+      </div>
       <span class="search-bar-group"><label class="field" style="margin:0;">Personne</label>
       <select data-action="pointages-filter" data-field="personne" style="width:auto;">
         <option value="">Toutes</option>${personneOptions}
@@ -7401,11 +7455,17 @@ function renderPointagesPage(){
       <input type="date" data-action="pointages-filter" data-field="customTo" value="${pointagesFilters.customTo||''}" style="width:auto;"></span>` : ''}
       <input type="text" id="pointages-search-input" placeholder="Rechercher une commande ou une pièce..." value="${escapeHtml(pointagesFilters.search)}" style="width:auto; flex:1; min-width:160px;">
     </div>
+    ${isRefMode ? `
+    <table class="ops-table">
+      <thead><tr><th>Référence de pièce</th><th>Nb pointages</th><th>Prévu (total)</th><th>Réel (total)</th><th>Écart</th><th>Dernière activité</th></tr></thead>
+      <tbody>${refRowsHtml || `<tr><td colspan="6" style="text-align:center; color:var(--text-faint);">Aucune référence ne correspond à ce filtre.</td></tr>`}</tbody>
+    </table>
+    <div class="footer-note" style="text-align:left; padding-top:10px;">Une référence regroupe tous ses pointages, toutes commandes et toutes étapes confondues (un lot fusionné ne compte qu'une fois). Cliquer une référence l'isole dans la vue "Liste" pour voir chaque pointage en détail.</div>` : `
     <table class="ops-table">
       <thead><tr><th>Commande</th><th>Pièce / Étape</th><th>Poste</th><th>Opérateur(s)</th><th>Statut</th><th>Début réel</th><th>Fin réelle</th><th>Prévu</th><th>Réel</th><th></th></tr></thead>
       <tbody>${rows || `<tr><td colspan="10" style="text-align:center; color:var(--text-faint);">Aucun pointage ne correspond à ce filtre.</td></tr>`}</tbody>
     </table>
-    <div class="footer-note" style="text-align:left; padding-top:10px;">La période ne masque jamais une tâche encore en cours ou en pause, seulement les tâches déjà terminées plus anciennes que la fenêtre choisie. "Prévu"/"Réel" d'un lot fusionné représentent le lot entier (une seule ligne, jamais comptée plusieurs fois). Corriger un pointage remplace intégralement son début réel, sa fin réelle et sa durée réellement passée.</div>
+    <div class="footer-note" style="text-align:left; padding-top:10px;">La période ne masque jamais une tâche encore en cours ou en pause, seulement les tâches déjà terminées plus anciennes que la fenêtre choisie. "Prévu"/"Réel" d'un lot fusionné représentent le lot entier (une seule ligne, jamais comptée plusieurs fois). Corriger un pointage remplace intégralement son début réel, sa fin réelle et sa durée réellement passée.</div>`}
     </div>
   </section>`;
 }
@@ -7777,6 +7837,31 @@ function computeRetardDemarrageParPoste(st){
     return { machineId, machineNom: m?m.nom:'Poste supprimé', nbTaches: rec.nbTaches, moyenneJours: rec.totalJours/rec.nbTaches, totalJours: rec.totalJours };
   }).sort((a,b) => b.totalJours - a.totalJours);
 }
+// Détail PAR TÂCHE des retards de démarrage constatés — retour utilisateur réel : le résumé par
+// poste ci-dessus (nombre de tâches, retard moyen/cumulé) ne dit pas QUELLE commande/pièce est
+// concernée ni QUAND elle était prévue vs quand elle a réellement démarré, seulement voir le détail
+// obligeait à recouper à la main avec le planning. Complète le même résumé, ne le remplace pas :
+// mêmes règles de sélection (retard ≥ 0,5 j, commandes actives ET archivées, `retardDemarrageJours`
+// comme unique source du calcul — jamais un second calcul divergent), triée du retard le plus grand
+// au plus petit (même sens que `commandeRiskDaysLate` sur la liste "⚠️ À risque" de cette page).
+function computeRetardDemarrageDetail(st){
+  const rows = [];
+  const consider = (c, o) => {
+    const j = retardDemarrageJours(o);
+    if(j == null || j < 0.5) return;
+    const m = st.machines.find(mm=>mm.id===o.machineId);
+    rows.push({
+      machineNom: m ? m.nom : 'Poste supprimé',
+      commandeId: c.id, commandeNom: c.nom,
+      piece: o.piece, etape: o.etape, numeroLigne: o.numeroLigne,
+      prevu: o.previsionAuDemarrage.debut, reel: o.debutReel,
+      joursRetard: j
+    });
+  };
+  (st.commandes||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
+  (st.commandesArchivees||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
+  return rows.sort((a,b) => b.joursRetard - a.joursRetard);
+}
 function renderRisquesPage(){
   const schedule = getSchedule();
   // Même filtre "commande active" que la liste principale (renderCommandes) : une commande
@@ -7843,6 +7928,7 @@ function renderRisquesPage(){
     </div>`;
   }).join('') : `<div class="empty-state"><strong>Aucune commande à risque</strong>Toutes les commandes en cours respectent leur échéance estimée.</div>`;
   const retardsDemarrage = computeRetardDemarrageParPoste(state);
+  const retardsDemarrageDetail = computeRetardDemarrageDetail(state);
   const retardsDemarrageHtml = retardsDemarrage.length ? `
   <section class="panel">
     <div class="panel-head">
@@ -7854,6 +7940,18 @@ function renderRisquesPage(){
       <table class="ops-table">
         <thead><tr><th>Poste</th><th>Tâches démarrées en retard</th><th>Retard moyen</th><th>Retard cumulé</th></tr></thead>
         <tbody>${retardsDemarrage.map(r => `<tr><td>${escapeHtml(r.machineNom)}</td><td>${r.nbTaches}</td><td>${Math.round(r.moyenneJours*10)/10} j</td><td>${Math.round(r.totalJours*10)/10} j</td></tr>`).join('')}</tbody>
+      </table>
+      <div class="modal-section-title" style="margin-top:16px;">Détail des tâches concernées</div>
+      <table class="ops-table">
+        <thead><tr><th>Poste</th><th>Commande</th><th>Pièce / Étape</th><th>Début prévu</th><th>Début réel</th><th>Retard</th></tr></thead>
+        <tbody>${retardsDemarrageDetail.map(r => `<tr>
+          <td>${escapeHtml(r.machineNom)}</td>
+          <td><button class="temps-prod-commande-link" data-action="isolate-commande-goto-planning" data-cid="${r.commandeId}" style="background:none; border:none; padding:0; color:var(--text);">${escapeHtml(r.commandeNom)}</button></td>
+          <td>${escapeHtml([r.piece, r.etape].filter(Boolean).join(' / ')||'—')}${r.numeroLigne?` <span class="footer-note" style="margin:0;">(n°${escapeHtml(r.numeroLigne)})</span>`:''}</td>
+          <td>${formatDT(new Date(r.prevu))}</td>
+          <td>${formatDT(new Date(r.reel))}</td>
+          <td>${Math.round(r.joursRetard*10)/10} j</td>
+        </tr>`).join('')}</tbody>
       </table>
     </div>
   </section>` : '';
@@ -11032,6 +11130,8 @@ function dispatchClickAction(action, el){
     case 'goto-zones': currentPage = 'zones'; render(); break;
     case 'goto-risques': currentPage = 'risques'; render(); break;
     case 'goto-pointages': currentPage = 'pointages'; render(); break;
+    case 'pointages-view-mode': pointagesViewMode = el.dataset.mode; render(); break;
+    case 'pointages-view-reference': pointagesFilters.search = el.dataset.piece; pointagesViewMode = 'liste'; render(); break;
     case 'open-correct-pointage': openCorrectPointage(el.dataset.cid, el.dataset.oid); break;
     case 'close-correct-pointage': closeCorrectPointage(); break;
     case 'submit-correct-pointage': submitCorrectPointage(); break;

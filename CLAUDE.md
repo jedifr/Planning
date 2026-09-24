@@ -1324,6 +1324,38 @@ aucun effet visible. Il faut donc un second outil qui édite `sessions[]` **elle
     qu'avec des valeurs arbitrairement fausses ; le bouton « ⇄ » couvre directement ce cas courant
     sans obliger à retaper les deux champs à la main.
 
+### Vue « Par référence » (historique des temps de production par pièce)
+
+Question utilisateur réelle : *« Est-ce que je peux obtenir l'historique des temps de production
+par référence de pièce ? »* — la liste à plat existante (voir ci-dessus) répond déjà partiellement
+via la recherche texte, mais ne montre qu'un pointage par ligne, sans total ni vue d'ensemble par
+référence. Un second mode d'affichage complète (ne remplace pas) la liste.
+
+- `pointagesViewMode` (`'liste'` | `'reference'`, défaut `'liste'`) — purement transitoire côté
+  client (comme `pointagesFilters`), jamais persisté. Onglets `.view-tabs` en tête de page (« Liste »
+  / « Par référence »), même modèle que les onglets Année/Mois du calendrier des congés.
+- `computePointagesByReference(list)` — regroupe la liste **déjà filtrée** (`list`, calculée dans
+  `renderPointagesPage` avec les mêmes filtres personne/poste/statut/période/recherche que la vue
+  Liste — chercher "Platine" dans la barre de recherche restreint donc déjà les références avant de
+  les agréger, pas un second jeu de filtres à régler séparément) par **nom exact de pièce**, trim +
+  insensible à la casse — même normalisation que le rapprochement par pièce des dépendances de phase
+  (voir « Dépendances de phase »). Toutes commandes et toutes étapes confondues pour une même
+  référence : répond à « combien de temps a-t-on passé sur CETTE pièce, au total, dans le temps ? »,
+  une question différente de « quand a eu lieu chaque pointage ». Une pièce sans nom exploitable
+  (`piece` vide) est simplement exclue du regroupement. Hérite gratuitement la déduplication par
+  `fusionGroupId` déjà faite par `computeAllPointages` : un lot fusionné ne compte qu'une fois, pas
+  une fois par membre. Triée par dernière activité (`finReel||debutReel`) la plus récente en tête,
+  même convention que la liste à plat.
+- Tableau : Référence de pièce (nom cliquable) / Nb pointages / Prévu (total) / Réel (total) / Écart
+  (`formatEcart`, réutilisé tel quel — rouge si dépassement, vert si moins de temps que prévu) /
+  Dernière activité. Cliquer une référence (`data-action="pointages-view-reference" data-piece=
+  "{référence}"`) préremplit `pointagesFilters.search` avec cette référence exacte et rebascule sur
+  la vue Liste — permet de voir chaque pointage individuel de cette référence (dates, opérateur,
+  commande) sans dupliquer l'affichage détaillé déjà existant dans la liste à plat.
+- Le compteur d'en-tête (« N pointages affichés » / « N références affichées ») et le message
+  d'état vide s'adaptent au mode actif, `countNote` calculé une seule fois plutôt que dupliqué aux
+  deux endroits qui l'utilisent.
+
 ## Zones de stockage
 
 Emplacements physiques où sont entreposées les pièces d'une commande pendant sa production.
@@ -2133,6 +2165,29 @@ l'ordonnancement.
   exclusivement organisée par personne) — section indépendante du filtre « commande active/à
   risque » du reste de la page : un poste peut être régulièrement en retard au démarrage même une
   fois ses commandes terminées ou hors risque.
+
+**Détail par tâche, en plus du résumé par poste.** Retour utilisateur réel : le résumé ci-dessus
+(nombre de tâches / retard moyen / retard cumulé, par poste) ne dit ni quelle commande ni quelle
+pièce précisément est concernée, ni les dates prévue/réelle — juste des totaux. « Cette zone est un
+résumé qu'il faut compléter » : ajouté sans rien retirer au résumé, qui reste affiché tel quel
+au-dessus.
+
+- `computeRetardDemarrageDetail(st)` — même sélection que `computeRetardDemarrageParPoste`
+  (`retardDemarrageJours(o) >= 0,5` jour, commandes actives ET archivées, `retardDemarrageJours`
+  comme unique source du calcul dans les deux fonctions — jamais un second calcul divergent), mais
+  renvoie une ligne **par tâche** plutôt qu'un total par poste : poste, id/nom de la commande,
+  pièce/étape/numéro de ligne, date de début prévue (`previsionAuDemarrage.debut`) et réelle
+  (`debutReel`) telles quelles, et le retard en jours. Triée du retard le plus grand au plus petit
+  — même sens que `commandeRiskDaysLate` sur la liste « ⚠️ À risque » de cette même page.
+- Rendu dans un second tableau (« Détail des tâches concernées »), sous le résumé par poste, dans la
+  même section — jamais une section séparée, jamais masqué derrière un clic : la demande portait sur
+  compléter cette zone, pas en ajouter une autre. Nom de commande cliquable
+  (`data-action="isolate-commande-goto-planning"`, `class="temps-prod-commande-link"` — même style
+  de lien déjà utilisé pour ce même bouton ailleurs sur cette page) pour isoler la commande dans le
+  planning, comme partout ailleurs où un nom de commande est cliquable dans l'appli.
+- Aucune fenêtre de récence ni pagination ajoutée (comme le résumé par poste, déjà sans limite) —
+  cohérent avec l'existant plutôt qu'un traitement différent entre les deux tableaux d'une même
+  section ; à revoir si la liste devient trop longue sur une installation avec beaucoup d'historique.
 
 ### Lisibilité des couleurs d'allée utilisées comme texte
 
