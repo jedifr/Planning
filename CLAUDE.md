@@ -2944,6 +2944,25 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   lointain sans opérateur lié au poste concerné ne doit produire AUCUN impact, malgré un `now` avancé
   de 8 minutes entre les deux calculs ; un congé qui bloque réellement le poste reste, lui, bien
   détecté).
+  - **Vérification demandée séparément : l'impact sur une tâche mise en pause depuis longtemps.**
+    Une tâche `en_pause` est verrouillée en phase 1 de `computeSchedule` sur son début réel
+    (`manualStart`/`debutReel`), quelle que soit son ancienneté — seule sa fin est recalculée à
+    chaque appel via `runningTaskEnd` (« maintenant + temps restant », voir plus haut « Fin
+    projetée d'une tâche en_cours/en_pause »), `opElapsedHours` ne comptant que les sessions
+    réellement travaillées, jamais le nombre de jours écoulés depuis la mise en pause. Vérifié par
+    `test_leave_impact_long_paused_task.js` (tâche en pause depuis 28 jours, 2h réellement passées
+    sur 8h prévues) : un congé sans rapport avec son poste ne produit toujours aucun impact (le
+    temps restant ne bouge pas tout seul avec le temps qui passe) ; un congé qui bloque réellement
+    le poste (opérateur assigné, seul lié à la machine, via `operatorLeaveIntersection`/
+    `effectiveConfig`) décale correctement la fin projetée au-delà du congé, sans jamais toucher au
+    début (déjà verrouillé) et sans produire de date aberrante (`NaN`, fin antérieure au début)
+    malgré l'ancienneté de la pause — `configForPiece` (utilisé par `runningTaskEnd` via `cfg`)
+    inclut déjà les indisponibilités dérivées des congés du poste, donc `addWorkingDuration` saute
+    naturellement par-dessus les jours bloqués pour projeter la reprise. Aucun correctif
+    supplémentaire nécessaire ici : le mécanisme était déjà correct, seule la comparaison
+    "avant/après" de `simulateLeaveImpactForRequest` (piège ci-dessus) pouvait fausser le résultat
+    pour n'importe quelle tâche proche dans le temps, pause longue ou non — désormais réglé pour
+    les deux cas par le même correctif (calcul des deux schedules au même instant).
 
 ## Conventions
 
