@@ -2294,6 +2294,25 @@ ici telles quelles.
   face à une de 2h/3h, et non-apparition d'une commande hors risque ou d'une pause trop récente dans
   le détail par tâche.
 
+### Sections repliables de la page « ⚠️ Risques de retard »
+
+Retour utilisateur réel, une fois les trois sections ci-dessus en place (Pauses de production,
+Retards de démarrage constatés, Risques de retard) : la page devenait longue à faire défiler pour qui
+ne s'intéresse qu'à une seule d'entre elles. Chacune se replie désormais indépendamment, en
+réutilisant **tel quel** le mécanisme déjà en place pour « Tâches en cours »/« Tâches terminées »/
+« Archives » du planning (`panelCollapsed`/`togglePanelCollapse(key)`/`isPanelEffectivelyCollapsed(key)`,
+même clé de stockage `PANEL_COLLAPSE_STORAGE_KEY`, même chevron `.collapse-chevron`, même dispatch
+générique `data-action="toggle-panel-collapse"`) plutôt qu'un second système de repli à inventer pour
+une autre page — trois nouvelles clés ajoutées à l'objet `panelCollapsed` : `pauses`,
+`retardsDemarrage`, `atRisk`. `loadPanelCollapsePref()` (lecture du `localStorage`) itère déjà
+génériquement sur `Object.keys(panelCollapsed)`, donc n'a nécessité aucune modification pour les
+prendre en compte. Chaque section garde son en-tête (titre + note contextuelle) visible même repliée
+— seul le `<div class="panel-body">` (tableaux) disparaît — pour que la page reste un sommaire lisible
+d'un coup d'œil (quelles catégories de risque existent) même entièrement repliée. Dépliées par défaut
+sur une installation neuve, comme les panneaux du planning. Couvert par
+`test_risques_page_collapsible.js` : chaque section repliable indépendamment des deux autres, en-tête
+toujours visible, repliage simultané des trois.
+
 ### Lisibilité des couleurs d'allée utilisées comme texte
 
 `readableZoneTextColor(hex)` — les couleurs d'allée (Paramètres → Zones de stockage) sont choisies

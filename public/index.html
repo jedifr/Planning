@@ -899,7 +899,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.45.0';
+const APP_VERSION = '1.46.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -8059,9 +8059,12 @@ function renderRisquesPage(){
   <section class="panel">
     <div class="panel-head">
       <h2>⏸ Pauses de production</h2>
-      <span class="footer-note" style="margin:0;">Pauses manuelles non expliquées automatiquement</span>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span class="footer-note" style="margin:0;">Pauses manuelles non expliquées automatiquement</span>
+        <button class="ghost icon-btn collapse-chevron ${isPanelEffectivelyCollapsed('pauses')?'collapsed':''}" data-action="toggle-panel-collapse" data-key="pauses" title="${isPanelEffectivelyCollapsed('pauses')?'Déplier':'Replier'}">▾</button>
+      </div>
     </div>
-    <div class="panel-body">
+    ${isPanelEffectivelyCollapsed('pauses') ? '' : `<div class="panel-body">
       <div class="footer-note" style="text-align:left; padding-bottom:10px;">Ne montre jamais une pause déjeuner ou "hors horaires" automatique — déjà expliquées par l'appli (voir la mise en pause automatique) — seulement une pause déclenchée manuellement, toujours en cours, sans reprise. "Par poste" balaie TOUTES les commandes actives (vue d'ensemble, pour repérer une cause structurelle) ; "Tâches concernées" se limite à celles dont la commande est déjà à risque (conséquence concrète sur une échéance), au-delà de ${PAUSE_ANOMALIE_SEUIL_H} h de pause.</div>
       ${pauseParPoste.length ? `
       <table class="ops-table">
@@ -8081,7 +8084,7 @@ function renderRisquesPage(){
           <td>${r.cumulH!=null ? durationLabel(r.cumulH) : '—'}</td>
         </tr>`).join('')}</tbody>
       </table>` : ''}
-    </div>
+    </div>`}
   </section>` : '';
   const retardsDemarrage = computeRetardDemarrageParPoste(state);
   const retardsDemarrageDetail = computeRetardDemarrageDetail(state);
@@ -8089,9 +8092,12 @@ function renderRisquesPage(){
   <section class="panel">
     <div class="panel-head">
       <h2>🕓 Retards de démarrage constatés</h2>
-      <span class="footer-note" style="margin:0;">Par poste, jamais par personne</span>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span class="footer-note" style="margin:0;">Par poste, jamais par personne</span>
+        <button class="ghost icon-btn collapse-chevron ${isPanelEffectivelyCollapsed('retardsDemarrage')?'collapsed':''}" data-action="toggle-panel-collapse" data-key="retardsDemarrage" title="${isPanelEffectivelyCollapsed('retardsDemarrage')?'Déplier':'Replier'}">▾</button>
+      </div>
     </div>
-    <div class="panel-body">
+    ${isPanelEffectivelyCollapsed('retardsDemarrage') ? '' : `<div class="panel-body">
       <div class="footer-note" style="text-align:left; padding-bottom:10px;">Écart entre la date de début que le planning prévoyait juste avant qu'une tâche ne démarre réellement, et son démarrage effectif. Mesuré uniquement à partir de maintenant — aucune donnée avant l'introduction de ce suivi. Regroupé par poste plutôt que par personne : ce retard tient à la disponibilité du poste et à l'ordonnancement, pas à qui a fini par exécuter la tâche.</div>
       <table class="ops-table">
         <thead><tr><th>Poste</th><th>Tâches démarrées en retard</th><th>Retard moyen</th><th>Retard cumulé</th></tr></thead>
@@ -8109,7 +8115,7 @@ function renderRisquesPage(){
           <td>${Math.round(r.joursRetard*10)/10} j</td>
         </tr>`).join('')}</tbody>
       </table>
-    </div>
+    </div>`}
   </section>` : '';
   return `
   ${pausesHtml}
@@ -8117,12 +8123,15 @@ function renderRisquesPage(){
   <section class="panel">
     <div class="panel-head">
       <h2>⚠️ Risques de retard</h2>
-      <span class="footer-note" style="margin:0;">${atRisk.length} commande(s) à risque</span>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span class="footer-note" style="margin:0;">${atRisk.length} commande(s) à risque</span>
+        <button class="ghost icon-btn collapse-chevron ${isPanelEffectivelyCollapsed('atRisk')?'collapsed':''}" data-action="toggle-panel-collapse" data-key="atRisk" title="${isPanelEffectivelyCollapsed('atRisk')?'Déplier':'Replier'}">▾</button>
+      </div>
     </div>
-    <div class="panel-body">
+    ${isPanelEffectivelyCollapsed('atRisk') ? '' : `<div class="panel-body">
       ${atRisk.length ? `<div class="footer-note" style="text-align:left; padding-bottom:10px;">Triées de la plus en retard à la moins en retard. Pour chaque pièce, la chaîne de ses étapes dans l'ordre des phases — l'étape surlignée est la première pas encore terminée : c'est elle qui retient les suivantes. Quand une autre commande occupe le même poste juste avant ou juste après, elle est indiquée sous la ligne. Cliquez un nom de commande pour l'isoler dans le planning.</div>` : ''}
       ${body}
-    </div>
+    </div>`}
   </section>`;
 }
 
@@ -9907,7 +9916,10 @@ function renderYearView(schedule){
 }
 
 const PANEL_COLLAPSE_STORAGE_KEY = 'planning-atelier-panel-collapse';
-let panelCollapsed = { planning:false, active:false, done:false, archives:true };
+// `pauses`/`retardsDemarrage`/`atRisk` : les trois sections de la page "⚠️ Risques de retard" (voir
+// renderRisquesPage) — même mécanisme, même clé de stockage que les panneaux du planning ci-dessus,
+// réutilisé tel quel plutôt qu'un second système de repli à inventer pour une autre page.
+let panelCollapsed = { planning:false, active:false, done:false, archives:true, pauses:false, retardsDemarrage:false, atRisk:false };
 let archiveSearchQuery = '';
 function loadPanelCollapsePref(){
   try{
