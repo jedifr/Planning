@@ -899,7 +899,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.44.1';
+const APP_VERSION = '1.45.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -5003,6 +5003,55 @@ function opElapsedHours(o, st){
   });
   return total;
 }
+// Symétrique d'opElapsedHours (temps de travail réel) : les PAUSES d'une pièce, déduites des trous
+// entre ses sessions[] — voir CLAUDE.md « Pauses de production mises en évidence ». Un trou négatif
+// (session suivante démarrée avant la fin de la précédente) n'est jamais compté comme une pause :
+// c'est un chevauchement de deux opérateurs sur la même tâche (voir « Travail à plusieurs sur une
+// même pièce »), pas un arrêt. Même règle de détection que le trou déjà affiché entre deux lignes
+// dans la pop-up « Détail des horaires » (renderSessionRowsHtml) — ici réduite à une donnée
+// numérique, réutilisable ailleurs (Pointages, Risques de retard) sans reconstruire du HTML.
+function pauseGapsForPiece(o, now){
+  const sessions = (o.sessions||[]).filter(s=>s.debut).slice().sort((a,b)=>a.debut.localeCompare(b.debut));
+  const gaps = [];
+  for(let i=0;i<sessions.length-1;i++){
+    const fin = sessions[i].fin;
+    if(!fin) continue; // une session ouverte au milieu du tableau ne devrait pas arriver — prudence
+    const gapH = (new Date(sessions[i+1].debut) - new Date(fin)) / 3600000;
+    if(gapH > 0.01) gaps.push({ debut:new Date(fin), fin:new Date(sessions[i+1].debut), h:gapH, enCours:false });
+  }
+  // Pause EN COURS : la pièce est encore en_pause après la dernière session fermée — aucune session
+  // ouverte ne peut exister dans ce cas (le statut lui-même l'exclut).
+  if(o.statut === 'en_pause' && sessions.length){
+    const last = sessions[sessions.length-1];
+    if(last.fin){
+      const gapH = (now - new Date(last.fin)) / 3600000;
+      if(gapH > 0.01) gaps.push({ debut:new Date(last.fin), fin:now, h:gapH, enCours:true });
+    }
+  }
+  return gaps;
+}
+// Cumul de toutes les pauses connues d'une pièce (historique + pause en cours le cas échéant) —
+// `null` si sessions[] n'est plus disponible (déjà archivée, voir « Historique des sessions ») :
+// jamais 0, qui laisserait croire à tort « aucune pause » alors que la donnée est simplement perdue.
+function pieceCumulPauseHours(o, now){
+  if(!o.sessions || !o.sessions.length) return null;
+  return pauseGapsForPiece(o, now).reduce((s,g)=>s+g.h, 0);
+}
+// La seule pause EN COURS (le dernier trou, si la pièce est encore en_pause au moment de l'appel) —
+// distinct du cumul ci-dessus : répond à « depuis quand » et « durée de CETTE pause », pas à
+// l'historique complet de la tâche.
+function pieceCurrentPauseGap(o, now){
+  const gaps = pauseGapsForPiece(o, now);
+  const last = gaps[gaps.length-1];
+  return (last && last.enCours) ? last : null;
+}
+// Filtre D : une pause déjà EXPLIQUÉE par un mécanisme automatique de l'appli (pause déjeuner ou
+// hors-horaires, voir « Mise en pause automatique... ») n'est pas un signal à investiguer — seule
+// une pause MANUELLE, sans explication automatique connue, doit remonter comme « à risque » : c'est
+// elle qui n'a aucune cause déjà tracée par l'appli.
+function isUnexplainedPause(o){
+  return o.statut === 'en_pause' && !o.autoPaused && !o.autoPausedOutOfHours;
+}
 // Même somme qu'opElapsedHours, mais répartie par opérateur ayant réellement ouvert chaque session
 // (repli sur l'opérateur assigné pour une session qui n'a pas son propre operatorUserId — données
 // antérieures à ce suivi, voir CLAUDE.md) — à calculer et figer AVANT de vider sessions[] à la
@@ -7257,6 +7306,7 @@ function computeAllPointages(st){
     if(o.fusionGroupId) fusionCounts[o.fusionGroupId] = (fusionCounts[o.fusionGroupId]||0) + 1;
   })));
   const seenFusionGroups = new Set();
+  const now = new Date();
   allPieces.forEach(({ c, o }) => {
     if(o.statut === 'a_faire') return;
     if(o.fusionGroupId){
@@ -7279,6 +7329,10 @@ function computeAllPointages(st){
       statut: o.statut, operatorIds,
       debutReel: o.debutReel, finReel: o.finReel,
       dureePrevueH: dureePrevueH(o), dureeReelleH: isDone ? o.dureeReelleH : opElapsedHours(o, st),
+      // Temps cumulé en pause (voir pieceCumulPauseHours) — `null` si sessions[] déjà archivée,
+      // jamais 0 (qui laisserait croire à tort "aucune pause"), voir CLAUDE.md « Pauses de
+      // production mises en évidence ».
+      pauseH: pieceCumulPauseHours(o, now),
     });
   });
   return rows;
@@ -7297,11 +7351,15 @@ function computePointagesByReference(list){
     const label = (r.piece||'').trim();
     if(!label) return; // pas de référence exploitable (pointage sans nom de pièce) — rien à grouper
     const key = label.toLowerCase();
-    if(!byKey[key]) byKey[key] = { key, label, count:0, dureePrevueH:0, dureeReelleH:0, lastDate:null };
+    if(!byKey[key]) byKey[key] = { key, label, count:0, dureePrevueH:0, dureeReelleH:0, pauseH:0, lastDate:null };
     const g = byKey[key];
     g.count++;
     g.dureePrevueH += r.dureePrevueH || 0;
     g.dureeReelleH += r.dureeReelleH || 0;
+    // Best-effort : une pièce dont sessions[] est déjà archivée (pauseH null) contribue 0 au cumul,
+    // comme dureePrevueH/dureeReelleH le font déjà pour leurs propres cas limites — pas de distinction
+    // "partiellement inconnu" ici, cohérent avec le reste de l'agrégation.
+    g.pauseH += r.pauseH || 0;
     const refDate = r.finReel || r.debutReel;
     if(refDate && (!g.lastDate || refDate > g.lastDate)) g.lastDate = refDate;
   });
@@ -7396,6 +7454,7 @@ function renderPointagesPage(){
       <td>${r.finReel ? formatDT(new Date(r.finReel)) : '—'}</td>
       <td>${durationLabel(r.dureePrevueH)}</td>
       <td>${r.dureeReelleH!=null ? durationLabel(r.dureeReelleH) : '—'}</td>
+      <td>${pauseTimeCellHtml(r.pauseH)}</td>
       <td style="white-space:nowrap;">${correctBtn}${sessionsBtn}</td>
     </tr>`;
   }).join('');
@@ -7416,6 +7475,7 @@ function renderPointagesPage(){
       <td>${durationLabel(g.dureePrevueH)}</td>
       <td>${durationLabel(g.dureeReelleH)}</td>
       <td>${formatEcart(ecart)}</td>
+      <td>${pauseTimeCellHtml(g.pauseH)}</td>
       <td>${g.lastDate ? formatDT(new Date(g.lastDate)) : '—'}</td>
     </tr>`;
   }).join('');
@@ -7466,15 +7526,15 @@ function renderPointagesPage(){
     </div>
     ${isRefMode ? `
     <table class="ops-table">
-      <thead><tr><th>Référence de pièce</th><th>Nb pointages</th><th>Prévu (total)</th><th>Réel (total)</th><th>Écart</th><th>Dernière activité</th></tr></thead>
-      <tbody>${refRowsHtml || `<tr><td colspan="6" style="text-align:center; color:var(--text-faint);">Aucune référence ne correspond à ce filtre.</td></tr>`}</tbody>
+      <thead><tr><th>Référence de pièce</th><th>Nb pointages</th><th>Prévu (total)</th><th>Réel (total)</th><th>Écart</th><th>Temps en pause (total)</th><th>Dernière activité</th></tr></thead>
+      <tbody>${refRowsHtml || `<tr><td colspan="7" style="text-align:center; color:var(--text-faint);">Aucune référence ne correspond à ce filtre.</td></tr>`}</tbody>
     </table>
-    <div class="footer-note" style="text-align:left; padding-top:10px;">Une référence regroupe tous ses pointages, toutes commandes et toutes étapes confondues (un lot fusionné ne compte qu'une fois). Cliquer une référence l'isole dans la vue "Liste" pour voir chaque pointage en détail.</div>` : `
+    <div class="footer-note" style="text-align:left; padding-top:10px;">Une référence regroupe tous ses pointages, toutes commandes et toutes étapes confondues (un lot fusionné ne compte qu'une fois). Cliquer une référence l'isole dans la vue "Liste" pour voir chaque pointage en détail. "Temps en pause" : voir la note sur le sujet ci-dessous.</div>` : `
     <table class="ops-table">
-      <thead><tr><th>Commande</th><th>Pièce / Étape</th><th>Poste</th><th>Opérateur(s)</th><th>Statut</th><th>Début réel</th><th>Fin réelle</th><th>Prévu</th><th>Réel</th><th></th></tr></thead>
-      <tbody>${rows || `<tr><td colspan="10" style="text-align:center; color:var(--text-faint);">Aucun pointage ne correspond à ce filtre.</td></tr>`}</tbody>
+      <thead><tr><th>Commande</th><th>Pièce / Étape</th><th>Poste</th><th>Opérateur(s)</th><th>Statut</th><th>Début réel</th><th>Fin réelle</th><th>Prévu</th><th>Réel</th><th>Temps en pause</th><th></th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="11" style="text-align:center; color:var(--text-faint);">Aucun pointage ne correspond à ce filtre.</td></tr>`}</tbody>
     </table>
-    <div class="footer-note" style="text-align:left; padding-top:10px;">La période ne masque jamais une tâche encore en cours ou en pause, seulement les tâches déjà terminées plus anciennes que la fenêtre choisie. "Prévu"/"Réel" d'un lot fusionné représentent le lot entier (une seule ligne, jamais comptée plusieurs fois). Corriger un pointage remplace intégralement son début réel, sa fin réelle et sa durée réellement passée.</div>`}
+    <div class="footer-note" style="text-align:left; padding-top:10px;">La période ne masque jamais une tâche encore en cours ou en pause, seulement les tâches déjà terminées plus anciennes que la fenêtre choisie. "Prévu"/"Réel" d'un lot fusionné représentent le lot entier (une seule ligne, jamais comptée plusieurs fois). Corriger un pointage remplace intégralement son début réel, sa fin réelle et sa durée réellement passée. "Temps en pause" cumule tous les trous entre les sessions de la tâche (mis en évidence en ambre/rouge au-delà de 2h/8h) — "—" quand le détail par session n'est plus disponible (tâche déjà archivée).</div>`}
     </div>
   </section>`;
 }
@@ -7871,6 +7931,62 @@ function computeRetardDemarrageDetail(st){
   (st.commandesArchivees||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
   return rows.sort((a,b) => b.joursRetard - a.joursRetard);
 }
+// Seuil de bruit pour la section « Pauses de production » ci-dessous : une pause manuelle qui vient
+// tout juste de commencer (< 1h) n'est pas encore un signe de dérive — évite de signaler
+// systématiquement toute pause en cours d'une commande à risque, y compris celle posée deux minutes
+// plus tôt (l'opérateur est peut-être simplement parti chercher une pièce).
+const PAUSE_ANOMALIE_SEUIL_H = 1;
+// E — Vue par POSTE, snapshot des pauses actuellement en cours ET non expliquées (filtre D, voir
+// isUnexplainedPause) — TOUTES commandes actives confondues, pas seulement celles à risque
+// (contrairement au détail ci-dessous) : répond à « quel poste accumule le plus de temps à l'arrêt
+// en ce moment », une question de fond (recherche de cause structurelle : sous-effectif, changement
+// d'outillage fréquent...) différente de « quelle échéance est menacée maintenant ». Snapshot
+// uniquement, jamais un cumul sur une période passée : sessions[] est vidée à l'archivage d'une
+// pièce (voir « Historique des sessions ») — impossible de reconstituer un historique de pauses sans
+// requêter session_history poste par poste, hors périmètre ici.
+function computePauseTimeParPoste(st, now){
+  const byMachine = {};
+  st.commandes.forEach(c => {
+    if(isCommandeFullyDone(c)) return; // commande déjà terminée : rien à surveiller
+    c.pieces.forEach(o => {
+      if(!isUnexplainedPause(o)) return;
+      const gap = pieceCurrentPauseGap(o, now);
+      if(!gap) return;
+      const key = o.machineId || '_sans_poste';
+      const rec = byMachine[key] || (byMachine[key] = { machineId:o.machineId, nbTaches:0, totalH:0 });
+      rec.nbTaches++;
+      rec.totalH += gap.h;
+    });
+  });
+  return Object.values(byMachine).map(rec => {
+    const m = st.machines.find(mm=>mm.id===rec.machineId);
+    return { ...rec, machineNom: m ? m.nom : (rec.machineId ? 'Poste supprimé' : 'Sans poste') };
+  }).sort((a,b) => b.totalH - a.totalH);
+}
+// C — Détail PAR TÂCHE des pauses non expliquées (filtre D) dont la COMMANDE est déjà à risque
+// (`atRiskCommandes`, la même liste déjà filtrée/triée que le corps de la page) : répond à « quelle
+// échéance concrète cette pause menace-t-elle maintenant », une conséquence directement actionnable
+// — contrairement à E ci-dessus qui balaie toutes les commandes actives sans distinction. Seules les
+// pauses dépassant PAUSE_ANOMALIE_SEUIL_H sont retenues, triées de la plus longue à la plus courte.
+function computePausesARisque(atRiskCommandes, now){
+  const rows = [];
+  atRiskCommandes.forEach(c => {
+    c.pieces.forEach(o => {
+      if(!isUnexplainedPause(o)) return;
+      const gap = pieceCurrentPauseGap(o, now);
+      if(!gap || gap.h < PAUSE_ANOMALIE_SEUIL_H) return;
+      const m = state.machines.find(mm=>mm.id===o.machineId);
+      rows.push({
+        commandeId: c.id, commandeNom: c.nom,
+        piece: o.piece, etape: o.etape, numeroLigne: o.numeroLigne,
+        machineNom: m ? m.nom : (o.machineId ? 'Poste supprimé' : '—'),
+        depuis: gap.debut, dureeH: gap.h,
+        cumulH: pieceCumulPauseHours(o, now)
+      });
+    });
+  });
+  return rows.sort((a,b) => b.dureeH - a.dureeH);
+}
 function renderRisquesPage(){
   const schedule = getSchedule();
   // Même filtre "commande active" que la liste principale (renderCommandes) : une commande
@@ -7936,6 +8052,37 @@ function renderRisquesPage(){
       </table>
     </div>`;
   }).join('') : `<div class="empty-state"><strong>Aucune commande à risque</strong>Toutes les commandes en cours respectent leur échéance estimée.</div>`;
+  const nowPauses = new Date();
+  const pauseParPoste = computePauseTimeParPoste(state, nowPauses);
+  const pausesARisque = computePausesARisque(atRisk, nowPauses);
+  const pausesHtml = (pauseParPoste.length || pausesARisque.length) ? `
+  <section class="panel">
+    <div class="panel-head">
+      <h2>⏸ Pauses de production</h2>
+      <span class="footer-note" style="margin:0;">Pauses manuelles non expliquées automatiquement</span>
+    </div>
+    <div class="panel-body">
+      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Ne montre jamais une pause déjeuner ou "hors horaires" automatique — déjà expliquées par l'appli (voir la mise en pause automatique) — seulement une pause déclenchée manuellement, toujours en cours, sans reprise. "Par poste" balaie TOUTES les commandes actives (vue d'ensemble, pour repérer une cause structurelle) ; "Tâches concernées" se limite à celles dont la commande est déjà à risque (conséquence concrète sur une échéance), au-delà de ${PAUSE_ANOMALIE_SEUIL_H} h de pause.</div>
+      ${pauseParPoste.length ? `
+      <table class="ops-table">
+        <thead><tr><th>Poste</th><th>Tâches actuellement en pause</th><th>Temps d'arrêt cumulé</th></tr></thead>
+        <tbody>${pauseParPoste.map(r => `<tr><td>${escapeHtml(r.machineNom)}</td><td>${r.nbTaches}</td><td>${pauseTimeCellHtml(r.totalH)}</td></tr>`).join('')}</tbody>
+      </table>` : `<div class="footer-note" style="text-align:left;">Aucun poste n'est actuellement à l'arrêt sur une pause manuelle non expliquée.</div>`}
+      ${pausesARisque.length ? `
+      <div class="modal-section-title" style="margin-top:16px;">Tâches concernées (échéance à risque)</div>
+      <table class="ops-table">
+        <thead><tr><th>Commande</th><th>Pièce / Étape</th><th>Poste</th><th>En pause depuis</th><th>Durée de cette pause</th><th>Cumul pauses (tâche)</th></tr></thead>
+        <tbody>${pausesARisque.map(r => `<tr>
+          <td><button class="temps-prod-commande-link" data-action="isolate-commande-goto-planning" data-cid="${r.commandeId}" style="background:none; border:none; padding:0; color:var(--text);">${escapeHtml(r.commandeNom)}</button></td>
+          <td>${escapeHtml([r.piece, r.etape].filter(Boolean).join(' / ')||'—')}${r.numeroLigne?` <span class="footer-note" style="margin:0;">(n°${escapeHtml(r.numeroLigne)})</span>`:''}</td>
+          <td>${escapeHtml(r.machineNom)}</td>
+          <td>${formatDT(r.depuis)}</td>
+          <td>${pauseTimeCellHtml(r.dureeH)}</td>
+          <td>${r.cumulH!=null ? durationLabel(r.cumulH) : '—'}</td>
+        </tr>`).join('')}</tbody>
+      </table>` : ''}
+    </div>
+  </section>` : '';
   const retardsDemarrage = computeRetardDemarrageParPoste(state);
   const retardsDemarrageDetail = computeRetardDemarrageDetail(state);
   const retardsDemarrageHtml = retardsDemarrage.length ? `
@@ -7965,6 +8112,7 @@ function renderRisquesPage(){
     </div>
   </section>` : '';
   return `
+  ${pausesHtml}
   ${retardsDemarrageHtml}
   <section class="panel">
     <div class="panel-head">
@@ -8169,6 +8317,16 @@ function formatEcart(h){
   const sign = h > 0 ? '+' : '';
   const color = h > 0.05 ? 'var(--red)' : (h < -0.05 ? 'var(--green)' : 'var(--text-dim)');
   return `<span style="color:${color};">${sign}${formatHeures(h)}</span>`;
+}
+// Met un temps de pause en évidence selon sa gravité — ambre au-delà de 2h, rouge au-delà de 8h
+// (une journée de travail) : même principe que formatEcart (couleur inline, pas un nouveau badge)
+// pour que la donnée saute aux yeux sans encombrer les tableaux d'une icône supplémentaire. `null`
+// (donnée indisponible, sessions[] déjà archivée) affiche "—", jamais un 0 h trompeur.
+function pauseTimeCellHtml(h){
+  if(h == null) return '—';
+  if(h <= 0.05) return durationLabel(h);
+  const color = h >= 8 ? 'var(--red)' : (h >= 2 ? 'var(--amber)' : null);
+  return color ? `<span style="color:${color}; font-weight:600;">${durationLabel(h)}</span>` : durationLabel(h);
 }
 // Taux d'occupation (production réelle ÷ présence théorique) : rouge sous 50% (temps largement
 // inoccupé sur les tâches suivies par l'appli), ambre entre 50 et 80%, vert au-delà de 80%. Peut

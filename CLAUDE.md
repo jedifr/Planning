@@ -1356,6 +1356,63 @@ référence. Un second mode d'affichage complète (ne remplace pas) la liste.
   d'état vide s'adaptent au mode actif, `countNote` calculé une seule fois plutôt que dupliqué aux
   deux endroits qui l'utilisent.
 
+## Pauses de production mises en évidence
+
+Demande manager réelle : *« que les pauses de production soient mises en évidence dans les risques
+de retard ainsi que dans les pointages, pour verrouiller tout risque de dérive de temps et en
+analyser les causes et conséquences »*. Trois phénomènes différents se cachent derrière « pause » —
+une pause manuelle en pleine journée sans justification (le signal le plus grave, aucune cause déjà
+tracée par l'appli), une pause « hors horaires » automatique oubliée (déjà détectée par ailleurs, voir
+`pausedSinceEarlierTasks`/la bannière superviseur), et le morcellement d'une tâche redémarrée/mise en
+pause de nombreuses fois (chaque pause isolément anodine, leur accumulation moins). Cette
+fonctionnalité ajoute la brique manquante — **combien de temps** a réellement été perdu en pause —
+puis l'expose à deux endroits : l'onglet Pointages (ci-dessous) et la page « ⚠️ Risques de retard »
+(voir plus bas, section dédiée).
+
+- `pauseGapsForPiece(o, now)` — point unique de calcul, symétrique d'`opElapsedHours` (temps de
+  travail réel) : déduit les PAUSES d'une pièce à partir des trous entre ses `sessions[]`, triées par
+  `debut` (comparaison de chaînes `"AAAA-MM-JJTHH:mm"`, triables telles quelles). Un trou négatif
+  (session suivante démarrée avant la fin de la précédente) n'est **jamais** compté comme une pause :
+  c'est un chevauchement de deux opérateurs sur la même tâche (voir « Travail à plusieurs sur une
+  même pièce »), pas un arrêt. Si la pièce est encore `en_pause` après la dernière session fermée, un
+  dernier trou « en cours » (`enCours:true`) est ajouté, de cette fin jusqu'à `now` — aucune session
+  ouverte ne peut exister dans ce cas, le statut lui-même l'exclut. Même règle de détection que le
+  trou déjà affiché entre deux lignes dans la pop-up « Détail des horaires »
+  (`renderSessionRowsHtml`, pré-existante, jamais modifiée par cette fonctionnalité) — ici réduite à
+  une donnée numérique réutilisable ailleurs, sans reconstruire du HTML.
+- `pieceCumulPauseHours(o, now)` — somme de toutes les pauses connues d'une pièce (historique + pause
+  en cours le cas échéant). Renvoie **`null`**, jamais `0`, si `sessions[]` n'est plus disponible
+  (pièce déjà archivée, voir « Historique des sessions ») — un `0` laisserait croire à tort « aucune
+  pause » alors que la donnée est simplement perdue à l'archivage, comme partout ailleurs dans
+  l'appli où cette distinction compte.
+- `pieceCurrentPauseGap(o, now)` — la seule pause **en cours** (le dernier trou, si la pièce est
+  encore en pause au moment de l'appel) : répond à « depuis quand » et « durée de CETTE pause », pas
+  à l'historique complet de la tâche. `null` si la pièce n'est pas actuellement en pause.
+- Ces trois fonctions travaillent en temps RÉEL (horloge murale), jamais en heures de travail
+  filtrées (contrairement à `opElapsedHours`/`workingHoursBetween`) : une pièce mise en pause un soir
+  et reprise le lendemain matin voit sa nuit entière comptée comme pause. C'est volontaire — la
+  colonne "Temps en pause" ci-dessous répond à « combien de temps cette tâche a-t-elle été à l'arrêt,
+  au total », pas à « combien d'heures ouvrées ont été perdues » ; c'est en revanche le filtre D
+  (voir plus bas, page Risques de retard) qui exclut les pauses déjà expliquées par l'appli
+  (déjeuner, hors-horaires) de la liste des signaux à investiguer — les deux notions sont
+  volontairement séparées : l'une mesure, l'autre alerte.
+
+### Colonne « Temps en pause » (onglet Pointages)
+
+- `computeAllPointages(st)` porte désormais un champ `pauseH` par ligne (`pieceCumulPauseHours(o,
+  now)`, calculé une seule fois au moment de l'appel) — `null` pour une pièce déjà archivée sans
+  `sessions[]`, comme documenté ci-dessus. `computePointagesByReference(list)` le somme (`|| 0`,
+  best-effort, même convention que `dureePrevueH`/`dureeReelleH`) : une pièce dont le détail est
+  perdu contribue simplement 0 au cumul de sa référence, sans distinction « partiellement inconnu ».
+- `pauseTimeCellHtml(h)` — met le temps en évidence selon sa gravité (même principe que `formatEcart` :
+  couleur inline, pas un nouveau badge) : ambre au-delà de 2h, rouge au-delà de 8h (une journée de
+  travail). `null` affiche « — », jamais un 0 h trompeur.
+- Colonne ajoutée aux deux tableaux de la page (`renderPointagesPage`) : « Temps en pause » en vue
+  Liste (une pièce à la fois), « Temps en pause (total) » en vue Par référence (cumul de toutes les
+  occurrences de cette référence) — visible pour **toute** tâche pointée, pas seulement celles encore
+  en pause : le but est de voir, même après coup sur une tâche déjà terminée, combien de temps mort
+  elle a réellement accumulé, pour en analyser les causes et conséquences.
+
 ## Zones de stockage
 
 Emplacements physiques où sont entreposées les pièces d'une commande pendant sa production.
@@ -2188,6 +2245,54 @@ au-dessus.
 - Aucune fenêtre de récence ni pagination ajoutée (comme le résumé par poste, déjà sans limite) —
   cohérent avec l'existant plutôt qu'un traitement différent entre les deux tableaux d'une même
   section ; à revoir si la liste devient trop longue sur une installation avec beaucoup d'historique.
+
+### Pauses de production à risque
+
+Complète « Retard de démarrage » ci-dessus sur un axe différent : celui-ci mesure un retard **avant**
+qu'une tâche ne commence (file d'attente, ordonnancement) ; celui-ci mesure un retard **pendant**
+son exécution, dû à un arrêt. Voir « Pauses de production mises en évidence » plus haut pour les
+fonctions de base (`pauseGapsForPiece`, `pieceCumulPauseHours`, `pieceCurrentPauseGap`) réutilisées
+ici telles quelles.
+
+- **Filtre D — `isUnexplainedPause(o)`.** Une pause déjà EXPLIQUÉE par un mécanisme automatique de
+  l'appli (`o.autoPaused` : pause déjeuner ; `o.autoPausedOutOfHours` : hors-horaires, voir « Mise en
+  pause automatique... ») n'est pas un signal à investiguer — remonter TOUTE pause en cours noierait
+  la page sous les pauses déjeuner/nocturnes de tout l'atelier, sans rien dire d'anormal. Seule une
+  pause **manuelle**, sans explication automatique connue (`statut==='en_pause' && !autoPaused &&
+  !autoPausedOutOfHours`), remonte comme « à risque » dans les deux tableaux ci-dessous : c'est elle
+  qui n'a aucune cause déjà tracée par l'appli, la seule qui mérite d'être creusée.
+- **`PAUSE_ANOMALIE_SEUIL_H` (1h)** — une pause manuelle qui vient tout juste de commencer n'est pas
+  encore un signe de dérive (l'opérateur est peut-être simplement parti chercher une pièce) ; seul le
+  détail par tâche (E ci-dessous) applique ce seuil — le résumé par poste (D) n'en a pas besoin,
+  toute pause `> 0.01h` y compte déjà (voir le garde-fou de `pauseGapsForPiece`).
+- **E — `computePauseTimeParPoste(st, now)`** — vue d'ensemble par POSTE, snapshot des pauses non
+  expliquées **actuellement en cours**, TOUTES commandes actives confondues (pas seulement celles à
+  risque, contrairement au détail ci-dessous) : répond à « quel poste accumule le plus de temps à
+  l'arrêt en ce moment », une question de cause structurelle (sous-effectif, changement d'outillage
+  fréquent...) différente de « quelle échéance est menacée maintenant ». Snapshot uniquement, jamais
+  un cumul sur une période passée : `sessions[]` est vidée à l'archivage d'une pièce (voir
+  « Historique des sessions »), impossible de reconstituer un historique de pauses sans requêter
+  `session_history` poste par poste — hors périmètre ici, comme pour `previsionAuDemarrage`/
+  `previsionAvantCloture` qui ont la même limite (aucune donnée rétroactive). Exclut les commandes
+  déjà `isCommandeFullyDone` (rien à surveiller sur une commande terminée).
+- **C — `computePausesARisque(atRiskCommandes, now)`** — détail PAR TÂCHE, limité aux pauses non
+  expliquées d'une commande déjà `isCommandeAtRisk` (la même liste `atRisk` déjà calculée/triée par
+  `renderRisquesPage` pour le corps principal de la page — aucun second calcul), au-delà du seuil
+  `PAUSE_ANOMALIE_SEUIL_H`. Colonnes : commande / pièce-étape / poste / en pause depuis / durée de
+  cette pause / cumul de pauses de la tâche (`pieceCumulPauseHours`, l'historique complet, pas
+  seulement l'arrêt en cours) — triée de la pause en cours la plus longue à la plus courte.
+- Rendu dans une nouvelle section « ⏸ Pauses de production » (`renderRisquesPage`), placée **avant**
+  « 🕓 Retards de démarrage constatés » et « ⚠️ Risques de retard » : c'est le signal le plus
+  immédiatement actionnable (quelque chose est à l'arrêt maintenant), contrairement aux deux autres
+  qui mesurent un écart déjà consommé. Résumé par poste (E) toujours affiché s'il n'est pas vide ;
+  détail par tâche (C) affiché seulement s'il y a au moins une pause au-delà du seuil sur une
+  commande à risque. Toute la section disparaît (pas d'encart vide) si ni l'un ni l'autre n'a rien à
+  montrer — même réflexe que « Retards de démarrage constatés » juste en dessous.
+- Couvert par `test_pauses_production.js` : trous entre sessions (y compris chevauchement « travail
+  à plusieurs », jamais compté comme une pause), `null` vs `0` sur une pièce archivée, filtre D sur
+  les trois combinaisons (manuelle / déjeuner / hors-horaires), seuil de bruit sur une pause de 30 min
+  face à une de 2h/3h, et non-apparition d'une commande hors risque ou d'une pause trop récente dans
+  le détail par tâche.
 
 ### Lisibilité des couleurs d'allée utilisées comme texte
 
