@@ -2916,6 +2916,34 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   utilisateur a besoin de le personnaliser pour UN SEUL de ces flux, résoudre la valeur en amont
   (dans le flux concerné) plutôt que d'ajouter un paramètre optionnel à la fonction partagée —
   garde cette dernière simple et inchangée pour les flux qui n'ont pas ce besoin.
+- **Comparer un planning mis en cache à un planning fraîchement recalculé, et confondre l'écart avec
+  l'effet d'une hypothèse simulée.** `simulateLeaveImpactForRequest` (pop-up « ▲ Impact » d'une
+  demande de congé, onglet « À valider ») compare le planning actuel à un planning hypothétique où
+  le congé est déjà approuvé, pour lister les tâches dont l'horaire changerait. Elle prenait
+  `scheduleBefore` via `getSchedule()` — qui peut renvoyer `scheduleCache` tel quel, potentiellement
+  calculé plusieurs minutes plus tôt (invalidé seulement par `commit()`, voir le piège « Mutation du
+  planning sans invalider le cache » plus haut) — contre `scheduleAfter` via `computeSchedule(...)`
+  calculé maintenant. Or `computeSchedule` ancre le placement des tâches "à faire" non figées sur
+  `new Date()` **au moment de l'appel** (plancher de `findNextFreeSlot`, jamais modifié en phase 3
+  autrement) : le simple écoulement du temps entre les deux calculs décale légèrement TOUTE tâche
+  proche dans le temps, indépendamment de quoi que ce soit d'autre. Bug réel signalé (Simon, congé
+  21/12→31/12/2026) : la pop-up affichait des dizaines de tâches "décalées" datées d'aujourd'hui/
+  cette semaine — une période sans aucun rapport avec celle du congé simulé, bien plus tard en
+  décembre — parce que le `scheduleCache` avait simplement été calculé quelques minutes avant le
+  clic sur "▲ Impact". Corrigé en recalculant `scheduleBefore` avec `computeSchedule(state)`
+  (jamais `getSchedule()`) dans cette fonction : les deux schedules comparés sont alors calculés au
+  même instant réel, donc la seule différence possible entre eux redevient le congé hypothétique
+  lui-même — `computeSchedule` ne mute pas les pièces de `state` (chaque résultat est un objet
+  recopié par `{...op, start, end, ...}`), l'appeler une seconde fois directement sur `state` est
+  donc sans risque, seulement plus coûteux (déjà doublé par le clone `hypothetical` dans cette même
+  fonction). Réflexe : toute comparaison "avant/après" qui simule un changement hypothétique via
+  `computeSchedule` doit calculer ses DEUX côtés dans le même appel de fonction, au même instant —
+  jamais un côté depuis un cache potentiellement ancien (`getSchedule()`) contre un côté fraîchement
+  recalculé, sous peine d'attribuer à l'hypothèse simulée un écart qui n'est dû qu'au temps écoulé
+  depuis le dernier calcul mis en cache. Couvert par `test_leave_impact_clock_drift.js` (un congé
+  lointain sans opérateur lié au poste concerné ne doit produire AUCUN impact, malgré un `now` avancé
+  de 8 minutes entre les deux calculs ; un congé qui bloque réellement le poste reste, lui, bien
+  détecté).
 
 ## Conventions
 

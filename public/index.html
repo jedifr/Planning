@@ -899,7 +899,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.44.0';
+const APP_VERSION = '1.44.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -3934,7 +3934,16 @@ function withdrawLeaveRequest(reqId){
 // une nouvelle demande). `reqLike` : { id?, userId, typeId, debut, fin }.
 function simulateLeaveImpactForRequest(reqLike){
   const TOLERANCE_MS = 60000; // 1 minute — ignore le bruit d'arrondi des calculs de durée, pas un vrai décalage
-  const scheduleBefore = getSchedule();
+  // Recalculé ICI, jamais repris de getSchedule() (qui peut renvoyer un scheduleCache vieux de
+  // plusieurs minutes, voir invalidateSchedule()) : computeSchedule ancre les tâches "à faire" non
+  // figées sur `new Date()` au moment de l'appel (plancher de placement, voir findNextFreeSlot) — un
+  // schedule "avant" figé dans le cache comparé à un schedule "après" calculé maintenant produirait
+  // un faux impact sur toute tâche proche dans le temps, rien à voir avec le congé simulé (bug réel
+  // signalé : un congé posé mi-décembre affichait des dizaines de tâches "décalées" datées d'aujourd'hui
+  // et de la semaine en cours — seul le temps écoulé depuis le dernier calcul mis en cache, pas le congé
+  // lui-même, expliquait ces décalages). Les deux schedules doivent être calculés au même instant réel
+  // pour que la seule différence possible entre eux soit le congé hypothétique lui-même.
+  const scheduleBefore = computeSchedule(state);
   const hypothetical = JSON.parse(JSON.stringify(state));
   if(!hypothetical.leaveRequests) hypothetical.leaveRequests = [];
   const existingIdx = reqLike.id ? hypothetical.leaveRequests.findIndex(r=>r.id===reqLike.id) : -1;
