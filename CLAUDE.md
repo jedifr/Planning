@@ -2352,6 +2352,52 @@ sur une installation neuve, comme les panneaux du planning. Couvert par
 `test_risques_page_collapsible.js` : chaque section repliable indépendamment des deux autres, en-tête
 toujours visible, repliage simultané des trois.
 
+### Alerte de démarrage tardif (pop-up à l'opérateur, activable dans Paramètres)
+
+Demande utilisateur directe : que chaque tâche démarrée en retard soit signalée à l'opérateur, par
+une pop-up indiquant le nombre de jours de retard pris sur son démarrage théorique, avec une case
+d'activation/désactivation dans Paramètres. Complète le badge discret `retardDemarrageBadgeHtml`
+(passif, visible seulement si on regarde la ligne) et le résumé par poste/détail par tâche de la page
+Risques de retard (voir « Retard de démarrage » plus haut, tous deux réservés au superviseur) par un
+signal **actif**, adressé directement à l'opérateur qui vient de démarrer.
+
+- `state.config.retardDemarragePopupActive` (bool, `false` par défaut — comportement inchangé tant
+  que personne ne l'active). `migrateState` l'initialise à `false` sur les états existants.
+  Paramètres → nouvelle section dédiée « 🕓 Risques de retard » (`sectionDefs.risquesRetard`, ajoutée
+  à `SETTINGS_SECTION_KEYS` — admin-only par construction, comme toute section hors "Mon compte", voir
+  `ADMIN_ONLY_SECTIONS`), une simple case à cocher (`data-action="update-config" data-field=
+  "retardDemarragePopupActive"`, `updateConfig` la traite comme les autres booléens de configuration).
+- **Déclenchée dans `setOpStatut`, juste après son `commit()`**, uniquement pour la transition
+  `a_faire → en_cours` (`prev === 'a_faire'`) — **jamais** une reprise après pause (`en_pause →
+  en_cours`) : `retardDemarrageJours(o)` compare `previsionAuDemarrage.debut` (figé une seule fois à
+  la CRÉATION de la pièce, voir « Retard de démarrage ») à `debutReel` (figé une seule fois, au tout
+  premier démarrage réel, jamais réécrit par une reprise) — la valeur ne peut donc de toute façon
+  changer qu'à ce tout premier démarrage, une reprise n'y changerait rien même si elle était testée
+  aussi. Même seuil que le badge (`>= 0,5` jour) pour ne pas notifier un simple bruit
+  d'ordonnancement (quelques minutes/heures d'écart sont courantes).
+- **Portée sur la seule pièce cliquée** (`o`, celle dont l'`id` est passé à `setOpStatut`), jamais sur
+  tout un groupe fusionné qui démarrerait en même temps : chaque pièce a sa propre
+  `previsionAuDemarrage`/son propre retard, et fusionner l'affichage en une seule pop-up multi-pièces
+  aurait ajouté une complexité de mise en page sans demande explicite en ce sens — si plusieurs
+  membres d'un groupe sont en retard, seule la pop-up de la pièce sur laquelle l'opérateur a cliqué
+  s'affiche (comportement jugé suffisant, tout le groupe partage de toute façon le même horodatage de
+  démarrage réel).
+- `retardDemarragePopupInfo` (`{ cid, oid, commandeNom, pieceLabel, posteNom, prevu, debutReel,
+  retardJours } | null`) — état transitoire côté client (comme `newCommandeZoneNotice`, dont cette
+  pop-up reprend le patron exact : petite `.modal-box`, un seul bouton "OK, j'ai compris", fermeture
+  par ✕/Échap/clic sur le fond, jamais persistée). `renderRetardDemarragePopupModal()` — purement
+  informative (la tâche est de toute façon déjà démarrée, rien à décider), affiche commande/pièce/
+  poste, les deux horodatages (prévu vs réel) et le retard en jours. Ajoutée à la composition de la
+  page Planning uniquement (`render()`, bloc principal) : `setOpStatut` n'est déclenché que depuis
+  cette page (menu contextuel `ctx-start`, sélecteur de statut du tableau des tâches) — jamais depuis
+  Congés/Temps de production/Zones/Risques de retard/Pointages, qui n'ont donc pas besoin de la
+  composer.
+- Couvert par `test_retard_demarrage_popup.js` : aucune pop-up si le réglage est désactivé (par
+  défaut) ; apparition avec les bonnes données pour un retard réel de 3 jours ; aucune pop-up pile à
+  l'heure, sous le seuil de 0,5 jour, sur une reprise après pause, ou sans `previsionAuDemarrage`
+  connue (pièce ancienne, donnée non rétroactive) ; `migrateState` initialise bien le réglage à
+  `false`.
+
 ### Lisibilité des couleurs d'allée utilisées comme texte
 
 `readableZoneTextColor(hex)` — les couleurs d'allée (Paramètres → Zones de stockage) sont choisies

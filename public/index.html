@@ -899,7 +899,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.47.0';
+const APP_VERSION = '1.48.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -939,7 +939,7 @@ let stateVersion = 0;
 let draft = null;
 let showNewForm = false;
 let showSettingsModal = false;
-const SETTINGS_SECTION_KEYS = ['moncompte', 'horaires', 'pause', 'affichage', 'utilisateurs', 'conges', 'backup', 'machines', 'storageZones', 'importProfiles', 'maintenance'];
+const SETTINGS_SECTION_KEYS = ['moncompte', 'horaires', 'pause', 'affichage', 'utilisateurs', 'conges', 'backup', 'machines', 'storageZones', 'importProfiles', 'risquesRetard', 'maintenance'];
 const SETTINGS_UI_STORAGE_KEY = 'planning-atelier-settings-ui';
 let settingsSectionOrder = [...SETTINGS_SECTION_KEYS];
 // Pop-up Paramètres en deux volets (catégories à gauche, contenu à droite) — une seule section
@@ -1326,6 +1326,11 @@ let excelImportResult = null;
 // (Excel/personnalisé) affiche la même information dans sa propre pop-up de résultat (excelImportResult),
 // commande par commande, plutôt que d'utiliser celle-ci qui ne porte qu'une seule commande à la fois.
 let newCommandeZoneNotice = null; // { nom, zoneStockage } | null
+// Pop-up "🕓 Démarrage tardif" (voir CLAUDE.md, "Alerte de démarrage tardif") — posée par setOpStatut
+// juste après un clic sur "▶ Démarrer" (a_faire → en_cours) sur une tâche déjà en retard sur son
+// démarrage théorique (retardDemarrageJours), uniquement si activée dans Paramètres → Risques de
+// retard. { cid, oid, commandeNom, pieceLabel, posteNom, prevu, debutReel, retardJours } | null.
+let retardDemarragePopupInfo = null;
 // Formulaire "Pointage rapide" (onglet Temps de production, voir CLAUDE.md) — { cid, nouvelleCommandeNom,
 // machineId, piece, etape, tempsUnitaire, quantite, operatorUserId } | null (fermé).
 let quickPointageDraft = null;
@@ -1438,6 +1443,7 @@ function migrateState(st){
   if(!st.config.margeEcheanceJours && st.config.margeEcheanceJours !== 0) st.config.margeEcheanceJours = 0;
   if(st.config.archiveApresJours === undefined) st.config.archiveApresJours = 365; // 0 = archivage automatique désactivé
   if(st.config.archiveAutoActive === undefined) st.config.archiveAutoActive = Number(st.config.archiveApresJours) > 0; // préserve le comportement des états déjà enregistrés
+  if(st.config.retardDemarragePopupActive === undefined) st.config.retardDemarragePopupActive = false; // désactivée par défaut, comportement inchangé pour qui ne l'active pas
   if(!Array.isArray(st.commandesArchivees)) st.commandesArchivees = []; // commandes entièrement terminées depuis longtemps, écartées du moteur de planification pour garder l'appli réactive — toujours incluses dans l'export complet
   if(!st.userMachines) st.userMachines = {}; // { [userId]: [machineId, ...] } — lien plusieurs-à-plusieurs
   if(!Array.isArray(st.hiddenTempsProdUserIds)) st.hiddenTempsProdUserIds = []; // salariés exclus de l'onglet Temps de production (superviseur) — voir isHiddenFromTempsProd
@@ -3208,6 +3214,8 @@ function updateConfig(field, value){
     state.config.matiereFusionActive = !!value;
   } else if(field==='archiveAutoActive'){
     state.config.archiveAutoActive = !!value;
+  } else if(field==='retardDemarragePopupActive'){
+    state.config.retardDemarragePopupActive = !!value;
   } else if(field==='pauseDebut' || field==='pauseFin'){
     if(value) state.config[field] = value;
   } else if(field==='appTitle'){
@@ -5666,6 +5674,26 @@ function setOpStatut(cid, oid, newStatut){
     showToast(`Terminée ${durationLabel(maxAdvanceH)} en avance — les tâches non figées viennent de se recaler automatiquement.`);
   }
   commit();
+  // Alerte de démarrage tardif (voir CLAUDE.md, Paramètres → Risques de retard) : uniquement au tout
+  // premier démarrage réel (a_faire → en_cours, jamais une reprise après pause) et seulement si
+  // activée — même donnée et même seuil que le badge "🕓" déjà affiché sur les tâches concernées
+  // (retardDemarrageJours, previsionAuDemarrage figé à la CRÉATION de la pièce). Portée sur la seule
+  // pièce cliquée, jamais tout le groupe fusionné : chaque pièce a sa propre prévision de démarrage.
+  if(newStatut === 'en_cours' && prev === 'a_faire' && state.config.retardDemarragePopupActive){
+    const retard = retardDemarrageJours(o);
+    if(retard != null && retard >= 0.5){
+      const m = state.machines.find(mm=>mm.id===o.machineId);
+      retardDemarragePopupInfo = {
+        cid: c.id, oid: o.id,
+        commandeNom: c.nom,
+        pieceLabel: [o.piece, o.etape].filter(Boolean).join(' / ') || '(sans nom)',
+        posteNom: m ? m.nom : null,
+        prevu: o.previsionAuDemarrage.debut,
+        debutReel: o.debutReel,
+        retardJours: retard
+      };
+    }
+  }
   // Déclenche l'archivage des sessions dès cette clôture (plutôt que d'attendre le prochain
   // démarrage de l'appli, seul moment où archiveOldSessions() tournait jusqu'ici) : sessions[] ne
   // vient justement plus d'être vidé par applySingleStatusChange (voir CLAUDE.md), donc le détail
@@ -5675,6 +5703,7 @@ function setOpStatut(cid, oid, newStatut){
     archiveOldSessions(state).then(changed => { if(changed) queueSilentSave(); });
   }
 }
+function closeRetardDemarragePopup(){ retardDemarragePopupInfo = null; render(); }
 // Permet à un second (ou troisième…) opérateur de se signaler comme travaillant, en parallèle, sur
 // une pièce déjà en_cours — cas réel d'un travail à plusieurs mains sur la même ligne (à distinguer
 // du split en plusieurs lignes utilisé pour deux MACHINES différentes, voir CLAUDE.md). Contrairement
@@ -9129,6 +9158,36 @@ function renderNewCommandeZoneNoticeModal(){
     </div>
   </div>`;
 }
+// Pop-up "🕓 Démarrage tardif" (voir CLAUDE.md, "Alerte de démarrage tardif") — posée par setOpStatut
+// juste après un clic sur "▶ Démarrer", purement informative (un seul bouton, la tâche est de toute
+// façon déjà démarrée) : indique de combien de jours le démarrage réel a dépassé la prévision figée à
+// la création de la pièce (previsionAuDemarrage). Activable/désactivable dans Paramètres → Risques de
+// retard, désactivée par défaut.
+function renderRetardDemarragePopupModal(){
+  if(!retardDemarragePopupInfo) return '';
+  const info = retardDemarragePopupInfo;
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:420px;">
+      <div class="modal-head">
+        <h2>🕓 Démarrage tardif</h2>
+        <button class="ghost icon-btn" data-action="close-retard-demarrage-popup" title="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="footer-note" style="text-align:left; margin:0 0 4px;">${escapeHtml(info.commandeNom)} — ${escapeHtml(info.pieceLabel)}</div>
+        ${info.posteNom ? `<div class="footer-note" style="text-align:left; margin:0 0 12px;">Poste : ${escapeHtml(info.posteNom)}</div>` : ''}
+        <div class="machines-grid" style="margin-bottom:12px;">
+          <div><label class="field">Prévu le</label><div class="mono">${formatDT(new Date(info.prevu))}</div></div>
+          <div><label class="field">Démarré le</label><div class="mono">${formatDT(new Date(info.debutReel))}</div></div>
+        </div>
+        <div style="text-align:center; padding:10px 0; font-size:18px; font-weight:700; color:var(--red);">⏱ Retard : ${info.retardJours.toFixed(1)} jour(s)</div>
+        <div class="form-actions" style="justify-content:flex-end; margin-top:8px;">
+          <button class="primary" data-action="close-retard-demarrage-popup">OK, j'ai compris</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
 // Pointage rapide (voir openQuickPointage/CLAUDE.md) — formulaire compact, volontairement distinct
 // du formulaire "Nouvelle commande" (multi-lignes, bien plus lourd que nécessaire ici).
 function renderQuickPointageModal(){
@@ -9569,7 +9628,13 @@ function renderSettingsModal(){
       <div class="footer-note" style="text-align:left; padding:10px 0;">Les commandes archivées sont écartées du calcul du planning pour garder l'appli réactive — elles restent consultables et désarchivables dans le panneau "Commandes archivées", et toujours incluses dans l'export .json complet. Décocher la case ci-dessus n'empêche pas "Archiver maintenant" de fonctionner ponctuellement.</div>
       <hr style="border:none; border-top:1px solid var(--line-soft); margin:14px 0;">
       <div class="footer-note" style="text-align:left; padding-bottom:10px;">Efface toutes les commandes et remet les postes à leurs réglages par défaut. Cette action est irréversible — une confirmation vous sera demandée.</div>
-      <button class="danger-ghost small" style="border:1px solid var(--red); padding:7px 14px;" data-action="reset-all">Réinitialiser tout le planning</button>` }
+      <button class="danger-ghost small" style="border:1px solid var(--red); padding:7px 14px;" data-action="reset-all">Réinitialiser tout le planning</button>` },
+    risquesRetard: { title: '🕓 Risques de retard', body: `
+      <label class="statut-chip" style="margin-bottom:10px;">
+        <input type="checkbox" ${cfg.retardDemarragePopupActive?'checked':''} data-action="update-config" data-field="retardDemarragePopupActive">
+        Avertir l'opérateur par une pop-up quand il démarre une tâche en retard sur son démarrage théorique
+      </label>
+      <div class="footer-note" style="text-align:left; padding-bottom:10px;">S'affiche juste après un clic sur "▶ Démarrer" (jamais à la reprise après pause), seulement si le retard dépasse un demi-jour — le même seuil et la même donnée que le badge "🕓" déjà affiché sur les tâches concernées (voir "Retard de démarrage" dans la page ⚠️ Risques de retard). Désactivée par défaut.</div>` }
   };
 
   // "Mon compte" est la SEULE section accessible à tout rôle (mot de passe, page d'accueil par
@@ -11140,6 +11205,7 @@ function render(){
     renderCustomImportModal(),
     renderFusionGroupDetailModal(),
     renderNewCommandeZoneNoticeModal(),
+    renderRetardDemarragePopupModal(),
     renderCorrectOperatorModal(),
     renderQuickPointageModal(),
     renderContextMenu(),
@@ -11242,7 +11308,7 @@ function updateHighlightClasses(){
 /* ---------------- délégation d'événements : clics & changements ---------------- */
 document.addEventListener('click', (e) => {
   if(e.target.classList && e.target.classList.contains('modal-overlay')){
-    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; closeSettingsModal(); return;
+    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; closeSettingsModal(); return;
   }
   if(contextMenu && !e.target.closest('.context-menu')){
     contextMenu = null; render();
@@ -11424,6 +11490,7 @@ function dispatchClickAction(action, el){
     case 'close-settings': closeSettingsModal(); break;
     case 'close-excel-import-result': excelImportResult = null; render(); break;
     case 'close-new-commande-zone-notice': newCommandeZoneNotice = null; render(); break;
+    case 'close-retard-demarrage-popup': closeRetardDemarragePopup(); break;
     case 'dismiss-toast': if(toastTimer) clearTimeout(toastTimer); toastMessage = null; render(); break;
     case 'show-new-form': toggleNewForm(); break;
     case 'cancel-new-form': showNewForm=false; render(); break;
@@ -12036,6 +12103,7 @@ document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && showSettingsModal){ closeSettingsModal(); }
   if(e.key === 'Escape' && excelImportResult){ excelImportResult = null; render(); }
   if(e.key === 'Escape' && newCommandeZoneNotice){ newCommandeZoneNotice = null; render(); }
+  if(e.key === 'Escape' && retardDemarragePopupInfo){ closeRetardDemarragePopup(); }
   if(e.key === 'Escape' && quickPointageDraft){ closeQuickPointage(); }
   if(e.key === 'Escape' && correctOperatorDraft){ closeCorrectOperator(); }
   if(e.key === 'Escape' && continuedDrag){ cancelContinuedDrag(); }
