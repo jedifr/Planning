@@ -914,7 +914,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.52.0';
+const APP_VERSION = '1.53.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -954,7 +954,7 @@ let stateVersion = 0;
 let draft = null;
 let showNewForm = false;
 let showSettingsModal = false;
-const SETTINGS_SECTION_KEYS = ['moncompte', 'horaires', 'pause', 'affichage', 'utilisateurs', 'conges', 'backup', 'machines', 'storageZones', 'importProfiles', 'risquesRetard', 'maintenance'];
+const SETTINGS_SECTION_KEYS = ['moncompte', 'horaires', 'pause', 'affichage', 'utilisateurs', 'conges', 'backup', 'emailReport', 'machines', 'storageZones', 'importProfiles', 'risquesRetard', 'maintenance'];
 const SETTINGS_UI_STORAGE_KEY = 'planning-atelier-settings-ui';
 let settingsSectionOrder = [...SETTINGS_SECTION_KEYS];
 // Pop-up Paramètres en deux volets (catégories à gauche, contenu à droite) — une seule section
@@ -1472,6 +1472,7 @@ function migrateState(st){
   if(st.config.archiveApresJours === undefined) st.config.archiveApresJours = 365; // 0 = archivage automatique désactivé
   if(st.config.archiveAutoActive === undefined) st.config.archiveAutoActive = Number(st.config.archiveApresJours) > 0; // préserve le comportement des états déjà enregistrés
   if(st.config.retardDemarragePopupActive === undefined) st.config.retardDemarragePopupActive = false; // désactivée par défaut, comportement inchangé pour qui ne l'active pas
+  if(!st.config.emailReport) st.config.emailReport = { actif:false, destinataires:'', frequence:'quotidien', jourSemaine:1, heure:'18:00', dernierEnvoi:null }; // rapports par e-mail (voir CLAUDE.md « Alertes e-mail ») — désactivé par défaut
   if(!Array.isArray(st.commandesArchivees)) st.commandesArchivees = []; // commandes entièrement terminées depuis longtemps, écartées du moteur de planification pour garder l'appli réactive — toujours incluses dans l'export complet
   if(!st.userMachines) st.userMachines = {}; // { [userId]: [machineId, ...] } — lien plusieurs-à-plusieurs
   if(!Array.isArray(st.hiddenTempsProdUserIds)) st.hiddenTempsProdUserIds = []; // salariés exclus de l'onglet Temps de production (superviseur) — voir isHiddenFromTempsProd
@@ -3234,6 +3235,15 @@ function updateConfig(field, value){
     commit(true);
     return;
   }
+  if(field.startsWith('emailReport.')){
+    if(!state.config.emailReport) state.config.emailReport = { actif:false, destinataires:'', frequence:'quotidien', jourSemaine:1, heure:'18:00', dernierEnvoi:null };
+    const sub = field.split('.')[1];
+    if(sub==='actif') state.config.emailReport.actif = !!value;
+    else if(sub==='jourSemaine') state.config.emailReport.jourSemaine = Number(value);
+    else state.config.emailReport[sub] = value;
+    commit(true);
+    return;
+  }
   if(field.startsWith('urgencyColors.')){
     if(!state.config.urgencyColors) state.config.urgencyColors = { importante:'#a06d1a', urgente:'#b23a30' };
     const sub = field.split('.')[1];
@@ -3501,6 +3511,22 @@ async function testBackupNow(){
       alert('Sauvegarde envoyée avec succès.');
     } else {
       alert("Échec de l'envoi : " + (json.error || 'erreur inconnue') + "\n\nVérifiez le fichier Cfg_backup.yml (hôte, port, secure, identifiants) et l'adresse destinataire.");
+    }
+  }catch(e){
+    alert("Impossible de contacter le serveur pour tester l'envoi.");
+  }
+  if(btn){ btn.disabled = false; btn.textContent = 'Tester l\'envoi maintenant'; }
+}
+async function testEmailReportNow(){
+  const btn = document.getElementById('test-email-report-btn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Envoi en cours…'; }
+  try{
+    const res = await fetch('/api/report/test', { method: 'POST', credentials: 'include' });
+    const json = await res.json();
+    if(res.ok && json.ok){
+      alert('Rapport envoyé avec succès.');
+    } else {
+      alert("Échec de l'envoi : " + (json.error || 'erreur inconnue') + "\n\nVérifiez le fichier Cfg_backup.yml (même configuration SMTP que la sauvegarde) et l'adresse destinataire.");
     }
   }catch(e){
     alert("Impossible de contacter le serveur pour tester l'envoi.");
@@ -9753,6 +9779,7 @@ function renderSettingsModal(){
   if(!showSettingsModal) return '';
   const cfg = state.config;
   const bk = cfg.backup || { destinataire:'', motDePasse:'', heure:'02:00', actif:false, dernierEnvoi:null };
+  const er = cfg.emailReport || { actif:false, destinataires:'', frequence:'quotidien', jourSemaine:1, heure:'18:00', dernierEnvoi:null };
   const uc = cfg.urgencyColors || { importante:'#a06d1a', urgente:'#b23a30' };
   const machineCards = state.machines.map((m,i) => {
     const h = m.horaires || DEFAULT_CONFIG;
@@ -10011,6 +10038,33 @@ function renderSettingsModal(){
         ${bk.dernierEnvoi ? `<span class="footer-note" style="margin:0;">Dernier envoi : ${escapeHtml(bk.dernierEnvoi)}</span>` : ''}
       </div>
       <div class="footer-note" style="text-align:left; padding-top:8px;">Le serveur SMTP (compte d'envoi) est configuré par l'administrateur dans le fichier Cfg_backup.yml, pas ici — voir le README. Sans cette configuration, le bouton de test échouera.</div>` },
+    emailReport: { title: 'Rapports par e-mail', body: `
+      <label class="statut-chip" style="margin-bottom:10px;">
+        <input type="checkbox" ${er.actif?'checked':''} data-action="update-config" data-field="emailReport.actif">
+        Envoyer un rapport automatique par e-mail
+      </label>
+      <div class="machines-grid">
+        <div><label class="field">Adresse(s) e-mail destinataire(s)</label><input type="text" placeholder="exemple@entreprise.fr, autre@entreprise.fr" value="${escapeHtml(er.destinataires||'')}" data-action="update-config" data-field="emailReport.destinataires"></div>
+        <div><label class="field">Fréquence</label><select data-action="update-config" data-field="emailReport.frequence">
+          <option value="quotidien" ${er.frequence==='quotidien'?'selected':''}>Quotidien</option>
+          <option value="hebdomadaire" ${er.frequence==='hebdomadaire'?'selected':''}>Hebdomadaire</option>
+        </select></div>
+        ${er.frequence==='hebdomadaire' ? `<div><label class="field">Jour de la semaine</label><select data-action="update-config" data-field="emailReport.jourSemaine">
+          <option value="1" ${Number(er.jourSemaine)===1?'selected':''}>Lundi</option>
+          <option value="2" ${Number(er.jourSemaine)===2?'selected':''}>Mardi</option>
+          <option value="3" ${Number(er.jourSemaine)===3?'selected':''}>Mercredi</option>
+          <option value="4" ${Number(er.jourSemaine)===4?'selected':''}>Jeudi</option>
+          <option value="5" ${Number(er.jourSemaine)===5?'selected':''}>Vendredi</option>
+          <option value="6" ${Number(er.jourSemaine)===6?'selected':''}>Samedi</option>
+          <option value="0" ${Number(er.jourSemaine)===0?'selected':''}>Dimanche</option>
+        </select></div>` : ''}
+        <div><label class="field">Heure d'envoi</label><input type="time" value="${er.heure||'18:00'}" data-action="update-config" data-field="emailReport.heure"></div>
+      </div>
+      <div style="margin-top:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <button class="small" id="test-email-report-btn" data-action="test-email-report">Tester l'envoi maintenant</button>
+        ${er.dernierEnvoi ? `<span class="footer-note" style="margin:0;">Dernier envoi : ${escapeHtml(er.dernierEnvoi)}</span>` : ''}
+      </div>
+      <div class="footer-note" style="text-align:left; padding-top:8px;">Résume, depuis le dernier envoi (les dernières 24h en quotidien, les 7 derniers jours en hebdomadaire) : commandes dont l'échéance est déjà dépassée, tâches démarrées en retard, rebuts déclarés, sous-traitances en retard, et pauses actuellement non expliquées. Ce résumé n'utilise volontairement pas le moteur de planification complet (pas de notion de commande "à risque" ni de fin projetée) — voir CLAUDE.md, section « Alertes e-mail ». Même serveur SMTP que la sauvegarde automatique ci-dessus (Cfg_backup.yml) — sans cette configuration, le bouton de test échouera.</div>` },
     machines: { title: `Postes de production (${state.machines.length})`, body: `
       <label class="statut-chip" style="margin-bottom:12px;">
         <input type="checkbox" ${state.config.matiereFusionActive?'checked':''} data-action="update-config" data-field="matiereFusionActive">
@@ -11831,6 +11885,7 @@ function dispatchClickAction(action, el){
     case 'reset-all': resetAll(); break;
     case 'export-data': exportData(); break;
     case 'test-backup': testBackupNow(); break;
+    case 'test-email-report': testEmailReportNow(); break;
     case 'trigger-import': triggerImport(); break;
     case 'download-excel-template': downloadExcelTemplate(); break;
     case 'trigger-logo-upload': triggerLogoUpload(); break;

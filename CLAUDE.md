@@ -84,6 +84,7 @@ rendent ce geste manuel inutile dans le cas courant :
 | `sessionHistory.js` | Historique des sessions de travail archivées (voir plus bas). |
 | `previsionHistory.js` | Historique des prévisions du moteur avant clôture d'une tâche (voir plus bas). |
 | `autoPauseResume.js` | Reprise automatique de pause déjeuner par personne, tournée côté serveur (voir plus bas). |
+| `reportEmail.js` | Rapport quotidien/hebdomadaire par e-mail (échéances dépassées, retards, rebuts...), voir plus bas. |
 
 Base SQLite, trois tables : `app_state` (l'état entier en JSON + numéro de version), `users`,
 et `session_history` (voir ci-dessous). Volume Docker nommé `planning-data`.
@@ -1719,6 +1720,89 @@ une pièce à produire, à partir du temps déjà mesuré par ailleurs.
   (`null`→"—", `0`→"0 €", arrondi à 2 décimales), exposition dans `computeAllPointages`, agrégation
   et `hasCout` dans `computePointagesByReference` (vrai/faux selon qu'au moins un poste de la
   référence est taxé), migration `tauxHoraireH:0` sur un poste ancien.
+
+## Alertes e-mail (quotidien/hebdomadaire)
+
+Retour utilisateur réel : jusqu'ici, un problème (échéance dépassée, tâche démarrée en retard, rebut,
+sous-traitance en retard, pause suspecte) n'était visible que par quelqu'un ayant l'application
+ouverte au bon moment. Demande : un rapport envoyé par e-mail, quotidien ou hebdomadaire, pour être
+alerté même sans avoir l'appli sous les yeux — même principe que la sauvegarde automatique déjà
+existante (`backup.js`), mais pour du contenu plutôt qu'un export complet des données.
+
+- **`reportEmail.js` — portage SIMPLIFIÉ, pas un simple portage à l'identique comme
+  `autoPauseResume.js`.** Contrairement à ce dernier (qui duplique fidèlement une logique de pause
+  indépendante du moteur de planification), ce rapport n'appelle **jamais** `computeSchedule`/
+  `getSchedule` — dupliquer le moteur de planification complet côté serveur aurait été un changement
+  d'architecture bien plus large que ce qui est demandé. Réflexion explicite tranchée en amont : le
+  rapport se limite donc à des métriques calculables **directement** à partir des champs déjà
+  persistés sur les pièces (dates, `rebuts[]`, `previsionAuDemarrage`/`debutReel`,
+  `sousTraitanceDateRetour`, `sessions[]`) — jamais une fin projetée, jamais de notion de commande
+  "à risque" (`isCommandeAtRisk`, qui a structurellement besoin du moteur pour projeter une fin).
+  - `commandesEcheanceDepassee(state, now)` — commandes actives (pas `isCommandeFullyDone`) dont
+    `dateBesoin` est déjà strictement dépassée aujourd'hui : une comparaison de date directe, pas "à
+    risque" au sens de la page Risques de retard (qui, elle, peut alerter AVANT l'échéance grâce à
+    une fin projetée).
+  - `tachesDemarreesEnRetard(state, since)` — réécrit `retardDemarrageJours` (public/index.html) en
+    pur JS sur les deux champs déjà figés (`previsionAuDemarrage.debut`/`debutReel`, jamais recalculés
+    après coup côté client non plus, voir « Retard de démarrage ») : même seuil de 0,5 jour, bucketée
+    sur la date de démarrage réel tombant dans `[since, maintenant]` — une tâche en retard mais
+    démarrée avant la période n'est comptée que dans le rapport qui couvrait cette période-là,
+    jamais deux fois.
+  - `rebutsSurPeriode(state, since)` — somme des quantités de `pieces[].rebuts[]` dont la date tombe
+    dans la période.
+  - `sousTraitancesEnRetard(state, now)` — même condition que `sousTraitanceRetardBadgeHtml` côté
+    client (sous-traitée, pas encore `termine`, date de retour dépassée) : un ÉTAT à l'instant du
+    rapport, pas un événement de la période — une sous-traitance en retard depuis 3 semaines reste
+    signalée à chaque rapport tant qu'elle n'est pas revenue, contrairement aux métriques "sur la
+    période" ci-dessus.
+  - `pausesSuspectesEnCours(state, now, seuilH)` — version **délibérément simplifiée** de
+    `isUnexplainedPause`/`pieceCurrentPauseGap` (public/index.html) : mêmes champs
+    (`autoPaused`/`autoPausedOutOfHours`) pour écarter une pause déjà expliquée par l'application,
+    mais la durée de la pause en cours est lue directement sur la fin de la **dernière session
+    fermée**, plutôt que via le calcul complet des trous entre sessions (`pauseGapsForPiece`) —
+    suffisant pour un simple compteur de rapport (on ne veut qu'un signal "il y a une pause suspecte
+    en ce moment", pas le détail complet affiché par la page Risques de retard), et évite de
+    dupliquer une fonction plus élaborée pour ce seul besoin. Même seuil de bruit qu'ailleurs (1h).
+  - `buildReportText(state, now, since, frequenceLabel)` — texte simple (pas de HTML, comme les
+    autres e-mails de l'application), une section par métrique ci-dessus, chaque liste tronquée aux
+    15 premiers éléments (« … et N autre(s) ») pour ne jamais produire un e-mail interminable sur un
+    atelier avec beaucoup d'historique. Rappelle explicitement, en pied de rapport, que ce résumé ne
+    reflète pas le moteur de planification — pour ne jamais laisser croire à une exhaustivité qu'il
+    n'a pas.
+  - **Réflexe explicite documenté en tête du fichier** (comme pour `autoPauseResume.js`) : toute
+    évolution de la logique équivalente côté client qui changerait la SÉLECTION des données (pas
+    seulement son affichage) doit être reportée ici aussi, sous peine de rapport trompeur.
+- `state.config.emailReport` (`{ actif, destinataires, frequence:'quotidien'|'hebdomadaire',
+  jourSemaine, heure, dernierEnvoi }`, `migrateState` l'initialise désactivé par défaut) —
+  `destinataires` est une chaîne (une ou plusieurs adresses séparées par des virgules, transmise
+  telle quelle à `sendMail`, qui accepte nativement ce format) plutôt qu'un tableau : cohérent avec le
+  champ `destinataire` (singulier) déjà existant de la sauvegarde automatique, pas de nouvelle
+  convention à apprendre. `jourSemaine` (0=dimanche..6=samedi) n'a d'effet qu'en `'hebdomadaire'`.
+- Paramètres → nouvelle section « Rapports par e-mail » (`sectionDefs.emailReport`, ajoutée à
+  `SETTINGS_SECTION_KEYS` juste après `backup` — admin-only par construction, voir `ADMIN_ONLY_
+  SECTIONS`), sur le même modèle visuel que la section Sauvegarde automatique juste au-dessus :
+  case d'activation, destinataire(s), fréquence, jour de la semaine (affiché seulement si
+  hebdomadaire), heure, bouton « Tester l'envoi maintenant » (`testEmailReportNow()` →
+  `POST /api/report/test`, même structure que `testBackupNow()`/`/api/backup/test`).
+- **Même configuration SMTP que la sauvegarde automatique** (`Cfg_backup.yml`, via
+  `sendNotificationEmail` déjà exportée par `backup.js` — utilisée telle quelle, aucune duplication
+  de la logique SMTP/`nodemailer`) : pas de second fichier de configuration à maintenir, le rapport
+  utilise le même compte d'envoi.
+- `checkScheduledEmailReport()` (`server.js`, `setInterval` toutes les 60s, même structure et même
+  cadence que `checkScheduledBackup`) — compare l'heure courante à `cfg.heure`, vérifie le jour de la
+  semaine en `'hebdomadaire'`, ignore si déjà envoyé aujourd'hui (`dernierEnvoi`), construit le texte
+  via `reportEmail.buildReportText` avec `since` = les dernières 24h (quotidien) ou les 7 derniers
+  jours (hebdomadaire), puis marque `dernierEnvoi` dans tous les cas (succès ou échec) pour ne jamais
+  boucler toutes les minutes sur une configuration invalide — mêmes précautions que la sauvegarde
+  automatique (lecture/écriture synchrones, aucun risque de conflit de version pour ce job lui-même).
+- **Réflexe Dockerfile** (piège déjà documenté plus bas) : `reportEmail.js` ajouté à la fois au
+  `require()` de `server.js` et à la ligne `COPY reportEmail.js ./` du `Dockerfile`.
+- Couvert par `test_report_email.js` (module serveur autonome, comme `test_server_timezone_bug.js`) :
+  échéance dépassée sur une commande active non finie mais jamais sur une commande déjà terminée,
+  seuil de retard de démarrage (0,5j) et exclusion d'une tâche démarrée hors période, somme des
+  rebuts sur la période, sous-traitance en retard (uniquement non revenue et date dépassée), filtre
+  des pauses suspectes (jamais une pause déjà expliquée, seuil d'1h), composition de
+  `buildReportText` sans erreur.
 
 ## Vue d'ensemble atelier
 

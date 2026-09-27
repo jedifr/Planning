@@ -23,6 +23,7 @@ const license = require('./license');
 const sessionHistory = require('./sessionHistory');
 const previsionHistory = require('./previsionHistory');
 const autoPauseResume = require('./autoPauseResume');
+const reportEmail = require('./reportEmail');
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'planning.db');
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -407,6 +408,23 @@ app.get('/api/backup/status', requireAuth, requireLicense, (req, res) => {
   res.json({ smtpConfigured: hasSmtpConfig() });
 });
 
+// Déclenche un rapport immédiat (bouton "Tester l'envoi maintenant" de la section "Rapports par
+// e-mail") — voir reportEmail.js/CLAUDE.md « Alertes e-mail ». Même configuration SMTP que la
+// sauvegarde automatique (Cfg_backup.yml, via sendNotificationEmail).
+app.post('/api/report/test', requireAuth, requireLicense, async (req, res) => {
+  const row = db.prepare('SELECT data FROM app_state WHERE id = 1').get();
+  const data = JSON.parse(row.data);
+  const cfg = (data.config && data.config.emailReport) || {};
+  if(!cfg.destinataires) return res.status(500).json({ ok:false, error:'Aucune adresse destinataire configurée.' });
+  const now = new Date();
+  const isHebdo = cfg.frequence === 'hebdomadaire';
+  const since = new Date(now.getTime() - (isHebdo ? 7 : 1) * 86400000);
+  const text = reportEmail.buildReportText(data, now, since, isHebdo ? 'hebdomadaire' : 'quotidien');
+  const result = await sendNotificationEmail(cfg.destinataires, `Rapport Planning Atelier — ${now.toLocaleDateString('fr-FR')}`, text);
+  if(result.ok) return res.json({ ok: true });
+  res.status(500).json({ ok: false, error: result.error });
+});
+
 // Planificateur : vérifie chaque minute si l'heure de sauvegarde configurée est atteinte.
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 async function checkScheduledBackup(){
@@ -444,6 +462,46 @@ async function checkScheduledBackup(){
   }
 }
 setInterval(checkScheduledBackup, 60000);
+
+// Planificateur du rapport par e-mail (quotidien/hebdomadaire) — voir reportEmail.js/CLAUDE.md
+// « Alertes e-mail ». Même structure que checkScheduledBackup ci-dessus (relecture/réécriture
+// synchrones via better-sqlite3, marquage de dernierEnvoi dans tous les cas pour ne pas boucler
+// toutes les minutes sur une configuration invalide).
+async function checkScheduledEmailReport(){
+  try{
+    const row = db.prepare('SELECT data, version FROM app_state WHERE id = 1').get();
+    const data = JSON.parse(row.data);
+    const cfg = data.config && data.config.emailReport;
+    if(!cfg || !cfg.actif || !cfg.destinataires) return;
+
+    const now = new Date();
+    const hhmm = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    if(hhmm !== cfg.heure) return;
+    const isHebdo = cfg.frequence === 'hebdomadaire';
+    if(isHebdo && now.getDay() !== Number(cfg.jourSemaine)) return; // pas le bon jour de la semaine
+    if(cfg.dernierEnvoi === todayStr()) return; // déjà envoyé aujourd'hui
+
+    console.log('Rapport automatique programmé : envoi en cours...');
+    const since = new Date(now.getTime() - (isHebdo ? 7 : 1) * 86400000);
+    const text = reportEmail.buildReportText(data, now, since, isHebdo ? 'hebdomadaire' : 'quotidien');
+    const result = await sendNotificationEmail(cfg.destinataires, `Rapport Planning Atelier — ${now.toLocaleDateString('fr-FR')}`, text);
+    if(result.ok){
+      console.log('Rapport automatique envoyé avec succès à', cfg.destinataires);
+    } else {
+      console.error('Échec du rapport automatique :', result.error);
+    }
+    const current = db.prepare('SELECT data, version FROM app_state WHERE id = 1').get();
+    const currentData = JSON.parse(current.data);
+    if(currentData.config && currentData.config.emailReport){
+      currentData.config.emailReport.dernierEnvoi = todayStr();
+      db.prepare('UPDATE app_state SET data = ?, version = ?, updated_at = ? WHERE id = 1')
+        .run(JSON.stringify(currentData), current.version + 1, nowIso());
+    }
+  }catch(err){
+    console.error('Erreur du planificateur de rapport par e-mail :', err);
+  }
+}
+setInterval(checkScheduledEmailReport, 60000);
 
 // Reprise automatique de pause déjeuner, même sans personne devant l'appli dans un navigateur (voir
 // autoPauseResume.js, portage volontairement dupliqué de la même logique côté client). Jusqu'ici,
