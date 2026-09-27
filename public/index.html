@@ -899,7 +899,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.48.0';
+const APP_VERSION = '1.49.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1351,6 +1351,11 @@ let pointagesFilters = { personne:'', poste:'', statut:'toutes', range:'thisMont
 // Vue "Liste" (une ligne par pointage, historique) vs "Par référence" (regroupée par pièce, voir
 // computePointagesByReference) — purement transitoire, jamais persistée (comme pointagesFilters).
 let pointagesViewMode = 'liste';
+// Déclaration d'un rebut/non-conformité depuis "Pointages" (voir CLAUDE.md, "Non-conformités /
+// rebuts") — { cid, oid, quantite, motif } | null (fermé). Chaque déclaration s'AJOUTE à
+// `pieces[].rebuts[]` (jamais un champ unique écrasé) : une même pièce peut accumuler plusieurs
+// rebuts déclarés à des moments différents de sa production.
+let rebutDraft = null;
 // Correction du DÉTAIL des sessions d'une pièce encore ACTIVE (en_cours/en_pause) depuis "Pointages"
 // — voir CLAUDE.md, section "Onglet Pointages". Distinct de correctPointageDraft (qui corrige les
 // champs agrégés d'une pièce déjà TERMINÉE) : une pièce active tire son temps affiché EN DIRECT de
@@ -1524,6 +1529,10 @@ function migrateState(st){
   st.commandes.forEach(c => { if(c.pretExpedition === undefined) c.pretExpedition = false; });
   (st.commandesArchivees||[]).forEach(c => { if(c.pretExpedition === undefined) c.pretExpedition = false; });
   (st.commandesArchivees||[]).forEach(c => { if(c.dateCreation === undefined) c.dateCreation = null; });
+  // Contrairement aux autres champs de pieces[], migrés uniquement pour les commandes ACTIVES
+  // (boucle st.commandes.forEach ci-dessus) : computeAllPointages (Onglet Pointages) lit aussi les
+  // commandes archivées, une pièce archivée déjà `rebuts:undefined` y planterait sinon la somme.
+  (st.commandesArchivees||[]).forEach(c => (c.pieces||[]).forEach(o => { if(!Array.isArray(o.rebuts)) o.rebuts = []; }));
   // Migration ponctuelle (une seule fois) : attribue automatiquement une zone de stockage aux
   // commandes déjà en cours au moment de l'introduction de cette fonctionnalité (voir CLAUDE.md).
   // Sans garde, ça retenterait une assignation à chaque chargement — inutile (assignStorageZone est
@@ -1610,10 +1619,12 @@ function migrateState(st){
       if(o.operatorUserId === undefined) o.operatorUserId = null;
       if(o.dateDebutPossible === undefined) o.dateDebutPossible = null;
       if(o.sousTraitance === undefined) o.sousTraitance = false;
+      if(o.sousTraitanceDateRetour === undefined) o.sousTraitanceDateRetour = null; // voir CLAUDE.md, "Suivi des délais de sous-traitance"
       if(o.horsPlanning === undefined) o.horsPlanning = false;
       if(o.matiere === undefined) o.matiere = '';
       if(o.epaisseur === undefined) o.epaisseur = '';
       if(o.numeroLigne === undefined) o.numeroLigne = null;
+      if(!Array.isArray(o.rebuts)) o.rebuts = []; // voir CLAUDE.md, "Non-conformités / rebuts" — { quantite, motif, date }[]
       if(o.previsionAvantCloture === undefined) o.previsionAvantCloture = null;
       if(o.previsionAuDemarrage === undefined) o.previsionAuDemarrage = null; // voir capturePrevisionAuDemarrage/CLAUDE.md, section "Retard de démarrage"
       if(o.fusionGroupId === undefined) o.fusionGroupId = null;
@@ -4830,6 +4841,25 @@ function updateOpDateDebutPossible(cid, oid, value){
   o.dateDebutPossible = value || null;
   commit();
 }
+// Date de retour attendue du sous-traitant (voir CLAUDE.md, "Suivi des délais de sous-traitance") —
+// purement informative (n'entre dans aucun calcul du moteur de planification, contrairement à
+// dateDebutPossible) : sert uniquement à sousTraitanceRetardBadgeHtml pour alerter d'un retard.
+function updateOpSousTraitanceDateRetour(cid, oid, value){
+  const c = state.commandes.find(c=>c.id===cid); if(!c) return;
+  const o = c.pieces.find(o=>o.id===oid); if(!o) return;
+  o.sousTraitanceDateRetour = value || null;
+  commit();
+}
+// Badge d'alerte (rouge) sur une pièce sous-traitée dont la date de retour attendue est déjà
+// dépassée et qui n'est pas encore revenue (statut !== 'termine') — jamais affiché sans date de
+// retour renseignée (champ optionnel) ni sur une pièce déjà terminée (revenue, peu importe quand).
+function sousTraitanceRetardBadgeHtml(o){
+  if(!o.sousTraitance || !o.sousTraitanceDateRetour || o.statut==='termine') return '';
+  const todayKey = toDateInputValue(new Date());
+  if(o.sousTraitanceDateRetour >= todayKey) return '';
+  const days = Math.round((new Date(todayKey) - new Date(o.sousTraitanceDateRetour)) / 86400000);
+  return ` <span class="badge red" title="Retour attendu le ${o.sousTraitanceDateRetour}">⏰ Sous-traitance en retard (${days} j)</span>`;
+}
 // Détection par nom de poste utilisée pour cocher automatiquement "Sous-traité" (updateOpField,
 // applyImportProfile) — tolère "sous-traitance" et "sous traitance", jamais bloquant : la case reste
 // modifiable ensuite si ce n'était pas ce qui était voulu.
@@ -7364,6 +7394,11 @@ function computeAllPointages(st){
       // jamais 0 (qui laisserait croire à tort "aucune pause"), voir CLAUDE.md « Pauses de
       // production mises en évidence ».
       pauseH: pieceCumulPauseHours(o, now),
+      // Non-conformités déclarées sur cette pièce (voir CLAUDE.md, "Non-conformités / rebuts") —
+      // rebutQty = somme des quantités (0 si aucune, jamais null : contrairement à sessions[], un
+      // rebut n'est jamais "perdu à l'archivage", il vit directement sur pieces[].rebuts).
+      rebutQty: (o.rebuts||[]).reduce((s,r)=>s+(Number(r.quantite)||0), 0),
+      rebutDetails: o.rebuts||[],
     });
   });
   return rows;
@@ -7382,7 +7417,7 @@ function computePointagesByReference(list){
     const label = (r.piece||'').trim();
     if(!label) return; // pas de référence exploitable (pointage sans nom de pièce) — rien à grouper
     const key = label.toLowerCase();
-    if(!byKey[key]) byKey[key] = { key, label, count:0, dureePrevueH:0, dureeReelleH:0, pauseH:0, lastDate:null };
+    if(!byKey[key]) byKey[key] = { key, label, count:0, dureePrevueH:0, dureeReelleH:0, pauseH:0, rebutQty:0, lastDate:null };
     const g = byKey[key];
     g.count++;
     g.dureePrevueH += r.dureePrevueH || 0;
@@ -7391,6 +7426,7 @@ function computePointagesByReference(list){
     // comme dureePrevueH/dureeReelleH le font déjà pour leurs propres cas limites — pas de distinction
     // "partiellement inconnu" ici, cohérent avec le reste de l'agrégation.
     g.pauseH += r.pauseH || 0;
+    g.rebutQty += r.rebutQty || 0;
     const refDate = r.finReel || r.debutReel;
     if(refDate && (!g.lastDate || refDate > g.lastDate)) g.lastDate = refDate;
   });
@@ -7475,6 +7511,10 @@ function renderPointagesPage(){
       ? `<button class="ghost small" data-action="open-correct-pointage" data-cid="${r.cid}" data-oid="${r.oid}">✎ Corriger</button>` : '';
     const sessionsBtn = isSessionsCorrectable(r.cid, r.oid)
       ? `<button class="ghost small" data-action="open-correct-sessions" data-cid="${r.cid}" data-oid="${r.oid}">🕘 Sessions</button>` : '';
+    const rebutBtn = `<button class="ghost small" data-action="open-rebut-draft" data-cid="${r.cid}" data-oid="${r.oid}">🗑 Rebut</button>`;
+    const rebutCell = r.rebutQty > 0
+      ? `<span style="color:var(--red); font-weight:600;" title="${escapeHtml(r.rebutDetails.map(d=>`${d.quantite}${d.motif?` — ${d.motif}`:''}`).join('\n'))}">${r.rebutQty}</span>`
+      : '—';
     return `<tr>
       <td>${escapeHtml(r.commandeNom)}</td>
       <td>${escapeHtml(pieceLabel)}${lotSuffix}</td>
@@ -7486,7 +7526,8 @@ function renderPointagesPage(){
       <td>${durationLabel(r.dureePrevueH)}</td>
       <td>${r.dureeReelleH!=null ? durationLabel(r.dureeReelleH) : '—'}</td>
       <td>${pauseTimeCellHtml(r.pauseH)}</td>
-      <td style="white-space:nowrap;">${correctBtn}${sessionsBtn}</td>
+      <td>${rebutCell}</td>
+      <td style="white-space:nowrap;">${correctBtn}${sessionsBtn}${rebutBtn}</td>
     </tr>`;
   }).join('');
 
@@ -7507,6 +7548,7 @@ function renderPointagesPage(){
       <td>${durationLabel(g.dureeReelleH)}</td>
       <td>${formatEcart(ecart)}</td>
       <td>${pauseTimeCellHtml(g.pauseH)}</td>
+      <td>${g.rebutQty > 0 ? `<span style="color:var(--red); font-weight:600;">${g.rebutQty}</span>` : '—'}</td>
       <td>${g.lastDate ? formatDT(new Date(g.lastDate)) : '—'}</td>
     </tr>`;
   }).join('');
@@ -7557,15 +7599,15 @@ function renderPointagesPage(){
     </div>
     ${isRefMode ? `
     <table class="ops-table">
-      <thead><tr><th>Référence de pièce</th><th>Nb pointages</th><th>Prévu (total)</th><th>Réel (total)</th><th>Écart</th><th>Temps en pause (total)</th><th>Dernière activité</th></tr></thead>
-      <tbody>${refRowsHtml || `<tr><td colspan="7" style="text-align:center; color:var(--text-faint);">Aucune référence ne correspond à ce filtre.</td></tr>`}</tbody>
+      <thead><tr><th>Référence de pièce</th><th>Nb pointages</th><th>Prévu (total)</th><th>Réel (total)</th><th>Écart</th><th>Temps en pause (total)</th><th>Rebuts (total)</th><th>Dernière activité</th></tr></thead>
+      <tbody>${refRowsHtml || `<tr><td colspan="8" style="text-align:center; color:var(--text-faint);">Aucune référence ne correspond à ce filtre.</td></tr>`}</tbody>
     </table>
     <div class="footer-note" style="text-align:left; padding-top:10px;">Une référence regroupe tous ses pointages, toutes commandes et toutes étapes confondues (un lot fusionné ne compte qu'une fois). Cliquer une référence l'isole dans la vue "Liste" pour voir chaque pointage en détail. "Temps en pause" : voir la note sur le sujet ci-dessous.</div>` : `
     <table class="ops-table">
-      <thead><tr><th>Commande</th><th>Pièce / Étape</th><th>Poste</th><th>Opérateur(s)</th><th>Statut</th><th>Début réel</th><th>Fin réelle</th><th>Prévu</th><th>Réel</th><th>Temps en pause</th><th></th></tr></thead>
-      <tbody>${rows || `<tr><td colspan="11" style="text-align:center; color:var(--text-faint);">Aucun pointage ne correspond à ce filtre.</td></tr>`}</tbody>
+      <thead><tr><th>Commande</th><th>Pièce / Étape</th><th>Poste</th><th>Opérateur(s)</th><th>Statut</th><th>Début réel</th><th>Fin réelle</th><th>Prévu</th><th>Réel</th><th>Temps en pause</th><th>Rebuts</th><th></th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="12" style="text-align:center; color:var(--text-faint);">Aucun pointage ne correspond à ce filtre.</td></tr>`}</tbody>
     </table>
-    <div class="footer-note" style="text-align:left; padding-top:10px;">La période ne masque jamais une tâche encore en cours ou en pause, seulement les tâches déjà terminées plus anciennes que la fenêtre choisie. "Prévu"/"Réel" d'un lot fusionné représentent le lot entier (une seule ligne, jamais comptée plusieurs fois). Corriger un pointage remplace intégralement son début réel, sa fin réelle et sa durée réellement passée. "Temps en pause" cumule tous les trous entre les sessions de la tâche (mis en évidence en ambre/rouge au-delà de 2h/8h) — "—" quand le détail par session n'est plus disponible (tâche déjà archivée).</div>`}
+    <div class="footer-note" style="text-align:left; padding-top:10px;">La période ne masque jamais une tâche encore en cours ou en pause, seulement les tâches déjà terminées plus anciennes que la fenêtre choisie. "Prévu"/"Réel" d'un lot fusionné représentent le lot entier (une seule ligne, jamais comptée plusieurs fois). Corriger un pointage remplace intégralement son début réel, sa fin réelle et sa durée réellement passée. "Temps en pause" cumule tous les trous entre les sessions de la tâche (mis en évidence en ambre/rouge au-delà de 2h/8h) — "—" quand le détail par session n'est plus disponible (tâche déjà archivée). "🗑 Rebut" déclare une non-conformité (quantité + motif optionnel), disponible quel que soit le statut.</div>`}
     </div>
   </section>`;
 }
@@ -7660,6 +7702,65 @@ function renderCorrectPointageModal(){
         <div class="form-actions" style="margin-top:16px;">
           <button class="ghost" data-action="close-correct-pointage">Annuler</button>
           <button class="primary" data-action="submit-correct-pointage">✓ Enregistrer la correction</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+// Déclaration d'un rebut/non-conformité (voir CLAUDE.md, "Non-conformités / rebuts") — disponible
+// sur n'importe quel pointage de la page (pas seulement une pièce terminée : un rebut peut être
+// constaté en cours de production, sur une pièce encore en_cours/en_pause). Chaque déclaration
+// s'AJOUTE à pieces[].rebuts[] (jamais un champ unique écrasé) : l'historique des rebuts d'une pièce
+// reste consultable, une pièce pouvant en accumuler plusieurs à des moments différents.
+function openRebutDraft(cid, oid){
+  rebutDraft = { cid, oid, quantite: '', motif: '' };
+  render();
+}
+function closeRebutDraft(){ rebutDraft = null; render(); }
+function updateRebutField(field, value){
+  if(!rebutDraft) return;
+  rebutDraft[field] = value;
+  render();
+}
+function submitRebut(){
+  const d = rebutDraft; if(!d) return;
+  const found = findPieceAnywhere(d.cid, d.oid); if(!found) return;
+  const { o } = found;
+  const qte = Number(String(d.quantite).replace(',','.'));
+  if(isNaN(qte) || qte <= 0){ alert('Merci de renseigner une quantité rebutée valide (nombre positif).'); return; }
+  if(!Array.isArray(o.rebuts)) o.rebuts = [];
+  o.rebuts.push({ quantite: qte, motif: (d.motif||'').trim(), date: toInputValue(new Date()) });
+  rebutDraft = null;
+  commit();
+  showToast('Rebut déclaré.');
+}
+function renderRebutModal(){
+  const d = rebutDraft;
+  if(!d) return '';
+  const found = findPieceAnywhere(d.cid, d.oid);
+  if(!found) return '';
+  const { c, o } = found;
+  const label = [o.piece, o.etape].filter(Boolean).join(' / ') || '(sans nom)';
+  const historyHtml = (o.rebuts||[]).length ? `
+    <div class="footer-note" style="text-align:left; margin-top:10px;">Déjà déclarés sur cette pièce : ${o.rebuts.map(r => `${r.quantite}${r.motif?` (${escapeHtml(r.motif)})`:''}`).join(', ')}</div>` : '';
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:420px;">
+      <div class="modal-head">
+        <h2>🗑 Déclarer un rebut</h2>
+        <button class="ghost icon-btn" data-action="close-rebut-draft" title="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="footer-note" style="text-align:left; margin-bottom:10px;">${escapeHtml(c.nom)} — ${escapeHtml(label)}</div>
+        <div class="commande-top-fields" style="grid-template-columns:1fr 2fr;">
+          <div><label class="field">Quantité rebutée</label><input type="number" min="0" step="1" value="${escapeHtml(d.quantite)}" data-action="rebut-field" data-field="quantite"></div>
+          <div><label class="field">Motif (optionnel)</label><input type="text" value="${escapeHtml(d.motif)}" data-action="rebut-field" data-field="motif" placeholder="ex. défaut de découpe"></div>
+        </div>
+        ${historyHtml}
+        <div class="footer-note" style="text-align:left; padding-top:10px;">S'ajoute à l'historique des rebuts de cette pièce (rien n'est écrasé) — visible ensuite dans la colonne "Rebuts" de la page Pointages, pour analyser où la qualité dérive (par poste, par référence...).</div>
+        <div class="form-actions" style="margin-top:16px;">
+          <button class="ghost" data-action="close-rebut-draft">Annuler</button>
+          <button class="primary" data-action="submit-rebut">✓ Déclarer</button>
         </div>
       </div>
     </div>
@@ -8331,6 +8432,72 @@ function computeProductionTimeByUser(st, periodStart, periodEnd){
   (st.commandesArchivees||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
   return byUser;
 }
+// Temps de production RÉEL par POSTE (symétrique de computeProductionTimeByUser ci-dessus, mais
+// agrégé par machine plutôt que par personne — voir CLAUDE.md, "Taux d'occupation par poste") : sert
+// à mesurer la charge réelle d'un poste, indépendamment de qui l'a fait tourner. Même dédoublonnage
+// par fusionGroupId (une seule opération physique sur le poste, jamais comptée une fois par membre).
+function computeProductionTimeByMachine(st, periodStart, periodEnd){
+  const byMachine = {};
+  const seenFusionGroups = new Set();
+  const consider = (o) => {
+    if(!o.machineId) return;
+    if(o.fusionGroupId){
+      if(seenFusionGroups.has(o.fusionGroupId)) return;
+      seenFusionGroups.add(o.fusionGroupId);
+    }
+    const cfg = configForPiece(o, st);
+    let h = 0;
+    if(o.sessions && o.sessions.length){
+      o.sessions.forEach(s => {
+        const sStart = new Date(s.debut);
+        const sEnd = s.fin ? new Date(s.fin) : new Date();
+        const clampStart = sStart < periodStart ? periodStart : sStart;
+        const clampEnd = sEnd > periodEnd ? periodEnd : sEnd;
+        if(clampEnd > clampStart) h += workingHoursBetween(clampStart, clampEnd, cfg);
+      });
+    } else if(o.statut === 'termine' && o.dureeReelleH != null && o.dureeReelleH > 0){
+      const refStr = o.finReel || o.debutReel;
+      if(refStr){
+        const refDate = new Date(refStr);
+        if(refDate >= periodStart && refDate < periodEnd) h = o.dureeReelleH;
+      }
+    }
+    if(h > 1e-6) byMachine[o.machineId] = (byMachine[o.machineId]||0) + h;
+  };
+  (st.commandes||[]).forEach(c => c.pieces.forEach(consider));
+  (st.commandesArchivees||[]).forEach(c => c.pieces.forEach(consider));
+  return byMachine;
+}
+// Capacité théorique d'un poste sur [periodStart, periodEnd[ : somme de ses horaires nominaux (jours
+// ouvrés, hors fériés français ET jours bloqués par une indisponibilité du poste), symétrique de
+// theoreticalPresenceHoursForUser mais sans notion de congé (une machine ne part pas en vacances).
+function machineTheoreticalCapacityHours(machineId, st, periodStart, periodEnd){
+  const cfg = configForMachineId(machineId, st);
+  let total = 0;
+  let d = new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate());
+  let guard = 0;
+  while(d < periodEnd && guard++ < 3660){
+    const dow = d.getDay();
+    if(dow!==0 && dow!==6 && !isFrenchPublicHoliday(d) && !isDateBlocked(d, cfg)){
+      total += dayHoursFor(dow, cfg);
+    }
+    d = new Date(d.getFullYear(), d.getMonth(), d.getDate()+1);
+  }
+  return total;
+}
+// Une ligne par poste : temps réellement passé sur la période / capacité théorique = taux
+// d'occupation (même sémantique que tauxOccupation côté personne — peut dépasser 100%, jamais traité
+// comme une anomalie en soi). Triée du taux le plus élevé au plus faible (`null`, capacité nulle —
+// poste indisponible toute la période — relégué en fin de liste).
+function computeMachineOccupationRows(st, periodStart, periodEnd){
+  const byMachine = computeProductionTimeByMachine(st, periodStart, periodEnd);
+  return st.machines.map(m => {
+    const totalH = byMachine[m.id] || 0;
+    const capaciteH = machineTheoreticalCapacityHours(m.id, st, periodStart, periodEnd);
+    const taux = capaciteH > 1e-6 ? totalH / capaciteH : null;
+    return { machineId: m.id, machineNom: m.nom, totalH, capaciteH, taux };
+  }).sort((a,b) => (b.taux==null?-1:b.taux) - (a.taux==null?-1:a.taux));
+}
 // Salarié exclu de la vue superviseur de l'onglet Temps de production (Paramètres → Utilisateurs
 // → "Afficher dans le temps de production" décochée) — pour ne pas surcharger la page de comptes
 // qui n'ont pas leur place ici (admin sans activité d'atelier, compte de test...). N'affecte QUE la
@@ -8777,6 +8944,29 @@ function renderTempsProdPage(){
       <tbody>${rowsHtml || `<tr><td colspan="8" style="text-align:center; color:var(--text-faint);">Aucun salarié attendu ni aucune tâche sur cette période</td></tr>`}</tbody>
     </table>
     <div class="footer-note" style="text-align:left; padding-top:10px;">Le temps prévu vient de la durée théorique de chaque ligne (temps unitaire × quantité, ou durée d'un groupe fusionné) ; le temps passé du temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses. L'écart compare les deux sur les tâches déjà comptées dans la période, y compris en cours (le prévu couvre alors toute la quantité). Un ⚠️ signale une tâche ayant dépassé son temps prévu de plus de 50% (et d'au moins 15 minutes). La présence théorique est celle attendue par l'horaire de la personne (jours ouvrés hors fériés, moins ses congés approuvés) — l'application ne fait pas de pointage réel ; le taux d'occupation compare le temps passé sur des tâches suivies à cette présence théorique (peut dépasser 100% en cas d'heures supplémentaires ou de travail à plusieurs sur une même pièce). Un salarié attendu sur la période mais sans aucune tâche suivie apparaît quand même, à 0% — pour le repérer, pas parce que l'application sait s'il était réellement absent.</div>
+  </div></section>
+  ${renderMachineOccupationSection(start, end)}`;
+}
+// Symétrique du tableau par salarié ci-dessus, mais par POSTE (voir CLAUDE.md, "Taux d'occupation
+// par poste") — répond à une question différente : pas "qui a travaillé combien", mais "quel poste
+// est structurellement sous-chargé ou au contraire un goulot d'étranglement", sur la même période que
+// le tableau par salarié (mêmes bornes, jamais un second sélecteur de période à maintenir).
+function renderMachineOccupationSection(start, end){
+  const rows = computeMachineOccupationRows(state, start, end);
+  const rowsHtml = rows.map(r => `<tr>
+      <td>${escapeHtml(r.machineNom)}</td>
+      <td>${formatHeures(r.totalH)}</td>
+      <td>${formatHeures(r.capaciteH)}</td>
+      <td>${renderOccupationBar(r.taux)}</td>
+    </tr>`).join('');
+  return `
+  <section class="panel"><div class="panel-body">
+    <h3 style="margin-top:0;">Taux d'occupation par poste</h3>
+    <table class="ops-table">
+      <thead><tr><th>Poste</th><th>Temps réel</th><th>Capacité théorique</th><th>Taux d'occupation</th></tr></thead>
+      <tbody>${rowsHtml || `<tr><td colspan="4" style="text-align:center; color:var(--text-faint);">Aucun poste configuré</td></tr>`}</tbody>
+    </table>
+    <div class="footer-note" style="text-align:left; padding-top:10px;">Temps réel = somme des sessions/temps réellement passé sur ce poste (toutes commandes actives et archivées confondues) sur la période affichée ci-dessus. Capacité théorique = horaires nominaux du poste sur cette même période (jours ouvrés, hors fériés et indisponibilités programmées). Un poste durablement sous 50% peut être sous-utilisé ; un poste régulièrement au-delà de 100% (heures supplémentaires, ou deux pièces qui se chevauchent réellement) est un goulot d'étranglement structurel à surveiller.</div>
   </div></section>`;
 }
 // Classeur à 2 feuilles (Résumé / Détail) pour la période actuellement affichée dans l'onglet
@@ -10689,7 +10879,7 @@ function renderOpsRow(o, c){
   const datesCell = o.sousTraitance
     ? (done
         ? (o.finReel ? `<span class="dates-val">🏭 <span class="lbl">Revenue le</span> ${formatDT(new Date(o.finReel))}</span>` : `<span class="dates-val" style="color:var(--text-faint)">🏭 Sous-traitée — revenue</span>`)
-        : `<span class="dates-val" style="color:var(--text-faint)">🏭 Sous-traitée — ${running?'en cours chez le sous-traitant':'en attente d\'envoi'}</span>`)
+        : `<span class="dates-val" style="color:var(--text-faint)">🏭 Sous-traitée — ${running?'en cours chez le sous-traitant':'en attente d\'envoi'}${o.sousTraitanceDateRetour?` (retour prévu le ${o.sousTraitanceDateRetour})`:''}</span>${sousTraitanceRetardBadgeHtml(o)}`)
     : o.horsPlanning
     ? (done
         ? (o.finReel ? `<span class="dates-val">📋 <span class="lbl">Terminée le</span> ${formatDT(new Date(o.finReel))}</span>` : `<span class="dates-val" style="color:var(--text-faint)">📋 Hors planning — réalisée</span>`)
@@ -10729,6 +10919,7 @@ function renderOpsRow(o, c){
       <label class="statut-chip" style="font-size:10px; margin-top:4px; display:flex; align-items:center; gap:4px;" title="Cette pièce n'est jamais planifiée sur un poste — elle garde son statut normalement, et peut toujours bloquer une phase suivante tant qu'elle n'est pas marquée Terminée.">
         <input type="checkbox" ${o.sousTraitance?'checked':''} data-action="toggle-op-sous-traitance" data-cid="${c.id}" data-oid="${o.id}"> 🏭 Sous-traité
       </label>
+      ${o.sousTraitance ? `<input type="date" class="phase-input" style="margin-top:2px;" value="${o.sousTraitanceDateRetour||''}" data-action="op-date-retour-sous-traitance" data-cid="${c.id}" data-oid="${o.id}" title="Date de retour attendue du sous-traitant (optionnel) — une alerte apparaît si elle est dépassée et que la pièce n'est pas revenue">` : ''}
       <label class="statut-chip" style="font-size:10px; margin-top:4px; display:flex; align-items:center; gap:4px;" title="Tâche sans durée estimée fiable (pointage rapide) : jamais placée sur le planning, mais son temps réel reste suivi normalement.">
         <input type="checkbox" ${o.horsPlanning?'checked':''} data-action="toggle-op-hors-planning" data-cid="${c.id}" data-oid="${o.id}"> 📋 Hors planning
       </label></td>
@@ -11179,6 +11370,7 @@ function render(){
       renderPointagesPage(),
       renderCorrectPointageModal(),
       renderCorrectSessionsModal(),
+      renderRebutModal(),
       renderSettingsModal(),
       renderPauseReminderModal(otherModalOpen),
       renderToast()
@@ -11308,7 +11500,7 @@ function updateHighlightClasses(){
 /* ---------------- délégation d'événements : clics & changements ---------------- */
 document.addEventListener('click', (e) => {
   if(e.target.classList && e.target.classList.contains('modal-overlay')){
-    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; closeSettingsModal(); return;
+    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; rebutDraft = null; closeSettingsModal(); return;
   }
   if(contextMenu && !e.target.closest('.context-menu')){
     contextMenu = null; render();
@@ -11382,6 +11574,9 @@ function dispatchClickAction(action, el){
     case 'open-correct-pointage': openCorrectPointage(el.dataset.cid, el.dataset.oid); break;
     case 'close-correct-pointage': closeCorrectPointage(); break;
     case 'submit-correct-pointage': submitCorrectPointage(); break;
+    case 'open-rebut-draft': openRebutDraft(el.dataset.cid, el.dataset.oid); break;
+    case 'close-rebut-draft': closeRebutDraft(); break;
+    case 'submit-rebut': submitRebut(); break;
     case 'open-correct-sessions': openCorrectSessions(el.dataset.cid, el.dataset.oid); break;
     case 'close-correct-sessions': closeCorrectSessions(); break;
     case 'submit-correct-sessions': submitCorrectSessions(); break;
@@ -11636,12 +11831,14 @@ function dispatchChangeAction(el, action){
     case 'set-manual-start': setManualStartValue(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'op-phase': updateOpPhase(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'op-date-debut-possible': updateOpDateDebutPossible(el.dataset.cid, el.dataset.oid, el.value); break;
+    case 'op-date-retour-sous-traitance': updateOpSousTraitanceDateRetour(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'toggle-op-sous-traitance': toggleOpSousTraitance(el.dataset.cid, el.dataset.oid, el.checked); break;
     case 'toggle-op-hors-planning': toggleOpHorsPlanning(el.dataset.cid, el.dataset.oid, el.checked); break;
     case 'quick-pointage-select': updateQuickPointageField(el.dataset.field, el.value); break;
     case 'correct-operator-select': updateCorrectOperatorField(el.dataset.field, el.value); break;
     case 'pointages-filter': updatePointagesFilter(el.dataset.field, el.value); break;
     case 'correct-pointage-field': updateCorrectPointageField(el.dataset.field, el.value); break;
+    case 'rebut-field': updateRebutField(el.dataset.field, el.value); break;
     case 'correct-session-field': updateCorrectSessionField(Number(el.dataset.idx), el.dataset.field, el.value); break;
     case 'user-machines': {
       const selected = Array.from(el.selectedOptions).map(o => o.value);
@@ -12104,6 +12301,7 @@ document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && excelImportResult){ excelImportResult = null; render(); }
   if(e.key === 'Escape' && newCommandeZoneNotice){ newCommandeZoneNotice = null; render(); }
   if(e.key === 'Escape' && retardDemarragePopupInfo){ closeRetardDemarragePopup(); }
+  if(e.key === 'Escape' && rebutDraft){ closeRebutDraft(); }
   if(e.key === 'Escape' && quickPointageDraft){ closeQuickPointage(); }
   if(e.key === 'Escape' && correctOperatorDraft){ closeCorrectOperator(); }
   if(e.key === 'Escape' && continuedDrag){ cancelContinuedDrag(); }

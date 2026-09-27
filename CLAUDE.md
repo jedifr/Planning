@@ -1573,6 +1573,94 @@ rien d'exploitable comme une date.
   jamais réécrit sur un ajout de lignes/un rejeu, migration vers `null` pour une commande (active ou
   archivée) déjà existante et jamais recalculé à un second passage de `migrateState`.
 
+## Taux d'occupation par poste
+
+Symétrique de « Temps de production vs présence théorique » (voir plus haut), mais côté MACHINE
+plutôt que côté personne — répond à une question différente : pas « qui a travaillé combien », mais
+« quel poste est structurellement sous-chargé, ou au contraire un goulot d'étranglement ».
+
+- `computeProductionTimeByMachine(st, periodStart, periodEnd)` — temps réel agrégé par poste
+  (`machineId`), même logique de lecture que `computeProductionTimeByUser` (sessions clampées à la
+  période, ou `dureeReelleH` pour une pièce terminée sans session — import déjà terminé/temps saisi à
+  la main) mais sans ventilation par opérateur : une seule question ici, "combien d'heures sur CE
+  poste". Même dédoublonnage par `fusionGroupId` que partout ailleurs (voir « Temps de production vs
+  présence théorique ») — un lot fusionné ne compte qu'une fois, jamais une fois par membre.
+- `machineTheoreticalCapacityHours(machineId, st, periodStart, periodEnd)` — capacité théorique du
+  poste sur la période : somme de ses horaires nominaux (`configForMachineId`, jours ouvrés hors
+  fériés français) moins les jours couverts par une indisponibilité programmée du poste
+  (`isDateBlocked`) — symétrique de `theoreticalPresenceHoursForUser`, mais sans notion de congé
+  (une machine ne part pas en vacances) : aucun `st.leaveRequests` consulté ici.
+- `computeMachineOccupationRows(st, periodStart, periodEnd)` — une ligne par poste (temps réel /
+  capacité théorique = taux, `null` si capacité nulle — poste indisponible toute la période, jamais
+  une division par zéro), triée du taux le plus élevé au plus faible.
+- Affiché dans l'onglet « ⏱ Temps de production » (superviseur uniquement, `renderTempsProdPage`),
+  sous le tableau par salarié déjà existant, sur la MÊME période (même sélecteur, jamais un second à
+  maintenir) — `renderMachineOccupationSection(start, end)`. Réutilise `renderOccupationBar` tel quel
+  (même code couleur/mêmes seuils que côté personne) : pas de nouvelle palette à inventer pour une
+  notion de taux déjà bien établie ailleurs dans l'appli.
+- Couvert par `test_machine_occupation.js` : taux calculé correctement sur une semaine complète,
+  poste sans aucune pièce (0h réel, jamais `null`), poste totalement indisponible sur la période
+  (capacité 0 ⇒ taux `null`), déduplication d'un groupe fusionné.
+
+## Non-conformités / rebuts
+
+Retour manager réel (proposition faite en amont, retenue par l'utilisateur) : pouvoir déclarer
+qu'une pièce a été rebutée, avec un motif, pour analyser où la qualité dérive dans le temps (par
+poste, par référence...) — jusqu'ici, aucune trace de ce genre d'incident n'existait dans l'appli.
+
+- `pieces[].rebuts` (`{ quantite, motif, date }[]`, `[]` par défaut) — chaque déclaration **s'ajoute**
+  à ce tableau, jamais un champ unique écrasé : une même pièce peut accumuler plusieurs rebuts
+  déclarés à des moments différents de sa production (ex. un premier lot rebuté en cours de route,
+  puis un second plus tard). `migrateState` l'initialise à `[]` sur toute pièce (active **et**
+  archivée) qui ne l'a pas encore — contrairement à la plupart des champs de `pieces[]`, migrés
+  uniquement pour les commandes actives (la boucle `st.commandes.forEach` habituelle) : `rebuts` a
+  besoin d'exister aussi côté `commandesArchivees`, que `computeAllPointages` (onglet Pointages) lit
+  également.
+- `openRebutDraft(cid, oid)`/`rebutDraft`/`submitRebut()` — petit formulaire (quantité obligatoire et
+  positive, motif optionnel), disponible sur **n'importe quel statut** (`a_faire` exclu de la page
+  Pointages de toute façon, mais un rebut peut être constaté sur une pièce encore `en_cours`/
+  `en_pause`, pas seulement `termine`) — bouton « 🗑 Rebut » à côté de « ✎ Corriger »/« 🕘 Sessions »
+  dans le tableau de la page Pointages. Horodaté à l'instant de la déclaration (`toInputValue(new
+  Date())`), jamais à une date antérieure supposée.
+- `computeAllPointages(st)` porte désormais `rebutQty` (somme des quantités, `0` si aucune — jamais
+  `null`, contrairement à `pauseH` : un rebut n'est jamais « perdu à l'archivage », il vit directement
+  sur `pieces[].rebuts`, pas dans une table à part) et `rebutDetails` (le tableau brut, pour
+  l'infobulle). `computePointagesByReference` cumule `rebutQty` par référence, comme les autres
+  totaux — colonne « Rebuts (total) » de la vue « Par référence », en plus de la colonne « Rebuts »
+  (avec infobulle listant quantité/motif de chaque déclaration) de la vue « Liste ».
+- Volontairement **pas de page dédiée « Qualité »** ni de résumé par poste séparé pour cette première
+  version : la vue « Par référence », déjà filtrable par poste/personne/période, répond déjà à
+  « où la qualité dérive » sans dupliquer un mécanisme de filtrage/agrégation qui existe déjà — à
+  réévaluer si le volume de rebuts déclarés justifie un jour une vue dédiée.
+- Couvert par `test_rebuts.js` : déclaration, accumulation de plusieurs rebuts sur la même pièce
+  (jamais un écrasement), rejet d'une quantité invalide (0, négative), agrégation correcte dans
+  `computeAllPointages`/`computePointagesByReference`, `migrateState` sur une pièce ancienne active
+  **et** archivée.
+
+## Suivi des délais de sous-traitance
+
+Retour manager réel : `sousTraitance` n'était jusqu'ici qu'une case à cocher, sans aucune date de
+retour attendue ni alerte de retard — une pièce sous-traitée pouvait rester « en attente chez le
+sous-traitant » indéfiniment sans que rien ne le signale.
+
+- `pieces[].sousTraitanceDateRetour` (`"AAAA-MM-JJ" | null`) — purement informatif : n'entre dans
+  aucun calcul du moteur de planification (contrairement à `dateDebutPossible`, qui sert de plancher
+  réel à `computeSchedule`) — une pièce sous-traitée n'est de toute façon jamais planifiée sur un
+  poste (voir modèle de données). `migrateState` l'initialise à `null`. `updateOpSousTraitanceDateRetour(cid, oid, value)` le pose (valeur vide stockée comme `null`, jamais
+  chaîne vide).
+- Champ affiché (`<input type="date">`) **uniquement quand la case « 🏭 Sous-traité » est cochée**,
+  juste en dessous, dans le tableau des tâches (`renderOpsRow`) — bénéficie automatiquement du
+  redessin différé jusqu'au `focusout` (`isDeferredTimeField`, générique à tout `type="date"` porteur
+  d'un `data-action`, voir Pièges), aucun code supplémentaire nécessaire.
+- `sousTraitanceRetardBadgeHtml(o)` — badge rouge (« ⏰ Sous-traitance en retard (X j) ») affiché
+  **uniquement** si la date de retour est renseignée, dépassée, **et** la pièce n'est pas encore
+  `termine` (revenue) — jamais sur une pièce déjà revenue, quelle que soit la date, ni sur une pièce
+  sans date de retour renseignée (champ optionnel). Affiché dans le tableau des tâches, à côté du
+  libellé « Sous-traitée — en attente d'envoi/en cours chez le sous-traitant » de `datesCell`.
+- Couvert par `test_sous_traitance_retour.js` : pose/effacement du champ, absence de badge sans date
+  renseignée ou avec une date future/du jour même, badge correct pour un retard réel (jours comptés),
+  absence de badge sur une pièce revenue ou non sous-traitée, migration vers `null`.
+
 ## Recréer une commande sous un nom déjà archivé
 
 Question utilisateur réelle : que se passe-t-il si on recrée une commande (formulaire « Nouvelle
