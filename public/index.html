@@ -552,6 +552,16 @@
   .occ-bar-wrap.big .occ-bar-fill{border-radius:10px;}
   .occ-bar-wrap.big .occ-bar-pct{font-size:16px;}
   .occ-bar-wrap.big{min-width:150px;}
+  /* Mini-graphique en barres verticales pour la page Historique (voir renderTrendBarsHtml/CLAUDE.md
+     « Historique/tendances »). Pas de bibliothèque de graphiques (le client reste sans dépendance) :
+     une simple barre par semaine, hauteur proportionnelle à la valeur max de la série affichée. */
+  .trend-bars-row{display:flex; align-items:flex-end; gap:8px; height:150px; overflow-x:auto; padding:4px 2px 0;}
+  .trend-bar-col{display:flex; flex-direction:column; align-items:center; justify-content:flex-end; min-width:38px; height:100%; flex-shrink:0;}
+  .trend-bar-value{font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--text-faint); margin-bottom:3px; white-space:nowrap;}
+  .trend-bar-track{width:20px; height:95px; background:#e7e9ec; border-radius:3px; display:flex; align-items:flex-end; overflow:hidden;}
+  .trend-bar-fill{width:100%; border-radius:3px 3px 0 0; min-height:1px; transition:height .2s ease;}
+  .trend-bar-label{font-size:9.5px; color:var(--text-faint); margin-top:5px; text-align:center; line-height:1.2;}
+  .trend-section-title{font-family:'Oswald',sans-serif; font-size:12.5px; font-weight:600; letter-spacing:0.4px; margin:0 0 6px;}
   .ops-subhead{
     font-family:'Oswald',sans-serif; font-size:10.5px; font-weight:600; letter-spacing:0.7px; text-transform:uppercase;
     color:var(--text-faint); padding:9px 12px 5px; border-top:1px solid var(--line-soft);
@@ -899,7 +909,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.50.0';
+const APP_VERSION = '1.51.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1268,7 +1278,7 @@ function manualArchiveNow(){
   showToast(`${nb} commande${nb>1?'s':''} archivée${nb>1?'s':''}.`);
 }
 let currentView = 'semaine'; // 'semaine' | 'mois' | 'annee'
-let currentPage = 'planning'; // 'planning' | 'conges' | 'tempsProd' | 'zones' | 'risques' | 'pointages'
+let currentPage = 'planning'; // 'planning' | 'conges' | 'tempsProd' | 'zones' | 'risques' | 'pointages' | 'historique'
 let congesTab = 'mes-demandes'; // 'mes-demandes' | 'equipe' | 'calendrier' | 'a-valider' | 'soldes'
 let equipeStatutFilter = 'approuve'; // filtre de l'onglet "Congés de l'équipe"
 let leaveImpactPreviewId = null; // id de la demande dont on affiche l'aperçu d'impact, dans "À valider"
@@ -1351,6 +1361,10 @@ let pointagesFilters = { personne:'', poste:'', statut:'toutes', range:'thisMont
 // Vue "Liste" (une ligne par pointage, historique) vs "Par référence" (regroupée par pièce, voir
 // computePointagesByReference) — purement transitoire, jamais persistée (comme pointagesFilters).
 let pointagesViewMode = 'liste';
+// Nombre de semaines affichées sur la page "Historique / Tendances" (voir computeHistoriqueTrends) —
+// purement transitoire côté client (comme pointagesViewMode), jamais persisté : reprend 12 semaines
+// par défaut à chaque rechargement.
+let historiqueNbSemaines = 12;
 // Déclaration d'un rebut/non-conformité depuis "Pointages" (voir CLAUDE.md, "Non-conformités /
 // rebuts") — { cid, oid, quantite, motif } | null (fermé). Chaque déclaration s'AJOUTE à
 // `pieces[].rebuts[]` (jamais un champ unique écrasé) : une même pièce peut accumuler plusieurs
@@ -1456,7 +1470,7 @@ function migrateState(st){
   if(!Array.isArray(st.commandesArchivees)) st.commandesArchivees = []; // commandes entièrement terminées depuis longtemps, écartées du moteur de planification pour garder l'appli réactive — toujours incluses dans l'export complet
   if(!st.userMachines) st.userMachines = {}; // { [userId]: [machineId, ...] } — lien plusieurs-à-plusieurs
   if(!Array.isArray(st.hiddenTempsProdUserIds)) st.hiddenTempsProdUserIds = []; // salariés exclus de l'onglet Temps de production (superviseur) — voir isHiddenFromTempsProd
-  if(!st.userDefaultPage) st.userDefaultPage = {}; // { [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques'|'pointages' } — page affichée à la connexion, voir applyUserDefaultPageOnStart
+  if(!st.userDefaultPage) st.userDefaultPage = {}; // { [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques'|'pointages'|'historique' } — page affichée à la connexion, voir applyUserDefaultPageOnStart
   if(!st.userDefaultPlanningView) st.userDefaultPlanningView = {}; // { [userId]: 'jour'|'semaine'|'mois'|'annee'|'kanban'|'liste' } — vue du planning appliquée à la connexion quand la page d'accueil est Planning, voir applyUserDefaultPageOnStart
   if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
   Object.keys(st.userLunch).forEach(uid_ => {
@@ -6719,6 +6733,7 @@ function renderHeader(){
       <button class="page-switch-btn ${currentPage==='zones'?'active':''}" data-action="goto-zones">📍 Zones de stockage</button>
       ${!mobileHeader ? (() => { const n = getSchedule().filter(c => (c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine')) && isCommandeAtRisk(c)).length; return `<button class="page-switch-btn ${currentPage==='risques'?'active':''}" data-action="goto-risques">⚠️ Risques de retard${n>0?` <span class="pending-count-badge">${n}</span>`:''}</button>`; })() : ''}
       ${(canSupervise() && !mobileHeader) ? `<button class="page-switch-btn ${currentPage==='pointages'?'active':''}" data-action="goto-pointages">🕘 Pointages</button>` : ''}
+      ${(canSupervise() && !mobileHeader) ? `<button class="page-switch-btn ${currentPage==='historique'?'active':''}" data-action="goto-historique">📈 Historique</button>` : ''}
     </div>`;
   return `
   <header class="top">
@@ -7445,6 +7460,78 @@ function computePointagesByReference(list){
   });
   // Plus récente activité en tête — même convention que la liste à plat (finReel/debutReel).
   return Object.values(byKey).sort((a,b) => (b.lastDate||'').localeCompare(a.lastDate||''));
+}
+// Historique/tendances (voir CLAUDE.md « Historique/tendances ») — agrège, par semaine calendaire
+// glissante (lundi-dimanche, `startOfWeek`, déjà utilisé ailleurs), des métriques déjà calculées par
+// ailleurs (temps de production, coût réel, rebuts, retards de démarrage). Aucune nouvelle donnée
+// stockée ni snapshot quotidien à maintenir : tout se déduit à la volée des champs déjà persistés
+// sur les pièces actives ET archivées (dureeReelleH, rebuts[], previsionAuDemarrage/debutReel) —
+// cohérent avec l'esprit "pas de complexité sans nécessité" du projet. `nbSemaines` semaines
+// glissantes jusqu'à la semaine en cours incluse.
+function computeHistoriqueTrends(st, nbSemaines){
+  const now = new Date();
+  const thisWeekStart = startOfWeek(now); thisWeekStart.setHours(0,0,0,0);
+  const pad = n => String(n).padStart(2,'0');
+  const weeks = [];
+  for(let i = nbSemaines-1; i >= 0; i--){
+    const start = new Date(thisWeekStart.getFullYear(), thisWeekStart.getMonth(), thisWeekStart.getDate() - i*7);
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate()+7);
+    weeks.push({
+      start, end,
+      label: `Semaine du ${pad(start.getDate())}/${pad(start.getMonth()+1)}/${start.getFullYear()}`,
+      shortLabel: `${pad(start.getDate())}/${pad(start.getMonth()+1)}`,
+      productionH: 0, rebutQty: 0, coutReel: 0, hasCout: false, retardsCount: 0
+    });
+  }
+  function weekFor(dateStr){
+    if(!dateStr) return null;
+    const d = new Date(dateStr);
+    if(isNaN(d.getTime())) return null;
+    return weeks.find(w => d >= w.start && d < w.end) || null;
+  }
+  // Temps de production / rebuts / coût réel : uniquement les pièces déjà TERMINÉES, bucketées sur
+  // leur date de fin réelle (finReel) — même source que computeAllPointages, donc déjà dédupliquée
+  // par fusionGroupId (héritée). Une pièce encore active ne contribue à aucune semaine ici : sa
+  // contribution finale n'est connue qu'à sa clôture, pas avant.
+  computeAllPointages(st).forEach(r => {
+    if(r.statut !== 'termine') return;
+    const w = weekFor(r.finReel);
+    if(!w) return;
+    w.productionH += r.dureeReelleH || 0;
+    w.rebutQty += r.rebutQty || 0;
+    if(r.coutReel != null){ w.coutReel += r.coutReel; w.hasCout = true; }
+  });
+  // Retards de démarrage : bucketés sur la date de démarrage RÉELLE (pas la date de création de la
+  // pièce) — même sélection/seuil (>= 0,5 jour) que computeRetardDemarrageDetail, aucun second calcul.
+  computeRetardDemarrageDetail(st).forEach(r => {
+    const w = weekFor(r.reel);
+    if(w) w.retardsCount++;
+  });
+  return weeks;
+}
+// Mini-graphique en barres verticales, sans bibliothèque externe (voir CSS .trend-bars-row) —
+// hauteur de chaque barre proportionnelle à la valeur MAX de la série affichée (jamais à un maximum
+// théorique arbitraire), pour que la série la plus parlante possible s'affiche quel que soit l'ordre
+// de grandeur réel des données de cet atelier. `getValue(week)` extrait la métrique à afficher ;
+// `opts.decimals` (0 par défaut) contrôle l'arrondi du libellé, `opts.unit`/`opts.color` l'affichage.
+function renderTrendBarsHtml(weeks, getValue, opts){
+  opts = opts || {};
+  const decimals = opts.decimals != null ? opts.decimals : 0;
+  const unit = opts.unit || '';
+  const color = opts.color || 'var(--accent)';
+  const values = weeks.map(w => getValue(w) || 0);
+  const max = Math.max(1, ...values); // évite une division par zéro si la série est entièrement à 0
+  const fmt = v => decimals === 0 ? Math.round(v).toLocaleString('fr-FR') : v.toLocaleString('fr-FR',{minimumFractionDigits:decimals, maximumFractionDigits:decimals});
+  const cols = weeks.map((w,i) => {
+    const v = values[i];
+    const pct = Math.max(0, Math.min(100, Math.round((v/max)*100)));
+    return `<div class="trend-bar-col" title="${escapeHtml(w.label)} : ${fmt(v)}${unit}">
+      <div class="trend-bar-value">${fmt(v)}${unit}</div>
+      <div class="trend-bar-track"><div class="trend-bar-fill" style="height:${pct}%; background:${color};"></div></div>
+      <div class="trend-bar-label">${escapeHtml(w.shortLabel)}</div>
+    </div>`;
+  }).join('');
+  return `<div class="trend-bars-row">${cols}</div>`;
 }
 // Bornes [start, end[ de la fenêtre de récence pour les pointages déjà TERMINÉS uniquement (une
 // tâche encore en cours/en pause reste toujours visible, quelle que soit la fenêtre choisie — même
@@ -8279,6 +8366,51 @@ function renderRisquesPage(){
       ${atRisk.length ? `<div class="footer-note" style="text-align:left; padding-bottom:10px;">Triées de la plus en retard à la moins en retard. Pour chaque pièce, la chaîne de ses étapes dans l'ordre des phases — l'étape surlignée est la première pas encore terminée : c'est elle qui retient les suivantes. Quand une autre commande occupe le même poste juste avant ou juste après, elle est indiquée sous la ligne. Cliquez un nom de commande pour l'isoler dans le planning.</div>` : ''}
       ${body}
     </div>`}
+  </section>`;
+}
+
+/* ---------------- Historique / Tendances (voir CLAUDE.md « Historique/tendances ») ---------------- */
+function renderHistoriquePage(){
+  const weeks = computeHistoriqueTrends(state, historiqueNbSemaines);
+  const anyCout = weeks.some(w => w.hasCout);
+  return `<section class="panel"><div class="panel-head">
+      <h2>📈 Historique / Tendances</h2>
+      <span class="footer-note" style="margin:0;">${historiqueNbSemaines} dernières semaines</span>
+    </div>
+    <div class="panel-body">
+    <div class="search-bar">
+      <span class="search-bar-group"><label class="field" style="margin:0;">Période</label>
+      <select data-action="historique-nb-semaines" style="width:auto;">
+        <option value="8" ${historiqueNbSemaines===8?'selected':''}>8 semaines</option>
+        <option value="12" ${historiqueNbSemaines===12?'selected':''}>12 semaines</option>
+        <option value="26" ${historiqueNbSemaines===26?'selected':''}>26 semaines (~6 mois)</option>
+        <option value="52" ${historiqueNbSemaines===52?'selected':''}>52 semaines (1 an)</option>
+      </select></span>
+    </div>
+
+    <div class="trend-section-title" style="margin-top:16px;">⏱ Temps de production réel (h / semaine)</div>
+    ${renderTrendBarsHtml(weeks, w=>w.productionH, { decimals:1, unit:'h', color:'var(--accent)' })}
+
+    <div class="trend-section-title" style="margin-top:20px;">💶 Coût de revient réel (€ / semaine)${anyCout?'':' <span class="footer-note" style="margin:0;">— aucun poste avec un taux configuré (Paramètres → Postes)</span>'}</div>
+    ${renderTrendBarsHtml(weeks, w=>w.coutReel, { decimals:0, unit:'€', color:'#2f8f5b' })}
+
+    <div class="trend-section-title" style="margin-top:20px;">🗑 Rebuts déclarés (qté / semaine)</div>
+    ${renderTrendBarsHtml(weeks, w=>w.rebutQty, { decimals:0, unit:'', color:'var(--red)' })}
+
+    <div class="trend-section-title" style="margin-top:20px;">🕓 Tâches démarrées en retard (nb / semaine)</div>
+    ${renderTrendBarsHtml(weeks, w=>w.retardsCount, { decimals:0, unit:'', color:'#c9a227' })}
+
+    <div class="footer-note" style="text-align:left; margin-top:16px;">Semaines calendaires (lundi
+    au dimanche). « Temps de production »/« Coût »/« Rebuts » sont comptés sur la date de FIN RÉELLE
+    d'une pièce déjà terminée — une tâche encore en cours ne contribue à aucune semaine avant sa
+    clôture. « Coût » nécessite un taux horaire configuré par poste (Paramètres → Postes, voir « Coût
+    de revient approximatif »). « Tâches démarrées en retard » est compté sur la date de démarrage
+    réel, au-delà d'un demi-jour d'écart avec la prévision figée à la création de la pièce (voir
+    « Retard de démarrage »). Les pauses de production n'apparaissent volontairement pas ici : leur
+    détail (sessions[]) est vidé dès l'archivage d'une pièce — aucun historique de pauses fiable n'est
+    reconstituable au-delà des tâches encore actives (voir « Pauses de production mises en
+    évidence »).</div>
+    </div>
   </section>`;
 }
 
@@ -9683,6 +9815,7 @@ function renderSettingsModal(){
         <option value="zones" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='zones'?'selected':''}>📍 Zones de stockage</option>
         <option value="risques" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='risques'?'selected':''}>⚠️ Risques de retard</option>
         ${canSupervise() ? `<option value="pointages" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='pointages'?'selected':''}>🕘 Pointages</option>` : ''}
+        ${canSupervise() ? `<option value="historique" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='historique'?'selected':''}>📈 Historique / Tendances</option>` : ''}
       </select>
       <div class="footer-note" style="text-align:left; padding-top:6px;">Page affichée automatiquement à la connexion, à la place du Planning. Propre à ce compte : chacun peut choisir la sienne.</div>
       ${!(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')] ? `
@@ -11417,6 +11550,18 @@ function render(){
     restoreFocusRef(focusRef);
     return;
   }
+  if(currentPage === 'historique'){
+    appEl.innerHTML = [
+      renderHeader(),
+      renderHistoriquePage(),
+      renderSettingsModal(),
+      renderPauseReminderModal(otherModalOpen),
+      renderToast()
+    ].join('');
+    restoreModalScroll(modalScrollTop);
+    restoreFocusRef(focusRef);
+    return;
+  }
   const schedule = getSchedule();
   const html = [
     renderHeader(),
@@ -11607,6 +11752,7 @@ function dispatchClickAction(action, el){
     case 'goto-zones': currentPage = 'zones'; render(); break;
     case 'goto-risques': currentPage = 'risques'; render(); break;
     case 'goto-pointages': currentPage = 'pointages'; render(); break;
+    case 'goto-historique': currentPage = 'historique'; render(); break;
     case 'pointages-view-mode': pointagesViewMode = el.dataset.mode; render(); break;
     case 'pointages-view-reference': pointagesFilters.search = el.dataset.piece; pointagesViewMode = 'liste'; render(); break;
     case 'open-correct-pointage': openCorrectPointage(el.dataset.cid, el.dataset.oid); break;
@@ -11875,6 +12021,7 @@ function dispatchChangeAction(el, action){
     case 'quick-pointage-select': updateQuickPointageField(el.dataset.field, el.value); break;
     case 'correct-operator-select': updateCorrectOperatorField(el.dataset.field, el.value); break;
     case 'pointages-filter': updatePointagesFilter(el.dataset.field, el.value); break;
+    case 'historique-nb-semaines': historiqueNbSemaines = Number(el.value) || 12; render(); break;
     case 'correct-pointage-field': updateCorrectPointageField(el.dataset.field, el.value); break;
     case 'rebut-field': updateRebutField(el.dataset.field, el.value); break;
     case 'correct-session-field': updateCorrectSessionField(Number(el.dataset.idx), el.dataset.field, el.value); break;
@@ -12655,8 +12802,8 @@ function applyUserDefaultPageOnStart(){
     return;
   }
   if(pref === 'conges' && !(state.config.modules && state.config.modules.conges)) return; // module désactivé depuis : on garde Planning plutôt que d'ouvrir une page indisponible
-  if(pref === 'pointages' && !canSupervise()) return; // rôle rétrogradé depuis (n'est plus superviseur/admin) : page devenue inaccessible, on garde Planning
-  if(['conges','tempsProd','zones','risques','pointages'].includes(pref)) currentPage = pref;
+  if((pref === 'pointages' || pref === 'historique') && !canSupervise()) return; // rôle rétrogradé depuis (n'est plus superviseur/admin) : page devenue inaccessible, on garde Planning
+  if(['conges','tempsProd','zones','risques','pointages','historique'].includes(pref)) currentPage = pref;
 }
 async function startApp(){
   loadLoginBranding(); // en tâche de fond : alimente l'écran de connexion si la session a expiré

@@ -1720,6 +1720,61 @@ une pièce à produire, à partir du temps déjà mesuré par ailleurs.
   et `hasCout` dans `computePointagesByReference` (vrai/faux selon qu'au moins un poste de la
   référence est taxé), migration `tauxHoraireH:0` sur un poste ancien.
 
+## Historique / Tendances
+
+Retour utilisateur réel : toutes les pages de suivi (Temps de production, Pointages, Risques de
+retard) ne montrent que des instantanés — l'état actuel, ou une période choisie à la main sans
+comparaison avec les précédentes. Rien ne permet de voir si un problème (retards, rebuts, temps
+perdu) s'améliore ou s'aggrave dans le temps. Nouvelle page « 📈 Historique » (`currentPage===
+'historique'`, bouton dans `renderHeader`, **`canSupervise()` uniquement**, masqué sur mobile comme
+Temps de production/Risques/Pointages — voir « Planning sur téléphone »).
+
+- **Aucune nouvelle donnée stockée, aucun snapshot quotidien à maintenir** — parti pris déliberé pour
+  rester au plus près de l'existant (le projet n'a ni build ni framework, voir Conventions) : tout se
+  déduit à la volée, à chaque rendu, des mêmes champs déjà persistés sur les pièces actives ET
+  archivées (`dureeReelleH`, `rebuts[]`, `previsionAuDemarrage`/`debutReel`), exactement comme
+  `computeAllPointages`/`computeRetardDemarrageDetail` le font déjà pour leurs propres pages —
+  seulement regroupés par semaine calendaire plutôt qu'à plat.
+- `computeHistoriqueTrends(st, nbSemaines)` — construit `nbSemaines` semaines calendaires glissantes
+  (lundi-dimanche, `startOfWeek`, déjà utilisé ailleurs), de la plus ancienne à la plus récente
+  (la dernière contient toujours "maintenant"). Pour chaque semaine :
+  - `productionH`/`rebutQty`/`coutReel`/`hasCout` — parcourt `computeAllPointages(st)` (donc déjà
+    dédupliqué par `fusionGroupId`, voir « Temps de production vs présence théorique ») et ne retient
+    que les pièces **déjà `termine`**, bucketées sur leur `finReel` — une pièce encore active ne
+    contribue à AUCUNE semaine tant qu'elle n'est pas clôturée (sa contribution finale n'est connue
+    qu'à ce moment-là, pas avant). `coutReel`/`hasCout` reprennent la même sémantique que
+    `computePointagesByReference` (voir « Coût de revient approximatif ») : `hasCout` distingue "0€
+    parce qu'aucun poste taxé cette semaine-là" de l'absence de coût suivi.
+  - `retardsCount` — reprend telle quelle la sélection de `computeRetardDemarrageDetail(st)` (même
+    seuil de 0,5 jour, aucun second calcul), bucketée sur la date de démarrage **réel** (`debutReel`),
+    pas la date de création de la pièce — répond à "quand le retard a-t-il été CONSTATÉ", cohérent
+    avec le reste de la page.
+  - **Pauses de production volontairement absentes de cette page** — `sessions[]` (dont dépend tout
+    calcul de pause, voir `pauseGapsForPiece`) est vidée à l'archivage d'une pièce (« Historique des
+    sessions ») : impossible de reconstituer une tendance de pauses fiable au-delà des tâches encore
+    actives, même limite déjà documentée pour `computePauseTimeParPoste` (snapshot uniquement,
+    « aucune donnée rétroactive »). Note explicite en bas de page plutôt qu'un chiffre trompeur
+    (sous-compté pour toute semaine contenant des pièces déjà archivées).
+- `renderTrendBarsHtml(weeks, getValue, opts)` — mini-graphique en barres verticales **sans
+  bibliothèque externe** (le client reste volontairement sans dépendance, voir Conventions) : chaque
+  barre a une hauteur proportionnelle à la valeur **maximale de la série affichée** (jamais un
+  maximum théorique arbitraire), protégée contre la division par zéro (`Math.max(1, ...)`) si toute
+  la série est à 0. Réutilisable pour n'importe quelle métrique hebdomadaire, `opts.decimals`/
+  `opts.unit`/`opts.color` pilotent uniquement l'affichage, jamais le calcul.
+- `renderHistoriquePage()` — sélecteur du nombre de semaines affichées (`historiqueNbSemaines`,
+  8/12/26/52, purement transitoire côté client, jamais persisté — reprend 12 semaines par défaut à
+  chaque rechargement), puis quatre graphiques empilés (temps de production, coût réel, rebuts,
+  retards de démarrage) — un seul type de visualisation pour les quatre métriques plutôt que quatre
+  présentations différentes, pour rester lisible d'un coup d'œil.
+- Ajoutée à `userDefaultPage` (page d'accueil par défaut, voir plus haut) — option `'historique'`,
+  proposée uniquement à `canSupervise()`, même garde-fou que `'pointages'` (retombe sur Planning si
+  le rôle est rétrogradé depuis).
+- Couvert par `test_historique_trends.js` : nombre de semaines et ordre chronologique de
+  `computeHistoriqueTrends`, bucketage correct sur la date de fin réelle (temps/coût/rebuts) et sur la
+  date de démarrage réel (retards), absence totale de contribution d'une pièce encore `en_cours`,
+  proportionnalité des barres de `renderTrendBarsHtml` et absence de plantage sur une série
+  entièrement à 0.
+
 ## Recréer une commande sous un nom déjà archivé
 
 Question utilisateur réelle : que se passe-t-il si on recrée une commande (formulaire « Nouvelle
