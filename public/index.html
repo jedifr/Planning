@@ -502,6 +502,11 @@
   .risque-days-late{font-size:12px; font-weight:600; color:var(--red); white-space:nowrap;}
   .risque-piece-row td{background:var(--panel-2); font-weight:600; font-size:12px; color:var(--text-dim); padding-top:8px;}
   .risque-row-blocking{background:var(--amber-dim);}
+  /* Page "📊 Vue d'ensemble" (tableau de bord atelier, voir renderDashboardPage/CLAUDE.md) — teinte
+     légère par ligne de poste selon son état instantané, même principe que .risque-row-blocking. */
+  .dash-poste-actif td{background:rgba(53,117,87,0.10);}
+  .dash-poste-pause td{background:var(--amber-dim);}
+  .dash-poste-arret td{color:var(--text-faint);}
   .risque-blocking-tag{font-size:11px; color:var(--amber-strong,#a06d1a); font-weight:600;}
   .risque-context-row td{font-size:11.5px; color:var(--text-dim); padding-top:2px; padding-bottom:8px; border-top:none;}
   .risque-context-row .commande-link-inline{background:none; border:none; padding:0; font-weight:600; color:inherit; cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px;}
@@ -909,7 +914,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.51.0';
+const APP_VERSION = '1.52.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1278,7 +1283,7 @@ function manualArchiveNow(){
   showToast(`${nb} commande${nb>1?'s':''} archivée${nb>1?'s':''}.`);
 }
 let currentView = 'semaine'; // 'semaine' | 'mois' | 'annee'
-let currentPage = 'planning'; // 'planning' | 'conges' | 'tempsProd' | 'zones' | 'risques' | 'pointages' | 'historique'
+let currentPage = 'planning'; // 'planning' | 'conges' | 'tempsProd' | 'zones' | 'risques' | 'pointages' | 'historique' | 'dashboard'
 let congesTab = 'mes-demandes'; // 'mes-demandes' | 'equipe' | 'calendrier' | 'a-valider' | 'soldes'
 let equipeStatutFilter = 'approuve'; // filtre de l'onglet "Congés de l'équipe"
 let leaveImpactPreviewId = null; // id de la demande dont on affiche l'aperçu d'impact, dans "À valider"
@@ -1470,7 +1475,7 @@ function migrateState(st){
   if(!Array.isArray(st.commandesArchivees)) st.commandesArchivees = []; // commandes entièrement terminées depuis longtemps, écartées du moteur de planification pour garder l'appli réactive — toujours incluses dans l'export complet
   if(!st.userMachines) st.userMachines = {}; // { [userId]: [machineId, ...] } — lien plusieurs-à-plusieurs
   if(!Array.isArray(st.hiddenTempsProdUserIds)) st.hiddenTempsProdUserIds = []; // salariés exclus de l'onglet Temps de production (superviseur) — voir isHiddenFromTempsProd
-  if(!st.userDefaultPage) st.userDefaultPage = {}; // { [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques'|'pointages'|'historique' } — page affichée à la connexion, voir applyUserDefaultPageOnStart
+  if(!st.userDefaultPage) st.userDefaultPage = {}; // { [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques'|'pointages'|'historique'|'dashboard' } — page affichée à la connexion, voir applyUserDefaultPageOnStart
   if(!st.userDefaultPlanningView) st.userDefaultPlanningView = {}; // { [userId]: 'jour'|'semaine'|'mois'|'annee'|'kanban'|'liste' } — vue du planning appliquée à la connexion quand la page d'accueil est Planning, voir applyUserDefaultPageOnStart
   if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
   Object.keys(st.userLunch).forEach(uid_ => {
@@ -6734,6 +6739,7 @@ function renderHeader(){
       ${!mobileHeader ? (() => { const n = getSchedule().filter(c => (c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine')) && isCommandeAtRisk(c)).length; return `<button class="page-switch-btn ${currentPage==='risques'?'active':''}" data-action="goto-risques">⚠️ Risques de retard${n>0?` <span class="pending-count-badge">${n}</span>`:''}</button>`; })() : ''}
       ${(canSupervise() && !mobileHeader) ? `<button class="page-switch-btn ${currentPage==='pointages'?'active':''}" data-action="goto-pointages">🕘 Pointages</button>` : ''}
       ${(canSupervise() && !mobileHeader) ? `<button class="page-switch-btn ${currentPage==='historique'?'active':''}" data-action="goto-historique">📈 Historique</button>` : ''}
+      ${(canSupervise() && !mobileHeader) ? `<button class="page-switch-btn ${currentPage==='dashboard'?'active':''}" data-action="goto-dashboard">📊 Vue d'ensemble</button>` : ''}
     </div>`;
   return `
   <header class="top">
@@ -8165,6 +8171,28 @@ function computeRetardDemarrageDetail(st){
   (st.commandesArchivees||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
   return rows.sort((a,b) => b.joursRetard - a.joursRetard);
 }
+// Instantané de l'état de chaque poste, pour la page "📊 Vue d'ensemble" (voir CLAUDE.md, section
+// dédiée) — 'actif' dès qu'une pièce en_cours occupe le poste (priorité sur 'pause' : un poste
+// partagé avec une tâche en_cours ET une autre en_pause est avant tout "actif"), 'pause' sinon dès
+// qu'une pièce en_pause l'occupe, 'arret' sinon (rien de programmé en ce moment sur ce poste — pas
+// nécessairement anormal, juste pas de travail en cours). Ne regarde QUE les commandes actives —
+// une commande déjà archivée n'occupe plus aucun poste par définition.
+function computeMachineStatusSnapshot(st){
+  return (st.machines||[]).map(m => {
+    let statut = 'arret';
+    let ctx = null;
+    (st.commandes||[]).forEach(c => c.pieces.forEach(o => {
+      if(o.machineId !== m.id) return;
+      if(o.statut === 'en_cours'){ statut = 'actif'; if(!ctx || ctx.kind !== 'actif') ctx = { kind:'actif', c, o }; }
+      else if(o.statut === 'en_pause' && statut !== 'actif'){ statut = 'pause'; if(!ctx) ctx = { kind:'pause', c, o }; }
+    }));
+    return {
+      machineId: m.id, machineNom: m.nom, statut,
+      commandeNom: ctx ? ctx.c.nom : null,
+      pieceLabel: ctx ? [ctx.o.piece, ctx.o.etape].filter(Boolean).join(' / ') : null
+    };
+  });
+}
 // Seuil de bruit pour la section « Pauses de production » ci-dessous : une pause manuelle qui vient
 // tout juste de commencer (< 1h) n'est pas encore un signe de dérive — évite de signaler
 // systématiquement toute pause en cours d'une commande à risque, y compris celle posée deux minutes
@@ -8366,6 +8394,70 @@ function renderRisquesPage(){
       ${atRisk.length ? `<div class="footer-note" style="text-align:left; padding-bottom:10px;">Triées de la plus en retard à la moins en retard. Pour chaque pièce, la chaîne de ses étapes dans l'ordre des phases — l'étape surlignée est la première pas encore terminée : c'est elle qui retient les suivantes. Quand une autre commande occupe le même poste juste avant ou juste après, elle est indiquée sous la ligne. Cliquez un nom de commande pour l'isoler dans le planning.</div>` : ''}
       ${body}
     </div>`}
+  </section>`;
+}
+
+/* ---------------- Vue d'ensemble atelier (voir CLAUDE.md « Vue d'ensemble atelier ») ---------------- */
+// Purement de la composition : chaque chiffre/tableau réutilise TEL QUEL une fonction de calcul déjà
+// écrite pour une autre page (Risques de retard, bannière de pauses, congés du jour) — aucune
+// nouvelle logique métier, seulement une lecture groupée en un seul coup d'œil "que se passe-t-il
+// maintenant dans l'atelier" plutôt que de naviguer entre plusieurs pages.
+function renderDashboardPage(){
+  const schedule = getSchedule();
+  const active = schedule.filter(c => c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine'));
+  const atRisk = active.filter(isCommandeAtRisk);
+  const now = new Date();
+  const machineStatus = computeMachineStatusSnapshot(state);
+  const nbActifs = machineStatus.filter(m=>m.statut==='actif').length;
+  const nbPause = machineStatus.filter(m=>m.statut==='pause').length;
+  const nbArret = machineStatus.filter(m=>m.statut==='arret').length;
+  const retardsDetail = computeRetardDemarrageDetail(state);
+  const pausesSuspectes = computePausesARisque(atRisk, now);
+  const pausesVeille = pausedSinceEarlierTasks();
+
+  const statutLabel = { actif:'🟢 Actif', pause:'🟠 En pause', arret:'⚪ À l\'arrêt' };
+  const machineRows = machineStatus.map(m => {
+    const detail = m.commandeNom ? `${escapeHtml(m.commandeNom)} — ${escapeHtml(m.pieceLabel||'—')}` : '—';
+    return `<tr class="dash-poste-${m.statut}"><td>${escapeHtml(m.machineNom)}</td><td>${statutLabel[m.statut]}</td><td>${detail}</td></tr>`;
+  }).join('');
+
+  const pausesSuspectesHtml = pausesSuspectes.length ? `
+    <div class="trend-section-title" style="margin-top:20px;">⏸ Pauses suspectes en cours</div>
+    <table class="ops-table"><thead><tr><th>Commande</th><th>Pièce / étape</th><th>Poste</th><th>Depuis</th><th>Durée</th></tr></thead>
+      <tbody>${pausesSuspectes.map(r => `<tr>
+        <td><button class="temps-prod-commande-link" data-action="isolate-commande-goto-planning" data-cid="${r.commandeId}" style="background:none; border:none; padding:0; color:var(--text);">${escapeHtml(r.commandeNom)}</button></td>
+        <td>${escapeHtml([r.piece,r.etape].filter(Boolean).join(' / ')||'—')}</td>
+        <td>${escapeHtml(r.machineNom)}</td>
+        <td>${formatDT(r.depuis)}</td>
+        <td>${formatHeures(r.dureeH)}</td>
+      </tr>`).join('')}</tbody></table>` : '';
+
+  return `<section class="panel"><div class="panel-head">
+      <h2>📊 Vue d'ensemble atelier</h2>
+      <span class="footer-note" style="margin:0;">Instantané temps réel</span>
+    </div>
+    <div class="panel-body">
+    ${absenceBannerHtml([now])}
+    <div class="stat-row">
+      <div class="stat"><div class="num mono">${nbActifs}/${machineStatus.length}</div><div class="lbl">Postes actifs</div></div>
+      <div class="stat ${nbPause>0?'alert':''}"><div class="num mono">${nbPause}</div><div class="lbl">Postes en pause</div></div>
+      <div class="stat"><div class="num mono">${nbArret}</div><div class="lbl">Postes à l'arrêt</div></div>
+      <div class="stat ${atRisk.length>0?'alert stat-clickable':''}" ${atRisk.length>0?'data-action="goto-risques"':''}><div class="num mono">${atRisk.length}</div><div class="lbl">Commandes à risque</div></div>
+      <div class="stat ${retardsDetail.length>0?'alert':''}"><div class="num mono">${retardsDetail.length}</div><div class="lbl">Tâches démarrées en retard</div></div>
+      <div class="stat ${pausesSuspectes.length>0?'alert':''}"><div class="num mono">${pausesSuspectes.length}</div><div class="lbl">Pauses suspectes en cours</div></div>
+      <div class="stat ${pausesVeille.length>0?'alert':''}"><div class="num mono">${pausesVeille.length}</div><div class="lbl">En pause depuis la veille</div></div>
+    </div>
+
+    <div class="trend-section-title" style="margin-top:20px;">Postes</div>
+    <table class="ops-table"><thead><tr><th>Poste</th><th>État</th><th>Tâche en cours</th></tr></thead>
+      <tbody>${machineRows}</tbody></table>
+    ${pausesSuspectesHtml}
+
+    <div class="footer-note" style="text-align:left; margin-top:16px;">Instantané recalculé à chaque
+    rendu — les mêmes fonctions que la page « ⚠️ Risques de retard »/la bannière de pauses sont
+    réutilisées telles quelles, aucun nouveau calcul métier. Pour une vue dans le temps plutôt qu'un
+    instantané, voir la page « 📈 Historique ».</div>
+    </div>
   </section>`;
 }
 
@@ -9816,6 +9908,7 @@ function renderSettingsModal(){
         <option value="risques" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='risques'?'selected':''}>⚠️ Risques de retard</option>
         ${canSupervise() ? `<option value="pointages" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='pointages'?'selected':''}>🕘 Pointages</option>` : ''}
         ${canSupervise() ? `<option value="historique" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='historique'?'selected':''}>📈 Historique / Tendances</option>` : ''}
+        ${canSupervise() ? `<option value="dashboard" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='dashboard'?'selected':''}>📊 Vue d'ensemble atelier</option>` : ''}
       </select>
       <div class="footer-note" style="text-align:left; padding-top:6px;">Page affichée automatiquement à la connexion, à la place du Planning. Propre à ce compte : chacun peut choisir la sienne.</div>
       ${!(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')] ? `
@@ -11562,6 +11655,18 @@ function render(){
     restoreFocusRef(focusRef);
     return;
   }
+  if(currentPage === 'dashboard'){
+    appEl.innerHTML = [
+      renderHeader(),
+      renderDashboardPage(),
+      renderSettingsModal(),
+      renderPauseReminderModal(otherModalOpen),
+      renderToast()
+    ].join('');
+    restoreModalScroll(modalScrollTop);
+    restoreFocusRef(focusRef);
+    return;
+  }
   const schedule = getSchedule();
   const html = [
     renderHeader(),
@@ -11753,6 +11858,7 @@ function dispatchClickAction(action, el){
     case 'goto-risques': currentPage = 'risques'; render(); break;
     case 'goto-pointages': currentPage = 'pointages'; render(); break;
     case 'goto-historique': currentPage = 'historique'; render(); break;
+    case 'goto-dashboard': currentPage = 'dashboard'; render(); break;
     case 'pointages-view-mode': pointagesViewMode = el.dataset.mode; render(); break;
     case 'pointages-view-reference': pointagesFilters.search = el.dataset.piece; pointagesViewMode = 'liste'; render(); break;
     case 'open-correct-pointage': openCorrectPointage(el.dataset.cid, el.dataset.oid); break;
@@ -12802,8 +12908,8 @@ function applyUserDefaultPageOnStart(){
     return;
   }
   if(pref === 'conges' && !(state.config.modules && state.config.modules.conges)) return; // module désactivé depuis : on garde Planning plutôt que d'ouvrir une page indisponible
-  if((pref === 'pointages' || pref === 'historique') && !canSupervise()) return; // rôle rétrogradé depuis (n'est plus superviseur/admin) : page devenue inaccessible, on garde Planning
-  if(['conges','tempsProd','zones','risques','pointages','historique'].includes(pref)) currentPage = pref;
+  if((pref === 'pointages' || pref === 'historique' || pref === 'dashboard') && !canSupervise()) return; // rôle rétrogradé depuis (n'est plus superviseur/admin) : page devenue inaccessible, on garde Planning
+  if(['conges','tempsProd','zones','risques','pointages','historique','dashboard'].includes(pref)) currentPage = pref;
 }
 async function startApp(){
   loadLoginBranding(); // en tâche de fond : alimente l'écran de connexion si la session a expiré

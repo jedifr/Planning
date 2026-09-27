@@ -1720,6 +1720,44 @@ une pièce à produire, à partir du temps déjà mesuré par ailleurs.
   et `hasCout` dans `computePointagesByReference` (vrai/faux selon qu'au moins un poste de la
   référence est taxé), migration `tauxHoraireH:0` sur un poste ancien.
 
+## Vue d'ensemble atelier
+
+Retour utilisateur réel : comprendre "que se passe-t-il maintenant dans l'atelier" demandait de
+naviguer entre plusieurs pages (Risques de retard, bannière de pauses, congés du jour) sans jamais
+avoir tout au même endroit. Nouvelle page « 📊 Vue d'ensemble » (`currentPage==='dashboard'`, bouton
+dans `renderHeader`, **`canSupervise()` uniquement**, masquée sur mobile comme Temps de
+production/Risques/Pointages/Historique — voir « Planning sur téléphone »).
+
+- **Purement de la composition, aucune nouvelle logique métier** — chaque chiffre/tableau réutilise
+  TEL QUEL une fonction de calcul déjà écrite pour une autre page : `isCommandeAtRisk`,
+  `computeRetardDemarrageDetail`, `computePausesARisque`, `pausedSinceEarlierTasks`,
+  `absenceBannerHtml`. Le seul calcul réellement nouveau est `computeMachineStatusSnapshot` (voir
+  ci-dessous), qui n'existait nulle part ailleurs sous cette forme.
+- `computeMachineStatusSnapshot(st)` — classe chaque poste `'actif'` (au moins une pièce `en_cours`
+  l'occupe — prioritaire sur `'pause'` : un poste partagé avec une tâche `en_cours` ET une autre
+  `en_pause` reste avant tout "actif"), `'pause'` (sinon, au moins une pièce `en_pause`), ou `'arret'`
+  (aucune des deux — pas nécessairement anormal, juste aucun travail en cours sur ce poste en ce
+  moment). Ne regarde QUE `st.commandes` (actives) : une commande déjà archivée n'occupe plus aucun
+  poste par définition, même si une de ses pièces y est restée à tort `en_cours` dans les données
+  (cas théorique, `archiveOldCommandes` n'archive normalement qu'une commande entièrement terminée).
+- `renderDashboardPage()` — bandeau « qui est absent aujourd'hui » (`absenceBannerHtml([new
+  Date()])`, déjà réutilisé ailleurs, voir « Calendrier annuel des congés »), une rangée de tuiles
+  `.stat` (mêmes classes que `renderStats()` du planning : postes actifs/en pause/à l'arrêt, nombre
+  de commandes à risque — cliquable vers la page Risques si non nul, comme le badge "En retard sur
+  échéance" du planning —, tâches démarrées en retard, pauses suspectes en cours, tâches en pause
+  depuis la veille), un tableau détaillant l'état de chaque poste (teinte de ligne selon l'état, voir
+  `.dash-poste-actif`/`.dash-poste-pause`/`.dash-poste-arret`), et le détail des pauses suspectes en
+  cours si non vide (même colonnes que la section C de la page Risques de retard).
+- **Instantané recalculé à chaque rendu, aucun historique conservé ici** — pour une vue dans le temps
+  plutôt qu'un instantané, voir « Historique / Tendances » ci-dessous, une page volontairement
+  distincte répondant à une question différente.
+- Ajoutée à `userDefaultPage` — option `'dashboard'`, même garde-fou que `'pointages'`/`'historique'`
+  (retombe sur Planning si le rôle est rétrogradé depuis).
+- Couvert par `test_dashboard_atelier.js` : classification "actif" (pièce en_cours), "pause" (pièce
+  en_pause sans pièce en_cours), "arret" (aucune pièce active/en pause), priorité "actif" sur "pause"
+  quand les deux coexistent sur le même poste, une commande archivée n'occupe jamais aucun poste,
+  composition de `renderDashboardPage()` sans erreur.
+
 ## Historique / Tendances
 
 Retour utilisateur réel : toutes les pages de suivi (Temps de production, Pointages, Risques de
