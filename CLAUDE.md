@@ -1661,6 +1661,65 @@ sous-traitant » indéfiniment sans que rien ne le signale.
   renseignée ou avec une date future/du jour même, badge correct pour un retard réel (jours comptés),
   absence de badge sur une pièce revenue ou non sous-traitée, migration vers `null`.
 
+## Coût de revient approximatif
+
+Retour utilisateur réel : aucune notion de coût n'existait nulle part dans l'application — seulement
+du temps (prévu, réel, en pause). Demande : pouvoir estimer, même approximativement, ce qu'a coûté
+une pièce à produire, à partir du temps déjà mesuré par ailleurs.
+
+- `machines[].tauxHoraireH` (nombre, €/h, `0` par défaut, `migrateState`) — **un seul taux horaire
+  "tout compris" par poste** (machine + main d'œuvre confondues), pas deux champs séparés : garde le
+  réglage minimal et correspond à la façon dont un petit atelier chiffre habituellement son temps
+  (à l'heure-machine, opérateur inclus), plutôt qu'une décomposition plus fine non demandée. `0` =
+  "coût non suivi pour ce poste" (valeur de migration, et cas normal pour un poste dont le coût
+  n'intéresse personne) — **jamais confondu avec "production gratuite"** dans l'affichage : voir
+  `pieceCoutEstime`/`pieceCoutReel` ci-dessous, qui renvoient `null` (pas `0`) dans ce cas.
+- Réglage dans Paramètres → Postes (`renderSettingsModal`, carte de poste), sous "Transfert après ce
+  poste" : `<input type="number">` `data-field="tauxHoraireH"`, réutilise tel quel le setter générique
+  déjà existant `updateMachineTransfert(id, field, value)` (`data-action="machine-transfert"`) plutôt
+  que d'en écrire un nouveau — ce setter fait déjà exactement ce qu'il faut (conversion en nombre,
+  repli sur 0 si invalide). Une note explique que laisser `0` revient à ne pas suivre le coût de ce
+  poste.
+- `machineTauxHoraire(machineId, st)` — point unique de lecture du taux d'un poste (`0` si poste
+  introuvable ou taux non numérique, jamais de plantage).
+- `pieceCoutEstime(o, st)` — coût prévisionnel = `dureePrevueH(o) × taux` ; `null` si le poste n'a pas
+  de taux configuré (`taux <= 0`), jamais `0` (qui laisserait croire à une pièce sans coût plutôt qu'à
+  un poste dont le coût n'est simplement pas suivi).
+- `pieceCoutReel(o, st)` — coût réellement engagé : `dureeReelleH × taux` pour une pièce `termine`
+  (temps figé à la clôture, voir modèle de données), `opElapsedHours(o, st) × taux` pour une pièce
+  encore active (temps réellement écoulé à cet instant, même source que le reste de l'affichage en
+  direct — voir « Fin projetée d'une tâche en_cours/en_pause ») ; `null` dans les mêmes conditions que
+  `pieceCoutEstime`.
+- `formatEuros(v)` — `"—"` si `null`, sinon la valeur arrondie à 2 décimales suivie de `" €"` — jamais
+  un `0 €` trompeur pour un poste non suivi (même réflexe que `formatEcart`/`pauseTimeCellHtml`).
+- **Exposé dans l'onglet Pointages** (`computeAllPointages`/`computePointagesByReference`, voir plus
+  haut) plutôt que dans une page dédiée : c'est déjà l'endroit qui réunit tous les pointages avec leur
+  temps réel — le coût n'est qu'une lecture supplémentaire de la même donnée, pas un nouveau concept à
+  naviguer ailleurs.
+  - `computeAllPointages(st)` : chaque ligne porte `coutEstime`/`coutReel` (voir ci-dessus, `null`
+    possible).
+  - `computePointagesByReference(list)` : `coutReel` est la somme des lignes de la référence dont le
+    coût est connu, accompagnée d'un booléen `hasCout` (vrai dès qu'AU MOINS une pièce de cette
+    référence a un poste taxé) — distingue "0 € parce qu'aucun poste de cette référence n'a de taux
+    configuré" (aucun total à afficher, `hasCout=false`) de "0 € parce que le total réel est
+    effectivement nul" (cas qui ne se produit de toute façon jamais en pratique dès qu'il y a au moins
+    une pièce, mais le booléen protège la distinction par principe, même logique que `pauseH`/`null`
+    ailleurs dans cette même page).
+  - Colonne « Coût réel » (vue Liste, une pièce) / « Coût réel (total) » (vue Par référence, cumul) —
+    ajoutées après la colonne Rebuts dans les deux tableaux de `renderPointagesPage()`, avec les
+    en-têtes et `colspan` des messages d'état vide mis à jour en conséquence. Note de bas de page
+    explicitant le calcul (« temps réel × taux horaire du poste, Paramètres → Postes — "—" si ce
+    poste n'a pas de taux configuré »).
+  - **Pas de "coût estimé" affiché dans Pointages** : seul `coutReel` y figure (`pieceCoutEstime`
+    reste disponible pour un usage futur, ex. un écart coût prévu/réel symétrique de `formatEcart`,
+    mais n'a pas été demandé — pas ajouté pour rester au périmètre de la demande).
+- Couvert par `test_cout_revient.js` : taux par défaut à 0 pour un poste inconnu/non configuré,
+  `null` sur `pieceCoutEstime`/`pieceCoutReel` sans taux, calcul correct avec un taux positif (pièce
+  `termine` via `dureeReelleH`, pièce `en_cours` via `opElapsedHours`), formatage `formatEuros`
+  (`null`→"—", `0`→"0 €", arrondi à 2 décimales), exposition dans `computeAllPointages`, agrégation
+  et `hasCout` dans `computePointagesByReference` (vrai/faux selon qu'au moins un poste de la
+  référence est taxé), migration `tauxHoraireH:0` sur un poste ancien.
+
 ## Recréer une commande sous un nom déjà archivé
 
 Question utilisateur réelle : que se passe-t-il si on recrée une commande (formulaire « Nouvelle
