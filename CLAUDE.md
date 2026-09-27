@@ -100,7 +100,7 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
 - `machines[]` — postes : `nom`, `dispo` (disponible à partir de), `couleur`,
   `horairesActifs`/`horaires` (horaires spécifiques), `indisponibilites[]`,
   `fusionnable`, `transfertFixeMin`, `transfertParPieceMin`
-- `commandes[]` — `nom` (référence), `dateBesoin`, `urgence`, `zoneStockage`, `pieces[]`
+- `commandes[]` — `nom` (référence), `dateBesoin`, `urgence`, `zoneStockage`, `dateCreation`, `pieces[]`
 - `pieces[]` (dans une commande) — `piece`, `etape`, `machineId`, `tempsUnitaire`
   (minutes), `quantite`, `statut`, `phase`, `manualStart`, `dureeOverrideH`,
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
@@ -1533,6 +1533,45 @@ volontairement la même zone (regroupement manuel de petites affaires dans un m�
     `pretExpedition` encore `false`.
   - `assignStorageZone`/`setCommandeZone` n'ont pas besoin d'être modifiés : ils lisent déjà
     `occupiedStorageZones`/`commandesInZone`, qui portent maintenant la nouvelle règle.
+
+## Horodatage de création d'une commande (`commandes[].dateCreation`)
+
+Question utilisateur réelle : les commandes créées sont-elles horodatées ? Réponse avant ce
+correctif : non — seule `dateBesoin` (l'échéance demandée, une donnée métier saisie, pas un
+horodatage système) existait sur une commande ; l'ordre de `state.commandes[]` reflétait
+implicitement l'ordre de création (nouvelles commandes toujours poussées en fin de tableau), mais
+rien d'exploitable comme une date.
+
+- `commandes[].dateCreation` (`"AAAA-MM-JJTHH:mm" | null`) — posé **une seule fois**, à l'instant
+  réel de création de l'objet commande, aux trois points qui en créent vraiment un
+  (`toInputValue(new Date())`, même format naïf que `debutReel`/`finReel`) :
+  - `submitNewCommande()`, branche "nouvelle commande" (`newCmd`) — jamais posé/touché dans la
+    branche "ajout de lignes à une commande déjà existante", qui garde la `dateCreation` d'origine
+    de la commande qu'elle complète.
+  - `submitQuickPointage()`, quand aucune commande existante n'est choisie (nouvelle commande créée
+    à la volée).
+  - `commitImportGroups()` (partagée par les deux imports), uniquement dans la branche qui crée
+    vraiment une nouvelle commande — jamais dans la branche de fusion sur une référence déjà
+    présente. Même piège que `capturePrevisionAuDemarrage` (voir « Retard de démarrage ») : cette
+    fonction recrée des copies fraîches à chaque appel et peut être rejouée après un conflit
+    d'enregistrement — `toInputValue(new Date())` n'est donc atteint que pour une référence pas
+    encore trouvée dans `targetState.commandes`, jamais recalculé sur un rejeu qui la retrouve déjà
+    créée (comportement déjà garanti par la structure existante de la fonction, aucun garde-fou
+    supplémentaire à ajouter).
+  - **Recréer une commande sous un nom déjà archivé** (voir section suivante) : le désarchivage
+    réutilise l'objet existant tel quel, `dateCreation` n'est donc jamais réécrit — la commande
+    garde sa date de création d'origine, cohérent avec le reste de cette fonctionnalité (aucun champ
+    réinitialisé).
+- `migrateState` initialise `dateCreation` à `null` sur toute commande (active ou archivée) qui ne
+  l'a pas encore — **aucune donnée rétroactive**, même principe que `previsionAuDemarrage`/
+  `previsionAvantCloture` : impossible de reconstituer une date de création réelle pour une commande
+  déjà existante au moment de l'introduction de ce champ.
+- Affiché en infobulle sur le bouton `#N` de la carte commande (`renderCommandeCard`, « Créée le
+  {date} » ajouté au `title` existant, seulement si `dateCreation` est connu) — pas de colonne dédiée
+  ni de nouvel affichage permanent, cette information n'a pas besoin de plus de place à l'écran.
+- Couvert par `test_commande_date_creation.js` : horodatage posé à la création dans les trois flux,
+  jamais réécrit sur un ajout de lignes/un rejeu, migration vers `null` pour une commande (active ou
+  archivée) déjà existante et jamais recalculé à un second passage de `migrateState`.
 
 ## Recréer une commande sous un nom déjà archivé
 

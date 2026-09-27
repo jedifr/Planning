@@ -899,7 +899,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.46.0';
+const APP_VERSION = '1.47.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1517,6 +1517,7 @@ function migrateState(st){
   // isCommandeReadyToFreeZone/CLAUDE.md. Sans effet tant que le module est désactivé.
   st.commandes.forEach(c => { if(c.pretExpedition === undefined) c.pretExpedition = false; });
   (st.commandesArchivees||[]).forEach(c => { if(c.pretExpedition === undefined) c.pretExpedition = false; });
+  (st.commandesArchivees||[]).forEach(c => { if(c.dateCreation === undefined) c.dateCreation = null; });
   // Migration ponctuelle (une seule fois) : attribue automatiquement une zone de stockage aux
   // commandes déjà en cours au moment de l'introduction de cette fonctionnalité (voir CLAUDE.md).
   // Sans garde, ça retenterait une assignation à chaque chargement — inutile (assignStorageZone est
@@ -1570,6 +1571,7 @@ function migrateState(st){
     if(!c.pieces) c.pieces = [];
     if(!c.urgence) c.urgence = 'normale';
     if(c.refClient === undefined) c.refClient = '';
+    if(c.dateCreation === undefined) c.dateCreation = null; // pas de donnée rétroactive, comme previsionAuDemarrage
     c.pieces.forEach(o => {
       if(o.manualStart === undefined) o.manualStart = null;
       if(o.dureeOverrideH === undefined) o.dureeOverrideH = null;
@@ -4507,7 +4509,7 @@ function submitNewCommande(){
 
   const newCmd = {
     id: uid('c'), nom: nomTrim, refClient: (draft.refClient||'').trim(), dateBesoin: draft.dateBesoin, urgence: draft.urgence || 'normale',
-    zoneStockage: null,
+    zoneStockage: null, dateCreation: toInputValue(new Date()),
     pieces: dedupedOps.map(o => ({
       id: o.id, piece: o.piece.trim(), etape: o.etape.trim(), machineId: o.machineId,
       tempsUnitaire: Number(o.tempsUnitaire), quantite: Number(o.quantite), statut: 'a_faire',
@@ -4619,7 +4621,7 @@ function submitQuickPointage(){
   }
 
   if(isNewCommande){
-    c = { id: uid('c'), nom: newNom, refClient:'', dateBesoin: toDateInputValue(new Date()), urgence:'normale', zoneStockage:null, pieces:[] };
+    c = { id: uid('c'), nom: newNom, refClient:'', dateBesoin: toDateInputValue(new Date()), urgence:'normale', zoneStockage:null, dateCreation: toInputValue(new Date()), pieces:[] };
     state.commandes.push(c);
     assignStorageZone(state, c);
   }
@@ -6085,7 +6087,7 @@ function commitImportGroups(targetState, groups){
       const d = new Date(); d.setDate(d.getDate()+14);
       g.dateBesoin = toDateInputValue(d); // échéance provisoire, à corriger manuellement
     }
-    const importedCmd = { id: uid('c'), nom: ref, refClient: g.refClient||'', dateBesoin: g.dateBesoin, urgence: g.urgence, pieces: g.pieces.map(p=>({...p})), zoneStockage: null };
+    const importedCmd = { id: uid('c'), nom: ref, refClient: g.refClient||'', dateBesoin: g.dateBesoin, urgence: g.urgence, pieces: g.pieces.map(p=>({...p})), zoneStockage: null, dateCreation: toInputValue(new Date()) };
     targetState.commandes.push(importedCmd);
     assignStorageZone(targetState, importedCmd);
     createdPieceIds.push(...importedCmd.pieces.map(p=>p.id));
@@ -10769,7 +10771,7 @@ function renderCommandeCard(c, idx, total){
         <button class="ghost" data-action="move-commande" data-dir="-1" data-id="${c.id}" ${idx===0?'disabled':''} title="Monter en priorité">▲</button>
         <button class="ghost" data-action="move-commande" data-dir="1" data-id="${c.id}" ${idx===total-1?'disabled':''} title="Descendre en priorité">▼</button>
       </div>
-      <button class="commande-rank mono ${selectedCommandeId===c.id?'selected':''}" data-action="toggle-select-commande" data-id="${c.id}" title="Mettre en évidence cette commande dans le planning visuel">#${idx+1}</button>
+      <button class="commande-rank mono ${selectedCommandeId===c.id?'selected':''}" data-action="toggle-select-commande" data-id="${c.id}" title="Mettre en évidence cette commande dans le planning visuel${c.dateCreation?` — créée le ${formatDT(new Date(c.dateCreation))}`:''}">#${idx+1}</button>
       <input class="commande-name" value="${escapeHtml(c.nom)}" data-action="commande-field" data-cid="${c.id}" data-field="nom">
       <input class="commande-ref-client" style="color:${escapeHtml(state.config.refClientColor||'#316f98')}" placeholder="Réf. commande client" title="Référence de la commande chez le client" value="${escapeHtml(c.refClient||'')}" data-action="commande-field" data-cid="${c.id}" data-field="refClient">
       <div class="chead-spacer"></div>
