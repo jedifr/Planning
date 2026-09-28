@@ -499,9 +499,21 @@
     border-radius:2px; font-size:12px; color:var(--text-dim);
   }
   .risque-card{
-    margin-bottom:16px; padding:12px 14px; background:var(--panel); border:1px solid var(--line);
-    border-left:3px solid var(--red); border-radius:2px;
+    padding:12px 14px; background:var(--panel); border:1px solid var(--line);
+    border-left:3px solid var(--red); border-radius:2px; min-width:0;
   }
+  /* Deux colonnes (retour utilisateur réel) — chaque carte gardait toute la largeur de la page,
+     jamais nécessaire pour son contenu (chaîne + tableau), et forçait un long défilement vertical
+     dès quelques commandes à risque. `align-items:start` : une carte plus haute (plus de pièces/
+     étapes) ne doit jamais étirer sa voisine de la même ligne à sa hauteur. Repasse à une seule
+     colonne sous 1100px (chaîne en pastilles + tableau ont besoin d'assez de largeur chacun). */
+  .risque-cards-grid{display:grid; grid-template-columns:repeat(2, 1fr); gap:16px; align-items:start;}
+  @media (max-width:1100px){ .risque-cards-grid{grid-template-columns:1fr;} }
+  /* Une carte deux fois moins large peut ne plus suffire à la chaîne de pastilles/au tableau —
+     défilement horizontal propre à CHAQUE carte plutôt que de casser la grille ou de rétrécir le
+     contenu au point de le rendre illisible. */
+  .risque-cards-grid .rc-track{overflow-x:auto; padding-bottom:4px;}
+  .risque-cards-grid table.ops-table{display:block; overflow-x:auto;}
   .risque-card-head{display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:8px;}
   .risque-days-late{font-size:12px; font-weight:600; color:var(--red); white-space:nowrap;}
   .risque-piece-row td{background:var(--panel-2); font-weight:600; font-size:12px; color:var(--text-dim); padding-top:8px;}
@@ -1091,7 +1103,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.63.0';
+const APP_VERSION = '1.63.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -8922,7 +8934,7 @@ function renderRisquesPage(){
   const active = schedule.filter(c => c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine'));
   const atRisk = active.filter(isCommandeAtRisk).sort((a,b) => commandeRiskDaysLate(b) - commandeRiskDaysLate(a));
   const machineTimelines = buildMachineTimelines(schedule);
-  const body = atRisk.length ? atRisk.map(c => {
+  const bodyCards = atRisk.length ? atRisk.map(c => {
     const joursRetard = Math.ceil(commandeRiskDaysLate(c));
     const urgenceTxt = c.urgence==='urgente' ? 'Urgente' : c.urgence==='importante' ? 'Importante' : 'Normale';
     const chains = pieceChainsForCommande(c);
@@ -8990,7 +9002,10 @@ function renderRisquesPage(){
         <tbody>${rowsHtml}</tbody>
       </table>` : ''}
     </div>`;
-  }).join('') : `<div class="empty-state"><strong>Aucune commande à risque</strong>Toutes les commandes en cours respectent leur échéance estimée.</div>`;
+  }).join('') : '';
+  // Grille à deux colonnes (retour utilisateur réel) — jamais autour du message d'état vide, qui
+  // n'a rien d'une liste de cartes à ranger en colonnes.
+  const body = atRisk.length ? `<div class="risque-cards-grid">${bodyCards}</div>` : `<div class="empty-state"><strong>Aucune commande à risque</strong>Toutes les commandes en cours respectent leur échéance estimée.</div>`;
   const nowPauses = new Date();
   const pauseParPoste = computePauseTimeParPoste(state, nowPauses);
   const pausesARisque = computePausesARisque(atRisk, nowPauses);

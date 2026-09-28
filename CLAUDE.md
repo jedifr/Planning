@@ -3356,6 +3356,20 @@ bouton "Détail" »*.
   toast de succès/absence de destinataire/échec réseau, bouton réactivé et son libellé restauré dans
   tous les cas).
 
+**Cartes en deux colonnes (retour utilisateur réel).** Avec la chaîne en pastilles + le tableau
+replié par défaut, chaque carte est devenue bien moins haute qu'avant — occuper toute la largeur de
+la page pour autant ne se justifiait plus, et forçait un long défilement vertical dès plusieurs
+commandes à risque. `.risque-cards-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:16px;
+align-items:start;}` enrobe désormais `bodyCards` (jamais le message d'état vide "Aucune commande à
+risque", qui n'a rien d'une liste de cartes) — `align-items:start` pour qu'une carte plus chargée
+(plusieurs pièces/étapes) n'étire jamais sa voisine de la même ligne à sa hauteur. Repasse à une
+seule colonne sous 1100px (`@media`), la chaîne de pastilles et le tableau ayant chacun besoin d'une
+largeur minimale pour rester lisibles. Une carte deux fois moins large peut ne plus suffire à son
+contenu le plus large (beaucoup d'étapes dans une chaîne, ou le tableau à 5 colonnes) :
+`.risque-cards-grid .rc-track`/`table.ops-table` reçoivent un défilement horizontal propre à chaque
+carte (`overflow-x:auto`) plutôt que de casser la grille ou de rétrécir le contenu au point de le
+rendre illisible.
+
 ### Alerte de démarrage tardif (pop-up à l'opérateur, activable dans Paramètres)
 
 Demande utilisateur directe : que chaque tâche démarrée en retard soit signalée à l'opérateur, par
