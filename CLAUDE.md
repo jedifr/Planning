@@ -1804,6 +1804,43 @@ existante (`backup.js`), mais pour du contenu plutôt qu'un export complet des d
   des pauses suspectes (jamais une pause déjà expliquée, seuil d'1h), composition de
   `buildReportText` sans erreur.
 
+## Navigation (menu « Plus ▾ », ordre configurable)
+
+Retour utilisateur réel, capture d'écran à l'appui : la barre de pages de l'en-tête (Planning,
+Congés, Temps de production, Zones de stockage, Risques de retard, Pointages, Historique, Vue
+d'ensemble) déborde visuellement une fois toutes les pages superviseur ajoutées. Demande : la rendre
+plus conviviale, éventuellement en regroupant des onglets, et pouvoir choisir leur ordre. Trois
+pistes proposées (menu unique « Plus ▾ » / deux sous-menus thématiques / icônes seules sans
+regroupement) — **option retenue : le menu unique**.
+
+- **Planning et Congés restent seuls en accès direct** (comportement inchangé) — ce sont les deux
+  pages consultées en continu ; tout le reste (Temps de production, Zones de stockage, Risques de
+  retard, Pointages, Historique, Vue d'ensemble) rejoint un unique menu déroulant « Plus ▾ »
+  (`renderHeader`), réutilisant tel quel le mécanisme `<details class="dd-menu">`/`openMiniDropdowns`
+  déjà en place pour "Postes affichés"/"Filtres & tri" — aucun nouveau mécanisme de menu à inventer.
+  Le bouton « Plus » porte lui-même le badge du nombre de commandes à risque (`nbRisque`, même donnée
+  que le badge historique du bouton "Risques de retard") pour rester visible sans ouvrir le menu ;
+  le badge du même compteur reste aussi affiché sur la ligne "Risques de retard" à l'intérieur.
+- **Ce regroupement ne concerne QUE le bureau** (`!mobileHeader`) — la barre mobile garde exactement
+  son comportement déjà résolu séparément (Planning/Congés/Zones de stockage en accès direct, rien
+  d'autre dans le bandeau, voir « Planning sur téléphone ») : un problème déjà réglé, hors périmètre
+  de cette demande centrée sur l'encombrement en largeur du bureau.
+- `pageMenuOrder` (`PAGE_MENU_KEYS = ['tempsProd','zones','risques','pointages','historique',
+  'dashboard']`, préférence de **navigateur** — jamais synchronisée dans `state`, comme demandé) —
+  même principe exact que `settingsSectionOrder` (ordre des catégories de la pop-up Paramètres) :
+  `loadPageOrderPref()`/`savePageOrderPref()` (localStorage, `PAGE_ORDER_STORAGE_KEY`), une
+  préférence invalide (longueur différente, clé manquante/inconnue) est silencieusement ignorée au
+  chargement plutôt qu'appliquée à moitié. Réglable dans Paramètres → Affichage (section déjà admin-
+  only) via les mêmes flèches ▲/▼ que l'ordre des catégories de Paramètres (`.settings-nav-item`/
+  `.settings-reorder`, réutilisés tels quels) — `case 'move-page-menu-item'`, symétrique de
+  `case 'move-settings-section'`. Chacun organise donc sa propre barre sur son propre poste, sans
+  affecter les autres comptes/appareils.
+- Un item du menu masqué pour un rôle (`pointages`/`historique`/`dashboard`, `canSupervise()`
+  uniquement — comportement de visibilité inchangé) est simplement absent de la liste rendue, jamais
+  de trou dans le menu ni de case grisée.
+- Couvert par `test_nav_and_pie_charts.js` : ordre par défaut, permutation persistée puis relue après
+  un rechargement simulé, préférence invalide (clé inconnue) ignorée au profit de l'ordre par défaut.
+
 ## Vue d'ensemble atelier
 
 Retour utilisateur réel : comprendre "que se passe-t-il maintenant dans l'atelier" demandait de
@@ -1841,6 +1878,44 @@ production/Risques/Pointages/Historique — voir « Planning sur téléphone »)
   en_pause sans pièce en_cours), "arret" (aucune pièce active/en pause), priorité "actif" sur "pause"
   quand les deux coexistent sur le même poste, une commande archivée n'occupe jamais aucun poste,
   composition de `renderDashboardPage()` sans erreur.
+
+### Synthèse annuelle en camembert
+
+Retour utilisateur réel : « les graph barre de l'onglet Historique/Tendances pourraient être
+synthétisés sur l'année sous forme de camembert dans l'onglet Vue d'ensemble ». Point tranché avant
+d'implémenter (voir propositions faites à l'utilisateur) : un camembert répartit des **parts d'un
+même tout** — les 4 métriques hebdomadaires d'Historique/Tendances sont 4 grandeurs différentes
+(heures, €, quantité de rebuts, nombre de tâches), pas des parts les unes des autres ; les combiner
+dans un seul camembert n'aurait aucun sens mathématique. **Option retenue : deux camemberts de vraies
+répartitions catégorielles**, chacun totalisant 100% de son propre tout : temps de production annuel
+par poste, rebuts annuels par motif — ce sont, elles, de véritables répartitions.
+
+- `computeAnnualProductionByMachine(st, since)` / `computeAnnualRebutsByMotif(st, since)` — fenêtre
+  **glissante de 365 jours** (pas une année civile, cohérent avec l'esprit "glissant" déjà en place
+  pour Historique/Tendances — aucune notion d'année fiscale dans ce projet), calculée à chaque rendu
+  comme le reste de la page. Le premier parcourt `computeAllPointages(st)` et ne retient que les
+  pièces `termine` bucketées sur `finReel`, comme `computeHistoriqueTrends` ; le second regroupe les
+  rebuts déclarés dans la fenêtre par motif (trim + insensible à la casse, même normalisation que le
+  rapprochement par pièce des dépendances de phase), une déclaration sans motif rejoignant "Sans
+  motif" plutôt que d'être exclue.
+- `renderPieChartHtml(items, opts)` — camembert en **CSS pur** (`conic-gradient`), sans bibliothèque
+  externe (voir Conventions, même réflexe que `renderTrendBarsHtml`) : `opts.valueKey`/`labelKey`
+  désignent les champs à lire dans chaque item déjà trié, `opts.colors` la palette dans l'ordre des
+  items (boucle avec `% colors.length` si plus courte que la liste, jamais un plantage). Un total nul
+  affiche un message explicite (« Aucune donnée sur la période ») plutôt qu'une division par zéro ou
+  un cercle vide trompeur.
+- **Couleurs du camembert "temps de production par poste" : la couleur RÉELLE de chaque poste**
+  (`machine.couleur`, Paramètres → Postes), pas une palette générique — cohérent avec le Kanban/les
+  autres endroits où un poste est déjà identifié par sa propre couleur ; repli sur `MACHINE_COLORS`
+  (palette catégorielle déjà utilisée ailleurs, ex. zones de stockage par défaut) pour un poste sans
+  couleur définie. Le camembert "rebuts par motif" n'a pas de couleur naturelle à réutiliser : palette
+  générique `MACHINE_COLORS` par défaut.
+- Rendu juste après le tableau des pauses suspectes dans `renderDashboardPage()`, avant la note de
+  bas de page (mise à jour pour mentionner la fenêtre de 365 jours).
+- Couvert par `test_nav_and_pie_charts.js` : fenêtre glissante (une donnée à 400 jours exclue, une à
+  10 jours incluse), fusion de motifs de casse différente ("Défaut de découpe"/"défaut de découpe"),
+  regroupement "Sans motif", camembert avec données (dégradé + légende + pourcentages) et sans donnée
+  (message explicite, y compris une série entièrement à 0).
 
 ## Historique / Tendances
 
@@ -1896,6 +1971,41 @@ Temps de production/Risques/Pointages — voir « Planning sur téléphone »).
   date de démarrage réel (retards), absence totale de contribution d'une pièce encore `en_cours`,
   proportionnalité des barres de `renderTrendBarsHtml` et absence de plantage sur une série
   entièrement à 0.
+
+### Graphiques interactifs (détail au clic sur une barre)
+
+Retour utilisateur réel : « il serait bien que les graphiques Historique/Tendances soient interactifs
+(des informations plus précises au clic sur une barre) ». Chaque métrique dispose déjà de la donnée
+sous-jacente au moment de l'agrégation — il s'agit de la CONSERVER plutôt que de la recalculer une
+seconde fois pour l'affichage détaillé.
+
+- `computeHistoriqueTrends` porte désormais, par semaine, `productionRows`/`rebutRows`/`retardRows` —
+  les lignes exactes déjà utilisées pour sommer `productionH`/`coutReel`/`rebutQty`/`retardsCount`,
+  simplement conservées en plus du total plutôt qu'un second calcul distinct : `productionRows`
+  (commande, pièce/étape, temps réel, coût réel — partagé entre les barres "Temps de production" ET
+  "Coût réel", les deux se déduisant des mêmes pièces terminées cette semaine-là), `rebutRows`
+  (commande, pièce, quantité, motif), `retardRows` (commande, pièce/étape, retard en jours).
+- `renderTrendBarsHtml(weeks, getValue, opts)` — `opts.metric` (`'production'|'cout'|'rebuts'|
+  'retards'`, un par appel dans `renderHistoriquePage`) rend chaque barre cliquable
+  (`.trend-bar-col-clickable`, `data-action="open-historique-detail"`) ; omis, une barre reste
+  purement informative comme avant cette fonctionnalité (aucun autre appelant actuel de la fonction
+  n'a besoin du clic).
+- `historiqueDetailInfo` (`{ weekIndex, metric } | null`, purement transitoire) — retient
+  l'**indice** de la semaine dans le tableau, jamais les lignes elles-mêmes ni une référence à
+  l'objet semaine : `renderHistoriqueDetailModal()` recalcule `computeHistoriqueTrends(state,
+  historiqueNbSemaines)` à chaque rendu (jamais mis en cache, cohérent avec le reste de la page) et
+  relit `weeks[weekIndex]`. Si `historiqueNbSemaines` change pendant que la pop-up est ouverte
+  (sélecteur de période), l'indice peut plus rien désigner d'utile — le dispatch de
+  `historique-nb-semaines` referme donc explicitement la pop-up (`historiqueDetailInfo = null`)
+  plutôt que de risquer d'afficher la mauvaise semaine ; `renderHistoriqueDetailModal()` renvoie
+  aussi une chaîne vide par sécurité si l'indice ne désigne plus rien.
+- Pop-up de détail (petite `.modal-box`, même patron que les autres pop-up d'information de l'appli :
+  fermeture par ✕/Échap/clic sur le fond/bouton "Fermer") — un tableau adapté à la métrique cliquée
+  (`production`/`cout` partagent le même tableau, `rebuts` et `retards` ont chacun le leur), ou un
+  message explicite si la semaine n'a rien à montrer pour cette métrique (jamais un tableau vide sans
+  explication).
+- Couvert par `test_nav_and_pie_charts.js` : `computeHistoriqueTrends` expose bien `productionRows`/
+  `rebutRows` avec le détail attendu pour une semaine donnée.
 
 ## Recréer une commande sous un nom déjà archivé
 

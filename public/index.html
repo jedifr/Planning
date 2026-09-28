@@ -562,11 +562,20 @@
      une simple barre par semaine, hauteur proportionnelle à la valeur max de la série affichée. */
   .trend-bars-row{display:flex; align-items:flex-end; gap:8px; height:150px; overflow-x:auto; padding:4px 2px 0;}
   .trend-bar-col{display:flex; flex-direction:column; align-items:center; justify-content:flex-end; min-width:38px; height:100%; flex-shrink:0;}
+  .trend-bar-col-clickable{cursor:pointer; border-radius:4px; padding:2px; margin:-2px;}
+  .trend-bar-col-clickable:hover{background:var(--panel-2);}
+  .trend-bar-col-clickable:hover .trend-bar-fill{filter:brightness(1.15);}
   .trend-bar-value{font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--text-faint); margin-bottom:3px; white-space:nowrap;}
   .trend-bar-track{width:20px; height:95px; background:#e7e9ec; border-radius:3px; display:flex; align-items:flex-end; overflow:hidden;}
   .trend-bar-fill{width:100%; border-radius:3px 3px 0 0; min-height:1px; transition:height .2s ease;}
   .trend-bar-label{font-size:9.5px; color:var(--text-faint); margin-top:5px; text-align:center; line-height:1.2;}
   .trend-section-title{font-family:'Oswald',sans-serif; font-size:12.5px; font-weight:600; letter-spacing:0.4px; margin:0 0 6px;}
+  /* Camembert en CSS pur (conic-gradient) — voir renderPieChartHtml/CLAUDE.md « Synthèse annuelle ». */
+  .pie-chart-wrap{display:flex; align-items:center; gap:20px; flex-wrap:wrap; padding:6px 0;}
+  .pie-chart-donut{width:120px; height:120px; border-radius:50%; flex-shrink:0; box-shadow:inset 0 0 0 1px var(--line-soft);}
+  .pie-chart-legend{display:flex; flex-direction:column; gap:4px; min-width:180px;}
+  .pie-legend-row{display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--text-dim);}
+  .pie-legend-dot{width:10px; height:10px; border-radius:50%; flex-shrink:0;}
   .ops-subhead{
     font-family:'Oswald',sans-serif; font-size:10.5px; font-weight:600; letter-spacing:0.7px; text-transform:uppercase;
     color:var(--text-faint); padding:9px 12px 5px; border-top:1px solid var(--line-soft);
@@ -851,6 +860,10 @@
   .dd-panel-check{display:flex; align-items:center; gap:7px; padding:3px 0; font-size:12.5px; white-space:nowrap;}
   .dd-panel-check input{width:auto; accent-color:var(--accent); margin:0;}
   .dd-panel hr{border:none; border-top:1px solid var(--line-soft); margin:8px 0;}
+  /* Menu "Plus ▾" de l'en-tête (voir CLAUDE.md « Navigation ») — une page par ligne, pleine
+     largeur, plutôt que les boutons compacts alignés horizontalement de .dd-row. */
+  .dd-page-panel{display:flex; flex-direction:column; gap:2px; min-width:200px;}
+  .dd-page-item{display:block; width:100%; text-align:left; white-space:nowrap;}
 
   @media screen and (max-width:1100px){
     .commandes-columns{grid-template-columns:1fr !important;}
@@ -914,7 +927,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.53.0';
+const APP_VERSION = '1.54.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -980,6 +993,30 @@ function loadSettingsUIPrefs(){
 }
 function saveSettingsUIPrefs(){
   try{ localStorage.setItem(SETTINGS_UI_STORAGE_KEY, JSON.stringify({ order: settingsSectionOrder, active: settingsActiveSection })); }
+  catch(e){ /* stockage indisponible : préférence simplement non retenue */ }
+}
+// Ordre des pages regroupées dans le menu "Plus ▾" de l'en-tête (voir CLAUDE.md « Navigation ») —
+// préférence de NAVIGATEUR, comme settingsSectionOrder juste au-dessus, jamais synchronisée dans
+// state : chacun organise sa propre barre, aucun impact sur les autres postes/comptes.
+const PAGE_MENU_KEYS = ['tempsProd', 'zones', 'risques', 'pointages', 'historique', 'dashboard'];
+const PAGE_MENU_LABELS = {
+  tempsProd: '⏱ Temps de production', zones: '📍 Zones de stockage', risques: '⚠️ Risques de retard',
+  pointages: '🕘 Pointages', historique: '📈 Historique', dashboard: "📊 Vue d'ensemble"
+};
+const PAGE_ORDER_STORAGE_KEY = 'planning-atelier-page-order';
+let pageMenuOrder = [...PAGE_MENU_KEYS];
+function loadPageOrderPref(){
+  try{
+    const raw = localStorage.getItem(PAGE_ORDER_STORAGE_KEY);
+    if(!raw) return;
+    const parsed = JSON.parse(raw);
+    if(Array.isArray(parsed) && parsed.length === PAGE_MENU_KEYS.length && PAGE_MENU_KEYS.every(k => parsed.includes(k))){
+      pageMenuOrder = parsed;
+    }
+  }catch(e){ /* préférence absente ou invalide : ordre par défaut */ }
+}
+function savePageOrderPref(){
+  try{ localStorage.setItem(PAGE_ORDER_STORAGE_KEY, JSON.stringify(pageMenuOrder)); }
   catch(e){ /* stockage indisponible : préférence simplement non retenue */ }
 }
 let searchQuery = '';
@@ -1370,6 +1407,13 @@ let pointagesViewMode = 'liste';
 // purement transitoire côté client (comme pointagesViewMode), jamais persisté : reprend 12 semaines
 // par défaut à chaque rechargement.
 let historiqueNbSemaines = 12;
+// Détail au clic sur une barre de la page "Historique / Tendances" (voir CLAUDE.md) —
+// { weekIndex, metric:'production'|'cout'|'rebuts'|'retards' } | null. Purement transitoire, jamais
+// persisté. `weekIndex` (pas la semaine elle-même) car la liste des semaines est recalculée à
+// chaque rendu par computeHistoriqueTrends — jamais mise en cache — voir renderHistoriqueDetailModal.
+let historiqueDetailInfo = null;
+function openHistoriqueDetail(weekIndex, metric){ historiqueDetailInfo = { weekIndex: Number(weekIndex), metric }; render(); }
+function closeHistoriqueDetail(){ historiqueDetailInfo = null; render(); }
 // Déclaration d'un rebut/non-conformité depuis "Pointages" (voir CLAUDE.md, "Non-conformités /
 // rebuts") — { cid, oid, quantite, motif } | null (fermé). Chaque déclaration s'AJOUTE à
 // `pieces[].rebuts[]` (jamais un champ unique écrasé) : une même pièce peut accumuler plusieurs
@@ -6753,20 +6797,43 @@ function renderHeader(){
   const pendingCount = congesActif ? state.leaveRequests.filter(r=>r.statut==='en_attente').length : 0;
   // Sur téléphone, seuls Planning/Congés/Zones de stockage restent dans le bandeau (retour
   // utilisateur réel : la rangée de pages débordait en largeur sur un écran étroit) — Temps de
-  // production/Risques de retard/Pointages restent des pages valides (currentPage peut toujours y
-  // pointer, ex. via userDefaultPage), simplement sans raccourci direct depuis l'en-tête sur mobile.
+  // production/Risques de retard/Pointages/Historique/Vue d'ensemble restent des pages valides
+  // (currentPage peut toujours y pointer, ex. via userDefaultPage), simplement sans raccourci
+  // direct depuis l'en-tête sur mobile — le menu "Plus ▾" ci-dessous ne concerne que le bureau,
+  // la disposition mobile est un problème déjà résolu séparément.
   const mobileHeader = isNarrowViewport();
-  const pageSwitcher = `
+  const nbRisque = getSchedule().filter(c => (c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine')) && isCommandeAtRisk(c)).length;
+  const pageSwitcher = mobileHeader ? `
     <div class="page-switcher">
       <button class="page-switch-btn ${currentPage==='planning'?'active':''}" data-action="goto-planning">Planning</button>
       ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
-      ${!mobileHeader ? `<button class="page-switch-btn ${currentPage==='tempsProd'?'active':''}" data-action="goto-temps-prod">⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}</button>` : ''}
       <button class="page-switch-btn ${currentPage==='zones'?'active':''}" data-action="goto-zones">📍 Zones de stockage</button>
-      ${!mobileHeader ? (() => { const n = getSchedule().filter(c => (c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine')) && isCommandeAtRisk(c)).length; return `<button class="page-switch-btn ${currentPage==='risques'?'active':''}" data-action="goto-risques">⚠️ Risques de retard${n>0?` <span class="pending-count-badge">${n}</span>`:''}</button>`; })() : ''}
-      ${(canSupervise() && !mobileHeader) ? `<button class="page-switch-btn ${currentPage==='pointages'?'active':''}" data-action="goto-pointages">🕘 Pointages</button>` : ''}
-      ${(canSupervise() && !mobileHeader) ? `<button class="page-switch-btn ${currentPage==='historique'?'active':''}" data-action="goto-historique">📈 Historique</button>` : ''}
-      ${(canSupervise() && !mobileHeader) ? `<button class="page-switch-btn ${currentPage==='dashboard'?'active':''}" data-action="goto-dashboard">📊 Vue d'ensemble</button>` : ''}
+    </div>` : (() => {
+      // Menu "Plus ▾" (voir CLAUDE.md « Navigation ») : regroupe tout sauf Planning/Congés, qui
+      // restent seuls en accès direct — désencombre la barre sur bureau, sans rien retirer côté
+      // mobile (déjà traité ci-dessus). Ordre configurable (pageMenuOrder, Paramètres → Affichage),
+      // préférence de navigateur jamais synchronisée, comme settingsSectionOrder.
+      const pageMenuDefs = {
+        tempsProd: `⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}`,
+        zones: '📍 Zones de stockage',
+        risques: `⚠️ Risques de retard${nbRisque>0?` <span class="pending-count-badge">${nbRisque}</span>`:''}`,
+        pointages: canSupervise() ? '🕘 Pointages' : null,
+        historique: canSupervise() ? '📈 Historique' : null,
+        dashboard: canSupervise() ? "📊 Vue d'ensemble" : null
+      };
+      const gotoAction = { tempsProd:'goto-temps-prod', zones:'goto-zones', risques:'goto-risques', pointages:'goto-pointages', historique:'goto-historique', dashboard:'goto-dashboard' };
+      const items = pageMenuOrder.filter(k => pageMenuDefs[k] != null).map(k => `
+        <button class="page-switch-btn small dd-page-item ${currentPage===k?'active':''}" data-action="${gotoAction[k]}">${pageMenuDefs[k]}</button>`).join('');
+      return `
+    <div class="page-switcher">
+      <button class="page-switch-btn ${currentPage==='planning'?'active':''}" data-action="goto-planning">Planning</button>
+      ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
+      <details class="dd-menu" data-dd-key="page-plus" ontoggle="openMiniDropdowns['page-plus']=this.open" ${openMiniDropdowns['page-plus']?'open':''}>
+        <summary class="small">Plus${nbRisque>0?` <span class="pending-count-badge">${nbRisque}</span>`:''} ▾</summary>
+        <div class="dd-panel dd-page-panel">${items}</div>
+      </details>
     </div>`;
+    })();
   return `
   <header class="top">
     <div class="title-block">
@@ -7512,7 +7579,11 @@ function computeHistoriqueTrends(st, nbSemaines){
       start, end,
       label: `Semaine du ${pad(start.getDate())}/${pad(start.getMonth()+1)}/${start.getFullYear()}`,
       shortLabel: `${pad(start.getDate())}/${pad(start.getMonth()+1)}`,
-      productionH: 0, rebutQty: 0, coutReel: 0, hasCout: false, retardsCount: 0
+      productionH: 0, rebutQty: 0, coutReel: 0, hasCout: false, retardsCount: 0,
+      // Détail par tâche sous-jacent à chaque barre (voir "Graphiques interactifs" dans CLAUDE.md) —
+      // permet au clic sur une barre d'afficher précisément ce qui la compose, sans recalcul distinct
+      // (mêmes lignes que celles déjà sommées ci-dessous, simplement conservées en plus du total).
+      productionRows: [], rebutRows: [], retardRows: []
     });
   }
   function weekFor(dateStr){
@@ -7532,12 +7603,18 @@ function computeHistoriqueTrends(st, nbSemaines){
     w.productionH += r.dureeReelleH || 0;
     w.rebutQty += r.rebutQty || 0;
     if(r.coutReel != null){ w.coutReel += r.coutReel; w.hasCout = true; }
+    w.productionRows.push({ commandeNom: r.commandeNom, piece: r.piece, etape: r.etape, dureeReelleH: r.dureeReelleH || 0, coutReel: r.coutReel });
+    if(r.rebutQty > 0){
+      (r.rebutDetails||[]).forEach(d => w.rebutRows.push({ commandeNom: r.commandeNom, piece: r.piece, quantite: d.quantite, motif: d.motif || '' }));
+    }
   });
   // Retards de démarrage : bucketés sur la date de démarrage RÉELLE (pas la date de création de la
   // pièce) — même sélection/seuil (>= 0,5 jour) que computeRetardDemarrageDetail, aucun second calcul.
   computeRetardDemarrageDetail(st).forEach(r => {
     const w = weekFor(r.reel);
-    if(w) w.retardsCount++;
+    if(!w) return;
+    w.retardsCount++;
+    w.retardRows.push({ commandeNom: r.commandeNom, piece: r.piece, etape: r.etape, joursRetard: r.joursRetard });
   });
   return weeks;
 }
@@ -7546,18 +7623,24 @@ function computeHistoriqueTrends(st, nbSemaines){
 // théorique arbitraire), pour que la série la plus parlante possible s'affiche quel que soit l'ordre
 // de grandeur réel des données de cet atelier. `getValue(week)` extrait la métrique à afficher ;
 // `opts.decimals` (0 par défaut) contrôle l'arrondi du libellé, `opts.unit`/`opts.color` l'affichage.
+// `opts.metric` (voir CLAUDE.md « Graphiques interactifs ») rend chaque barre cliquable — ouvre
+// renderHistoriqueDetailModal sur cette semaine ; omis, la barre reste purement informative (aucun
+// autre appelant actuel de cette fonction en dehors de la page Historique n'a besoin du clic).
 function renderTrendBarsHtml(weeks, getValue, opts){
   opts = opts || {};
   const decimals = opts.decimals != null ? opts.decimals : 0;
   const unit = opts.unit || '';
   const color = opts.color || 'var(--accent)';
+  const metric = opts.metric || null;
   const values = weeks.map(w => getValue(w) || 0);
   const max = Math.max(1, ...values); // évite une division par zéro si la série est entièrement à 0
   const fmt = v => decimals === 0 ? Math.round(v).toLocaleString('fr-FR') : v.toLocaleString('fr-FR',{minimumFractionDigits:decimals, maximumFractionDigits:decimals});
   const cols = weeks.map((w,i) => {
     const v = values[i];
     const pct = Math.max(0, Math.min(100, Math.round((v/max)*100)));
-    return `<div class="trend-bar-col" title="${escapeHtml(w.label)} : ${fmt(v)}${unit}">
+    const clickAttrs = metric ? ` data-action="open-historique-detail" data-week-idx="${i}" data-metric="${metric}"` : '';
+    const title = `${w.label} : ${fmt(v)}${unit}${metric ? ' — cliquer pour le détail' : ''}`;
+    return `<div class="trend-bar-col${metric?' trend-bar-col-clickable':''}"${clickAttrs} title="${escapeHtml(title)}">
       <div class="trend-bar-value">${fmt(v)}${unit}</div>
       <div class="trend-bar-track"><div class="trend-bar-fill" style="height:${pct}%; background:${color};"></div></div>
       <div class="trend-bar-label">${escapeHtml(w.shortLabel)}</div>
@@ -8219,6 +8302,75 @@ function computeMachineStatusSnapshot(st){
     };
   });
 }
+// Synthèse annuelle en camembert pour "📊 Vue d'ensemble" (voir CLAUDE.md « Synthèse annuelle ») —
+// UNIQUEMENT des répartitions catégorielles (parts d'un même tout), jamais les 4 métriques
+// hebdomadaires d'Historique/Tendances forcées dans un seul graphique (heures/€/quantité/nombre ne
+// sont pas des parts d'un même tout, un camembert n'aurait aucun sens mathématique sur ce mélange).
+// Fenêtre glissante de 365 jours (comme le reste de la page, un instantané recalculé à chaque
+// rendu) plutôt qu'une année calendaire — cohérent avec l'esprit "glissant" déjà en place pour
+// Historique/Tendances, pas de notion d'année fiscale dans ce projet.
+function computeAnnualProductionByMachine(st, since){
+  const byMachine = {};
+  computeAllPointages(st).forEach(r => {
+    if(r.statut !== 'termine' || !r.finReel) return;
+    const d = new Date(r.finReel);
+    if(isNaN(d.getTime()) || d < since) return;
+    const key = r.machineId || '_sans_poste';
+    if(!byMachine[key]) byMachine[key] = { machineId: r.machineId, machineNom: r.machineNom || 'Sans poste', totalH: 0 };
+    byMachine[key].totalH += r.dureeReelleH || 0;
+  });
+  return Object.values(byMachine).filter(r => r.totalH > 0.01).sort((a,b) => b.totalH - a.totalH);
+}
+// Rebuts déclarés sur la fenêtre, regroupés par motif (trim, insensible à la casse — même
+// normalisation que le rapprochement par pièce des dépendances de phase) ; "Sans motif" pour une
+// déclaration sans motif renseigné (champ optionnel, voir « Non-conformités / rebuts »).
+function computeAnnualRebutsByMotif(st, since){
+  const byMotif = {};
+  computeAllPointages(st).forEach(r => (r.rebutDetails||[]).forEach(d => {
+    if(!d.date) return;
+    const dd = new Date(d.date);
+    if(isNaN(dd.getTime()) || dd < since) return;
+    const motif = (d.motif||'').trim() || 'Sans motif';
+    const key = motif.toLowerCase();
+    if(!byMotif[key]) byMotif[key] = { motif, qty: 0 };
+    byMotif[key].qty += Number(d.quantite) || 0;
+  }));
+  return Object.values(byMotif).filter(r => r.qty > 0).sort((a,b) => b.qty - a.qty);
+}
+// Camembert en CSS pur (conic-gradient), sans bibliothèque externe — même réflexe que
+// renderTrendBarsHtml (voir « Conventions », le client reste volontairement sans dépendance).
+// `items` : tableau d'objets déjà triés ; `opts.valueKey`/`labelKey` désignent les champs à lire,
+// `opts.colors` la palette (dans l'ordre des items), `opts.unit`/`decimals` l'affichage des valeurs
+// dans la légende. Une palette plus courte que `items` boucle (`% colors.length`) plutôt que de
+// planter ou de répéter une seule couleur pour tout le reste.
+function renderPieChartHtml(items, opts){
+  opts = opts || {};
+  const valueKey = opts.valueKey || 'value';
+  const labelKey = opts.labelKey || 'label';
+  const unit = opts.unit || '';
+  const decimals = opts.decimals != null ? opts.decimals : 0;
+  const colors = opts.colors || MACHINE_COLORS;
+  const total = items.reduce((s,it) => s + (it[valueKey]||0), 0);
+  if(total <= 0.01) return `<div class="footer-note" style="text-align:left;">Aucune donnée sur la période.</div>`;
+  const fmt = v => decimals === 0 ? Math.round(v).toLocaleString('fr-FR') : v.toLocaleString('fr-FR',{minimumFractionDigits:decimals, maximumFractionDigits:decimals});
+  let acc = 0;
+  const stops = items.map((it, i) => {
+    const v = it[valueKey] || 0;
+    const startPct = (acc/total)*100;
+    acc += v;
+    const endPct = (acc/total)*100;
+    return `${colors[i % colors.length]} ${startPct}% ${endPct}%`;
+  }).join(', ');
+  const legend = items.map((it, i) => {
+    const v = it[valueKey] || 0;
+    const pct = Math.round((v/total)*1000)/10;
+    return `<div class="pie-legend-row"><span class="pie-legend-dot" style="background:${colors[i % colors.length]};"></span>${escapeHtml(it[labelKey])} — ${fmt(v)}${unit} (${pct}%)</div>`;
+  }).join('');
+  return `<div class="pie-chart-wrap">
+    <div class="pie-chart-donut" style="background:conic-gradient(${stops});"></div>
+    <div class="pie-chart-legend">${legend}</div>
+  </div>`;
+}
 // Seuil de bruit pour la section « Pauses de production » ci-dessous : une pause manuelle qui vient
 // tout juste de commencer (< 1h) n'est pas encore un signe de dérive — évite de signaler
 // systématiquement toute pause en cours d'une commande à risque, y compris celle posée deux minutes
@@ -8458,6 +8610,16 @@ function renderDashboardPage(){
         <td>${formatHeures(r.dureeH)}</td>
       </tr>`).join('')}</tbody></table>` : '';
 
+  // Synthèse annuelle (voir CLAUDE.md « Synthèse annuelle ») — fenêtre glissante de 365 jours,
+  // deux VRAIES répartitions catégorielles (chaque camembert totalise 100% de son propre tout) :
+  // temps de production par poste, rebuts par motif. Jamais les 4 métriques hebdomadaires
+  // d'Historique/Tendances (heures/€/qté/nombre) forcées dans un seul graphique, qui n'aurait pas
+  // de sens dimensionnel (voir renderPieChartHtml).
+  const oneYearAgo = new Date(now.getTime() - 365*86400000);
+  const prodByMachine = computeAnnualProductionByMachine(state, oneYearAgo);
+  const prodColors = prodByMachine.map((r,i) => { const m = state.machines.find(mm=>mm.id===r.machineId); return (m && m.couleur) || MACHINE_COLORS[i % MACHINE_COLORS.length]; });
+  const rebutsByMotif = computeAnnualRebutsByMotif(state, oneYearAgo);
+
   return `<section class="panel"><div class="panel-head">
       <h2>📊 Vue d'ensemble atelier</h2>
       <span class="footer-note" style="margin:0;">Instantané temps réel</span>
@@ -8479,10 +8641,17 @@ function renderDashboardPage(){
       <tbody>${machineRows}</tbody></table>
     ${pausesSuspectesHtml}
 
+    <div class="trend-section-title" style="margin-top:24px;">⏱ Temps de production par poste (12 derniers mois)</div>
+    ${renderPieChartHtml(prodByMachine, { valueKey:'totalH', labelKey:'machineNom', unit:'h', decimals:1, colors:prodColors })}
+
+    <div class="trend-section-title" style="margin-top:20px;">🗑 Rebuts par motif (12 derniers mois)</div>
+    ${renderPieChartHtml(rebutsByMotif, { valueKey:'qty', labelKey:'motif', unit:'' })}
+
     <div class="footer-note" style="text-align:left; margin-top:16px;">Instantané recalculé à chaque
     rendu — les mêmes fonctions que la page « ⚠️ Risques de retard »/la bannière de pauses sont
-    réutilisées telles quelles, aucun nouveau calcul métier. Pour une vue dans le temps plutôt qu'un
-    instantané, voir la page « 📈 Historique ».</div>
+    réutilisées telles quelles, aucun nouveau calcul métier. Les deux camemberts couvrent une fenêtre
+    glissante de 365 jours (pas une année civile). Pour une vue semaine par semaine plutôt qu'une
+    synthèse annuelle, voir la page « 📈 Historique ».</div>
     </div>
   </section>`;
 }
@@ -8507,29 +8676,75 @@ function renderHistoriquePage(){
     </div>
 
     <div class="trend-section-title" style="margin-top:16px;">⏱ Temps de production réel (h / semaine)</div>
-    ${renderTrendBarsHtml(weeks, w=>w.productionH, { decimals:1, unit:'h', color:'var(--accent)' })}
+    ${renderTrendBarsHtml(weeks, w=>w.productionH, { decimals:1, unit:'h', color:'var(--accent)', metric:'production' })}
 
     <div class="trend-section-title" style="margin-top:20px;">💶 Coût de revient réel (€ / semaine)${anyCout?'':' <span class="footer-note" style="margin:0;">— aucun poste avec un taux configuré (Paramètres → Postes)</span>'}</div>
-    ${renderTrendBarsHtml(weeks, w=>w.coutReel, { decimals:0, unit:'€', color:'#2f8f5b' })}
+    ${renderTrendBarsHtml(weeks, w=>w.coutReel, { decimals:0, unit:'€', color:'#2f8f5b', metric:'cout' })}
 
     <div class="trend-section-title" style="margin-top:20px;">🗑 Rebuts déclarés (qté / semaine)</div>
-    ${renderTrendBarsHtml(weeks, w=>w.rebutQty, { decimals:0, unit:'', color:'var(--red)' })}
+    ${renderTrendBarsHtml(weeks, w=>w.rebutQty, { decimals:0, unit:'', color:'var(--red)', metric:'rebuts' })}
 
     <div class="trend-section-title" style="margin-top:20px;">🕓 Tâches démarrées en retard (nb / semaine)</div>
-    ${renderTrendBarsHtml(weeks, w=>w.retardsCount, { decimals:0, unit:'', color:'#c9a227' })}
+    ${renderTrendBarsHtml(weeks, w=>w.retardsCount, { decimals:0, unit:'', color:'#c9a227', metric:'retards' })}
 
     <div class="footer-note" style="text-align:left; margin-top:16px;">Semaines calendaires (lundi
-    au dimanche). « Temps de production »/« Coût »/« Rebuts » sont comptés sur la date de FIN RÉELLE
-    d'une pièce déjà terminée — une tâche encore en cours ne contribue à aucune semaine avant sa
-    clôture. « Coût » nécessite un taux horaire configuré par poste (Paramètres → Postes, voir « Coût
-    de revient approximatif »). « Tâches démarrées en retard » est compté sur la date de démarrage
-    réel, au-delà d'un demi-jour d'écart avec la prévision figée à la création de la pièce (voir
-    « Retard de démarrage »). Les pauses de production n'apparaissent volontairement pas ici : leur
-    détail (sessions[]) est vidé dès l'archivage d'une pièce — aucun historique de pauses fiable n'est
+    au dimanche) — cliquer une barre pour le détail des tâches qui la composent. « Temps de
+    production »/« Coût »/« Rebuts » sont comptés sur la date de FIN RÉELLE d'une pièce déjà
+    terminée — une tâche encore en cours ne contribue à aucune semaine avant sa clôture. « Coût »
+    nécessite un taux horaire configuré par poste (Paramètres → Postes, voir « Coût de revient
+    approximatif »). « Tâches démarrées en retard » est compté sur la date de démarrage réel,
+    au-delà d'un demi-jour d'écart avec la prévision figée à la création de la pièce (voir « Retard
+    de démarrage »). Les pauses de production n'apparaissent volontairement pas ici : leur détail
+    (sessions[]) est vidé dès l'archivage d'une pièce — aucun historique de pauses fiable n'est
     reconstituable au-delà des tâches encore actives (voir « Pauses de production mises en
     évidence »).</div>
     </div>
   </section>`;
+}
+// Pop-up de détail au clic sur une barre d'Historique/Tendances (voir CLAUDE.md « Graphiques
+// interactifs ») — recalcule la même série que la page (jamais mise en cache), lit la semaine visée
+// par son INDICE plutôt que de conserver les lignes détaillées dans historiqueDetailInfo : si
+// historiqueNbSemaines change pendant que la pop-up est ouverte, l'indice peut ne plus rien
+// désigner d'utile — dans ce cas, on referme silencieusement plutôt que d'afficher n'importe quoi.
+function renderHistoriqueDetailModal(){
+  if(!historiqueDetailInfo) return '';
+  const weeks = computeHistoriqueTrends(state, historiqueNbSemaines);
+  const w = weeks[historiqueDetailInfo.weekIndex];
+  if(!w) return '';
+  const metric = historiqueDetailInfo.metric;
+  const titles = { production:'⏱ Temps de production', cout:'💶 Coût réel', rebuts:'🗑 Rebuts déclarés', retards:'🕓 Tâches démarrées en retard' };
+  let bodyHtml;
+  if(metric === 'production' || metric === 'cout'){
+    const rows = w.productionRows;
+    bodyHtml = rows.length ? `<table class="ops-table"><thead><tr><th>Commande</th><th>Pièce / étape</th><th>Temps réel</th><th>Coût réel</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr><td>${escapeHtml(r.commandeNom)}</td><td>${escapeHtml([r.piece,r.etape].filter(Boolean).join(' / ')||'—')}</td><td>${formatHeures(r.dureeReelleH)}</td><td>${formatEuros(r.coutReel)}</td></tr>`).join('')}</tbody></table>`
+      : `<div class="footer-note" style="text-align:left;">Aucune pièce terminée cette semaine-là.</div>`;
+  } else if(metric === 'rebuts'){
+    const rows = w.rebutRows;
+    bodyHtml = rows.length ? `<table class="ops-table"><thead><tr><th>Commande</th><th>Pièce</th><th>Quantité</th><th>Motif</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr><td>${escapeHtml(r.commandeNom)}</td><td>${escapeHtml(r.piece||'—')}</td><td>${escapeHtml(String(r.quantite))}</td><td>${escapeHtml(r.motif||'—')}</td></tr>`).join('')}</tbody></table>`
+      : `<div class="footer-note" style="text-align:left;">Aucun rebut déclaré cette semaine-là.</div>`;
+  } else {
+    const rows = w.retardRows;
+    bodyHtml = rows.length ? `<table class="ops-table"><thead><tr><th>Commande</th><th>Pièce / étape</th><th>Retard</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr><td>${escapeHtml(r.commandeNom)}</td><td>${escapeHtml([r.piece,r.etape].filter(Boolean).join(' / ')||'—')}</td><td>${Math.round(r.joursRetard*10)/10} j</td></tr>`).join('')}</tbody></table>`
+      : `<div class="footer-note" style="text-align:left;">Aucune tâche démarrée en retard cette semaine-là.</div>`;
+  }
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:560px;">
+      <div class="modal-head">
+        <h2>${titles[metric]} — ${escapeHtml(w.label)}</h2>
+        <button class="ghost icon-btn" data-action="close-historique-detail" title="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+        ${bodyHtml}
+        <div class="form-actions" style="margin-top:16px;">
+          <button class="ghost" data-action="close-historique-detail">Fermer</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
 }
 
 /* ---------------- Temps de production (superviseurs/administrateurs) ---------------- */
@@ -9920,7 +10135,17 @@ function renderSettingsModal(){
         <div><label class="field">Couleur "Importante"</label><input type="color" value="${uc.importante}" data-action="update-config" data-field="urgencyColors.importante"></div>
         <div><label class="field">Couleur "Urgente"</label><input type="color" value="${uc.urgente}" data-action="update-config" data-field="urgencyColors.urgente"></div>
       </div>
-      <div class="footer-note" style="text-align:left; padding-top:10px;">S'applique aux badges, liserés et surlignages "Importante" / "Urgente" partout dans le planning (tableau, vues Semaine/Jour/Mois/Année, Kanban, Liste). Le niveau "Normale" reste volontairement neutre, sans couleur.</div>` },
+      <div class="footer-note" style="text-align:left; padding-top:10px;">S'applique aux badges, liserés et surlignages "Importante" / "Urgente" partout dans le planning (tableau, vues Semaine/Jour/Mois/Année, Kanban, Liste). Le niveau "Normale" reste volontairement neutre, sans couleur.</div>
+      <div class="modal-section-title" style="margin-top:18px;">Ordre des pages du menu « Plus ▾ »</div>
+      <div class="footer-note" style="text-align:left; padding-bottom:8px;">Ordre d'affichage des pages regroupées dans le menu « Plus ▾ » de l'en-tête (Planning et Congés restent toujours en accès direct, à côté du menu). Préférence propre à ce navigateur, comme l'ordre des catégories de cette pop-up ci-contre.</div>
+      ${pageMenuOrder.map((key, idx) => `
+      <div class="settings-nav-item">
+        <span class="settings-nav-btn" style="cursor:default;">${PAGE_MENU_LABELS[key]}</span>
+        <div class="settings-reorder">
+          <button class="ghost icon-btn" data-action="move-page-menu-item" data-key="${key}" data-dir="-1" ${idx===0?'disabled':''} title="Monter">▲</button>
+          <button class="ghost icon-btn" data-action="move-page-menu-item" data-key="${key}" data-dir="1" ${idx===pageMenuOrder.length-1?'disabled':''} title="Descendre">▼</button>
+        </div>
+      </div>`).join('')}` },
     moncompte: { title: 'Mon compte', body: `
       <div class="footer-note" style="text-align:left; margin-bottom:10px;">Connecté en tant que <strong>${escapeHtml(currentUsername||'')}</strong> (${roleLabel(currentUserRole())}).</div>
       <label class="field">Adresse e-mail (pour les notifications de congés)</label>
@@ -11701,6 +11926,7 @@ function render(){
     appEl.innerHTML = [
       renderHeader(),
       renderHistoriquePage(),
+      renderHistoriqueDetailModal(),
       renderSettingsModal(),
       renderPauseReminderModal(otherModalOpen),
       renderToast()
@@ -11842,7 +12068,7 @@ function updateHighlightClasses(){
 /* ---------------- délégation d'événements : clics & changements ---------------- */
 document.addEventListener('click', (e) => {
   if(e.target.classList && e.target.classList.contains('modal-overlay')){
-    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; rebutDraft = null; closeSettingsModal(); return;
+    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; rebutDraft = null; historiqueDetailInfo = null; closeSettingsModal(); return;
   }
   if(contextMenu && !e.target.closest('.context-menu')){
     contextMenu = null; render();
@@ -11913,6 +12139,8 @@ function dispatchClickAction(action, el){
     case 'goto-risques': currentPage = 'risques'; render(); break;
     case 'goto-pointages': currentPage = 'pointages'; render(); break;
     case 'goto-historique': currentPage = 'historique'; render(); break;
+    case 'open-historique-detail': openHistoriqueDetail(el.dataset.weekIdx, el.dataset.metric); break;
+    case 'close-historique-detail': closeHistoriqueDetail(); break;
     case 'goto-dashboard': currentPage = 'dashboard'; render(); break;
     case 'pointages-view-mode': pointagesViewMode = el.dataset.mode; render(); break;
     case 'pointages-view-reference': pointagesFilters.search = el.dataset.piece; pointagesViewMode = 'liste'; render(); break;
@@ -12023,6 +12251,18 @@ function dispatchClickAction(action, el){
         const arr = settingsSectionOrder;
         [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
         saveSettingsUIPrefs();
+        render();
+      }
+      break;
+    }
+    case 'move-page-menu-item': {
+      const key = el.dataset.key, dir = Number(el.dataset.dir);
+      const idx = pageMenuOrder.indexOf(key);
+      const newIdx = idx + dir;
+      if(newIdx >= 0 && newIdx < pageMenuOrder.length){
+        const arr = pageMenuOrder;
+        [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+        savePageOrderPref();
         render();
       }
       break;
@@ -12182,7 +12422,7 @@ function dispatchChangeAction(el, action){
     case 'quick-pointage-select': updateQuickPointageField(el.dataset.field, el.value); break;
     case 'correct-operator-select': updateCorrectOperatorField(el.dataset.field, el.value); break;
     case 'pointages-filter': updatePointagesFilter(el.dataset.field, el.value); break;
-    case 'historique-nb-semaines': historiqueNbSemaines = Number(el.value) || 12; render(); break;
+    case 'historique-nb-semaines': historiqueNbSemaines = Number(el.value) || 12; historiqueDetailInfo = null; render(); break;
     case 'correct-pointage-field': updateCorrectPointageField(el.dataset.field, el.value); break;
     case 'rebut-field': updateRebutField(el.dataset.field, el.value); break;
     case 'correct-session-field': updateCorrectSessionField(Number(el.dataset.idx), el.dataset.field, el.value); break;
@@ -12648,6 +12888,7 @@ document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && newCommandeZoneNotice){ newCommandeZoneNotice = null; render(); }
   if(e.key === 'Escape' && retardDemarragePopupInfo){ closeRetardDemarragePopup(); }
   if(e.key === 'Escape' && rebutDraft){ closeRebutDraft(); }
+  if(e.key === 'Escape' && historiqueDetailInfo){ closeHistoriqueDetail(); }
   if(e.key === 'Escape' && quickPointageDraft){ closeQuickPointage(); }
   if(e.key === 'Escape' && correctOperatorDraft){ closeCorrectOperator(); }
   if(e.key === 'Escape' && continuedDrag){ cancelContinuedDrag(); }
@@ -12969,6 +13210,7 @@ function applyUserDefaultPageOnStart(){
 async function startApp(){
   loadLoginBranding(); // en tâche de fond : alimente l'écran de connexion si la session a expiré
   loadSettingsUIPrefs();
+  loadPageOrderPref();
   loadDoneFilterPref();
   loadDueFilterPref();
   loadKanbanDoneLimitPref();
