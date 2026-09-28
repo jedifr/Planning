@@ -1573,8 +1573,23 @@ il fallait descendre les ascenseurs à la main pour la retrouver.
   `render()`, **puis** cherche `document.querySelector('.spotlight')` et l'amène à l'écran
   (`scrollIntoView({ block:'center', behavior:'smooth' })`) — `scrollIntoView` gère nativement les
   conteneurs à défilement imbriqués (la colonne Kanban ET la page), pas besoin de cibler la bonne
-  colonne à la main. Silencieux (aucune exception) si aucun élément surligné n'existe (commande sans
-  tâche visible sur la vue courante) ou si l'environnement ne supporte pas `scrollIntoView`.
+  colonne à la main.
+  - **Repli sur `.commande-card.commande-selected` (panneaux « Tâches en cours »/« Tâches
+    terminées ») si aucun `.spotlight` n'existe.** Retour utilisateur réel, séparé du précédent :
+    `.spotlight` (voir `highlightActive()`) ne couvre que les vues Gantt/Kanban/Liste
+    (`renderPlanningSection`) — jamais les panneaux « Tâches en cours »/« Tâches terminées »
+    (`renderCommandes`, toujours rendus en dessous, quelle que soit `currentView`), qui surlignent
+    la commande isolée via une classe DIFFÉRENTE (`commande-selected`, posée par
+    `renderCommandeCard` sur `selectedCommandeId===c.id`, indépendamment du statut en_cours/
+    en_pause/termine de ses pièces). Sans ce repli, une commande dont aucune pièce n'a de
+    représentation visible dans la vue datée/Kanban actuelle (ex. vue « Jour » un jour sans rapport
+    avec ses tâches, ou pièces déjà toutes `termine`) ne recevait aucun défilement automatique,
+    alors qu'elle reste toujours listée dans ces deux panneaux (filtres neutralisés par
+    `highlightActive()`, voir « Recherche/isolement de commande » plus haut). `.spotlight` reste
+    prioritaire quand il existe (contexte de planification le plus riche) ; secours sur
+    `.commande-card.commande-selected` sinon.
+  - Silencieux (aucune exception) si ni l'un ni l'autre n'existe (commande sans aucune trace
+    visible, cas théorique) ou si l'environnement ne supporte pas `scrollIntoView`.
 - **Portée volontairement limitée à ce point d'entrée précis** — jamais à `toggleIsolateCommande`/
   `scheduleIsolate` (clic DIRECT sur une carte déjà visible à l'écran, cliquée par l'utilisateur : la
   faire défiler serait un sursaut visuel superflu, la carte est par définition déjà sous les yeux).
@@ -1582,7 +1597,8 @@ il fallait descendre les ascenseurs à la main pour la retrouver.
   visible avant ce clic.
 - Couvert par `test_kanban_zone_and_isolate.js` : `selectedCommandeId`/`currentPage` posés
   correctement, `render()` appelé une seule fois, `scrollIntoView` appelé sur l'élément `.spotlight`
-  trouvé après le rendu, aucun plantage si rien n'est surligné, no-op complet sur un `cid` vide.
+  trouvé après le rendu, repli sur `.commande-card.commande-selected` quand aucun `.spotlight`
+  n'existe, aucun plantage si ni l'un ni l'autre n'est trouvé, no-op complet sur un `cid` vide.
 
 ## Horodatage de création d'une commande (`commandes[].dateCreation`)
 
@@ -2977,13 +2993,22 @@ l'encombrement d'écrans devenus denses au fil des fonctionnalités ajoutées un
 d'elles ne change de comportement fonctionnel, seulement la façon dont les actions déjà existantes
 sont regroupées/exposées.
 
-- **Export .json déplacé dans Paramètres → Maintenance.** Le bouton "Exporter (.json)" de l'en-tête
-  (`renderHeader`) est une sauvegarde manuelle complète, utile en admin mais jamais en usage
-  quotidien — il n'a plus sa place à côté de la déconnexion sur chaque page. Toujours le même
-  `data-action="export-data"`/`exportData()`, simplement rendu depuis la section `maintenance` de
-  `renderSettingsModal()` au lieu de `renderHeader()`. "Importer" (et son `<input type="file">`)
-  reste dans l'en-tête — c'est le seul des deux qui a besoin d'être accessible en un clic depuis
-  n'importe quelle page.
+- **Export .json ET Import .json déplacés dans Paramètres → Maintenance.** Le bouton "Exporter
+  (.json)" de l'en-tête (`renderHeader`) est une sauvegarde manuelle complète, utile en admin mais
+  jamais en usage quotidien — il n'a plus sa place à côté de la déconnexion sur chaque page. Toujours
+  le même `data-action="export-data"`/`exportData()`, simplement rendu depuis la section
+  `maintenance` de `renderSettingsModal()` au lieu de `renderHeader()`. **"Importer" (et son
+  `<input type="file">`) est resté seul dans l'en-tête un temps** — jugé initialement le seul des
+  deux à avoir besoin d'être accessible en un clic depuis n'importe quelle page — mais retour
+  utilisateur réel juste après : il forme en réalité une paire avec "Exporter" (restauration complète
+  du fichier produit par l'export, `handleImportFile`) et gagne à rester à côté de lui plutôt que
+  séparé à l'autre bout de l'écran. Déplacé au même endroit, dans la même section `maintenance`
+  (`data-action="trigger-import"`/`triggerImport()`/`handleImportFile()` inchangés, seul le point de
+  rendu du bouton et de son `<input type="file">` caché change). Conséquence assumée (pas discutée
+  explicitement, mais cohérente avec la nature de l'action) : `maintenance` étant une section
+  admin-only (voir `ADMIN_ONLY_SECTIONS`), Importer — une restauration complète et destructive de
+  `state`, jusque-là accessible à tout utilisateur connecté sur n'importe quelle page hors Congés —
+  devient réservé aux administrateurs, comme "Exporter" l'a toujours été.
 - **Menu "Filtres & tri ▾" dans l'en-tête "Tâches en cours".** Les deux tris one-shot (`sortByPriority`/
   `sortByDueDate` — voir plus haut, ce sont des actions déclenchées à la main, pas un mode persistant)
   et le sélecteur de fenêtre d'échéance (`dueFilterRange`) étaient 3 des 7 contrôles alignés dans

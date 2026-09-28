@@ -927,7 +927,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.54.1';
+const APP_VERSION = '1.54.3';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -2431,20 +2431,35 @@ function toggleIsolateCommande(cid){
 // visible à l'écran, aucun défilement nécessaire), la carte ciblée peut être hors du champ visible
 // une fois sur le planning : chaque colonne du Kanban défile indépendamment (voir le piège "Ascenseur
 // d'une colonne" dans CLAUDE.md), et une carte peut tout aussi bien être plus bas dans une longue vue
-// Liste. Bug réel signalé : cliquer un casier occupé depuis "Zones de stockage" surlignait bien la
-// bonne commande dans le Kanban (spotlight déjà fonctionnel), mais sans jamais l'amener à l'écran —
-// fallait descendre les ascenseurs à la main pour la retrouver.
+// Liste, ou dans les panneaux "Tâches en cours"/"Tâches terminées" (toujours rendus sous la vue
+// planning quelle que soit `currentView` — voir `render()`). Bug réel signalé : cliquer un casier
+// occupé depuis "Zones de stockage" surlignait bien la bonne commande dans le Kanban (spotlight déjà
+// fonctionnel), mais sans jamais l'amener à l'écran — fallait descendre les ascenseurs à la main pour
+// la retrouver.
+//
+// Extension demandée séparément (retour utilisateur réel) : `.spotlight` (Gantt/Kanban/Liste, voir
+// `highlightActive()`) ne couvre PAS les panneaux "Tâches en cours"/"Tâches terminées" — ceux-ci
+// surlignent la commande isolée via `.commande-card.commande-selected` (classe différente, posée par
+// `renderCommandeCard` sur `selectedCommandeId===c.id`, indépendamment du statut en_cours/en_pause/
+// termine de ses pièces). Sans repli, une commande dont AUCUNE pièce n'a de représentation visible
+// dans la vue datée/Kanban actuelle (ex. vue "Jour" sur un jour qui ne concerne pas cette commande,
+// ou pièces déjà toutes `termine` sorties du Kanban) ne recevait alors aucun défilement automatique,
+// alors qu'elle reste toujours listée dans "Tâches en cours"/"Tâches terminées" (filtres neutralisés
+// par `highlightActive()`, voir CLAUDE.md « Recherche/isolement de commande »). `.spotlight` reste
+// prioritaire quand il existe (contexte de planification le plus riche) ; secours sur `.commande-card.
+// commande-selected` sinon, pour ne jamais laisser un isolement sans défilement.
 function isolateCommandeFromElsewhere(cid){
   if(!cid) return;
   selectedCommandeId = cid;
   currentPage = 'planning';
   render();
-  // `.spotlight` n'existe qu'une fois le rendu terminé (render() vient de reconstruire tout le DOM,
-  // y compris la restauration des ascenseurs de colonne Kanban) — scrollIntoView gère nativement les
-  // conteneurs à défilement imbriqués (colonne ET page), pas besoin de cibler la bonne colonne à la
-  // main. Silencieux si aucun élément surligné n'existe (commande sans tâche visible sur cette vue).
+  // Ni `.spotlight` ni `.commande-card.commande-selected` n'existent avant que `render()` n'ait
+  // reconstruit tout le DOM (y compris la restauration des ascenseurs de colonne Kanban) —
+  // scrollIntoView gère nativement les conteneurs à défilement imbriqués (colonne ET page), pas
+  // besoin de cibler la bonne colonne à la main. Silencieux si aucun des deux n'existe (commande sans
+  // aucune trace visible, cas théorique).
   try{
-    const el = document.querySelector('.spotlight');
+    const el = document.querySelector('.spotlight') || document.querySelector('.commande-card.commande-selected');
     if(el) el.scrollIntoView({ block:'center', behavior:'smooth' });
   }catch(e){ /* environnement sans scrollIntoView (tests) : ignoré */ }
 }
@@ -6869,9 +6884,6 @@ function renderHeader(){
       ${!mobileHeader ? `<div class="shift-badge ${on?'on':'off'}"><span class="shift-dot"></span>${on?'Poste en cours':'Hors horaires'} · ${new Date().toLocaleString('fr-FR',{weekday:'short',hour:'2-digit',minute:'2-digit'})}</div>` : ''}
       ${!mobileHeader ? renderSyncBadge() : ''}
       ${(() => { const n = pausedSinceEarlierTasks().length; return n>0 ? `<button class="small" data-action="show-paused-banner" title="Revoir les tâches en pause depuis la veille ou avant">⏸ ${n} en pause</button>` : ''; })()}
-      ${currentPage!=='conges' ? `
-      <button class="small" data-action="trigger-import" title="Recharger un fichier .json exporté précédemment">Importer</button>
-      <input type="file" id="import-file-input" accept="application/json" style="display:none;" onchange="handleImportFile(event)">` : ''}
       <button class="small" data-action="open-settings" title="${isAdmin()?'Paramétrer les horaires de travail':'Mon compte — mot de passe, page d’accueil par défaut...'}">⚙ ${isAdmin()?'Paramétrer':'Mon compte'}</button>
       ${usersList.length > 1 ? `
       <select data-action="set-active-identity" class="${activeIdentityUserId?'active-identity-select active':'active-identity-select'}" title="Identité active sur ce poste — préremplit l'opérateur des nouvelles tâches et cible « Mon temps de production », sans changer les droits réels ni se déconnecter">
@@ -10360,7 +10372,9 @@ function renderSettingsModal(){
     maintenance: { title: 'Maintenance', body: `
       <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
         <button class="small" data-action="export-data" title="Télécharger un fichier .json — à déposer dans un dossier synchronisé avec votre NAS">Exporter (.json)</button>
-        <span class="footer-note" style="margin:0;">Sauvegarde manuelle complète du planning — le fichier obtenu se recharge via "Importer" dans l'en-tête.</span>
+        <button class="small" data-action="trigger-import" title="Recharger un fichier .json exporté précédemment">Importer (.json)</button>
+        <input type="file" id="import-file-input" accept="application/json" style="display:none;" onchange="handleImportFile(event)">
+        <span class="footer-note" style="margin:0;">Sauvegarde/restauration manuelle complète du planning.</span>
       </div>
       <hr style="border:none; border-top:1px solid var(--line-soft); margin:14px 0;">
       <div class="machines-grid" style="margin-bottom:16px;">
