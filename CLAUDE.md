@@ -1890,21 +1890,58 @@ regroupement) — **option retenue : le menu unique**.
   son comportement déjà résolu séparément (Planning/Congés/Zones de stockage en accès direct, rien
   d'autre dans le bandeau, voir « Planning sur téléphone ») : un problème déjà réglé, hors périmètre
   de cette demande centrée sur l'encombrement en largeur du bureau.
-- `pageMenuOrder` (`PAGE_MENU_KEYS = ['tempsProd','zones','risques','pointages','historique',
-  'dashboard']`, préférence de **navigateur** — jamais synchronisée dans `state`, comme demandé) —
-  même principe exact que `settingsSectionOrder` (ordre des catégories de la pop-up Paramètres) :
-  `loadPageOrderPref()`/`savePageOrderPref()` (localStorage, `PAGE_ORDER_STORAGE_KEY`), une
-  préférence invalide (longueur différente, clé manquante/inconnue) est silencieusement ignorée au
-  chargement plutôt qu'appliquée à moitié. Réglable dans Paramètres → Affichage (section déjà admin-
-  only) via les mêmes flèches ▲/▼ que l'ordre des catégories de Paramètres (`.settings-nav-item`/
-  `.settings-reorder`, réutilisés tels quels) — `case 'move-page-menu-item'`, symétrique de
-  `case 'move-settings-section'`. Chacun organise donc sa propre barre sur son propre poste, sans
-  affecter les autres comptes/appareils.
+- `PAGE_MENU_KEYS = ['tempsProd','zones','risques','pointages','historique','dashboard']` — ordre
+  par défaut. **Version d'origine : préférence de navigateur** (`pageMenuOrder`, `localStorage`, même
+  principe que `settingsSectionOrder`) — **remplacée depuis** par un stockage **par personne**, voir
+  ci-dessous : retour utilisateur réel, juste après la mise en place de la première version, une fois
+  posée la question directe « et si on vidait le cache du navigateur ? » — une préférence purement
+  côté navigateur disparaît silencieusement à ce moment-là (ou sur un nouveau poste), sans que rien
+  ne l'indique à l'écran.
+- **`state.userPageMenuOrder[userId]`** (`{ [userId]: PAGE_MENU_KEYS réordonnée }`, `migrateState`
+  l'initialise à `{}`) — même principe exact que `userDefaultPage`/`userDefaultPlanningView` juste
+  au-dessus (préférence rangée dans le seul et même objet `state` déjà synchronisé par `commit()`,
+  **pas** une seconde table SQL dédiée) : ce n'est pas de l'historique à archiver (contrairement à
+  `session_history`/`prevision_history`, tables séparées pour ne pas alourdir la synchro habituelle
+  avec des données qui grossissent sans borne) mais une préférence mutable de petite taille, exactement
+  le genre de donnée que `app_state` porte déjà pour chaque personne — une table à part aurait
+  simplement dupliqué un mécanisme déjà existant (nouvel endpoint, nouvelle migration) sans qu'aucune
+  des raisons qui justifient `session_history` ne s'applique ici. Conséquence directe du choix
+  "par personne" plutôt que "par navigateur" : la préférence suit désormais la personne d'un poste à
+  l'autre et survit à un vidage de cache, mais ne peut plus être "différente par poste physique" pour
+  une même personne qui s'y connecterait depuis plusieurs endroits — l'application n'a de toute façon
+  aucune notion d'identité de poste distincte du compte connecté pour permettre ce second axe.
+- `getUserPageMenuOrder(userId)` — repli sur `PAGE_MENU_KEYS` si rien n'est enregistré pour cette
+  personne, ou si la valeur enregistrée est invalide (longueur différente, clé manquante/inconnue —
+  ancienne préférence `localStorage` jamais migrée, incluse) : même garde-fou qu'avant, appliqué
+  maintenant à la lecture de `state` plutôt qu'à celle du `localStorage`.
+- Réglable dans Paramètres → **Mon compte** (section accessible à tout rôle, pas seulement admin —
+  cohérent avec `userDefaultPage`/`userDefaultPlanningView`, déjà logées au même endroit pour la même
+  raison) via les mêmes flèches ▲/▼ que l'ordre des catégories de Paramètres (`.settings-nav-item`/
+  `.settings-reorder`, réutilisés tels quels) — `case 'move-page-menu-item'` appelle
+  `moveUserPageMenuItem(currentUser.id, key, dir)`, qui mute `state.userPageMenuOrder[userId]` et
+  `commit()` **une seule fois** (jamais un simple `render()` sans enregistrement, contrairement à
+  l'ancienne version localStorage).
+  - **Réordonne uniquement les clés VISIBLES pour le rôle courant**, jamais le tableau complet à
+    l'aveugle — `pointages`/`historique`/`dashboard` (`canSupervise()` uniquement) n'apparaissent même
+    pas dans la liste affichée à un employé (section "Mon compte" accessible à tout rôle, voir plus
+    haut). Sans ce filtrage, une flèche ▲/▼ cliquée par un employé aurait pu échanger la clé visée avec
+    une clé **masquée** occupant la position adjacente dans le tableau complet stocké — un échange
+    sans aucun effet visible pour cette personne, un bug de "rien ne se passe au clic" facile à
+    introduire par inadvertance. `moveUserPageMenuItem` construit donc d'abord le sous-ensemble
+    visible, y échange les deux voisins, puis réinjecte le résultat dans le tableau complet en
+    laissant les clés masquées **à leur position absolue d'origine** — seul l'ordre relatif des clés
+    visibles entre elles change, jamais celui des clés masquées (qui n'a de toute façon aucun effet
+    observable tant qu'elles restent masquées).
 - Un item du menu masqué pour un rôle (`pointages`/`historique`/`dashboard`, `canSupervise()`
-  uniquement — comportement de visibilité inchangé) est simplement absent de la liste rendue, jamais
-  de trou dans le menu ni de case grisée.
-- Couvert par `test_nav_and_pie_charts.js` : ordre par défaut, permutation persistée puis relue après
-  un rechargement simulé, préférence invalide (clé inconnue) ignorée au profit de l'ordre par défaut.
+  uniquement — comportement de visibilité inchangé) est simplement absent de la liste rendue (menu
+  « Plus ▾ » de l'en-tête **et** liste de réorganisation de "Mon compte"), jamais de trou ni de case
+  grisée.
+- Couvert par `test_nav_and_pie_charts.js` : ordre par défaut par personne, permutation écrite dans
+  `state.userPageMenuOrder` et relue par `getUserPageMenuOrder`, indépendance entre deux personnes
+  (l'une n'affecte jamais l'ordre de l'autre — contrairement à l'ancienne préférence de navigateur,
+  partagée par tout compte utilisant le même poste), préférence invalide ignorée, bornes (premier/
+  dernier élément), et réordonnancement d'un employé qui n'échange qu'avec son voisin VISIBLE, jamais
+  avec une clé masquée adjacente dans le tableau complet.
 
 ## Vue d'ensemble atelier
 

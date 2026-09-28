@@ -927,7 +927,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.54.3';
+const APP_VERSION = '1.55.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -996,28 +996,47 @@ function saveSettingsUIPrefs(){
   catch(e){ /* stockage indisponible : préférence simplement non retenue */ }
 }
 // Ordre des pages regroupées dans le menu "Plus ▾" de l'en-tête (voir CLAUDE.md « Navigation ») —
-// préférence de NAVIGATEUR, comme settingsSectionOrder juste au-dessus, jamais synchronisée dans
-// state : chacun organise sa propre barre, aucun impact sur les autres postes/comptes.
+// PROPRE À LA PERSONNE, rangé dans state.userPageMenuOrder (comme userDefaultPage/
+// userDefaultPlanningView), pas une préférence de navigateur : une préférence en localStorage se
+// réinitialisait silencieusement au moindre vidage de cache (retour utilisateur réel) — ici, comme
+// pour la page d'accueil par défaut, la personne retrouve son ordre quel que soit le poste depuis
+// lequel elle se connecte.
 const PAGE_MENU_KEYS = ['tempsProd', 'zones', 'risques', 'pointages', 'historique', 'dashboard'];
 const PAGE_MENU_LABELS = {
   tempsProd: '⏱ Temps de production', zones: '📍 Zones de stockage', risques: '⚠️ Risques de retard',
   pointages: '🕘 Pointages', historique: '📈 Historique', dashboard: "📊 Vue d'ensemble"
 };
-const PAGE_ORDER_STORAGE_KEY = 'planning-atelier-page-order';
-let pageMenuOrder = [...PAGE_MENU_KEYS];
-function loadPageOrderPref(){
-  try{
-    const raw = localStorage.getItem(PAGE_ORDER_STORAGE_KEY);
-    if(!raw) return;
-    const parsed = JSON.parse(raw);
-    if(Array.isArray(parsed) && parsed.length === PAGE_MENU_KEYS.length && PAGE_MENU_KEYS.every(k => parsed.includes(k))){
-      pageMenuOrder = parsed;
-    }
-  }catch(e){ /* préférence absente ou invalide : ordre par défaut */ }
+// Préférence invalide (ancienne clé localStorage jamais migrée, longueur différente, clé
+// inconnue/manquante) silencieusement ignorée au profit de l'ordre par défaut — même garde-fou
+// qu'avant, appliqué maintenant à la lecture de `state` plutôt qu'à celle du `localStorage`.
+function getUserPageMenuOrder(userId){
+  const stored = (state.userPageMenuOrder || {})[String(userId)];
+  if(Array.isArray(stored) && stored.length === PAGE_MENU_KEYS.length && PAGE_MENU_KEYS.every(k => stored.includes(k))){
+    return stored;
+  }
+  return PAGE_MENU_KEYS;
 }
-function savePageOrderPref(){
-  try{ localStorage.setItem(PAGE_ORDER_STORAGE_KEY, JSON.stringify(pageMenuOrder)); }
-  catch(e){ /* stockage indisponible : préférence simplement non retenue */ }
+// Déplace `key` parmi les seules clés VISIBLES pour ce rôle (`pointages`/`historique`/`dashboard`
+// masquées pour un non-superviseur, voir CLAUDE.md « Navigation ») — la pop-up "Mon compte" n'affiche
+// que ce sous-ensemble à un employé, et les flèches ▲/▼ doivent donc échanger avec le voisin VISIBLE
+// suivant, jamais avec une clé masquée occupant la position adjacente dans le tableau complet (sinon
+// le clic n'aurait silencieusement aucun effet visible pour cette personne). Les clés masquées
+// gardent leur position ABSOLUE d'origine dans le tableau complet stocké — seul l'ordre relatif des
+// clés visibles entre elles change.
+function moveUserPageMenuItem(userId, key, dir){
+  const uid_ = String(userId);
+  const full = getUserPageMenuOrder(uid_);
+  const visible = full.filter(k => k!=='pointages' && k!=='historique' && k!=='dashboard' || canSupervise());
+  const idx = visible.indexOf(key);
+  const newIdx = idx + dir;
+  if(idx === -1 || newIdx < 0 || newIdx >= visible.length) return;
+  const reordered = [...visible];
+  [reordered[idx], reordered[newIdx]] = [reordered[newIdx], reordered[idx]];
+  let vi = 0;
+  const arr = full.map(k => visible.includes(k) ? reordered[vi++] : k);
+  if(!state.userPageMenuOrder) state.userPageMenuOrder = {};
+  state.userPageMenuOrder[uid_] = arr;
+  commit();
 }
 let searchQuery = '';
 let atRiskFilterActive = false; // filtre "⚠️ À risque" de la liste des commandes actives
@@ -1522,6 +1541,7 @@ function migrateState(st){
   if(!Array.isArray(st.hiddenTempsProdUserIds)) st.hiddenTempsProdUserIds = []; // salariés exclus de l'onglet Temps de production (superviseur) — voir isHiddenFromTempsProd
   if(!st.userDefaultPage) st.userDefaultPage = {}; // { [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques'|'pointages'|'historique'|'dashboard' } — page affichée à la connexion, voir applyUserDefaultPageOnStart
   if(!st.userDefaultPlanningView) st.userDefaultPlanningView = {}; // { [userId]: 'jour'|'semaine'|'mois'|'annee'|'kanban'|'liste' } — vue du planning appliquée à la connexion quand la page d'accueil est Planning, voir applyUserDefaultPageOnStart
+  if(!st.userPageMenuOrder) st.userPageMenuOrder = {}; // { [userId]: PAGE_MENU_KEYS réordonnée } — ordre du menu "Plus ▾" de l'en-tête, propre à la personne (voir CLAUDE.md « Navigation »)
   if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
   Object.keys(st.userLunch).forEach(uid_ => {
     const lunch = st.userLunch[uid_];
@@ -6848,8 +6868,8 @@ function renderHeader(){
     </div>` : (() => {
       // Menu "Plus ▾" (voir CLAUDE.md « Navigation ») : regroupe tout sauf Planning/Congés, qui
       // restent seuls en accès direct — désencombre la barre sur bureau, sans rien retirer côté
-      // mobile (déjà traité ci-dessus). Ordre configurable (pageMenuOrder, Paramètres → Affichage),
-      // préférence de navigateur jamais synchronisée, comme settingsSectionOrder.
+      // mobile (déjà traité ci-dessus). Ordre configurable par personne (state.userPageMenuOrder,
+      // Paramètres → Mon compte), synchronisé comme userDefaultPage/userDefaultPlanningView.
       const pageMenuDefs = {
         tempsProd: `⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}`,
         zones: '📍 Zones de stockage',
@@ -6859,6 +6879,7 @@ function renderHeader(){
         dashboard: canSupervise() ? "📊 Vue d'ensemble" : null
       };
       const gotoAction = { tempsProd:'goto-temps-prod', zones:'goto-zones', risques:'goto-risques', pointages:'goto-pointages', historique:'goto-historique', dashboard:'goto-dashboard' };
+      const pageMenuOrder = getUserPageMenuOrder(currentUser ? currentUser.id : '');
       const items = pageMenuOrder.filter(k => pageMenuDefs[k] != null).map(k => `
         <button class="page-switch-btn small dd-page-item ${currentPage===k?'active':''}" data-action="${gotoAction[k]}">${pageMenuDefs[k]}</button>`).join('');
       return `
@@ -10169,17 +10190,7 @@ function renderSettingsModal(){
         <div><label class="field">Couleur "Importante"</label><input type="color" value="${uc.importante}" data-action="update-config" data-field="urgencyColors.importante"></div>
         <div><label class="field">Couleur "Urgente"</label><input type="color" value="${uc.urgente}" data-action="update-config" data-field="urgencyColors.urgente"></div>
       </div>
-      <div class="footer-note" style="text-align:left; padding-top:10px;">S'applique aux badges, liserés et surlignages "Importante" / "Urgente" partout dans le planning (tableau, vues Semaine/Jour/Mois/Année, Kanban, Liste). Le niveau "Normale" reste volontairement neutre, sans couleur.</div>
-      <div class="modal-section-title" style="margin-top:18px;">Ordre des pages du menu « Plus ▾ »</div>
-      <div class="footer-note" style="text-align:left; padding-bottom:8px;">Ordre d'affichage des pages regroupées dans le menu « Plus ▾ » de l'en-tête (Planning et Congés restent toujours en accès direct, à côté du menu). Préférence propre à ce navigateur, comme l'ordre des catégories de cette pop-up ci-contre.</div>
-      ${pageMenuOrder.map((key, idx) => `
-      <div class="settings-nav-item">
-        <span class="settings-nav-btn" style="cursor:default;">${PAGE_MENU_LABELS[key]}</span>
-        <div class="settings-reorder">
-          <button class="ghost icon-btn" data-action="move-page-menu-item" data-key="${key}" data-dir="-1" ${idx===0?'disabled':''} title="Monter">▲</button>
-          <button class="ghost icon-btn" data-action="move-page-menu-item" data-key="${key}" data-dir="1" ${idx===pageMenuOrder.length-1?'disabled':''} title="Descendre">▼</button>
-        </div>
-      </div>`).join('')}` },
+      <div class="footer-note" style="text-align:left; padding-top:10px;">S'applique aux badges, liserés et surlignages "Importante" / "Urgente" partout dans le planning (tableau, vues Semaine/Jour/Mois/Année, Kanban, Liste). Le niveau "Normale" reste volontairement neutre, sans couleur.</div>` },
     moncompte: { title: 'Mon compte', body: `
       <div class="footer-note" style="text-align:left; margin-bottom:10px;">Connecté en tant que <strong>${escapeHtml(currentUsername||'')}</strong> (${roleLabel(currentUserRole())}).</div>
       <label class="field">Adresse e-mail (pour les notifications de congés)</label>
@@ -10203,7 +10214,21 @@ function renderSettingsModal(){
         <option value="" ${!(state.userDefaultPlanningView||{})[String(currentUser?currentUser.id:'')]?'selected':''}>Semaine (par défaut)</option>
         ${['jour','semaine','mois','annee','kanban','liste'].map(v => `<option value="${v}" ${(state.userDefaultPlanningView||{})[String(currentUser?currentUser.id:'')]===v?'selected':''}>${{jour:'Jour',semaine:'Semaine',mois:'Mois',annee:'Année',kanban:'Kanban',liste:'Liste'}[v]}</option>`).join('')}
       </select>
-      <div class="footer-note" style="text-align:left; padding-top:6px;">Vue du planning ouverte automatiquement à la connexion (Jour, Semaine, Mois, Année, Kanban ou Liste).</div>` : ''}` },
+      <div class="footer-note" style="text-align:left; padding-top:6px;">Vue du planning ouverte automatiquement à la connexion (Jour, Semaine, Mois, Année, Kanban ou Liste).</div>` : ''}
+      <div class="modal-section-title" style="margin-top:18px;">Ordre des pages du menu « Plus ▾ »</div>
+      <div class="footer-note" style="text-align:left; padding-bottom:8px;">Ordre d'affichage de vos pages regroupées dans le menu « Plus ▾ » de l'en-tête (Planning et Congés restent toujours en accès direct, à côté du menu). Propre à VOTRE compte : vous le retrouvez identique quel que soit le poste depuis lequel vous vous connectez, jamais réinitialisé par un vidage de cache navigateur.</div>
+      ${(() => {
+        const uid_ = currentUser ? currentUser.id : '';
+        const order = getUserPageMenuOrder(uid_).filter(key => key!=='pointages' && key!=='historique' && key!=='dashboard' || canSupervise());
+        return order.map((key, idx) => `
+      <div class="settings-nav-item">
+        <span class="settings-nav-btn" style="cursor:default;">${PAGE_MENU_LABELS[key]}</span>
+        <div class="settings-reorder">
+          <button class="ghost icon-btn" data-action="move-page-menu-item" data-key="${key}" data-dir="-1" ${idx===0?'disabled':''} title="Monter">▲</button>
+          <button class="ghost icon-btn" data-action="move-page-menu-item" data-key="${key}" data-dir="1" ${idx===order.length-1?'disabled':''} title="Descendre">▼</button>
+        </div>
+      </div>`).join('');
+      })()}` },
     utilisateurs: { title: `Utilisateurs (${usersList.length})`, body: `
       <div class="machines-grid">
         ${usersList.map(u => {
@@ -12300,15 +12325,7 @@ function dispatchClickAction(action, el){
       break;
     }
     case 'move-page-menu-item': {
-      const key = el.dataset.key, dir = Number(el.dataset.dir);
-      const idx = pageMenuOrder.indexOf(key);
-      const newIdx = idx + dir;
-      if(newIdx >= 0 && newIdx < pageMenuOrder.length){
-        const arr = pageMenuOrder;
-        [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
-        savePageOrderPref();
-        render();
-      }
+      moveUserPageMenuItem(currentUser ? currentUser.id : '', el.dataset.key, Number(el.dataset.dir));
       break;
     }
     case 'close-settings': closeSettingsModal(); break;
@@ -13254,7 +13271,6 @@ function applyUserDefaultPageOnStart(){
 async function startApp(){
   loadLoginBranding(); // en tâche de fond : alimente l'écran de connexion si la session a expiré
   loadSettingsUIPrefs();
-  loadPageOrderPref();
   loadDoneFilterPref();
   loadDueFilterPref();
   loadKanbanDoneLimitPref();
