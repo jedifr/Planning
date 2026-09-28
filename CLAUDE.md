@@ -1535,6 +1535,55 @@ volontairement la même zone (regroupement manuel de petites affaires dans un m�
   - `assignStorageZone`/`setCommandeZone` n'ont pas besoin d'être modifiés : ils lisent déjà
     `occupiedStorageZones`/`commandesInZone`, qui portent maintenant la nouvelle règle.
 
+### Zone masquée à tort sur une fusion mono-commande (Kanban)
+
+Bug réel signalé (capture d'écran à l'appui) : une carte Kanban fusionnée (« 🔗 9 pièces —
+C026-0693 ASM DIMATEC », vue groupée activée, voir « Regroupement ») n'affichait aucune zone de
+stockage, alors que la commande en avait bien une (A4). `renderKanbanView` masquait le badge zone
+(`zoneLineK`) pour **toute** carte fusionnée (`!o._fusionMembers`), sans distinguer deux cas pourtant
+très différents :
+
+- Une fusion **multi-commandes** (plusieurs commandes différentes regroupées) : `o.zoneStockage` n'y
+  porte que la zone de la PREMIÈRE commande du groupe (voir `mergeFusedOpsForDisplay`) — l'afficher
+  serait trompeur pour les autres membres. Masquage justifié, **conservé**.
+- Une fusion **mono-commande** (plusieurs pièces de la MÊME commande fusionnées entre elles, cas du
+  bug signalé) : `zoneStockage` est un attribut de **commande** (voir modèle de données), donc
+  strictement identique pour tous les membres du groupe — aucune ambiguïté possible. Le masquer ici
+  n'avait aucune justification, contrairement au commentaire d'origine qui ne visait que le cas
+  multi-commandes.
+- Corrigé en calculant `distinctCmdK` (déjà calculé pour construire le libellé « 🔗 N pièces —
+  {commande}/{N commandes} », désormais partagé) une seule fois, et en n'appliquant le masquage de
+  `zoneLineK` que si `distinctCmdK.length > 1` — une fusion mono-commande affiche donc désormais sa
+  zone exactement comme une pièce non fusionnée, au même endroit (sous la ligne d'échéance).
+- Couvert par `test_kanban_zone_and_isolate.js` : zone affichée sur une fusion mono-commande, masquée
+  sur une fusion multi-commandes (les deux zones distinctes n'apparaissent ni l'une ni l'autre), et
+  comportement inchangé sur une pièce non fusionnée.
+
+### Isoler une commande depuis une autre page ne l'amenait pas à l'écran
+
+Retour utilisateur réel : cliquer un casier occupé depuis « Zones de stockage » surlignait bien la
+bonne commande dans le Kanban une fois sur le planning (le mécanisme `.spotlight`/`highlightActive()`
+fonctionnait déjà correctement), mais sans jamais faire défiler l'écran jusqu'à elle — sur une longue
+colonne (chaque colonne du Kanban défile indépendamment, voir le piège « Ascenseur d'une colonne »),
+il fallait descendre les ascenseurs à la main pour la retrouver.
+
+- `isolateCommandeFromElsewhere(cid)` — remplace le code inline du dispatch `case
+  'isolate-commande-goto-planning'` (bouton utilisé depuis Zones de stockage, Risques de retard,
+  Temps de production, Pointages...) : pose `selectedCommandeId`, bascule `currentPage`, appelle
+  `render()`, **puis** cherche `document.querySelector('.spotlight')` et l'amène à l'écran
+  (`scrollIntoView({ block:'center', behavior:'smooth' })`) — `scrollIntoView` gère nativement les
+  conteneurs à défilement imbriqués (la colonne Kanban ET la page), pas besoin de cibler la bonne
+  colonne à la main. Silencieux (aucune exception) si aucun élément surligné n'existe (commande sans
+  tâche visible sur la vue courante) ou si l'environnement ne supporte pas `scrollIntoView`.
+- **Portée volontairement limitée à ce point d'entrée précis** — jamais à `toggleIsolateCommande`/
+  `scheduleIsolate` (clic DIRECT sur une carte déjà visible à l'écran, cliquée par l'utilisateur : la
+  faire défiler serait un sursaut visuel superflu, la carte est par définition déjà sous les yeux).
+  Seule la navigation DEPUIS une autre page a ce problème, puisque la carte cible n'a jamais été
+  visible avant ce clic.
+- Couvert par `test_kanban_zone_and_isolate.js` : `selectedCommandeId`/`currentPage` posés
+  correctement, `render()` appelé une seule fois, `scrollIntoView` appelé sur l'élément `.spotlight`
+  trouvé après le rendu, aucun plantage si rien n'est surligné, no-op complet sur un `cid` vide.
+
 ## Horodatage de création d'une commande (`commandes[].dateCreation`)
 
 Question utilisateur réelle : les commandes créées sont-elles horodatées ? Réponse avant ce

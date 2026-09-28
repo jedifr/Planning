@@ -927,7 +927,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.54.0';
+const APP_VERSION = '1.54.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -2425,6 +2425,28 @@ function toggleIsolateCommande(cid){
   selectedCommandeId = (selectedCommandeId === cid) ? null : cid; // reclique sur la même commande = désisole
   searchQuery = ''; // évite de cumuler recherche et sélection
   render();
+}
+// Isoler une commande DEPUIS UNE AUTRE PAGE (Zones de stockage, Risques de retard, Temps de
+// production, Pointages...) — contrairement à toggleIsolateCommande (clic direct sur une carte déjà
+// visible à l'écran, aucun défilement nécessaire), la carte ciblée peut être hors du champ visible
+// une fois sur le planning : chaque colonne du Kanban défile indépendamment (voir le piège "Ascenseur
+// d'une colonne" dans CLAUDE.md), et une carte peut tout aussi bien être plus bas dans une longue vue
+// Liste. Bug réel signalé : cliquer un casier occupé depuis "Zones de stockage" surlignait bien la
+// bonne commande dans le Kanban (spotlight déjà fonctionnel), mais sans jamais l'amener à l'écran —
+// fallait descendre les ascenseurs à la main pour la retrouver.
+function isolateCommandeFromElsewhere(cid){
+  if(!cid) return;
+  selectedCommandeId = cid;
+  currentPage = 'planning';
+  render();
+  // `.spotlight` n'existe qu'une fois le rendu terminé (render() vient de reconstruire tout le DOM,
+  // y compris la restauration des ascenseurs de colonne Kanban) — scrollIntoView gère nativement les
+  // conteneurs à défilement imbriqués (colonne ET page), pas besoin de cibler la bonne colonne à la
+  // main. Silencieux si aucun élément surligné n'existe (commande sans tâche visible sur cette vue).
+  try{
+    const el = document.querySelector('.spotlight');
+    if(el) el.scrollIntoView({ block:'center', behavior:'smooth' });
+  }catch(e){ /* environnement sans scrollIntoView (tests) : ignoré */ }
 }
 // Sur les éléments où un double-clic déclenche une AUTRE action (réinitialiser une tâche figée), on
 // diffère légèrement l'isolement pour laisser la fenêtre de détection du double-clic du navigateur
@@ -11123,10 +11145,14 @@ function renderKanbanView(schedule){
         : col.key==='termine'
         ? (o.finReel ? `Terminée le ${formatDT(new Date(o.finReel))}` : 'Réalisée')
         : (o.start ? `${formatDT(o.start)} → ${formatDT(o.end)}` : 'Non planifiée');
+      // Distinctes commandes du groupe — une seule fusion PARTAGE la même zoneStockage (attribut de
+      // commande, voir modèle de données) : dans ce cas (une seule commande, plusieurs pièces
+      // fusionnées entre elles), afficher la zone n'a rien de trompeur, contrairement à une fusion
+      // multi-commandes où o.zoneStockage ne porterait que celle du premier membre du groupe.
+      const distinctCmdK = o._fusionMembers ? Array.from(new Set(o._fusionMembers.map(mb=>mb.commandeNom))) : null;
       const label = o._fusionMembers
         ? (() => {
-            const distinctCmd = Array.from(new Set(o._fusionMembers.map(mb=>mb.commandeNom)));
-            const refLabel = distinctCmd.length===1 ? distinctCmd[0] : `${distinctCmd.length} commandes`;
+            const refLabel = distinctCmdK.length===1 ? distinctCmdK[0] : `${distinctCmdK.length} commandes`;
             return `🔗 ${o._fusionMembers.length} pièces — ${refLabel}`;
           })()
         : [o.commandeNom, o.piece, o.etape].filter(Boolean).join(' · ') + (o.numeroLigne ? ` (n°${o.numeroLigne})` : '');
@@ -11160,10 +11186,14 @@ function renderKanbanView(schedule){
           : ((producteurK||operateurK) ? ` · 👤 ${escapeHtml((producteurK||operateurK).username)}` : '');
       }
       const dueLineK = o.dateBesoin ? `<div class="kanban-card-due">Échéance : ${escapeHtml(new Date(o.dateBesoin+'T00:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'}))}</div>` : '';
-      // Pas affiché sur une carte fusionnée multi-commandes : o.zoneStockage ne porterait alors que
-      // la zone de la première commande du groupe, ce qui serait trompeur pour les autres membres.
+      // Affichée sauf sur une carte fusionnée MULTI-COMMANDES (distinctCmdK.length > 1) : dans ce cas
+      // seulement, o.zoneStockage ne porterait que la zone de la première commande du groupe, ce qui
+      // serait trompeur pour les autres membres. Une fusion à l'intérieur d'une seule commande
+      // (distinctCmdK.length === 1, ou pas de fusion du tout) partage forcément la même zone —
+      // aucune ambiguïté, l'afficher est donc sûr (bug réel signalé : le casier disparaissait à tort
+      // sur une pièce fusionnée pourtant seule concernée).
       const zoneAlleeK = o.zoneStockage ? zonesInfoK.byCode[o.zoneStockage] : null;
-      const zoneLineK = (!o._fusionMembers && o.zoneStockage) ? `<div class="kanban-card-zone" style="${zoneAlleeK?`color:${readableZoneTextColor(zoneAlleeK.couleur)};`:''}">📍 ${escapeHtml(o.zoneStockage)}</div>` : '';
+      const zoneLineK = ((!distinctCmdK || distinctCmdK.length===1) && o.zoneStockage) ? `<div class="kanban-card-zone" style="${zoneAlleeK?`color:${readableZoneTextColor(zoneAlleeK.couleur)};`:''}">📍 ${escapeHtml(o.zoneStockage)}</div>` : '';
       const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (Number(o.tempsUnitaire)*Number(o.quantite))/60;
       const plannedLineK = `<div class="kanban-card-planned">Prévu : ${durationLabel(dureeH)}</div>`;
       const elapsedLineK = (col.key==='en_cours'||col.key==='en_pause'||col.key==='termine') ? (() => {
@@ -12307,7 +12337,7 @@ function dispatchClickAction(action, el){
     case 'unarchive-commande': unarchiveCommande(el.dataset.cid); break;
     case 'archive-now': manualArchiveNow(); break;
     case 'clear-isolate': selectedCommandeId = null; render(); break;
-    case 'isolate-commande-goto-planning': selectedCommandeId = el.dataset.cid; currentPage = 'planning'; render(); break;
+    case 'isolate-commande-goto-planning': isolateCommandeFromElsewhere(el.dataset.cid); break;
     case 'toggle-zone-active': toggleStorageZoneActive(el.dataset.zone); break;
     case 'toggle-select-commande': toggleIsolateCommande(el.dataset.id); if(selectedCommandeId) maybeJumpToHighlight(); render(); break;
     case 'toggle-panel-collapse': togglePanelCollapse(el.dataset.key); break;
