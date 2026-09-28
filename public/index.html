@@ -786,6 +786,25 @@
   .pause-reminder-task .pr-piece{font-size:14px; font-weight:600; margin:2px 0;}
   .pause-reminder-task .pr-meta{font-size:11.5px; color:var(--text-faint);}
   .pause-reminder-snooze{display:flex; align-items:center; gap:6px; flex-wrap:wrap;}
+  /* Pop-up "Démarrage tardif" (voir CLAUDE.md, « Alerte de démarrage tardif ») — retour utilisateur
+     réel : la version d'origine (un modal-box neutre, sans couleur) manquait de visibilité. Déjà
+     centrée à l'écran par .modal-overlay (flex/align-items:center/justify-content:center, inchangé) —
+     ce qui manquait, c'est le traitement visuel : reprend le même langage que .pause-reminder-box/
+     .pr-icon (icône ronde colorée en tête) mais en rouge (alerte d'un problème déjà survenu), pas en
+     accent (simple action neutre) — cohérent avec .badge-overdue/.login-error, déjà utilisés ailleurs
+     dans l'appli pour signaler un problème plutôt qu'une information neutre. */
+  .retard-demarrage-box{border-top:4px solid var(--red);}
+  .retard-demarrage-head{background:rgba(178,58,48,0.08);}
+  .retard-demarrage-head-main{display:flex; align-items:center; gap:14px; min-width:0;}
+  .retard-demarrage-head .rd-icon{
+    width:40px; height:40px; border-radius:50%; flex:none; background:var(--red); color:#fff;
+    display:flex; align-items:center; justify-content:center; font-size:19px;
+  }
+  .retard-demarrage-head h2{color:var(--red);}
+  .retard-demarrage-days{
+    text-align:center; padding:14px 10px; font-size:19px; font-weight:700; color:#fff;
+    background:var(--red); border-radius:var(--radius); margin:4px 0 4px;
+  }
   .modal-head{
     display:flex; align-items:center; justify-content:space-between;
     padding:13px 18px; border-bottom:1px solid var(--line-soft); background:var(--panel-2);
@@ -824,6 +843,21 @@
     font-family:'Oswald',sans-serif; font-size:15px; font-weight:600; letter-spacing:0.3px;
     margin:0 0 16px; color:var(--text); padding-bottom:10px; border-bottom:1px solid var(--line-soft);
   }
+  /* Pin/réordonnancement de "Pages du menu « Plus ▾ »" (Paramètres → Mon compte) — retour
+     utilisateur réel : une première version réutilisait .settings-reorder (pensé pour de
+     minuscules flèches ▲/▼ à 8px, empilées verticalement, à côté d'une catégorie de la barre de
+     navigation Paramètres) — à cette taille, en style fantôme transparent, les boutons 📌/▲/▼
+     étaient quasiment invisibles. Rangée dédiée, boutons de taille normale (style `button` par
+     défaut : fond/bordure visibles au repos, pas seulement au survol comme `.ghost`). */
+  .page-menu-item{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:9px 6px; border-bottom:1px solid var(--line-soft);
+  }
+  .page-menu-item:last-child{border-bottom:none;}
+  .page-menu-label{font-size:13px; color:var(--text);}
+  .page-menu-label .pinned-tag{color:var(--accent); font-weight:600;}
+  .page-menu-actions{display:flex; align-items:center; gap:6px; flex:none;}
+  .page-menu-actions button.pinned{background:var(--accent-dim); border-color:var(--accent); color:var(--accent); font-weight:600;}
 
   .context-menu{
     position:fixed; z-index:1100; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
@@ -927,7 +961,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.56.0';
+const APP_VERSION = '1.56.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -9948,9 +9982,12 @@ function renderRetardDemarragePopupModal(){
   const info = retardDemarragePopupInfo;
   return `
   <div class="modal-overlay">
-    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:420px;">
-      <div class="modal-head">
-        <h2>🕓 Démarrage tardif</h2>
+    <div class="modal-box retard-demarrage-box" role="dialog" aria-modal="true" style="max-width:420px;">
+      <div class="modal-head retard-demarrage-head">
+        <div class="retard-demarrage-head-main">
+          <div class="rd-icon">⏰</div>
+          <h2>Démarrage tardif</h2>
+        </div>
         <button class="ghost icon-btn" data-action="close-retard-demarrage-popup" title="Fermer">✕</button>
       </div>
       <div class="modal-body">
@@ -9960,7 +9997,7 @@ function renderRetardDemarragePopupModal(){
           <div><label class="field">Prévu le</label><div class="mono">${formatDT(new Date(info.prevu))}</div></div>
           <div><label class="field">Démarré le</label><div class="mono">${formatDT(new Date(info.debutReel))}</div></div>
         </div>
-        <div style="text-align:center; padding:10px 0; font-size:18px; font-weight:700; color:var(--red);">⏱ Retard : ${info.retardJours.toFixed(1)} jour(s)</div>
+        <div class="retard-demarrage-days">⏱ Retard : ${info.retardJours.toFixed(1)} jour(s)</div>
         <div class="form-actions" style="justify-content:flex-end; margin-top:8px;">
           <button class="primary" data-action="close-retard-demarrage-popup">OK, j'ai compris</button>
         </div>
@@ -10259,12 +10296,12 @@ function renderSettingsModal(){
         const order = getUserPageMenuOrder(uid_).filter(key => key!=='pointages' && key!=='historique' && key!=='dashboard' || canSupervise());
         const pinned = getUserPinnedMenuPages(uid_);
         return order.map((key, idx) => `
-      <div class="settings-nav-item">
-        <span class="settings-nav-btn" style="cursor:default;">${PAGE_MENU_LABELS[key]}${pinned.includes(key)?' <span class="footer-note" style="display:inline;">(épinglée)</span>':''}</span>
-        <div class="settings-reorder">
-          <button class="ghost icon-btn" data-action="toggle-page-menu-pin" data-key="${key}" title="${pinned.includes(key)?'Remettre dans « Plus ▾ »':'Épingler en accès direct, à côté de Planning/Congés'}">${pinned.includes(key)?'📥':'📌'}</button>
-          <button class="ghost icon-btn" data-action="move-page-menu-item" data-key="${key}" data-dir="-1" ${idx===0?'disabled':''} title="Monter">▲</button>
-          <button class="ghost icon-btn" data-action="move-page-menu-item" data-key="${key}" data-dir="1" ${idx===order.length-1?'disabled':''} title="Descendre">▼</button>
+      <div class="page-menu-item">
+        <span class="page-menu-label">${PAGE_MENU_LABELS[key]}${pinned.includes(key)?' <span class="pinned-tag">(épinglée)</span>':''}</span>
+        <div class="page-menu-actions">
+          <button class="${pinned.includes(key)?'pinned':''}" data-action="toggle-page-menu-pin" data-key="${key}" title="${pinned.includes(key)?'Remettre dans « Plus ▾ »':'Épingler en accès direct, à côté de Planning/Congés'}">${pinned.includes(key)?'📥 Retirer':'📌 Épingler'}</button>
+          <button data-action="move-page-menu-item" data-key="${key}" data-dir="-1" ${idx===0?'disabled':''} title="Monter">▲</button>
+          <button data-action="move-page-menu-item" data-key="${key}" data-dir="1" ${idx===order.length-1?'disabled':''} title="Descendre">▼</button>
         </div>
       </div>`).join('');
       })()}` },
@@ -11168,7 +11205,10 @@ function renderKanbanView(schedule){
     allOps.push({ ...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin, zoneStockage:c.zoneStockage });
   }));
   allOps = allOps.filter(o => matchesSearch({ nom:o.commandeNom, pieces:[o] }, searchQuery));
-  if(kanbanMachineFilters) allOps = allOps.filter(o => {
+  // Même neutralisation que doneCutoff/effectiveKanbanDoneLimit ci-dessous pendant une recherche ou
+  // un isolement (highlightActive()) : le filtre "Postes affichés" ne doit pas non plus pouvoir
+  // masquer le résultat trouvé/isolé si un poste avait été décoché lors d'un tri précédent.
+  if(kanbanMachineFilters && !highlightActive()) allOps = allOps.filter(o => {
     // Une tâche sans poste (pointage rapide sans machine choisie, voir CLAUDE.md) n'appartient à
     // aucun des postes du filtre — elle a ses deux propres pseudo-entrées, jamais celles des postes.
     if(o.machineId === null){
@@ -11178,7 +11218,16 @@ function renderKanbanView(schedule){
     return kanbanMachineFilters.has(o.machineId);
   });
 
-  const doneCutoff = doneFilterCutoff(doneFilterRange);
+  // Même principe que renderCommandes (voir CLAUDE.md « Recherche/isolement de commande — rien ne
+  // doit masquer un résultat trouvé ») — jusqu'ici jamais étendu au Kanban (bug réel signalé :
+  // isoler une commande depuis "Zones de stockage" mettait bien en évidence ses tâches en vue
+  // Semaine, mais ses pièces "À faire"/"Terminée" restaient invisibles en Kanban, coupées par la
+  // fenêtre de récence et la limite d'affichage ci-dessous avant même d'atteindre le surlignage).
+  // Pendant une recherche OU un isolement, les deux sont donc entièrement neutralisées — jamais une
+  // exception par carte, pour rester cohérent avec `effectiveDueFilterRange()`/le `doneCutoff` déjà
+  // neutralisé de la même façon dans renderCommandes.
+  const doneCutoff = highlightActive() ? null : doneFilterCutoff(doneFilterRange);
+  const effectiveKanbanDoneLimit = highlightActive() ? Infinity : kanbanDoneLimit;
   // colObjs plutôt qu'un HTML pré-assemblé par colonne : le contenu de chaque colonne (cartes,
   // compteur) est strictement le même sur mobile et sur ordinateur, seule la MISE EN PAGE change
   // (4 colonnes côte à côte vs un onglet de statut à la fois, voir plus bas) — calculé une seule
@@ -11195,7 +11244,7 @@ function renderKanbanView(schedule){
         const tb = b.finReel ? new Date(b.finReel).getTime() : 0;
         return tb - ta; // les plus récentes d'abord
       });
-      ops = ops.slice(0, kanbanDoneLimit);
+      ops = ops.slice(0, effectiveKanbanDoneLimit);
     } else if(col.key==='a_faire'){
       ops.sort((a,b) => {
         const ta = a.start ? a.start.getTime() : 0;
@@ -11203,7 +11252,7 @@ function renderKanbanView(schedule){
         return ta - tb;
       });
       totalAvantLimite = ops.length;
-      ops = ops.slice(0, kanbanDoneLimit); // les plus proches dans le temps restent visibles en priorité
+      ops = ops.slice(0, effectiveKanbanDoneLimit); // les plus proches dans le temps restent visibles en priorité
     } else {
       ops.sort((a,b) => {
         const ta = a.start ? a.start.getTime() : 0;

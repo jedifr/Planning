@@ -1599,6 +1599,30 @@ il fallait descendre les ascenseurs à la main pour la retrouver.
   correctement, `render()` appelé une seule fois, `scrollIntoView` appelé sur l'élément `.spotlight`
   trouvé après le rendu, repli sur `.commande-card.commande-selected` quand aucun `.spotlight`
   n'existe, aucun plantage si ni l'un ni l'autre n'est trouvé, no-op complet sur un `cid` vide.
+- **`renderKanbanView` jamais couverte par le principe « rien ne doit masquer un résultat trouvé »
+  (voir « Recherche/isolement de commande » plus haut) — bug réel signalé séparément.** Le correctif
+  ci-dessus amène bien la carte à l'écran une fois qu'elle existe dans le DOM, mais en vue Kanban
+  elle pouvait ne JAMAIS y exister : isoler, depuis « Zones de stockage », une commande dont des
+  pièces sont `termine`/`a_faire` fonctionnait correctement en vues Jour/Semaine/Mois/Année/Liste,
+  mais ces mêmes pièces restaient invisibles une fois basculé sur la vue Kanban — coupées par la
+  fenêtre de récence (`doneCutoff`/`doneFilterRange`, colonne "Terminée"), la limite d'affichage
+  (`kanbanDoneLimit`, colonnes "À faire" ET "Terminée"), et le filtre "Postes affichés"
+  (`kanbanMachineFilters`) laissés actifs d'un tri précédent — trois réglages que `renderCommandes`
+  neutralise déjà pendant `highlightActive()` (voir `effectiveDueFilterRange()`/le `doneCutoff`
+  local de `renderCommandes`), mais que `renderKanbanView` n'avait jamais repris pour lui-même.
+  Corrigé en neutralisant les trois de la même façon, **pendant tout `highlightActive()`** (recherche
+  OU isolement, jamais une exception par carte) : `effectiveKanbanDoneLimit = highlightActive() ?
+  Infinity : kanbanDoneLimit`, `doneCutoff = highlightActive() ? null : doneFilterCutoff(...)`, et
+  `kanbanMachineFilters` lui-même ignoré (`if(kanbanMachineFilters && !highlightActive())`) — les
+  tâches de la commande isolée/recherchée apparaissent donc désormais dans les QUATRE colonnes
+  (À faire/En cours/En pause/Terminée), quel que soit leur statut, exactement comme demandé.
+  Réflexe explicitement rappelé par la section « Recherche/isolement de commande » elle-même :
+  vérifier qu'un correctif déjà fait à UN endroit (ici `renderCommandes`) couvre aussi tous les
+  AUTRES endroits qui peuvent masquer le même résultat (ici `renderKanbanView`, jamais traitée)
+  — un correctif localisé à un seul rendu ne protège pas les autres. Couvert par l'ajout au test 7
+  de `test_kanban_zone_and_isolate.js` : sans isolement, la pièce ciblée est bien absente (récence +
+  limite + filtre poste combinés) ; avec isolement, elle apparaît dans ses deux statuts (à faire et
+  terminée) et porte la classe `spotlight`, malgré ces trois réglages laissés actifs.
 
 ## Horodatage de création d'une commande (`commandes[].dateCreation`)
 
@@ -1972,6 +1996,21 @@ en accès direct, codées en dur ; tout le reste rejoignait obligatoirement « P
 - Réglable dans Paramètres → Mon compte, section « Pages du menu « Plus ▾ » » (la même liste que
   l'ordre, voir ci-dessus) : un bouton « 📌 Épingler »/« 📥 Remettre dans « Plus ▾ » » par ligne, à
   côté des flèches ▲/▼ existantes — `data-action="toggle-page-menu-pin"`.
+- **Boutons 📌/▲/▼ peu visibles (retour utilisateur réel).** La première version réutilisait
+  `.settings-nav-item`/`.settings-reorder` — le mécanisme déjà en place pour réordonner les
+  CATÉGORIES de la barre de navigation Paramètres, où les flèches ▲/▼ sont volontairement
+  minuscules (`.settings-reorder button{padding:0px 4px; font-size:8px;}`) et en style fantôme
+  (`.ghost.icon-btn`, transparent au repos) pour ne pas distraire à côté du nom d'une catégorie.
+  Réutilisé tel quel ici pour trois boutons (📌/📥, ▲, ▼) au lieu de deux simples flèches, à cette
+  même taille et ce même style transparent, ils devenaient quasiment invisibles. Remplacé par
+  `.page-menu-item`/`.page-menu-actions` — rangée dédiée, boutons de taille normale (style `button`
+  par défaut : fond `--panel-2` et bordure visibles au repos, pas seulement au survol comme
+  `.ghost`), avec un libellé texte en plus de l'icône (« 📌 Épingler »/« 📥 Retirer », pas une icône
+  seule) et un état "épinglé" mis en évidence (`.pinned`, fond `--accent-dim`/bordure/texte accent).
+  Réflexe : un contrôle réutilisant une classe existante doit vérifier le CONTEXTE d'origine de
+  cette classe (ici : de minuscules flèches secondaires à côté d'un nom de catégorie) avant de la
+  redéployer pour un usage différent (ici : l'action principale d'une ligne de liste) — la
+  discrétion voulue dans un contexte peut devenir un défaut de lisibilité dans un autre.
 
 ### Police du déclencheur « Plus ▾ » incohérente avec Planning/Congés
 
@@ -2993,6 +3032,18 @@ signal **actif**, adressé directement à l'opérateur qui vient de démarrer.
   l'heure, sous le seuil de 0,5 jour, sur une reprise après pause, ou sans `previsionAuDemarrage`
   connue (pièce ancienne, donnée non rétroactive) ; `migrateState` initialise bien le réglage à
   `false`.
+- **Traitement visuel renforcé (retour utilisateur réel, capture d'écran à l'appui) : la pop-up
+  passait inaperçue, neutre et sans couleur.** Déjà centrée à l'écran par `.modal-overlay` (flex
+  `align-items:center`/`justify-content:center`, inchangé — ce n'était donc pas un bug de
+  positionnement) : ce qui manquait, c'est le poids visuel. `.retard-demarrage-box`/
+  `.retard-demarrage-head` ajoutent une bordure rouge en tête de pop-up, un bandeau d'en-tête
+  teinté (même rouge que `.login-error`, `rgba(178,58,48,0.08)`) avec une icône ronde ⏰ pleine
+  (même patron que `.pr-icon` de la pop-up de retour de pause déjeuner, mais en rouge — alerte
+  d'un problème déjà survenu — plutôt qu'en accent — simple action neutre), et le nombre de jours
+  de retard s'affiche désormais en encart plein rouge (`.retard-demarrage-days`, fond rouge/texte
+  blanc, même esprit que `.badge-overdue`) plutôt qu'en simple texte coloré. Réutilise des couleurs
+  et un langage visuel déjà établis ailleurs dans l'appli pour signaler un problème plutôt que
+  d'inventer une nouvelle palette.
 
 ### Lisibilité des couleurs d'allée utilisées comme texte
 
