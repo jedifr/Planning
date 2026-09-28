@@ -563,6 +563,7 @@
     background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius);
     padding:12px 14px; display:flex; flex-direction:column; gap:10px; min-width:0;
   }
+  .tp-emp-card.expanded{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset;}
   .tp-emp-head{display:flex; align-items:center; gap:8px;}
   .tp-avatar{
     width:30px; height:30px; border-radius:50%; flex:none; display:flex; align-items:center;
@@ -584,7 +585,11 @@
   .tp-mini-num{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:14px; font-variant-numeric:tabular-nums;}
   .tp-mini-lbl{font-size:9.5px; text-transform:uppercase; letter-spacing:0.3px; color:var(--text-faint);}
   .tp-occ-block{display:flex; flex-direction:column; gap:2px;}
-  .tp-emp-detail{margin-top:4px;}
+  .tp-emp-detail-block{
+    margin-top:12px; padding-top:10px; border-top:1px dashed var(--line);
+  }
+  .tp-emp-detail-head{display:flex; align-items:center; gap:8px; margin-bottom:6px;}
+  .tp-emp-detail-name{font-family:'Oswald',sans-serif; font-weight:600; font-size:13px;}
 
   .occ-machine-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:10px;}
   .occ-machine-card{
@@ -1049,7 +1054,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.60.0';
+const APP_VERSION = '1.61.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1076,6 +1081,32 @@ const MACHINE_ICON_OPTIONS = [
   { value:'🛠️', label:'Outillage général' },
   { value:'🔩', label:'Fixation / Assemblage' }
 ];
+// Devinette d'icône par mot-clé du nom — RÉSERVÉE au pré-remplissage ponctuel des postes déjà
+// existants dans migrateState (voir « Icône de poste »/CLAUDE.md), jamais appelée à l'usage courant
+// (le sélecteur Paramètres → Postes reste le seul point de réglage normal). Précédent déjà établi
+// dans ce fichier pour un besoin différent : `machineNameLooksLikeSousTraitance`. `null` si aucun
+// mot-clé ne correspond — reste alors sans icône, à choisir à la main.
+function guessMachineIconFromName(nom){
+  const n = String(nom||'').toLowerCase();
+  const rules = [
+    [/jet\s*d.?eau|h2o|waterjet/, '💧'],
+    [/laser/, '🔥'],
+    [/d[ée]coupe|cisaille|guillotine/, '✂️'],
+    [/soud/, '⚡'],
+    [/chaudronn/, '🔨'],
+    [/pli(age|euse)|presse/, '🗜️'],
+    [/tour(?!nage)|tournage/, '🌀'],
+    [/frais|usinage|mazak|\bcn\b/, '⚙️'],
+    [/per[cç]/, '🕳️'],
+    [/ajust/, '📐'],
+    [/\bfil\b/, '🧵'],
+    [/traitement.*surface|peinture|galva/, '🎨'],
+    [/sous.?trait/, '🏭'],
+    [/emball|exp[ée]dition/, '📦']
+  ];
+  for(const [re, icon] of rules){ if(re.test(n)) return icon; }
+  return null;
+}
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
 // DEFAULT_STORAGE_ZONES reprend l'ancienne configuration figée (3 allées de 16 emplacements) comme
@@ -1722,10 +1753,22 @@ function migrateState(st){
     // poste", jamais confondu avec "production gratuite" à l'affichage (voir pieceCoutEstime/Reel).
     if(m.tauxHoraireH === undefined) m.tauxHoraireH = 0;
     // Icône de poste (voir MACHINE_ICON_OPTIONS/CLAUDE.md « Icône de poste ») — choix EXPLICITE par
-    // poste (Paramètres → Postes), jamais déduit du nom : l'appli n'a aucune notion de "type" de
-    // machine, deviner depuis l'intitulé serait fragile. `null` = aucune icône choisie.
+    // poste au quotidien (Paramètres → Postes, jamais déduit automatiquement à l'usage), mais voir
+    // le pré-remplissage PONCTUEL ci-dessous pour les postes déjà existants. `null` = aucune icône.
     if(m.icone === undefined) m.icone = null;
   });
+  // Pré-remplissage ponctuel des icônes de postes DÉJÀ EXISTANTS au moment de l'introduction du
+  // champ (retour utilisateur réel : « ajoute des icônes aux postes existants ») — un seul passage,
+  // jamais un mécanisme permanent de déduction depuis le nom (voir MACHINE_ICON_OPTIONS/« Icône de
+  // poste » ci-dessus, qui reste la règle pour tout usage courant) : même précédent déjà établi dans
+  // ce fichier pour un autre besoin, voir `machineNameLooksLikeSousTraitance`. Garde-fou
+  // `_iconesAutoAssignees` (même principe que `_zonesStockageMigrated`) : ne retente jamais après ce
+  // premier passage, y compris si un poste change de nom ensuite — une icône déjà choisie (par ce
+  // pré-remplissage ou à la main) n'est jamais écrasée.
+  if(!st._iconesAutoAssignees){
+    st.machines.forEach(m => { if(!m.icone){ const g = guessMachineIconFromName(m.nom); if(g) m.icone = g; } });
+    st._iconesAutoAssignees = true;
+  }
   if(!st.config.margeEcheanceJours && st.config.margeEcheanceJours !== 0) st.config.margeEcheanceJours = 0;
   if(st.config.archiveApresJours === undefined) st.config.archiveApresJours = 365; // 0 = archivage automatique désactivé
   if(st.config.archiveAutoActive === undefined) st.config.archiveAutoActive = Number(st.config.archiveApresJours) > 0; // préserve le comportement des états déjà enregistrés
@@ -9733,11 +9776,17 @@ function renderTempsProdPeriodControls(label){
 // par la vue superviseur (une carte par salarié, dépliable) et "Mon temps de production" (une seule
 // carte, jamais dépliable puisque le détail suit déjà juste en dessous sur cette page). Purement de
 // la composition : aucune donnée ni calcul propre, tout vient déjà de `row` (voir tempsProdRows).
+// Carte JAMAIS étendue dans la grille (voir CLAUDE.md « Refonte visuelle... ») — un item en
+// `grid-column:1/-1` au sein d'une grille `auto-fit` déstabilise le nombre de colonnes calculé pour
+// TOUTE la grille (pas seulement sa propre ligne), ce qui compactait à tort les autres cartes dès
+// qu'on dépliait une seule d'entre elles (bug réel signalé, capture d'écran à l'appui). Le détail
+// dépliable est donc rendu par un bloc séparé, HORS de cette grille (voir renderEmployeeDetailBlocks
+// ci-dessous) — la carte elle-même garde toujours la même taille/position, dépliée ou non.
 function renderEmployeeCard(row, opts){
   opts = opts || {};
   const expandable = !!opts.expandable;
   const expanded = !!opts.expanded;
-  return `<div class="tp-emp-card${expanded?' expanded':''}"${expanded?' style="grid-column:1/-1;"':''}>
+  return `<div class="tp-emp-card${expanded?' expanded':''}">
     <div class="tp-emp-head">
       ${renderAvatar(row.username)}
       <div class="tp-emp-name" title="${escapeHtml(row.username)}">${escapeHtml(row.username)}</div>
@@ -9757,8 +9806,18 @@ function renderEmployeeCard(row, opts){
       <div class="tp-mini-lbl" style="margin-bottom:3px;">Taux d'occupation</div>
       ${renderOccupationBar(row.tauxOccupation, true)}
     </div>
-    ${expanded ? `<div class="tp-emp-detail">${renderTempsProdDetail(row, false)}</div>` : ''}
   </div>`;
+}
+// Blocs de détail des salariés actuellement dépliés — rendus APRÈS `tp-employee-grid`, jamais
+// comme cellule de cette grille (voir le commentaire de renderEmployeeCard ci-dessus). Plusieurs
+// salariés peuvent être dépliés en même temps (`tempsProdExpanded` est un objet, pas une seule
+// valeur) : un bloc par salarié dépliée, dans l'ordre d'affichage de la grille.
+function renderEmployeeDetailBlocks(rows){
+  return rows.filter(r => !!tempsProdExpanded[r.uid]).map(r => `
+    <div class="tp-emp-detail-block">
+      <div class="tp-emp-detail-head">${renderAvatar(r.username)}<span class="tp-emp-detail-name">Détail — ${escapeHtml(r.username)}</span></div>
+      ${renderTempsProdDetail(r, false)}
+    </div>`).join('');
 }
 // Vue d'un opérateur (non superviseur) : uniquement les tâches de l'identité active sur ce poste
 // (compte connecté par défaut, ou la personne choisie dans le sélecteur de l'en-tête sur un poste
@@ -9827,6 +9886,7 @@ function renderTempsProdPage(){
     <div class="trend-section-title" style="margin-top:0;">Performance des salariés</div>
     ${sortBarHtml}
     <div class="tp-employee-grid">${cardsHtml || `<div class="footer-note" style="grid-column:1/-1;">Aucun salarié attendu ni aucune tâche sur cette période</div>`}</div>
+    ${renderEmployeeDetailBlocks(rows)}
     <div class="footer-note" style="text-align:left; padding-top:14px;">Le temps prévu vient de la durée théorique de chaque ligne (temps unitaire × quantité, ou durée d'un groupe fusionné) ; le temps passé du temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses. L'écart compare les deux sur les tâches déjà comptées dans la période, y compris en cours (le prévu couvre alors toute la quantité). Un ⚠️ signale une tâche ayant dépassé son temps prévu de plus de 50% (et d'au moins 15 minutes). La présence théorique est celle attendue par l'horaire de la personne (jours ouvrés hors fériés, moins ses congés approuvés) — l'application ne fait pas de pointage réel ; le taux d'occupation compare le temps passé sur des tâches suivies à cette présence théorique (peut dépasser 100% en cas d'heures supplémentaires ou de travail à plusieurs sur une même pièce). Un salarié attendu sur la période mais sans aucune tâche suivie apparaît quand même, à 0% — pour le repérer, pas parce que l'application sait s'il était réellement absent.</div>
   </div></section>
   ${renderMachineOccupationSection(start, end)}`;

@@ -2221,6 +2221,31 @@ même principe que `machine.couleur` (Paramètres → Postes), plutôt qu'un map
 - Couvert par `test_dashboard_atelier.js` : `computeMachineStatusSnapshot` expose `icone` (valeur
   choisie, ou `null` si aucune — jamais `undefined`), affichage effectif sur la carte du poste actif.
 
+**Pré-remplissage ponctuel des postes déjà existants (`guessMachineIconFromName`).** Retour
+utilisateur réel, juste après l'introduction du champ : « ajoute des icônes aux postes existants
+dans Paramètres » — sans mécanisme dédié, chaque poste déjà en place serait resté sans icône
+jusqu'à un réglage manuel un par un. Contrairement au principe posé ci-dessus (choix explicite,
+jamais déduit du nom, pour l'usage COURANT), un pré-remplissage **ponctuel** par mot-clé du nom
+reste raisonnable ici : même précédent déjà établi dans ce fichier pour un besoin différent
+(`machineNameLooksLikeSousTraitance`), et l'utilisateur garde de toute façon la main ensuite via le
+sélecteur — ce n'est qu'une valeur de départ, pas une déduction permanente.
+
+- `guessMachineIconFromName(nom)` — une liste ORDONNÉE de règles mot-clé → emoji (jet d'eau/H2O,
+  laser, découpe, soudure, chaudronnerie, pliage/presse, tournage, fraisage/usinage/Mazak/CN,
+  perçage, ajustage, fil, traitement de surface, sous-traitance, emballage/expédition), la première
+  qui correspond l'emporte ; `null` si aucune ne correspond — reste alors sans icône, à choisir à la
+  main comme n'importe quel autre poste.
+- Appelée **une seule fois**, dans `migrateState`, garde-fou `st._iconesAutoAssignees` (même
+  principe que `_zonesStockageMigrated`) : ne retente jamais après ce premier passage, y compris si
+  un poste est renommé ensuite ou si son icône est explicitement retirée ("Aucune") — un choix,
+  même l'absence de choix, n'est plus jamais reconsidéré automatiquement. Ne touche **jamais** un
+  poste ayant déjà une icône (posée par ce même passage ou choisie à la main) : seuls les postes
+  encore à `null` au moment de ce passage sont concernés.
+- Couvert par `test_machine_icon_guess.js` : correspondance des mots-clés courants, `null` sur un
+  nom sans correspondance, pré-remplissage effectif sur des postes existants sans icône, aucune
+  icône déjà posée n'est jamais écrasée (y compris sans rapport avec le nom), et un second appel à
+  `migrateState` (garde-fou déjà posé) ne redevine jamais une icône explicitement retirée entre-temps.
+
 ### Refonte visuelle de « ⏱ Temps de production » (cartes, avatars, barres de progression)
 
 Retour utilisateur réel, maquette externe fournie (capture d'écran) : la table à colonnes fixes
@@ -2246,10 +2271,10 @@ pourcentage, sans le coût de mise en œuvre supplémentaire d'un tracé circula
   seule fonction, jamais dupliquée) : avatar, barre prévu/passé + écart (`formatEcart`, inchangé),
   trois mini-tuiles (Tâches/Dépassements/Présence théo. — `Dépassements` surligné en rouge pâle si
   `nbOverrun>0`), et la grande barre `renderOccupationBar(taux, true)` déjà existante pour le taux
-  d'occupation. `opts.expandable` (vue superviseur uniquement) ajoute un bouton "▸/▾ Détail" qui
-  déplie `renderTempsProdDetail(row, false)` **dans la carte elle-même**, laquelle passe alors sur
-  toute la largeur de la grille (`grid-column:1/-1`) — pas de second point d'affichage du détail à
-  maintenir en dehors de la fonction déjà existante, seul l'endroit où elle s'insère change.
+  d'occupation. `opts.expandable` (vue superviseur uniquement) ajoute un bouton "▸/▾ Détail" — la
+  carte elle-même **ne s'étend jamais** dans la grille et ne contient jamais le détail (voir
+  « Cartes qui se compactaient au dépliage » ci-dessous, correctif ultérieur) : seule une classe
+  `.expanded` (bordure accentuée) la distingue visuellement.
 - **Vue superviseur** (`renderTempsProdPage`) — la table `<table>` triable par en-tête de colonne
   est remplacée par `tp-employee-grid` (une carte par salarié) précédée d'une barre de tri
   (`tp-sort-bar` : `<select>` + bouton ▲/▼ séparé). **Deux nouvelles fonctions plutôt que réutiliser
@@ -2275,6 +2300,44 @@ pourcentage, sans le coût de mise en œuvre supplémentaire d'un tracé circula
   production") avec les classes de cartes/icônes/couleurs de poste attendues,
   `setTempsProdSortKey`/`toggleTempsProdSortDir` qui ne touchent chacune qu'un seul des deux champs
   de `tempsProdSort`.
+
+#### Cartes qui se compactaient au dépliage d'une seule d'entre elles (bug réel corrigé)
+
+Retour utilisateur réel, capture d'écran à l'appui : déplier le détail d'un seul salarié (bouton
+"▸ Détail") faisait visiblement rétrécir/compacter les AUTRES cartes de la grille, restées
+pourtant repliées — demande explicite : « peux-tu figer ou élargir les cases pour rester cohérent
+et lisible ? ».
+
+- **Cause : `grid-column:1/-1` sur un item d'une grille `auto-fit`.** La version d'origine de
+  `renderEmployeeCard` faisait passer la carte dépliée sur toute la largeur de `.tp-employee-grid`
+  (`grid-template-columns:repeat(auto-fit, minmax(240px, 1fr))`) en lui posant `grid-column:1/-1`
+  pour y loger le détail. Piège CSS classique de `auto-fit` : le nombre de colonnes n'est PAS figé
+  par carte/ligne, il est recalculé pour TOUTE la grille dès qu'un item change de span — un item
+  s'étendant sur `1/-1` peut forcer la grille à considérer davantage de colonnes "occupées" qu'il
+  n'en fallait pour les seules cartes à une colonne, redistribuant l'espace disponible entre PLUS de
+  colonnes qu'avant et rétrécissant donc les cartes qui n'occupent, elles, toujours qu'une seule
+  colonne — sans qu'aucune de leurs propres propriétés n'ait changé. Une grille `auto-fit` n'est
+  jamais indépendante par ligne : un item qui s'étend perturbe le calcul pour l'ensemble.
+- **Corrigé en sortant le détail de la grille, pas en essayant de la stabiliser.** `renderEmployeeCard`
+  ne pose plus jamais `grid-column` ni n'inclut le détail : une carte dépliée garde EXACTEMENT la
+  même taille/position que repliée, seule une classe `.expanded` (bordure `--accent`) la distingue.
+  `renderEmployeeDetailBlocks(rows)` — nouvelle fonction, rendue **après** `.tp-employee-grid` (donc
+  hors de cette grille, dans le flux normal de la page) : un bloc `.tp-emp-detail-block` par salarié
+  actuellement déplié (`tempsProdExpanded` reste un objet `{[userId]:true}`, plusieurs salariés
+  peuvent donc être dépliés simultanément, chacun son propre bloc), avec un petit en-tête (avatar +
+  « Détail — {nom} ») pour qu'on sache de qui il s'agit une fois sorti du contexte de la carte.
+  `renderTempsProdPage()` appelle `renderEmployeeDetailBlocks(rows)` juste après la grille — la
+  grille de cartes ne bouge donc plus jamais, quel que soit ce qui est déplié par ailleurs.
+- Réflexe : ne jamais faire dépendre le layout d'un item de grille `auto-fit`/`auto-fill` de son
+  propre état (déplié/replié, sélectionné...) via `grid-column` — le calcul du nombre de colonnes
+  n'est pas local à une ligne, un item qui s'étend peut redimensionner des cartes sans aucun rapport
+  ailleurs dans la même grille. Préférer sortir le contenu variable de la grille elle-même (bloc
+  séparé après/autour) plutôt que de faire varier le span d'un item en son sein.
+- Couvert par `test_temps_prod_cards.js` (assertions étendues) : `renderEmployeeCard` ne pose plus
+  jamais `grid-column` (repliée comme dépliée) et ne contient jamais le détail ; `renderEmployeeDetailBlocks`
+  produit un bloc par salarié déplié (aucun bloc si personne n'est déplié, plusieurs blocs si
+  plusieurs salariés le sont simultanément) ; `renderTempsProdPage()` avec une carte dépliée ne
+  contient toujours aucun `grid-column` nulle part dans le HTML produit.
 
 ### Synthèse annuelle en camembert
 
