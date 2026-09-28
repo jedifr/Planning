@@ -169,6 +169,10 @@
   }
   .machine-color-input::-webkit-color-swatch-wrapper{padding:2px;}
   .machine-color-input::-webkit-color-swatch{border:none; border-radius:2px;}
+  .machine-icon-select{
+    width:40px; flex-shrink:0; font-size:15px; padding:1px 1px; border:1px solid var(--line);
+    border-radius:3px; background:var(--panel); cursor:pointer; text-align:center;
+  }
   .machine-card input.name-input{font-family:'Oswald',sans-serif; font-weight:600; font-size:13.5px; background:transparent; border:none; padding:2px 0; letter-spacing:0.3px;}
   .machine-card input.name-input:focus{border-bottom:1px solid var(--blue);}
   .machine-card .dispo-label{font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:3px;}
@@ -539,6 +543,7 @@
   }
   .dash-machine-card .dmc-top{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;}
   .dash-machine-card .dmc-nom{font-family:'Oswald',sans-serif; font-size:12.5px; font-weight:600; letter-spacing:0.4px; text-transform:uppercase; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .dash-machine-card .dmc-icon{font-size:13px;}
   .dash-machine-card .dmc-badge{font-size:9.5px; font-weight:700; letter-spacing:0.4px; padding:2px 7px; border-radius:10px; flex:none; text-transform:uppercase;}
   .dash-machine-card .dmc-badge.st-actif{background:var(--green); color:#fff;}
   .dash-machine-card .dmc-badge.st-pause{background:var(--amber); color:#fff;}
@@ -1002,8 +1007,33 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.58.0';
+const APP_VERSION = '1.59.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
+// Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
+// qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
+// même symbole) et garantit un rendu cohérent partout où l'icône est réutilisée (Paramètres, Vue
+// d'ensemble...). Choix explicite par poste, jamais déduit du nom (voir migrateState) — l'appli n'a
+// aucune notion de "type" de machine dans son modèle de données.
+const MACHINE_ICON_OPTIONS = [
+  { value:'', label:'Aucune' },
+  { value:'💧', label:'Jet d’eau' },
+  { value:'🔥', label:'Découpe thermique / Laser' },
+  { value:'✂️', label:'Découpe' },
+  { value:'⚡', label:'Soudure' },
+  { value:'🔨', label:'Chaudronnerie' },
+  { value:'🗜️', label:'Pliage / Presse' },
+  { value:'🌀', label:'Tournage' },
+  { value:'⚙️', label:'Usinage / Fraisage' },
+  { value:'🕳️', label:'Perçage' },
+  { value:'📐', label:'Ajustage / Précision' },
+  { value:'🧵', label:'Fil' },
+  { value:'🎨', label:'Traitement de surface' },
+  { value:'🧪', label:'Traitement chimique' },
+  { value:'🏭', label:'Sous-traitance' },
+  { value:'📦', label:'Emballage / Stockage' },
+  { value:'🛠️', label:'Outillage général' },
+  { value:'🔩', label:'Fixation / Assemblage' }
+];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
 // DEFAULT_STORAGE_ZONES reprend l'ancienne configuration figée (3 allées de 16 emplacements) comme
@@ -1649,6 +1679,10 @@ function migrateState(st){
     // d'œuvre) de ce poste, en euros. `0` = non renseigné : traité comme "coût non suivi pour ce
     // poste", jamais confondu avec "production gratuite" à l'affichage (voir pieceCoutEstime/Reel).
     if(m.tauxHoraireH === undefined) m.tauxHoraireH = 0;
+    // Icône de poste (voir MACHINE_ICON_OPTIONS/CLAUDE.md « Icône de poste ») — choix EXPLICITE par
+    // poste (Paramètres → Postes), jamais déduit du nom : l'appli n'a aucune notion de "type" de
+    // machine, deviner depuis l'intitulé serait fragile. `null` = aucune icône choisie.
+    if(m.icone === undefined) m.icone = null;
   });
   if(!st.config.margeEcheanceJours && st.config.margeEcheanceJours !== 0) st.config.margeEcheanceJours = 0;
   if(st.config.archiveApresJours === undefined) st.config.archiveApresJours = 365; // 0 = archivage automatique désactivé
@@ -8494,7 +8528,7 @@ function computeMachineStatusSnapshot(st){
       else if(o.statut === 'en_pause' && statut !== 'actif'){ statut = 'pause'; if(!ctx) ctx = { kind:'pause', c, o }; }
     }));
     return {
-      machineId: m.id, machineNom: m.nom, couleur: m.couleur || null, statut,
+      machineId: m.id, machineNom: m.nom, couleur: m.couleur || null, icone: m.icone || null, statut,
       commandeNom: ctx ? ctx.c.nom : null,
       refClient: ctx ? (ctx.c.refClient || null) : null,
       pieceLabel: ctx ? [ctx.o.piece, ctx.o.etape].filter(Boolean).join(' / ') : null
@@ -8806,7 +8840,7 @@ function renderDashboardPage(){
       : `<div class="dmc-empty">—</div>`;
     return `<div class="dash-machine-card st-${m.statut}" ${borderStyle}>
       <div class="dmc-top">
-        <div class="dmc-nom" title="${escapeHtml(m.machineNom)}">${escapeHtml(m.machineNom)}</div>
+        <div class="dmc-nom" title="${escapeHtml(m.machineNom)}">${m.icone ? `<span class="dmc-icon">${m.icone}</span> ` : ''}${escapeHtml(m.machineNom)}</div>
         <span class="dmc-badge st-${m.statut}">${badgeLabel[m.statut]}</span>
       </div>
       ${body}
@@ -10243,6 +10277,9 @@ function renderSettingsModal(){
     <div class="machine-card">
       <div class="row1">
         <input type="color" class="machine-color-input" value="${m.couleur || MACHINE_COLORS[i%MACHINE_COLORS.length]}" data-action="update-machine-color" data-id="${m.id}" title="Couleur de ce poste">
+        <select class="machine-icon-select" data-action="update-machine-icone" data-id="${m.id}" title="Icône de ce poste (facultatif)">
+          ${MACHINE_ICON_OPTIONS.map(o => `<option value="${o.value}" ${(m.icone||'')===o.value?'selected':''}>${o.value ? o.value+' ' : ''}${escapeHtml(o.label)}</option>`).join('')}
+        </select>
         <input class="name-input" value="${escapeHtml(m.nom)}" data-action="update-machine-name" data-id="${m.id}">
         <button class="danger-ghost icon-btn" data-action="remove-machine" data-id="${m.id}" title="Supprimer ce poste">✕</button>
       </div>
@@ -12623,6 +12660,7 @@ function dispatchChangeAction(el, action){
     case 'update-machine-name': updateMachine(el.dataset.id, 'nom', el.value); break;
     case 'update-machine-dispo': updateMachine(el.dataset.id, 'dispo', el.value); break;
     case 'update-machine-color': updateMachine(el.dataset.id, 'couleur', el.value); break;
+    case 'update-machine-icone': updateMachine(el.dataset.id, 'icone', el.value || null); break;
     case 'update-allee-code': updateStorageAllee(el.dataset.id, 'code', el.value); break;
     case 'update-allee-nom': updateStorageAllee(el.dataset.id, 'nom', el.value); break;
     case 'update-allee-nb': updateStorageAllee(el.dataset.id, 'nbEmplacements', el.value); break;

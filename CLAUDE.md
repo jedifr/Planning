@@ -2190,6 +2190,36 @@ production/Risques/Pointages/Historique — voir « Planning sur téléphone »)
   quand les deux coexistent sur le même poste, une commande archivée n'occupe jamais aucun poste,
   composition de `renderDashboardPage()` sans erreur.
 
+### Icône de poste (`machines[].icone`)
+
+Retour utilisateur réel, après avoir vu une maquette externe avec une icône par machine (Mazak,
+Laser, Jet d'eau...) : « on pourrait imaginer une bibliothèque d'icônes de machines ». Comme pour
+la couleur de poste (voir « Refonte visuelle » ci-dessus), une déduction automatique depuis le nom
+(`"Laser 2D"` → icône laser) aurait été fragile — l'application n'a aucune notion de "type" de
+machine dans son modèle de données, seulement un nom libre. **Choix explicite par poste**, sur le
+même principe que `machine.couleur` (Paramètres → Postes), plutôt qu'un mapping nom→icône inventé.
+
+- `MACHINE_ICON_OPTIONS` — liste **fermée et curatée** (une vingtaine d'emojis courants d'un atelier
+  de métallerie/découpe : jet d'eau, laser, soudure, chaudronnerie, pliage, tournage, usinage,
+  perçage, ajustage, traitement de surface, sous-traitance...), jamais un champ texte libre où
+  l'utilisateur taperait n'importe quel émoji — évite les doublons visuels (deux variantes du même
+  symbole choisies sur deux postes différents) et garantit un rendu cohérent partout où l'icône est
+  réutilisée. `machines[].icone` (chaîne — l'emoji lui-même, comme le reste de l'appli qui utilise
+  déjà des emojis comme icônes partout, ex. `📊`/`🏖`/`⏱` — pas de bibliothèque d'icônes SVG/police à
+  charger) ; `null` = aucune icône choisie (valeur de migration, `migrateState`).
+- Sélecteur (`<select class="machine-icon-select">`, `data-action="update-machine-icone"`) dans
+  Paramètres → Postes, juste à côté du sélecteur de couleur déjà existant — réutilise le setter
+  générique déjà en place `updateMachine(id, field, value)` (`m[field] = value; commit();`), comme
+  `update-machine-color`/`update-machine-name`, plutôt qu'un nouveau setter dédié.
+- **Affichée pour l'instant sur la Vue d'ensemble atelier** (`dash-machine-card`, à côté du nom du
+  poste — `computeMachineStatusSnapshot` expose désormais aussi `icone`) : c'est la page qui vient
+  d'introduire une grille de cartes par poste, l'endroit le plus immédiatement profitable pour cette
+  fonctionnalité. Absente si `icone` vaut `null` (pas de case vide ni de symbole de repli) — un poste
+  sans icône choisie garde exactement le même rendu qu'avant cette fonctionnalité. Pas encore
+  reportée ailleurs (Kanban, tableau des tâches...) — à étendre si le besoin se confirme.
+- Couvert par `test_dashboard_atelier.js` : `computeMachineStatusSnapshot` expose `icone` (valeur
+  choisie, ou `null` si aucune — jamais `undefined`), affichage effectif sur la carte du poste actif.
+
 ### Synthèse annuelle en camembert
 
 Retour utilisateur réel : « les graph barre de l'onglet Historique/Tendances pourraient être
