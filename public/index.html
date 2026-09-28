@@ -961,7 +961,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.56.1';
+const APP_VERSION = '1.57.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1035,11 +1035,26 @@ function saveSettingsUIPrefs(){
 // réinitialisait silencieusement au moindre vidage de cache (retour utilisateur réel) — ici, comme
 // pour la page d'accueil par défaut, la personne retrouve son ordre quel que soit le poste depuis
 // lequel elle se connecte.
-const PAGE_MENU_KEYS = ['tempsProd', 'zones', 'risques', 'pointages', 'historique', 'dashboard'];
+const PAGE_MENU_KEYS = ['conges', 'tempsProd', 'zones', 'risques', 'pointages', 'historique', 'dashboard'];
 const PAGE_MENU_LABELS = {
-  tempsProd: '⏱ Temps de production', zones: '📍 Zones de stockage', risques: '⚠️ Risques de retard',
+  conges: '🏖 Congés', tempsProd: '⏱ Temps de production', zones: '📍 Zones de stockage', risques: '⚠️ Risques de retard',
   pointages: '🕘 Pointages', historique: '📈 Historique', dashboard: "📊 Vue d'ensemble"
 };
+// Congés était à l'origine épinglée en dur, indissociable de Planning — retour utilisateur réel,
+// question directe : « comment faire pour mettre Congés dans Plus ? ». Rejoint désormais ce même
+// mécanisme, comme n'importe quelle autre page, mais épinglée par DÉFAUT (voir
+// `getUserPinnedMenuPages`) pour ne rien changer au comportement de quiconque n'y touche pas.
+const DEFAULT_PINNED_PAGE_KEYS = ['conges'];
+// Point unique de visibilité d'une clé du menu, quelle qu'en soit la raison : `pointages`/
+// `historique`/`dashboard` sont réservées à `canSupervise()`, `conges` au module Congés actif
+// (`state.config.modules.conges`) — toutes les autres sont toujours visibles. Centralisé ici pour
+// que `getUserPageMenuOrder`/`moveUserPageMenuItem`/`getUserPinnedMenuPages`/la liste de Paramètres
+// → Mon compte appliquent tous la MÊME règle, jamais une copie légèrement différente de l'un à l'autre.
+function isPageMenuKeyVisible(key){
+  if(key === 'conges') return !!(state.config.modules && state.config.modules.conges);
+  if(key === 'pointages' || key === 'historique' || key === 'dashboard') return canSupervise();
+  return true;
+}
 // Préférence invalide (ancienne clé localStorage jamais migrée, longueur différente, clé
 // inconnue/manquante) silencieusement ignorée au profit de l'ordre par défaut — même garde-fou
 // qu'avant, appliqué maintenant à la lecture de `state` plutôt qu'à celle du `localStorage`.
@@ -1050,17 +1065,16 @@ function getUserPageMenuOrder(userId){
   }
   return PAGE_MENU_KEYS;
 }
-// Déplace `key` parmi les seules clés VISIBLES pour ce rôle (`pointages`/`historique`/`dashboard`
-// masquées pour un non-superviseur, voir CLAUDE.md « Navigation ») — la pop-up "Mon compte" n'affiche
-// que ce sous-ensemble à un employé, et les flèches ▲/▼ doivent donc échanger avec le voisin VISIBLE
-// suivant, jamais avec une clé masquée occupant la position adjacente dans le tableau complet (sinon
-// le clic n'aurait silencieusement aucun effet visible pour cette personne). Les clés masquées
-// gardent leur position ABSOLUE d'origine dans le tableau complet stocké — seul l'ordre relatif des
-// clés visibles entre elles change.
+// Déplace `key` parmi les seules clés VISIBLES pour ce rôle/cette config (voir `isPageMenuKeyVisible`)
+// — la pop-up "Mon compte" n'affiche que ce sous-ensemble, et les flèches ▲/▼ doivent donc échanger
+// avec le voisin VISIBLE suivant, jamais avec une clé masquée occupant la position adjacente dans le
+// tableau complet (sinon le clic n'aurait silencieusement aucun effet visible pour cette personne).
+// Les clés masquées gardent leur position ABSOLUE d'origine dans le tableau complet stocké — seul
+// l'ordre relatif des clés visibles entre elles change.
 function moveUserPageMenuItem(userId, key, dir){
   const uid_ = String(userId);
   const full = getUserPageMenuOrder(uid_);
-  const visible = full.filter(k => k!=='pointages' && k!=='historique' && k!=='dashboard' || canSupervise());
+  const visible = full.filter(k => isPageMenuKeyVisible(k));
   const idx = visible.indexOf(key);
   const newIdx = idx + dir;
   if(idx === -1 || newIdx < 0 || newIdx >= visible.length) return;
@@ -1072,22 +1086,33 @@ function moveUserPageMenuItem(userId, key, dir){
   state.userPageMenuOrder[uid_] = arr;
   commit();
 }
-// Épingler une page en accès direct (à côté de Planning/Congés) plutôt que dans "Plus ▾" — retour
+// Épingler une page en accès direct (à côté de Planning) plutôt que dans "Plus ▾" — retour
 // utilisateur réel, question directe : « comment faire pour avoir Zone de stockage en dehors de
 // Plus ? ». Même principe "propre à la personne" que l'ordre ci-dessus : `state.userPinnedMenuPages
 // [userId]`, sous-ensemble de `PAGE_MENU_KEYS`, jamais une préférence de navigateur.
 function getUserPinnedMenuPages(userId){
   const stored = (state.userPinnedMenuPages || {})[String(userId)];
-  if(!Array.isArray(stored)) return [];
-  // Une page masquée pour le rôle courant (canSupervise()) ne doit jamais s'afficher comme bouton
-  // direct cassé — filtrée ici, exactement comme getUserPageMenuOrder/moveUserPageMenuItem le font
-  // déjà pour la visibilité par rôle.
-  return stored.filter(k => PAGE_MENU_KEYS.includes(k) && (k!=='pointages' && k!=='historique' && k!=='dashboard' || canSupervise()));
+  // Rien d'enregistré pour cette personne (jamais touché aux épingles) : `conges` est épinglée par
+  // défaut (voir DEFAULT_PINNED_PAGE_KEYS) — dès qu'un tableau existe, même vide (tout dépinglé
+  // explicitement), il fait foi tel quel.
+  const base = Array.isArray(stored) ? stored : DEFAULT_PINNED_PAGE_KEYS;
+  // Une page masquée pour le rôle/la config courante ne doit jamais s'afficher comme bouton direct
+  // cassé — filtrée ici, exactement comme getUserPageMenuOrder/moveUserPageMenuItem le font déjà.
+  return base.filter(k => PAGE_MENU_KEYS.includes(k) && isPageMenuKeyVisible(k));
 }
 function toggleUserPinnedMenuPage(userId, key){
   const uid_ = String(userId);
   if(!state.userPinnedMenuPages) state.userPinnedMenuPages = {};
-  const current = Array.isArray(state.userPinnedMenuPages[uid_]) ? state.userPinnedMenuPages[uid_] : [];
+  const stored = state.userPinnedMenuPages[uid_];
+  // Matérialise le tableau complet des épingles par DÉFAUT (DEFAULT_PINNED_PAGE_KEYS, jamais
+  // filtré par visibilité — même réflexe que `toggleKanbanMachineFilter`, voir CLAUDE.md) au premier
+  // basculement pour cette personne, sinon `toggleUserPinnedMenuPage('op1','zones')` sur un compte
+  // n'ayant jamais rien enregistré perdrait silencieusement Congés (épinglée par défaut) au lieu de
+  // simplement lui ajouter Zones de stockage. Repartir de `getUserPinnedMenuPages` (déjà filtré par
+  // rôle/config) casserait au contraire une page épinglée mais temporairement masquée (ex. un
+  // superviseur rétrogradé) — elle doit rester dans le tableau brut, prête à réapparaître si le rôle
+  // est restauré, jamais effacée par un simple basculement d'une AUTRE page.
+  const current = Array.isArray(stored) ? stored : DEFAULT_PINNED_PAGE_KEYS;
   state.userPinnedMenuPages[uid_] = current.includes(key) ? current.filter(k => k!==key) : [...current, key];
   commit();
 }
@@ -1595,7 +1620,7 @@ function migrateState(st){
   if(!st.userDefaultPage) st.userDefaultPage = {}; // { [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques'|'pointages'|'historique'|'dashboard' } — page affichée à la connexion, voir applyUserDefaultPageOnStart
   if(!st.userDefaultPlanningView) st.userDefaultPlanningView = {}; // { [userId]: 'jour'|'semaine'|'mois'|'annee'|'kanban'|'liste' } — vue du planning appliquée à la connexion quand la page d'accueil est Planning, voir applyUserDefaultPageOnStart
   if(!st.userPageMenuOrder) st.userPageMenuOrder = {}; // { [userId]: PAGE_MENU_KEYS réordonnée } — ordre du menu "Plus ▾" de l'en-tête, propre à la personne (voir CLAUDE.md « Navigation »)
-  if(!st.userPinnedMenuPages) st.userPinnedMenuPages = {}; // { [userId]: string[] } — sous-ensemble de PAGE_MENU_KEYS épinglé en accès direct à côté de Planning/Congés, au lieu de rester dans "Plus ▾" (voir CLAUDE.md « Navigation »)
+  if(!st.userPinnedMenuPages) st.userPinnedMenuPages = {}; // { [userId]: string[] } — sous-ensemble de PAGE_MENU_KEYS épinglé en accès direct à côté de Planning, au lieu de rester dans "Plus ▾" (voir CLAUDE.md « Navigation ») — absence d'entrée pour une personne = épingles par défaut (getUserPinnedMenuPages, DEFAULT_PINNED_PAGE_KEYS = Congés), jamais "rien d'épinglé"
   if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
   Object.keys(st.userLunch).forEach(uid_ => {
     const lunch = st.userLunch[uid_];
@@ -6920,15 +6945,19 @@ function renderHeader(){
       ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
       <button class="page-switch-btn ${currentPage==='zones'?'active':''}" data-action="goto-zones">📍 Zones de stockage</button>
     </div>` : (() => {
-      // Menu "Plus ▾" (voir CLAUDE.md « Navigation ») : regroupe, par défaut, tout sauf Planning/
-      // Congés, qui restent seuls en accès direct — désencombre la barre sur bureau, sans rien
-      // retirer côté mobile (déjà traité ci-dessus). Ordre configurable par personne
-      // (state.userPageMenuOrder, Paramètres → Mon compte), synchronisé comme userDefaultPage/
-      // userDefaultPlanningView. N'importe laquelle de ces pages peut en plus être ÉPINGLÉE
-      // (state.userPinnedMenuPages, même page Paramètres → Mon compte) pour rejoindre Planning/
-      // Congés en accès direct plutôt que rester dans "Plus" — retour utilisateur réel, question
-      // directe : « comment faire pour avoir Zone de stockage en dehors de Plus ? ».
+      // Menu "Plus ▾" (voir CLAUDE.md « Navigation ») : regroupe, par défaut, tout sauf Planning
+      // (seule page qui reste hors de ce système — l'ancrage permanent de l'appli) — désencombre la
+      // barre sur bureau, sans rien retirer côté mobile (déjà traité ci-dessus). Ordre configurable
+      // par personne (state.userPageMenuOrder, Paramètres → Mon compte), synchronisé comme
+      // userDefaultPage/userDefaultPlanningView. N'importe laquelle de ces pages peut en plus être
+      // ÉPINGLÉE (state.userPinnedMenuPages, même page Paramètres → Mon compte) pour rejoindre
+      // Planning en accès direct plutôt que rester dans "Plus" — retour utilisateur réel, question
+      // directe : « comment faire pour avoir Zone de stockage en dehors de Plus ? ». Congés (épinglée
+      // par DÉFAUT, voir DEFAULT_PINNED_PAGE_KEYS) fait partie de ce même système depuis un second
+      // retour utilisateur, symétrique : « comment faire pour mettre Congés DANS Plus ? » — plus
+      // besoin de la coder en dur en accès direct pour ça.
       const pageMenuDefs = {
+        conges: congesActif ? `🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}` : null,
         tempsProd: `⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}`,
         zones: '📍 Zones de stockage',
         risques: `⚠️ Risques de retard${nbRisque>0?` <span class="pending-count-badge">${nbRisque}</span>`:''}`,
@@ -6936,29 +6965,31 @@ function renderHeader(){
         historique: canSupervise() ? '📈 Historique' : null,
         dashboard: canSupervise() ? "📊 Vue d'ensemble" : null
       };
-      const gotoAction = { tempsProd:'goto-temps-prod', zones:'goto-zones', risques:'goto-risques', pointages:'goto-pointages', historique:'goto-historique', dashboard:'goto-dashboard' };
+      const gotoAction = { conges:'goto-conges', tempsProd:'goto-temps-prod', zones:'goto-zones', risques:'goto-risques', pointages:'goto-pointages', historique:'goto-historique', dashboard:'goto-dashboard' };
       const uidForMenu = currentUser ? currentUser.id : '';
       const pageMenuOrder = getUserPageMenuOrder(uidForMenu);
       const pinned = getUserPinnedMenuPages(uidForMenu);
-      // Boutons épinglés : rendus EXACTEMENT comme Planning/Congés (même classe `.page-switch-btn`,
-      // pas `.small`/`.dd-page-item`) — ils rejoignent l'accès direct, pas la liste compacte du
-      // panneau déroulant. Ordre respecté via `pageMenuOrder`, pas l'ordre d'épinglage.
+      // Boutons épinglés : rendus EXACTEMENT comme Planning (même classe `.page-switch-btn`, pas
+      // `.small`/`.dd-page-item`) — ils rejoignent l'accès direct, pas la liste compacte du panneau
+      // déroulant. Ordre respecté via `pageMenuOrder`, pas l'ordre d'épinglage.
       const pinnedButtons = pageMenuOrder.filter(k => pinned.includes(k) && pageMenuDefs[k] != null).map(k => `
       <button class="page-switch-btn ${currentPage===k?'active':''}" data-action="${gotoAction[k]}">${pageMenuDefs[k]}</button>`).join('');
       const remaining = pageMenuOrder.filter(k => !pinned.includes(k) && pageMenuDefs[k] != null);
       const items = remaining.map(k => `
         <button class="page-switch-btn small dd-page-item ${currentPage===k?'active':''}" data-action="${gotoAction[k]}">${pageMenuDefs[k]}</button>`).join('');
       // "Plus" disparaît entièrement s'il ne reste plus rien dedans (tout épinglé) — jamais un menu
-      // déroulant vide affiché pour la forme.
+      // déroulant vide affiché pour la forme. Les deux badges (risques, congés en attente) restent
+      // visibles sur le déclencheur "Plus" lui-même tant que la page correspondante y est encore —
+      // même principe pour les deux, pas seulement pour risques.
+      const plusBadges = `${(nbRisque>0 && remaining.includes('risques'))?` <span class="pending-count-badge">${nbRisque}</span>`:''}${(canSupervise()&&pendingCount>0 && remaining.includes('conges'))?` <span class="pending-count-badge">${pendingCount}</span>`:''}`;
       const plusMenu = remaining.length === 0 ? '' : `
       <details class="dd-menu" data-dd-key="page-plus" ontoggle="openMiniDropdowns['page-plus']=this.open" ${openMiniDropdowns['page-plus']?'open':''}>
-        <summary class="page-switch-btn ${remaining.includes(currentPage)?'active':''}">Plus${(nbRisque>0 && remaining.includes('risques'))?` <span class="pending-count-badge">${nbRisque}</span>`:''} ▾</summary>
+        <summary class="page-switch-btn ${remaining.includes(currentPage)?'active':''}">Plus${plusBadges} ▾</summary>
         <div class="dd-panel dd-page-panel">${items}</div>
       </details>`;
       return `
     <div class="page-switcher">
       <button class="page-switch-btn ${currentPage==='planning'?'active':''}" data-action="goto-planning">Planning</button>
-      ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
       ${pinnedButtons}
       ${plusMenu}
     </div>`;
@@ -10293,7 +10324,7 @@ function renderSettingsModal(){
       <div class="footer-note" style="text-align:left; padding-bottom:8px;">Planning et Congés restent toujours en accès direct, à côté du menu. Pour chacune des pages ci-dessous : « ▲/▼ » change son ordre à l'intérieur de « Plus ▾ » (ou parmi les pages épinglées, voir ci-dessous) ; « 📌 Épingler » la fait rejoindre Planning/Congés en accès direct, sans passer par « Plus ▾ ». Propre à VOTRE compte : vous retrouvez ces choix identiques quel que soit le poste depuis lequel vous vous connectez, jamais réinitialisés par un vidage de cache navigateur.</div>
       ${(() => {
         const uid_ = currentUser ? currentUser.id : '';
-        const order = getUserPageMenuOrder(uid_).filter(key => key!=='pointages' && key!=='historique' && key!=='dashboard' || canSupervise());
+        const order = getUserPageMenuOrder(uid_).filter(key => isPageMenuKeyVisible(key));
         const pinned = getUserPinnedMenuPages(uid_);
         return order.map((key, idx) => `
       <div class="page-menu-item">
@@ -11205,6 +11236,21 @@ function renderKanbanView(schedule){
     allOps.push({ ...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin, zoneStockage:c.zoneStockage });
   }));
   allOps = allOps.filter(o => matchesSearch({ nom:o.commandeNom, pieces:[o] }, searchQuery));
+  // Isoler une commande (selectedCommandeId — clic sur un occupant de casier "Zones de stockage",
+  // une commande liée depuis "Risques de retard"/"Temps de production"...) doit RESTREINDRE le
+  // Kanban à cette seule commande, exactement comme `renderCommandes` le fait déjà pour "Tâches en
+  // cours"/"Tâches terminées" (`schedule.filter(c => ... && (!selectedCommandeId ||
+  // c.id===selectedCommandeId))`) — pas seulement la surligner (`hlClsK`/`spotlight`) au milieu de
+  // toutes les autres. Bug réel signalé : un simple surlignage laissait les pièces "À faire"/
+  // "Terminée" de la commande isolée noyées (voire coupées par la fenêtre de récence/la limite
+  // d'affichage ci-dessous) au milieu de toutes les autres commandes du Kanban — retour utilisateur
+  // direct après un premier correctif insuffisant (neutraliser doneCutoff/kanbanDoneLimit ne suffit
+  // pas si les pièces restent simplement diluées parmi des dizaines d'autres cartes) : « le plus
+  // simple serait de ne pas afficher les autres commandes ». Recherche texte (`matchesSearch`
+  // ci-dessus) et isolement (`selectedCommandeId`) sont mutuellement exclusifs en pratique (poser
+  // l'un efface l'autre, voir `toggleIsolateCommande`/le dispatch de la recherche) — aucun risque de
+  // conflit entre les deux filtres.
+  if(selectedCommandeId) allOps = allOps.filter(o => o.cid === selectedCommandeId);
   // Même neutralisation que doneCutoff/effectiveKanbanDoneLimit ci-dessous pendant une recherche ou
   // un isolement (highlightActive()) : le filtre "Postes affichés" ne doit pas non plus pouvoir
   // masquer le résultat trouvé/isolé si un poste avait été décoché lors d'un tri précédent.
@@ -11218,14 +11264,15 @@ function renderKanbanView(schedule){
     return kanbanMachineFilters.has(o.machineId);
   });
 
-  // Même principe que renderCommandes (voir CLAUDE.md « Recherche/isolement de commande — rien ne
-  // doit masquer un résultat trouvé ») — jusqu'ici jamais étendu au Kanban (bug réel signalé :
-  // isoler une commande depuis "Zones de stockage" mettait bien en évidence ses tâches en vue
-  // Semaine, mais ses pièces "À faire"/"Terminée" restaient invisibles en Kanban, coupées par la
-  // fenêtre de récence et la limite d'affichage ci-dessous avant même d'atteindre le surlignage).
-  // Pendant une recherche OU un isolement, les deux sont donc entièrement neutralisées — jamais une
-  // exception par carte, pour rester cohérent avec `effectiveDueFilterRange()`/le `doneCutoff` déjà
-  // neutralisé de la même façon dans renderCommandes.
+  // Filet de sécurité complémentaire au filtre par cid ci-dessus, pour une RECHERCHE texte (qui ne
+  // restreint pas allOps à une seule commande — plusieurs commandes peuvent matcher) : même principe
+  // que renderCommandes (voir CLAUDE.md « Recherche/isolement de commande — rien ne doit masquer un
+  // résultat trouvé »), jamais neutralisé pour le Kanban avant ce correctif. Sans lui, une pièce
+  // "Terminée" trouvée par la recherche pourrait encore être coupée par la fenêtre de récence, ou
+  // une pièce "À faire" par la limite d'affichage, avant même d'atteindre le surlignage — pendant
+  // une recherche OU un isolement, les deux sont donc entièrement neutralisées, jamais une exception
+  // par carte, cohérent avec `effectiveDueFilterRange()`/le `doneCutoff` déjà neutralisé de la même
+  // façon dans renderCommandes.
   const doneCutoff = highlightActive() ? null : doneFilterCutoff(doneFilterRange);
   const effectiveKanbanDoneLimit = highlightActive() ? Infinity : kanbanDoneLimit;
   // colObjs plutôt qu'un HTML pré-assemblé par colonne : le contenu de chaque colonne (cartes,

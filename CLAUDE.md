@@ -1604,25 +1604,48 @@ il fallait descendre les ascenseurs à la main pour la retrouver.
   ci-dessus amène bien la carte à l'écran une fois qu'elle existe dans le DOM, mais en vue Kanban
   elle pouvait ne JAMAIS y exister : isoler, depuis « Zones de stockage », une commande dont des
   pièces sont `termine`/`a_faire` fonctionnait correctement en vues Jour/Semaine/Mois/Année/Liste,
-  mais ces mêmes pièces restaient invisibles une fois basculé sur la vue Kanban — coupées par la
-  fenêtre de récence (`doneCutoff`/`doneFilterRange`, colonne "Terminée"), la limite d'affichage
-  (`kanbanDoneLimit`, colonnes "À faire" ET "Terminée"), et le filtre "Postes affichés"
-  (`kanbanMachineFilters`) laissés actifs d'un tri précédent — trois réglages que `renderCommandes`
-  neutralise déjà pendant `highlightActive()` (voir `effectiveDueFilterRange()`/le `doneCutoff`
-  local de `renderCommandes`), mais que `renderKanbanView` n'avait jamais repris pour lui-même.
-  Corrigé en neutralisant les trois de la même façon, **pendant tout `highlightActive()`** (recherche
-  OU isolement, jamais une exception par carte) : `effectiveKanbanDoneLimit = highlightActive() ?
-  Infinity : kanbanDoneLimit`, `doneCutoff = highlightActive() ? null : doneFilterCutoff(...)`, et
-  `kanbanMachineFilters` lui-même ignoré (`if(kanbanMachineFilters && !highlightActive())`) — les
-  tâches de la commande isolée/recherchée apparaissent donc désormais dans les QUATRE colonnes
-  (À faire/En cours/En pause/Terminée), quel que soit leur statut, exactement comme demandé.
-  Réflexe explicitement rappelé par la section « Recherche/isolement de commande » elle-même :
-  vérifier qu'un correctif déjà fait à UN endroit (ici `renderCommandes`) couvre aussi tous les
-  AUTRES endroits qui peuvent masquer le même résultat (ici `renderKanbanView`, jamais traitée)
-  — un correctif localisé à un seul rendu ne protège pas les autres. Couvert par l'ajout au test 7
-  de `test_kanban_zone_and_isolate.js` : sans isolement, la pièce ciblée est bien absente (récence +
-  limite + filtre poste combinés) ; avec isolement, elle apparaît dans ses deux statuts (à faire et
-  terminée) et porte la classe `spotlight`, malgré ces trois réglages laissés actifs.
+  mais ces mêmes pièces restaient invisibles une fois basculé sur la vue Kanban.
+  - **Premier correctif, insuffisant : neutraliser `doneCutoff`/`kanbanDoneLimit`/
+    `kanbanMachineFilters` pendant `highlightActive()`**, sur le modèle de `renderCommandes`
+    (`effectiveDueFilterRange()`). Retour utilisateur direct après déploiement : « le bug n'est pas
+    corrigé ». Cause du désaccord : ce correctif protégeait bien contre ces trois réglages précis,
+    mais le Kanban continuait par ailleurs de fonctionner en **surlignage** (`hlClsK`/`spotlight`/
+    `dimmed`, via `isFusionAwareHighlighted`) — TOUTES les commandes restent affichées, la commande
+    isolée est juste censée ressortir visuellement au milieu des autres. Sur une installation avec
+    beaucoup de commandes actives, la pièce isolée reste alors noyée dans la masse — un simple
+    surlignage ne "répare" rien tant que le vrai problème est l'absence de tri/filtre par
+    commande, pas une histoire de fenêtre de récence ou de limite d'affichage (qui n'étaient sans
+    doute même pas la cause réelle sur l'installation qui a signalé le bug).
+  - **Cause racine, repérée en comparant au comportement de `renderCommandes`** : les panneaux
+    « Tâches en cours »/« Tâches terminées » n'ont, eux, jamais fonctionné en surlignage pour
+    l'isolement — ils **restreignent** la liste à la seule commande isolée
+    (`schedule.filter(c => matchesSearch(...) && (!selectedCommandeId || c.id===selectedCommandeId))`).
+    Le Kanban, lui, n'avait jamais reçu ce même traitement : `selectedCommandeId` n'y pilotait QUE la
+    classe CSS de surlignage, jamais un filtre réel de `allOps`. Corrigé en alignant enfin le Kanban
+    sur ce même principe déjà établi ailleurs dans l'appli — suggestion directe de l'utilisateur :
+    *« le plus simple serait de ne pas afficher les autres commandes, mais uniquement celle qui est
+    sélectionnée »*. `if(selectedCommandeId) allOps = allOps.filter(o => o.cid === selectedCommandeId);`
+    juste après le filtre de recherche texte (les deux sont mutuellement exclusifs en pratique —
+    poser l'un efface l'autre, voir `toggleIsolateCommande`) : la commande isolée devient la SEULE
+    présente dans les quatre colonnes, exactement comme dans "Tâches en cours"/"Tâches terminées".
+  - La neutralisation de `doneCutoff`/`kanbanDoneLimit` (premier correctif) reste conservée et utile,
+    mais devient un filet de sécurité SECONDAIRE : elle protège désormais surtout la RECHERCHE texte
+    (qui peut faire correspondre plusieurs commandes à la fois, donc ne restreint jamais `allOps` à
+    une seule) contre les mêmes pièges — une pièce trouvée par la recherche pourrait sinon encore être
+    coupée par la fenêtre de récence ou la limite d'affichage avant d'être surlignée.
+  - Réflexe explicitement rappelé par la section « Recherche/isolement de commande » elle-même :
+    vérifier qu'un correctif déjà fait à UN endroit (ici `renderCommandes`) couvre aussi tous les
+    AUTRES endroits qui peuvent masquer le même résultat (ici `renderKanbanView`) — mais aussi,
+    signalé ici pour la première fois : vérifier que le MÉCANISME copié est bien le même que
+    l'original, pas seulement les symptômes qu'il neutralise. `renderCommandes` "isole" en
+    RESTREIGNANT la liste ; le Kanban avait été corrigé en ne neutralisant que des filtres
+    secondaires tout en gardant un mécanisme de SURLIGNAGE structurellement différent — un correctif
+    qui traite les symptômes d'un mécanisme sans en corriger le principe peut sembler complet sur le
+    papier (tests passants) tout en restant insuffisant en usage réel sur des données plus volumineuses.
+  - Couvert par le test 7 (étendu, test 7c) de `test_kanban_zone_and_isolate.js` : sans isolement, la
+    pièce ciblée est bien absente (récence + limite + filtre poste combinés, pour que le test soit
+    probant) ; avec isolement, elle apparaît dans ses deux statuts (à faire et terminée) et porte la
+    classe `spotlight`, ET aucune carte d'une AUTRE commande (les 10 "decoys") n'apparaît plus du tout.
 
 ## Horodatage de création d'une commande (`commandes[].dateCreation`)
 
@@ -1902,10 +1925,14 @@ plus conviviale, éventuellement en regroupant des onglets, et pouvoir choisir l
 pistes proposées (menu unique « Plus ▾ » / deux sous-menus thématiques / icônes seules sans
 regroupement) — **option retenue : le menu unique**.
 
-- **Planning et Congés restent seuls en accès direct** (comportement inchangé) — ce sont les deux
-  pages consultées en continu ; tout le reste (Temps de production, Zones de stockage, Risques de
-  retard, Pointages, Historique, Vue d'ensemble) rejoint un unique menu déroulant « Plus ▾ »
-  (`renderHeader`), réutilisant tel quel le mécanisme `<details class="dd-menu">`/`openMiniDropdowns`
+- **Planning et Congés restent seules en accès direct par défaut** (comportement inchangé au premier
+  chargement) — ce sont les deux pages consultées en continu ; tout le reste (Temps de production,
+  Zones de stockage, Risques de retard, Pointages, Historique, Vue d'ensemble) rejoint un unique menu
+  déroulant « Plus ▾ ». **Congés a depuis rejoint le même système d'épingles que le reste** (voir
+  « Congés rejoint le système d'épingles » plus bas) — épinglée par défaut, donc toujours en accès
+  direct pour qui n'y touche pas, mais déplaçable dans « Plus » comme n'importe quelle autre page si
+  on le souhaite ; seule Planning reste structurellement hors de ce système. Implémenté dans
+  `renderHeader()`, réutilisant tel quel le mécanisme `<details class="dd-menu">`/`openMiniDropdowns`
   déjà en place pour "Postes affichés"/"Filtres & tri" — aucun nouveau mécanisme de menu à inventer.
   Le bouton « Plus » porte lui-même le badge du nombre de commandes à risque (`nbRisque`, même donnée
   que le badge historique du bouton "Risques de retard") pour rester visible sans ouvrir le menu ;
@@ -2041,6 +2068,67 @@ rangée homogène de boutons.
   (jamais `.small` seule), une page épinglée devient un bouton direct identique à Planning/Congés et
   sort du panneau, dépingler la fait revenir, épingler les 6 clés fait disparaître « Plus ▾ »
   entièrement, et une page épinglée réservée à `canSupervise()` est filtrée pour un rôle rétrogradé.
+
+### Congés rejoint le système d'épingles, épinglée par défaut
+
+Retour utilisateur réel, question directe, symétrique de celle qui a motivé l'épinglage lui-même
+(« comment faire pour avoir Zone de stockage en dehors de Plus ? ») : *« et si je veux mettre l'onglet
+"Congé" dans "Plus", je fais comment ? »* — jusqu'ici Congés (comme Planning) était codée en dur en
+accès direct, en dehors de `PAGE_MENU_KEYS`/du système d'épingles : aucune échappatoire possible.
+
+- **`PAGE_MENU_KEYS` inclut désormais `'conges'`** (`['conges', 'tempsProd', 'zones', 'risques',
+  'pointages', 'historique', 'dashboard']`) — Planning **seule** reste hors de ce système (l'unique
+  page vraiment permanente de l'appli, jamais reléguée dans « Plus »). Conséquence directe et
+  attendue de ce changement de taille (6→7) : toute préférence d'ordre déjà enregistrée
+  (`state.userPageMenuOrder[userId]`, longueur 6) échoue désormais le test de validité de
+  `getUserPageMenuOrder` (`stored.length === PAGE_MENU_KEYS.length`) et retombe silencieusement sur
+  l'ordre par défaut — comportement déjà documenté et voulu pour toute préférence invalide (voir
+  « Navigation » plus haut), pas un bug introduit ici : personne ne perd un ordre personnalisé de
+  façon permanente, il est simplement réinitialisé une fois (nouvelle valeur, longueur 7, réenregistrée
+  dès le premier réordonnancement suivant).
+- **`isPageMenuKeyVisible(key)`** — point unique de visibilité d'une clé du menu, quelle qu'en soit la
+  raison (`pointages`/`historique`/`dashboard` → `canSupervise()`, `conges` → `state.config.modules.
+  conges`, tout le reste → toujours visible) : remplace les trois copies légèrement différentes de
+  cette même condition qui existaient avant dans `getUserPageMenuOrder`/`moveUserPageMenuItem`/
+  `getUserPinnedMenuPages`/la liste de Paramètres → Mon compte — réflexe déjà identifié ailleurs dans
+  ce document (une seule fonction de garde-fou, jamais une copie par appelant, sous peine de diverger
+  silencieusement le jour où l'un des appelants est modifié sans les autres).
+- **`DEFAULT_PINNED_PAGE_KEYS = ['conges']`** — Congés doit rester en accès direct pour quiconque n'a
+  jamais touché aux épingles (comportement inchangé par défaut, malgré le passage d'un accès direct
+  codé en dur à ce système générique) : `getUserPinnedMenuPages(userId)` retombe sur cette valeur
+  **uniquement si rien n'est encore enregistré** (`state.userPinnedMenuPages[userId] === undefined`)
+  — un tableau vide déjà enregistré (tout dépinglé explicitement, Congés y compris) fait foi tel quel,
+  jamais réinterprété comme "pas encore configuré".
+  - **Piège réel rencontré en écrivant ce correctif, corrigé avant tout déploiement** :
+    `toggleUserPinnedMenuPage` lisait jusqu'ici directement `state.userPinnedMenuPages[uid_]` (`[]` si
+    absent) pour construire `current` avant d'y ajouter/retirer une clé — sur un compte n'ayant
+    JAMAIS touché aux épingles, le tout premier appel (`toggleUserPinnedMenuPage('op1', 'zones')`)
+    serait donc parti de `[]` plutôt que de `DEFAULT_PINNED_PAGE_KEYS`, et aurait silencieusement
+    perdu l'épingle par défaut de Congés en épinglant "zones" toute seule à la place. Corrigé en
+    faisant lire `current` la même valeur de repli que `getUserPinnedMenuPages` (`DEFAULT_PINNED_
+    PAGE_KEYS` si rien n'est encore stocké) — même réflexe déjà appliqué à `toggleKanbanMachineFilter`
+    (« matérialiser le `Set` complet au premier décochage », voir « Filtre Kanban par poste » plus
+    haut) : tout mécanisme de bascule (`toggle`) qui a une valeur par défaut non vide doit partir de
+    CETTE valeur par défaut à son premier appel, jamais d'un tableau/`Set` vide qui l'effacerait
+    silencieusement. **Attention à ne pas repartir de `getUserPinnedMenuPages` (déjà FILTRÉE par
+    rôle/config) pour ce seed** : ça effacerait pour de bon une page épinglée mais temporairement
+    masquée (ex. `dashboard` épinglée par un superviseur ensuite rétrogradé) — le tableau brut stocké
+    doit rester la seule source de vérité, la visibilité n'étant qu'un filtre appliqué à la LECTURE.
+- `renderHeader()` — Congés ne fait plus l'objet d'un `${congesActif ? ...}` séparé, codé en dur entre
+  Planning et les boutons épinglés : `pageMenuDefs.conges` (label + badge `pendingCount`, comme avant)
+  rejoint le même objet que les autres pages, `null` si le module Congés est désactivé (même
+  traitement que `pointages`/`historique`/`dashboard` masquées pour un non-superviseur) — la page
+  suit alors le même chemin générique (`pinnedButtons`/`remaining`/`plusMenu`) que toute autre page du
+  système, sans code spécifique à Congés. Le badge de congés en attente, comme celui de `nbRisque`
+  pour "risques", reste également affiché sur le déclencheur "Plus" lui-même tant que Congés y est
+  encore (`plusBadges`, qui combine désormais les deux badges plutôt qu'un seul) — pour rester visible
+  sans avoir à ouvrir le menu, même une fois Congés dépinglée.
+- Couvert par `test_nav_and_pie_charts.js` (section 1b étendue) : Congés épinglée par défaut sans
+  configuration préalable (bouton direct dès le premier rendu), `toggleUserPinnedMenuPage` qui AJOUTE
+  une page à côté de Congés plutôt que de l'effacer, un dépinglage qui ne retire que la page ciblée
+  (Congés reste), et le réordonnancement (section 1) qui traite `'conges'` comme n'importe quelle
+  autre clé potentiellement masquée (ici par module désactivé, pas par rôle) sans casser l'échange
+  entre les voisins réellement visibles.
 
 ## Vue d'ensemble atelier
 
