@@ -3246,6 +3246,48 @@ sur une installation neuve, comme les panneaux du planning. Couvert par
 `test_risques_page_collapsible.js` : chaque section repliable indépendamment des deux autres, en-tête
 toujours visible, repliage simultané des trois.
 
+### « Tableau de bord des risques » (tuiles de synthèse en tête de page)
+
+Retour utilisateur réel, maquette externe fournie (capture d'écran d'un « TABLEAU DE BORD DE
+PILOTAGE D'ATELIER » sombre) : *« saurai-tu faire quelque chose de similaire en maintenant un fond
+blanc ? »* — même principe déjà tranché pour la Vue d'ensemble atelier (« je ne veux pas de noir ») :
+reprendre l'esprit de la maquette (tuiles de synthèse chiffrées en tête de page) sans son thème
+sombre. **Purement de la composition, aucun nouveau calcul métier** : `computeRisquesSummaryStats`
+relit TEL QUEL `atRisk`/`pauseParPoste`/`retardsDemarrage`, déjà calculés par `renderRisquesPage`
+pour les trois sections existantes (Pauses de production, Retards de démarrage constatés, Risques de
+retard) — jamais un second calcul divergent.
+
+- `computeRisquesSummaryStats(atRisk, pauseParPoste, retardsDemarrage)` — quatre indicateurs, un par
+  tuile de la maquette :
+  - `nbRisque` — `atRisk.length`, déjà filtré/trié par la page.
+  - `pireRisque` (`{ commandeNom, jours } | null`) — la commande dont `commandeRiskDaysLate` est le
+    plus élevé parmi `atRisk` ; `null` si aucune commande à risque.
+  - `cumulH` — somme de `pauseParPoste[].totalH` (temps d'arrêt en pause, toutes commandes actives)
+    **et** de `retardsDemarrage[].totalJours` convertis en heures (`× 8,75`, même conversion que
+    `durationLabel`) : « Temps d'arrêt cumulé » regroupe volontairement les deux causes d'arrêt déjà
+    mesurées par cette page (une pause manuelle en cours, un retard déjà constaté au démarrage), pas
+    une troisième métrique à calculer.
+  - `posteCritique` (`{ machineNom, totalH } | null`) — le poste en tête de `pauseParPoste` (déjà
+    trié décroissant par la fonction qui le produit) ; à défaut (aucune pause en cours nulle part)
+    replié sur le poste en tête de `retardsDemarrage`. `null` si les deux listes sont vides.
+- Rendu dans une nouvelle `<section class="panel">` (« 📊 Tableau de bord des risques »), placée
+  **avant** les trois sections existantes (jamais collapsible elle-même — c'est un résumé, pas un
+  détail à masquer) — réutilise **telles quelles** les tuiles `.dash-stat-tile`/`.dash-stat-grid`
+  déjà introduites pour la Vue d'ensemble atelier (fond clair teinté vert/ambre/rouge selon la
+  gravité, jamais un nouveau composant visuel à maintenir en double) : « Commandes à risque »
+  (rouge), « Retard estimé max » (rouge, avec le nom de la commande en sous-texte), « Temps d'arrêt
+  cumulé » (ambre), « Poste le plus critique » (rouge, ou neutre si aucune donnée).
+- `miniBarHtml(value, max, color)` — petite barre proportionnelle réutilisable, ajoutée dans les
+  colonnes « Temps d'arrêt cumulé »/« Retard cumulé » des deux tableaux « par poste » déjà existants
+  (`pauseParPoste`, `retardsDemarrage`) — toujours relative au **maximum de sa propre liste** (l'élément
+  en tête, déjà trié décroissant), jamais un pourcentage arbitraire ou une échelle fixe qui perdrait
+  son sens si les valeurs changent d'ordre de grandeur d'une installation à l'autre. Purement visuel,
+  n'affecte aucune donnée ni tri déjà en place.
+- Couvert par `test_risques_dashboard_summary.js` : `miniBarHtml` (proportion, max nul, plafonnage à
+  100%), `computeRisquesSummaryStats` à vide et peuplé (repli du poste critique sur les retards de
+  démarrage sans aucune pause en cours), et présence/ordre du résumé dans `renderRisquesPage()`
+  (rendu avant « ⏸ Pauses de production », tuiles claires réutilisées).
+
 ### Alerte de démarrage tardif (pop-up à l'opérateur, activable dans Paramètres)
 
 Demande utilisateur directe : que chaque tâche démarrée en retard soit signalée à l'opérateur, par

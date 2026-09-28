@@ -535,6 +535,11 @@
   .dash-stat-tile.tone-neutral .dst-num, .dash-stat-tile.tone-neutral .dst-lbl{color:var(--text-dim);}
   .dash-stat-tile.dst-clickable{cursor:pointer;}
   .dash-stat-tile.dst-clickable:hover{filter:brightness(0.97);}
+  /* Petites barres proportionnelles dans les tableaux "par poste" de la page Risques de retard (voir
+     computeRisquesSummaryStats/CLAUDE.md « Tableau de bord des risques ») — même esprit que le
+     tableau "Pauses de Production"/"Retards de Démarrage" de la maquette externe, fond clair inchangé. */
+  .risque-mini-bar{height:6px; border-radius:3px; background:var(--panel); overflow:hidden; margin-top:3px; max-width:180px;}
+  .risque-mini-bar-fill{height:100%; border-radius:3px;}
 
   .dash-machine-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:10px; margin-top:4px;}
   .dash-machine-card{
@@ -1054,7 +1059,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.61.0';
+const APP_VERSION = '1.62.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -8745,6 +8750,33 @@ function computePausesARisque(atRiskCommandes, now){
   });
   return rows.sort((a,b) => b.dureeH - a.dureeH);
 }
+// Petite barre proportionnelle réutilisable dans les tableaux "par poste" de cette page (pauses,
+// retards de démarrage) — jamais un pourcentage arbitraire : toujours relative au maximum de SA
+// PROPRE liste (le poste en tête de tri, déjà trié décroissant par les fonctions qui la produisent).
+function miniBarHtml(value, max, color){
+  const pct = max > 0 ? Math.min(100, Math.round((value/max)*100)) : 0;
+  return `<div class="risque-mini-bar"><div class="risque-mini-bar-fill" style="width:${pct}%; background:${color};"></div></div>`;
+}
+// Résumé "tableau de bord" en tête de la page "⚠️ Risques de retard" (retour utilisateur réel,
+// maquette externe fournie en capture d'écran) — purement de la composition, même principe que la
+// Vue d'ensemble atelier (voir CLAUDE.md) : réutilise TEL QUEL atRisk/pauseParPoste/retardsDemarrage
+// déjà calculés pour les trois sections existantes de cette page, aucun second calcul métier. Rendu
+// en tuiles `.dash-stat-tile` déjà utilisées par la Vue d'ensemble — fond clair, jamais le thème
+// sombre de la maquette source (même choix déjà tranché : « je ne veux pas de noir »).
+function computeRisquesSummaryStats(atRisk, pauseParPoste, retardsDemarrage){
+  let pireRisque = null;
+  atRisk.forEach(c => {
+    const j = commandeRiskDaysLate(c);
+    if(!pireRisque || j > pireRisque.jours) pireRisque = { commandeNom: c.nom, jours: j };
+  });
+  const cumulPauseH = pauseParPoste.reduce((s,r) => s + r.totalH, 0);
+  // jours -> heures, même conversion que durationLabel (8,75h = une journée ouvrée "type")
+  const cumulRetardH = retardsDemarrage.reduce((s,r) => s + r.totalJours, 0) * 8.75;
+  let posteCritique = null;
+  if(pauseParPoste.length) posteCritique = { machineNom: pauseParPoste[0].machineNom, totalH: pauseParPoste[0].totalH };
+  else if(retardsDemarrage.length) posteCritique = { machineNom: retardsDemarrage[0].machineNom, totalH: retardsDemarrage[0].totalJours*8.75 };
+  return { nbRisque: atRisk.length, pireRisque, cumulH: cumulPauseH + cumulRetardH, posteCritique };
+}
 function renderRisquesPage(){
   const schedule = getSchedule();
   // Même filtre "commande active" que la liste principale (renderCommandes) : une commande
@@ -8827,7 +8859,7 @@ function renderRisquesPage(){
       ${pauseParPoste.length ? `
       <table class="ops-table">
         <thead><tr><th>Poste</th><th>Tâches actuellement en pause</th><th>Temps d'arrêt cumulé</th></tr></thead>
-        <tbody>${pauseParPoste.map(r => `<tr><td>${escapeHtml(r.machineNom)}</td><td>${r.nbTaches}</td><td>${pauseTimeCellHtml(r.totalH)}</td></tr>`).join('')}</tbody>
+        <tbody>${pauseParPoste.map(r => `<tr><td>${escapeHtml(r.machineNom)}</td><td>${r.nbTaches}</td><td>${pauseTimeCellHtml(r.totalH)}${miniBarHtml(r.totalH, pauseParPoste[0].totalH, 'var(--red)')}</td></tr>`).join('')}</tbody>
       </table>` : `<div class="footer-note" style="text-align:left;">Aucun poste n'est actuellement à l'arrêt sur une pause manuelle non expliquée.</div>`}
       ${pausesARisque.length ? `
       <div class="modal-section-title" style="margin-top:16px;">Tâches concernées (échéance à risque)</div>
@@ -8859,7 +8891,7 @@ function renderRisquesPage(){
       <div class="footer-note" style="text-align:left; padding-bottom:10px;">Écart entre la date de début que le planning prévoyait juste avant qu'une tâche ne démarre réellement, et son démarrage effectif. Mesuré uniquement à partir de maintenant — aucune donnée avant l'introduction de ce suivi. Regroupé par poste plutôt que par personne : ce retard tient à la disponibilité du poste et à l'ordonnancement, pas à qui a fini par exécuter la tâche.</div>
       <table class="ops-table">
         <thead><tr><th>Poste</th><th>Tâches démarrées en retard</th><th>Retard moyen</th><th>Retard cumulé</th></tr></thead>
-        <tbody>${retardsDemarrage.map(r => `<tr><td>${escapeHtml(r.machineNom)}</td><td>${r.nbTaches}</td><td>${Math.round(r.moyenneJours*10)/10} j</td><td>${Math.round(r.totalJours*10)/10} j</td></tr>`).join('')}</tbody>
+        <tbody>${retardsDemarrage.map(r => `<tr><td>${escapeHtml(r.machineNom)}</td><td>${r.nbTaches}</td><td>${Math.round(r.moyenneJours*10)/10} j</td><td>${Math.round(r.totalJours*10)/10} j${miniBarHtml(r.totalJours, retardsDemarrage[0].totalJours, 'var(--amber)')}</td></tr>`).join('')}</tbody>
       </table>
       <div class="modal-section-title" style="margin-top:16px;">Détail des tâches concernées</div>
       <table class="ops-table">
@@ -8875,7 +8907,39 @@ function renderRisquesPage(){
       </table>
     </div>`}
   </section>` : '';
+  const summary = computeRisquesSummaryStats(atRisk, pauseParPoste, retardsDemarrage);
+  const summaryHtml = `
+  <section class="panel">
+    <div class="panel-head">
+      <h2>📊 Tableau de bord des risques</h2>
+      <span class="footer-note" style="margin:0;">Instantané temps réel</span>
+    </div>
+    <div class="panel-body">
+      <div class="dash-stat-grid">
+        <div class="dash-stat-tile tone-red">
+          <div class="dst-top"><div class="dst-num">${summary.nbRisque}</div><span class="dst-icon">🔔</span></div>
+          <div class="dst-lbl">Commandes à risque</div>
+        </div>
+        <div class="dash-stat-tile tone-red">
+          <div class="dst-top"><div class="dst-num">${summary.pireRisque ? '+'+Math.ceil(summary.pireRisque.jours)+' j' : '—'}</div><span class="dst-icon">🕓</span></div>
+          <div class="dst-lbl">Retard estimé max</div>
+          ${summary.pireRisque ? `<div class="dst-sub">${escapeHtml(summary.pireRisque.commandeNom)}</div>` : ''}
+        </div>
+        <div class="dash-stat-tile tone-amber">
+          <div class="dst-top"><div class="dst-num">${durationLabel(summary.cumulH)}</div><span class="dst-icon">⏸</span></div>
+          <div class="dst-lbl">Temps d'arrêt cumulé</div>
+          <div class="dst-sub">Pauses + retards de démarrage</div>
+        </div>
+        <div class="dash-stat-tile ${summary.posteCritique ? 'tone-red' : 'tone-neutral'}">
+          <div class="dst-top"><div class="dst-num">${summary.posteCritique ? durationLabel(summary.posteCritique.totalH) : '—'}</div><span class="dst-icon">⚠️</span></div>
+          <div class="dst-lbl">Poste le plus critique</div>
+          ${summary.posteCritique ? `<div class="dst-sub">${escapeHtml(summary.posteCritique.machineNom)}</div>` : ''}
+        </div>
+      </div>
+    </div>
+  </section>`;
   return `
+  ${summaryHtml}
   ${pausesHtml}
   ${retardsDemarrageHtml}
   <section class="panel">
