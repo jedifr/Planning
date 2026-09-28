@@ -1943,6 +1943,66 @@ regroupement) — **option retenue : le menu unique**.
   dernier élément), et réordonnancement d'un employé qui n'échange qu'avec son voisin VISIBLE, jamais
   avec une clé masquée adjacente dans le tableau complet.
 
+### Épingler une page en accès direct (hors de « Plus ▾ »)
+
+Retour utilisateur réel, question directe : « comment est-ce que je fais si je veux avoir le menu
+"Zone de stockage" en dehors de "Plus" ? » — jusqu'ici, Planning/Congés étaient les deux SEULES pages
+en accès direct, codées en dur ; tout le reste rejoignait obligatoirement « Plus ▾ », sans échappatoire.
+
+- **`state.userPinnedMenuPages[userId]`** (`string[]`, sous-ensemble de `PAGE_MENU_KEYS`,
+  `migrateState` l'initialise à `{}`) — même principe exact que `userPageMenuOrder` juste au-dessus
+  (préférence par PERSONNE, dans `state`, synchronisée par `commit()`, jamais une préférence de
+  navigateur) : une page listée y rejoint Planning/Congés en accès direct dans l'en-tête, à la place
+  de rester dans le panneau déroulant « Plus ▾ ».
+- `getUserPinnedMenuPages(userId)` — filtre déjà, à la lecture, toute clé invalide ou réservée à
+  `canSupervise()` pour un rôle qui ne l'est plus (même garde-fou que `getUserPageMenuOrder`/
+  `moveUserPageMenuItem`) : une page épinglée par un ancien superviseur rétrogradé ne s'affiche
+  jamais comme bouton direct cassé une fois son rôle redescendu — elle reste enregistrée (pas
+  effacée) et redeviendrait visible si le rôle est un jour restauré.
+- `toggleUserPinnedMenuPage(userId, key)` — bascule simple (ajoute si absent, retire si présent),
+  `commit()` une seule fois.
+- **`renderHeader()`** — calcule `pinned = getUserPinnedMenuPages(...)`, puis partitionne
+  `getUserPageMenuOrder(...)` en deux : les clés épinglées deviennent des boutons `.page-switch-btn`
+  **directs**, insérés juste après Planning/Congés, dans l'ORDRE de `userPageMenuOrder` (pas un ordre
+  d'épinglage séparé — un seul ordre à maintenir) ; les clés restantes seules composent le panneau
+  « Plus ▾ », inchangé sinon. **« Plus ▾ » disparaît entièrement dès qu'il ne reste plus aucune page
+  dedans** (tout épinglé) — jamais un menu déroulant vide affiché pour la forme ; le badge `nbRisque`
+  ne s'affiche sur le déclencheur « Plus » que si "risques" fait encore partie de ce qui reste dedans
+  (sinon il n'apparaît que sur son propre bouton direct, via `pageMenuDefs.risques` qui le porte déjà).
+- Réglable dans Paramètres → Mon compte, section « Pages du menu « Plus ▾ » » (la même liste que
+  l'ordre, voir ci-dessus) : un bouton « 📌 Épingler »/« 📥 Remettre dans « Plus ▾ » » par ligne, à
+  côté des flèches ▲/▼ existantes — `data-action="toggle-page-menu-pin"`.
+
+### Police du déclencheur « Plus ▾ » incohérente avec Planning/Congés
+
+Bug réel signalé (capture d'écran à l'appui) : le bouton « Plus ▾ » de l'en-tête ne rendait pas dans
+la même police/graisse que « Planning »/« Congés », alors que les trois sont censés former une seule
+rangée homogène de boutons.
+
+- **Cause : le déclencheur `<summary>` du menu déroulant ne portait que la classe `.small`, jamais
+  `.page-switch-btn`.** `.small` est en réalité définie `button.small{padding:4px 9px; font-size:
+  11.5px;}` — une règle CSS **scopée au sélecteur `button`**, qui ne s'applique donc jamais à un
+  `<summary>` (ce n'est pas un `<button>`). `.page-switch-btn` (celle qui donne à Planning/Congés
+  leur police 'IBM Plex Sans' 12.5px, leur graisse 600, leur forme de pilule et leur couleur active)
+  n'était, elle, jamais posée sur le `<summary>` — qui ne recevait donc que le style générique
+  `details.dd-menu summary{list-style:none; cursor:pointer;}`, sans aucune des propriétés visuelles
+  qui font ressembler Planning/Congés à des boutons de la même famille. Résultat : trois éléments
+  visuellement de la même rangée, deux avec un style, le troisième sans.
+- Corrigé en remplaçant `<summary class="small">` par `<summary class="page-switch-btn ${...}">` —
+  reçoit désormais exactement le même style que Planning/Congés/les items épinglés, y compris l'état
+  `active` (allumé dès que `currentPage` est l'une des pages encore dans le panneau déroulant, pas
+  seulement quand c'est l'une des deux pages fixes — cohérent avec le fait que Planning/Congés
+  s'allument déjà de la même façon).
+- Réflexe : tout élément non-`<button>` (`<summary>`, `<a>`, `<span>`...) auquel on veut appliquer un
+  style déjà défini pour des `<button>` doit recevoir la classe qui porte réellement ce style
+  (`.page-switch-btn` ici), jamais une classe modificatrice comme `.small` qui n'a de sens que
+  combinée à la règle de base d'un `<button>` — vérifier la définition CSS exacte (`button.small`
+  vs `.small`) avant de supposer qu'une classe s'applique à n'importe quel élément.
+- Couvert par `test_nav_and_pie_charts.js` : le déclencheur « Plus » porte bien `.page-switch-btn`
+  (jamais `.small` seule), une page épinglée devient un bouton direct identique à Planning/Congés et
+  sort du panneau, dépingler la fait revenir, épingler les 6 clés fait disparaître « Plus ▾ »
+  entièrement, et une page épinglée réservée à `canSupervise()` est filtrée pour un rôle rétrogradé.
+
 ## Vue d'ensemble atelier
 
 Retour utilisateur réel : comprendre "que se passe-t-il maintenant dans l'atelier" demandait de

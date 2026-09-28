@@ -927,7 +927,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.55.0';
+const APP_VERSION = '1.56.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -1036,6 +1036,25 @@ function moveUserPageMenuItem(userId, key, dir){
   const arr = full.map(k => visible.includes(k) ? reordered[vi++] : k);
   if(!state.userPageMenuOrder) state.userPageMenuOrder = {};
   state.userPageMenuOrder[uid_] = arr;
+  commit();
+}
+// Épingler une page en accès direct (à côté de Planning/Congés) plutôt que dans "Plus ▾" — retour
+// utilisateur réel, question directe : « comment faire pour avoir Zone de stockage en dehors de
+// Plus ? ». Même principe "propre à la personne" que l'ordre ci-dessus : `state.userPinnedMenuPages
+// [userId]`, sous-ensemble de `PAGE_MENU_KEYS`, jamais une préférence de navigateur.
+function getUserPinnedMenuPages(userId){
+  const stored = (state.userPinnedMenuPages || {})[String(userId)];
+  if(!Array.isArray(stored)) return [];
+  // Une page masquée pour le rôle courant (canSupervise()) ne doit jamais s'afficher comme bouton
+  // direct cassé — filtrée ici, exactement comme getUserPageMenuOrder/moveUserPageMenuItem le font
+  // déjà pour la visibilité par rôle.
+  return stored.filter(k => PAGE_MENU_KEYS.includes(k) && (k!=='pointages' && k!=='historique' && k!=='dashboard' || canSupervise()));
+}
+function toggleUserPinnedMenuPage(userId, key){
+  const uid_ = String(userId);
+  if(!state.userPinnedMenuPages) state.userPinnedMenuPages = {};
+  const current = Array.isArray(state.userPinnedMenuPages[uid_]) ? state.userPinnedMenuPages[uid_] : [];
+  state.userPinnedMenuPages[uid_] = current.includes(key) ? current.filter(k => k!==key) : [...current, key];
   commit();
 }
 let searchQuery = '';
@@ -1542,6 +1561,7 @@ function migrateState(st){
   if(!st.userDefaultPage) st.userDefaultPage = {}; // { [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques'|'pointages'|'historique'|'dashboard' } — page affichée à la connexion, voir applyUserDefaultPageOnStart
   if(!st.userDefaultPlanningView) st.userDefaultPlanningView = {}; // { [userId]: 'jour'|'semaine'|'mois'|'annee'|'kanban'|'liste' } — vue du planning appliquée à la connexion quand la page d'accueil est Planning, voir applyUserDefaultPageOnStart
   if(!st.userPageMenuOrder) st.userPageMenuOrder = {}; // { [userId]: PAGE_MENU_KEYS réordonnée } — ordre du menu "Plus ▾" de l'en-tête, propre à la personne (voir CLAUDE.md « Navigation »)
+  if(!st.userPinnedMenuPages) st.userPinnedMenuPages = {}; // { [userId]: string[] } — sous-ensemble de PAGE_MENU_KEYS épinglé en accès direct à côté de Planning/Congés, au lieu de rester dans "Plus ▾" (voir CLAUDE.md « Navigation »)
   if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
   Object.keys(st.userLunch).forEach(uid_ => {
     const lunch = st.userLunch[uid_];
@@ -6866,10 +6886,14 @@ function renderHeader(){
       ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
       <button class="page-switch-btn ${currentPage==='zones'?'active':''}" data-action="goto-zones">📍 Zones de stockage</button>
     </div>` : (() => {
-      // Menu "Plus ▾" (voir CLAUDE.md « Navigation ») : regroupe tout sauf Planning/Congés, qui
-      // restent seuls en accès direct — désencombre la barre sur bureau, sans rien retirer côté
-      // mobile (déjà traité ci-dessus). Ordre configurable par personne (state.userPageMenuOrder,
-      // Paramètres → Mon compte), synchronisé comme userDefaultPage/userDefaultPlanningView.
+      // Menu "Plus ▾" (voir CLAUDE.md « Navigation ») : regroupe, par défaut, tout sauf Planning/
+      // Congés, qui restent seuls en accès direct — désencombre la barre sur bureau, sans rien
+      // retirer côté mobile (déjà traité ci-dessus). Ordre configurable par personne
+      // (state.userPageMenuOrder, Paramètres → Mon compte), synchronisé comme userDefaultPage/
+      // userDefaultPlanningView. N'importe laquelle de ces pages peut en plus être ÉPINGLÉE
+      // (state.userPinnedMenuPages, même page Paramètres → Mon compte) pour rejoindre Planning/
+      // Congés en accès direct plutôt que rester dans "Plus" — retour utilisateur réel, question
+      // directe : « comment faire pour avoir Zone de stockage en dehors de Plus ? ».
       const pageMenuDefs = {
         tempsProd: `⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}`,
         zones: '📍 Zones de stockage',
@@ -6879,17 +6903,30 @@ function renderHeader(){
         dashboard: canSupervise() ? "📊 Vue d'ensemble" : null
       };
       const gotoAction = { tempsProd:'goto-temps-prod', zones:'goto-zones', risques:'goto-risques', pointages:'goto-pointages', historique:'goto-historique', dashboard:'goto-dashboard' };
-      const pageMenuOrder = getUserPageMenuOrder(currentUser ? currentUser.id : '');
-      const items = pageMenuOrder.filter(k => pageMenuDefs[k] != null).map(k => `
+      const uidForMenu = currentUser ? currentUser.id : '';
+      const pageMenuOrder = getUserPageMenuOrder(uidForMenu);
+      const pinned = getUserPinnedMenuPages(uidForMenu);
+      // Boutons épinglés : rendus EXACTEMENT comme Planning/Congés (même classe `.page-switch-btn`,
+      // pas `.small`/`.dd-page-item`) — ils rejoignent l'accès direct, pas la liste compacte du
+      // panneau déroulant. Ordre respecté via `pageMenuOrder`, pas l'ordre d'épinglage.
+      const pinnedButtons = pageMenuOrder.filter(k => pinned.includes(k) && pageMenuDefs[k] != null).map(k => `
+      <button class="page-switch-btn ${currentPage===k?'active':''}" data-action="${gotoAction[k]}">${pageMenuDefs[k]}</button>`).join('');
+      const remaining = pageMenuOrder.filter(k => !pinned.includes(k) && pageMenuDefs[k] != null);
+      const items = remaining.map(k => `
         <button class="page-switch-btn small dd-page-item ${currentPage===k?'active':''}" data-action="${gotoAction[k]}">${pageMenuDefs[k]}</button>`).join('');
+      // "Plus" disparaît entièrement s'il ne reste plus rien dedans (tout épinglé) — jamais un menu
+      // déroulant vide affiché pour la forme.
+      const plusMenu = remaining.length === 0 ? '' : `
+      <details class="dd-menu" data-dd-key="page-plus" ontoggle="openMiniDropdowns['page-plus']=this.open" ${openMiniDropdowns['page-plus']?'open':''}>
+        <summary class="page-switch-btn ${remaining.includes(currentPage)?'active':''}">Plus${(nbRisque>0 && remaining.includes('risques'))?` <span class="pending-count-badge">${nbRisque}</span>`:''} ▾</summary>
+        <div class="dd-panel dd-page-panel">${items}</div>
+      </details>`;
       return `
     <div class="page-switcher">
       <button class="page-switch-btn ${currentPage==='planning'?'active':''}" data-action="goto-planning">Planning</button>
       ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
-      <details class="dd-menu" data-dd-key="page-plus" ontoggle="openMiniDropdowns['page-plus']=this.open" ${openMiniDropdowns['page-plus']?'open':''}>
-        <summary class="small">Plus${nbRisque>0?` <span class="pending-count-badge">${nbRisque}</span>`:''} ▾</summary>
-        <div class="dd-panel dd-page-panel">${items}</div>
-      </details>
+      ${pinnedButtons}
+      ${plusMenu}
     </div>`;
     })();
   return `
@@ -10215,15 +10252,17 @@ function renderSettingsModal(){
         ${['jour','semaine','mois','annee','kanban','liste'].map(v => `<option value="${v}" ${(state.userDefaultPlanningView||{})[String(currentUser?currentUser.id:'')]===v?'selected':''}>${{jour:'Jour',semaine:'Semaine',mois:'Mois',annee:'Année',kanban:'Kanban',liste:'Liste'}[v]}</option>`).join('')}
       </select>
       <div class="footer-note" style="text-align:left; padding-top:6px;">Vue du planning ouverte automatiquement à la connexion (Jour, Semaine, Mois, Année, Kanban ou Liste).</div>` : ''}
-      <div class="modal-section-title" style="margin-top:18px;">Ordre des pages du menu « Plus ▾ »</div>
-      <div class="footer-note" style="text-align:left; padding-bottom:8px;">Ordre d'affichage de vos pages regroupées dans le menu « Plus ▾ » de l'en-tête (Planning et Congés restent toujours en accès direct, à côté du menu). Propre à VOTRE compte : vous le retrouvez identique quel que soit le poste depuis lequel vous vous connectez, jamais réinitialisé par un vidage de cache navigateur.</div>
+      <div class="modal-section-title" style="margin-top:18px;">Pages du menu « Plus ▾ »</div>
+      <div class="footer-note" style="text-align:left; padding-bottom:8px;">Planning et Congés restent toujours en accès direct, à côté du menu. Pour chacune des pages ci-dessous : « ▲/▼ » change son ordre à l'intérieur de « Plus ▾ » (ou parmi les pages épinglées, voir ci-dessous) ; « 📌 Épingler » la fait rejoindre Planning/Congés en accès direct, sans passer par « Plus ▾ ». Propre à VOTRE compte : vous retrouvez ces choix identiques quel que soit le poste depuis lequel vous vous connectez, jamais réinitialisés par un vidage de cache navigateur.</div>
       ${(() => {
         const uid_ = currentUser ? currentUser.id : '';
         const order = getUserPageMenuOrder(uid_).filter(key => key!=='pointages' && key!=='historique' && key!=='dashboard' || canSupervise());
+        const pinned = getUserPinnedMenuPages(uid_);
         return order.map((key, idx) => `
       <div class="settings-nav-item">
-        <span class="settings-nav-btn" style="cursor:default;">${PAGE_MENU_LABELS[key]}</span>
+        <span class="settings-nav-btn" style="cursor:default;">${PAGE_MENU_LABELS[key]}${pinned.includes(key)?' <span class="footer-note" style="display:inline;">(épinglée)</span>':''}</span>
         <div class="settings-reorder">
+          <button class="ghost icon-btn" data-action="toggle-page-menu-pin" data-key="${key}" title="${pinned.includes(key)?'Remettre dans « Plus ▾ »':'Épingler en accès direct, à côté de Planning/Congés'}">${pinned.includes(key)?'📥':'📌'}</button>
           <button class="ghost icon-btn" data-action="move-page-menu-item" data-key="${key}" data-dir="-1" ${idx===0?'disabled':''} title="Monter">▲</button>
           <button class="ghost icon-btn" data-action="move-page-menu-item" data-key="${key}" data-dir="1" ${idx===order.length-1?'disabled':''} title="Descendre">▼</button>
         </div>
@@ -12326,6 +12365,10 @@ function dispatchClickAction(action, el){
     }
     case 'move-page-menu-item': {
       moveUserPageMenuItem(currentUser ? currentUser.id : '', el.dataset.key, Number(el.dataset.dir));
+      break;
+    }
+    case 'toggle-page-menu-pin': {
+      toggleUserPinnedMenuPage(currentUser ? currentUser.id : '', el.dataset.key);
       break;
     }
     case 'close-settings': closeSettingsModal(); break;
