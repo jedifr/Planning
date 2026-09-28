@@ -2211,14 +2211,70 @@ même principe que `machine.couleur` (Paramètres → Postes), plutôt qu'un map
   Paramètres → Postes, juste à côté du sélecteur de couleur déjà existant — réutilise le setter
   générique déjà en place `updateMachine(id, field, value)` (`m[field] = value; commit();`), comme
   `update-machine-color`/`update-machine-name`, plutôt qu'un nouveau setter dédié.
-- **Affichée pour l'instant sur la Vue d'ensemble atelier** (`dash-machine-card`, à côté du nom du
-  poste — `computeMachineStatusSnapshot` expose désormais aussi `icone`) : c'est la page qui vient
-  d'introduire une grille de cartes par poste, l'endroit le plus immédiatement profitable pour cette
+- **Affichée sur la Vue d'ensemble atelier** (`dash-machine-card`, à côté du nom du poste —
+  `computeMachineStatusSnapshot` expose désormais aussi `icone`) **et sur les cartes postes de « ⏱
+  Temps de production »** (`occ-machine-card`, voir ci-dessous) — les deux pages qui présentent déjà
+  les postes sous forme de cartes, l'endroit le plus immédiatement profitable pour cette
   fonctionnalité. Absente si `icone` vaut `null` (pas de case vide ni de symbole de repli) — un poste
   sans icône choisie garde exactement le même rendu qu'avant cette fonctionnalité. Pas encore
   reportée ailleurs (Kanban, tableau des tâches...) — à étendre si le besoin se confirme.
 - Couvert par `test_dashboard_atelier.js` : `computeMachineStatusSnapshot` expose `icone` (valeur
   choisie, ou `null` si aucune — jamais `undefined`), affichage effectif sur la carte du poste actif.
+
+### Refonte visuelle de « ⏱ Temps de production » (cartes, avatars, barres de progression)
+
+Retour utilisateur réel, maquette externe fournie (capture d'écran) : la table à colonnes fixes
+d'origine (une ligne par salarié, une ligne par poste) est remplacée par des cartes, sur le même
+principe que la Vue d'ensemble atelier — **purement de la présentation, aucun nouveau calcul** :
+`tempsProdRows`/`computeMachineOccupationRows`/`computeProductionTimeByUser` restent la seule
+source de vérité, seul leur affichage change. Choix explicite, suite à la question directe de
+l'utilisateur (« est-ce possible de faire quelque chose de similaire ? ») : des **barres de
+progression** plutôt que les jauges en arc de cercle de la maquette — même lisibilité pour un
+pourcentage, sans le coût de mise en œuvre supplémentaire d'un tracé circulaire en CSS/SVG.
+
+- **Avatars du personnel** (`renderAvatar(name)`/`avatarColorFor(name)`/`initialsForName(name)`) —
+  générés (initiales + couleur déterministe à partir du nom, palette `AVATAR_PALETTE` fixe), jamais
+  une vraie photo à uploader/stocker : aucun nouveau champ `state` à synchroniser, aucune gestion de
+  fichier binaire. Même nom → même couleur d'une page à l'autre et d'un rendu à l'autre (fonction
+  pure, pas de tirage aléatoire). Utilisés sur les cartes salarié des deux vues ci-dessous.
+- **`renderPrevuPasseBar(prevuH, passeH)`** — barre "temps passé ÷ temps prévu" par salarié, même
+  principe que `renderOccupationBar` (remplissage plafonné à 100% de largeur, seule la couleur
+  change au-delà) mais **sémantique inversée** : ici dépasser 100% (plus de temps passé que prévu)
+  est le signal à surveiller, vert en dessous, ambre entre 100 et 150%, rouge au-delà. Sans temps
+  prévu connu (`prevuH<=0`), barre vide plutôt qu'une division par zéro.
+- **`renderEmployeeCard(row, opts)`** — carte salarié partagée par les deux vues ci-dessous (une
+  seule fonction, jamais dupliquée) : avatar, barre prévu/passé + écart (`formatEcart`, inchangé),
+  trois mini-tuiles (Tâches/Dépassements/Présence théo. — `Dépassements` surligné en rouge pâle si
+  `nbOverrun>0`), et la grande barre `renderOccupationBar(taux, true)` déjà existante pour le taux
+  d'occupation. `opts.expandable` (vue superviseur uniquement) ajoute un bouton "▸/▾ Détail" qui
+  déplie `renderTempsProdDetail(row, false)` **dans la carte elle-même**, laquelle passe alors sur
+  toute la largeur de la grille (`grid-column:1/-1`) — pas de second point d'affichage du détail à
+  maintenir en dehors de la fonction déjà existante, seul l'endroit où elle s'insère change.
+- **Vue superviseur** (`renderTempsProdPage`) — la table `<table>` triable par en-tête de colonne
+  est remplacée par `tp-employee-grid` (une carte par salarié) précédée d'une barre de tri
+  (`tp-sort-bar` : `<select>` + bouton ▲/▼ séparé). **Deux nouvelles fonctions plutôt que réutiliser
+  `setTempsProdSort`** : `setTempsProdSortKey(key)` (change UNIQUEMENT la clé, jamais le sens — un
+  `<select>` qui change de valeur ne doit pas surprendre en inversant aussi le sens déjà choisi,
+  contrairement à un clic sur un en-tête de colonne déjà trié) et `toggleTempsProdSortDir()` (bouton
+  dédié, inverse uniquement le sens). `setTempsProdSort` elle-même reste inchangée et continue de
+  servir `renderTempsProdDetail` (tri du détail déplié par en-tête de colonne, resté un tableau
+  classique — lui n'a pas été redessiné en cartes, une liste de tâches individuelles se prêtant mal
+  à ce format).
+- **Vue "Mon temps de production"** (`renderTempsProdSelfPage`) — la rangée `.stat-row` d'origine
+  est remplacée par une seule `renderEmployeeCard(row, { expandable:false })` (pas de bouton
+  "Détail" : le tableau détaillé reste affiché juste en dessous, comme avant cette fonctionnalité,
+  aucune raison de le replier derrière un clic supplémentaire sur sa propre page).
+- **Cartes postes** (`renderMachineOccupationSection`, `occ-machine-card`) — même traitement que
+  les cartes de la Vue d'ensemble atelier : bordure gauche dans la couleur du poste
+  (`machine.couleur`) et icône choisie (`machine.icone`, voir « Icône de poste » ci-dessus) à côté
+  du nom, `renderOccupationBar(taux)` inchangée pour le taux d'occupation.
+- Couvert par `test_temps_prod_cards.js` : couleur/initiales d'avatar déterministes,
+  `renderPrevuPasseBar` (ratio normal, plafonné à 100% en cas de gros dépassement, couleur rouge
+  au-delà de 150%, aucun plantage sans temps prévu), `renderEmployeeCard` repliée/dépliée/non
+  dépliable, composition complète de `renderTempsProdPage()` (superviseur et "Mon temps de
+  production") avec les classes de cartes/icônes/couleurs de poste attendues,
+  `setTempsProdSortKey`/`toggleTempsProdSortDir` qui ne touchent chacune qu'un seul des deux champs
+  de `tempsProdSort`.
 
 ### Synthèse annuelle en camembert
 

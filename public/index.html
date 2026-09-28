@@ -553,6 +553,48 @@
   .dash-machine-card.st-pause .dmc-commande{color:var(--amber);}
   .dash-machine-card .dmc-client, .dash-machine-card .dmc-piece{font-size:11px; color:var(--text-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .dash-machine-card .dmc-empty{font-size:13px; color:var(--text-faint);}
+
+  /* Cartes salariés/postes de "⏱ Temps de production" (voir CLAUDE.md « Refonte visuelle... ») —
+     même esprit que la Vue d'ensemble ci-dessus (cartes + barres de progression, fond clair). */
+  .tp-sort-bar{display:flex; align-items:center; gap:8px; margin:2px 0 12px; flex-wrap:wrap;}
+  .tp-sort-bar select{width:auto;}
+  .tp-employee-grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:10px;}
+  .tp-emp-card{
+    background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius);
+    padding:12px 14px; display:flex; flex-direction:column; gap:10px; min-width:0;
+  }
+  .tp-emp-head{display:flex; align-items:center; gap:8px;}
+  .tp-avatar{
+    width:30px; height:30px; border-radius:50%; flex:none; display:flex; align-items:center;
+    justify-content:center; color:#fff; font-family:'IBM Plex Sans',sans-serif; font-weight:600;
+    font-size:11.5px; letter-spacing:0.2px;
+  }
+  .tp-emp-name{font-family:'Oswald',sans-serif; font-weight:600; font-size:14px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .tp-bar-block{display:flex; flex-direction:column; gap:4px;}
+  .tp-bar-labels{display:flex; justify-content:space-between; font-size:11px; color:var(--text-dim);}
+  .tp-bar-track{height:7px; border-radius:4px; background:rgba(0,0,0,0.08); overflow:hidden;}
+  .tp-bar-fill{height:100%; border-radius:4px;}
+  .tp-ecart-line{font-size:12px; color:var(--text-dim);}
+  .tp-mini-stats{display:flex; gap:8px;}
+  .tp-mini-stat{
+    flex:1; text-align:center; background:var(--panel); border:1px solid var(--line);
+    border-radius:6px; padding:5px 4px; display:flex; flex-direction:column; gap:1px; min-width:0;
+  }
+  .tp-mini-stat.alert{border-color:rgba(178,58,48,0.4); background:rgba(178,58,48,0.08);}
+  .tp-mini-num{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:14px; font-variant-numeric:tabular-nums;}
+  .tp-mini-lbl{font-size:9.5px; text-transform:uppercase; letter-spacing:0.3px; color:var(--text-faint);}
+  .tp-occ-block{display:flex; flex-direction:column; gap:2px;}
+  .tp-emp-detail{margin-top:4px;}
+
+  .occ-machine-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:10px;}
+  .occ-machine-card{
+    background:var(--panel-2); border:1px solid var(--line); border-left:4px solid var(--line);
+    border-radius:var(--radius); padding:10px 12px; display:flex; flex-direction:column; gap:6px; min-width:0;
+  }
+  .occ-machine-head{display:flex; align-items:center; gap:6px;}
+  .occ-machine-icon{font-size:15px; flex:none;}
+  .occ-machine-nom{font-family:'Oswald',sans-serif; font-weight:600; font-size:12.5px; letter-spacing:0.3px; text-transform:uppercase; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .occ-machine-stats{font-size:11px; color:var(--text-dim); display:flex; flex-direction:column; gap:1px;}
   .risque-blocking-tag{font-size:11px; color:var(--amber-strong,#a06d1a); font-weight:600;}
   .risque-context-row td{font-size:11.5px; color:var(--text-dim); padding-top:2px; padding-bottom:8px; border-top:none;}
   .risque-context-row .commande-link-inline{background:none; border:none; padding:0; font-weight:600; color:inherit; cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px;}
@@ -1007,7 +1049,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.59.0';
+const APP_VERSION = '1.60.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -9334,6 +9376,42 @@ function renderOccupationBar(taux, big){
     <span class="occ-bar-pct" style="color:${color};">${label}</span>
   </div>`;
 }
+// Barre "temps passé ÷ temps prévu" (cartes salariés de "⏱ Temps de production", voir CLAUDE.md
+// « Refonte visuelle... ») — même principe que renderOccupationBar (remplissage plafonné à 100% de
+// largeur, la couleur seule change au-delà), mais sémantique INVERSÉE : ici dépasser 100% est le
+// signal à surveiller (dépassement), pas le manque à combler.
+function renderPrevuPasseBar(prevuH, passeH){
+  if(!(prevuH > 1e-6)){
+    return `<div class="tp-bar-track"><div class="tp-bar-fill" style="width:0%; background:var(--text-faint);"></div></div>`;
+  }
+  const ratio = passeH / prevuH;
+  const fillPct = Math.max(0, Math.min(ratio, 1)) * 100;
+  const color = ratio > 1.5 ? 'var(--red)' : (ratio > 1.05 ? '#c9a227' : 'var(--green)');
+  const pct = Math.round(ratio*100);
+  return `<div class="tp-bar-track" title="Temps passé : ${pct}% du temps prévu">
+    <div class="tp-bar-fill" style="width:${fillPct}%; background:${color};"></div>
+  </div>`;
+}
+// Avatar généré (initiales + couleur déterministe à partir du nom) — pas de photo à uploader ni de
+// nouveau champ `state` à synchroniser, juste un repère visuel cohérent pour retrouver un salarié
+// d'un coup d'œil sur les cartes de "⏱ Temps de production" (retour utilisateur réel, maquette
+// externe fournie). Même nom -> même couleur d'une page à l'autre et d'un rendu à l'autre.
+const AVATAR_PALETTE = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a', '#5a8f9c', '#b0563a', '#6f8f4a'];
+function avatarColorFor(name){
+  let hash = 0;
+  const s = String(name||'');
+  for(let i=0;i<s.length;i++){ hash = (hash*31 + s.charCodeAt(i)) >>> 0; }
+  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
+}
+function initialsForName(name){
+  const parts = String(name||'').trim().split(/\s+/).filter(Boolean);
+  if(!parts.length) return '?';
+  if(parts.length===1) return parts[0].slice(0,2).toUpperCase();
+  return (parts[0][0]+parts[parts.length-1][0]).toUpperCase();
+}
+function renderAvatar(name){
+  return `<div class="tp-avatar" style="background:${avatarColorFor(name)};" title="${escapeHtml(name||'')}">${escapeHtml(initialsForName(name))}</div>`;
+}
 // Dépassement "notable" : +50% ET au moins 15 minutes d'écart absolu — le double seuil évite de
 // signaler une tâche de 2 minutes prévue à 1 minute (100% de dépassement, mais insignifiant).
 function isOverrunTask(prevuH, h){
@@ -9343,6 +9421,18 @@ function isOverrunTask(prevuH, h){
 function setTempsProdSort(key){
   if(tempsProdSort.key === key) tempsProdSort.dir = tempsProdSort.dir==='asc' ? 'desc' : 'asc';
   else tempsProdSort = { key, dir: key==='username' ? 'asc' : 'desc' };
+  render();
+}
+// Sélecteur "Trier par" des cartes salariés (voir CLAUDE.md « Refonte visuelle... ») — contrairement
+// à setTempsProdSort (clic sur un même en-tête de colonne = bascule le sens), changer la valeur d'un
+// <select> doit toujours choisir CETTE clé sans toucher au sens déjà choisi ; le bouton dédié
+// ▲/▼ à côté du sélecteur inverse le sens indépendamment.
+function setTempsProdSortKey(key){
+  tempsProdSort.key = key;
+  render();
+}
+function toggleTempsProdSortDir(){
+  tempsProdSort.dir = tempsProdSort.dir==='asc' ? 'desc' : 'asc';
   render();
 }
 function setTempsProdDetailSort(userId, key){
@@ -9639,6 +9729,37 @@ function renderTempsProdPeriodControls(label){
     </div>`;
   return `<div class="view-tabs">${modesHtml}</div>${navHtml}`;
 }
+// Carte "salarié" de l'onglet Temps de production (voir CLAUDE.md « Refonte visuelle... ») — partagée
+// par la vue superviseur (une carte par salarié, dépliable) et "Mon temps de production" (une seule
+// carte, jamais dépliable puisque le détail suit déjà juste en dessous sur cette page). Purement de
+// la composition : aucune donnée ni calcul propre, tout vient déjà de `row` (voir tempsProdRows).
+function renderEmployeeCard(row, opts){
+  opts = opts || {};
+  const expandable = !!opts.expandable;
+  const expanded = !!opts.expanded;
+  return `<div class="tp-emp-card${expanded?' expanded':''}"${expanded?' style="grid-column:1/-1;"':''}>
+    <div class="tp-emp-head">
+      ${renderAvatar(row.username)}
+      <div class="tp-emp-name" title="${escapeHtml(row.username)}">${escapeHtml(row.username)}</div>
+      ${expandable ? `<button class="ghost small" data-action="temps-prod-toggle" data-user-id="${row.uid}" title="Voir le détail des tâches">${expanded?'▾':'▸'} Détail</button>` : ''}
+    </div>
+    <div class="tp-bar-block">
+      <div class="tp-bar-labels"><span>Prévu : ${formatHeures(row.totalPrevuH)}</span><span>Passé : ${formatHeures(row.totalH)}</span></div>
+      ${renderPrevuPasseBar(row.totalPrevuH, row.totalH)}
+      <div class="tp-ecart-line">Écart : ${formatEcart(row.ecartH)}</div>
+    </div>
+    <div class="tp-mini-stats">
+      <div class="tp-mini-stat"><span class="tp-mini-num">${row.nbTaches}</span><span class="tp-mini-lbl">Tâches</span></div>
+      <div class="tp-mini-stat${row.nbOverrun>0?' alert':''}"><span class="tp-mini-num">${row.nbOverrun}</span><span class="tp-mini-lbl">Dépassements</span></div>
+      <div class="tp-mini-stat"><span class="tp-mini-num">${row.presenceH!=null?formatHeures(row.presenceH):'—'}</span><span class="tp-mini-lbl">Présence théo.</span></div>
+    </div>
+    <div class="tp-occ-block">
+      <div class="tp-mini-lbl" style="margin-bottom:3px;">Taux d'occupation</div>
+      ${renderOccupationBar(row.tauxOccupation, true)}
+    </div>
+    ${expanded ? `<div class="tp-emp-detail">${renderTempsProdDetail(row, false)}</div>` : ''}
+  </div>`;
+}
 // Vue d'un opérateur (non superviseur) : uniquement les tâches de l'identité active sur ce poste
 // (compte connecté par défaut, ou la personne choisie dans le sélecteur de l'en-tête sur un poste
 // partagé — voir activeIdentityId) — jamais la liste des collègues. Même moteur de calcul
@@ -9661,15 +9782,9 @@ function renderTempsProdSelfPage(start, end, label){
     </div>
     <div class="panel-body">${renderTempsProdPeriodControls(label)}</div>
   </section>
-  <section class="panel"><div class="panel-body" style="padding:9px 16px;">
-    <div class="stat-row">
-      <div class="stat"><div class="num mono">${formatHeures(row.totalPrevuH)}</div><div class="lbl">Temps prévu</div></div>
-      <div class="stat"><div class="num mono">${formatHeures(row.totalH)}</div><div class="lbl">Temps passé</div></div>
-      <div class="stat"><div class="num mono">${formatEcart(row.ecartH)}</div><div class="lbl">Écart</div></div>
-      <div class="stat"><div class="num mono">${row.nbTaches}</div><div class="lbl">Tâches</div></div>
-      <div class="stat ${row.nbOverrun>0?'alert':''}"><div class="num mono">${row.nbOverrun}</div><div class="lbl">Dépassements notables</div></div>
-      <div class="stat"><div class="num mono">${formatHeures(row.presenceH)}</div><div class="lbl">Présence théorique</div></div>
-      <div class="stat" style="flex-direction:column; align-items:flex-start; gap:5px;"><div class="lbl">Taux d'occupation</div>${renderOccupationBar(row.tauxOccupation, true)}</div>
+  <section class="panel"><div class="panel-body">
+    <div class="tp-employee-grid" style="grid-template-columns:1fr; max-width:420px;">
+      ${renderEmployeeCard(row, { expandable:false })}
     </div>
   </div></section>
   <section class="panel"><div class="panel-body">
@@ -9682,21 +9797,23 @@ function renderTempsProdPage(){
   if(!canSupervise()) return renderTempsProdSelfPage(start, end, label);
   const byUser = computeProductionTimeByUser(state, start, end);
   const rows = tempsProdRows(byUser, start, end).filter(r => !isHiddenFromTempsProd(state, r.uid));
-  const th = (key, label) => `<th data-action="temps-prod-sort" data-key="${key}" style="cursor:pointer; white-space:nowrap;">${label}${sortIndicatorHtml(key, tempsProdSort)}</th>`;
-  const rowsHtml = rows.map(r => {
-    const expanded = !!tempsProdExpanded[r.uid];
-    return `<tr>
-        <td><button class="ghost small" data-action="temps-prod-toggle" data-user-id="${r.uid}" style="margin-right:6px;">${expanded?'▾':'▸'}</button>${escapeHtml(r.username)}</td>
-        <td>${formatHeures(r.totalPrevuH)}</td>
-        <td>${formatHeures(r.totalH)}</td>
-        <td>${formatEcart(r.ecartH)}</td>
-        <td>${r.nbTaches}</td>
-        <td>${r.nbOverrun>0 ? `<span title="${r.nbOverrun} tâche(s) avec un dépassement notable (+50% et plus de 15 min)" style="color:var(--red); font-weight:600;">⚠️ ${r.nbOverrun}</span>` : '—'}</td>
-        <td>${formatHeures(r.presenceH)}</td>
-        <td>${renderOccupationBar(r.tauxOccupation)}</td>
-      </tr>
-      ${expanded ? `<tr><td colspan="8" style="padding:8px 0;">${renderTempsProdDetail(r)}</td></tr>` : ''}`;
-  }).join('');
+  // Tri par sélecteur (voir setTempsProdSortKey/CLAUDE.md « Refonte visuelle... ») — remplace le tri
+  // par clic sur un en-tête de colonne, qui n'existe plus depuis que les lignes du tableau sont
+  // devenues des cartes (tempsProdRows applique déjà le tri, cette barre ne fait que le piloter).
+  const sortOptions = [
+    { key:'username', label:'Salarié' }, { key:'prevu', label:'Temps prévu' },
+    { key:'total', label:'Temps passé' }, { key:'ecart', label:'Écart' },
+    { key:'nbTaches', label:'Nb tâches' }, { key:'overrun', label:'Dépassements' },
+    { key:'presence', label:'Présence théo.' }, { key:'taux', label:"Taux d'occupation" }
+  ];
+  const sortBarHtml = `<div class="tp-sort-bar">
+    <label class="field" style="margin:0;">Trier par</label>
+    <select data-action="temps-prod-sort-select">
+      ${sortOptions.map(o => `<option value="${o.key}" ${tempsProdSort.key===o.key?'selected':''}>${o.label}</option>`).join('')}
+    </select>
+    <button class="ghost small" data-action="temps-prod-sort-dir" title="Inverser l'ordre">${tempsProdSort.dir==='asc'?'▲ Croissant':'▼ Décroissant'}</button>
+  </div>`;
+  const cardsHtml = rows.map(r => renderEmployeeCard(r, { expandable:true, expanded: !!tempsProdExpanded[r.uid] })).join('');
   return `
   <section class="panel">
     <div class="panel-head">
@@ -9707,12 +9824,10 @@ function renderTempsProdPage(){
     <div class="panel-body">${renderTempsProdPeriodControls(label)}</div>
   </section>
   <section class="panel"><div class="panel-body">
-    <table class="ops-table temps-prod-fixed">
-      <colgroup><col style="width:22%"><col style="width:12%"><col style="width:12%"><col style="width:11%"><col style="width:9%"><col style="width:12%"><col style="width:11%"><col style="width:11%"></colgroup>
-      <thead><tr>${th('username','Salarié')}${th('prevu','Temps prévu')}${th('total','Temps passé')}${th('ecart','Écart')}${th('nbTaches','Nb tâches')}${th('overrun','⚠️ Dépassements')}${th('presence','Présence théo.')}${th('taux',"Taux d'occupation")}</tr></thead>
-      <tbody>${rowsHtml || `<tr><td colspan="8" style="text-align:center; color:var(--text-faint);">Aucun salarié attendu ni aucune tâche sur cette période</td></tr>`}</tbody>
-    </table>
-    <div class="footer-note" style="text-align:left; padding-top:10px;">Le temps prévu vient de la durée théorique de chaque ligne (temps unitaire × quantité, ou durée d'un groupe fusionné) ; le temps passé du temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses. L'écart compare les deux sur les tâches déjà comptées dans la période, y compris en cours (le prévu couvre alors toute la quantité). Un ⚠️ signale une tâche ayant dépassé son temps prévu de plus de 50% (et d'au moins 15 minutes). La présence théorique est celle attendue par l'horaire de la personne (jours ouvrés hors fériés, moins ses congés approuvés) — l'application ne fait pas de pointage réel ; le taux d'occupation compare le temps passé sur des tâches suivies à cette présence théorique (peut dépasser 100% en cas d'heures supplémentaires ou de travail à plusieurs sur une même pièce). Un salarié attendu sur la période mais sans aucune tâche suivie apparaît quand même, à 0% — pour le repérer, pas parce que l'application sait s'il était réellement absent.</div>
+    <div class="trend-section-title" style="margin-top:0;">Performance des salariés</div>
+    ${sortBarHtml}
+    <div class="tp-employee-grid">${cardsHtml || `<div class="footer-note" style="grid-column:1/-1;">Aucun salarié attendu ni aucune tâche sur cette période</div>`}</div>
+    <div class="footer-note" style="text-align:left; padding-top:14px;">Le temps prévu vient de la durée théorique de chaque ligne (temps unitaire × quantité, ou durée d'un groupe fusionné) ; le temps passé du temps réel enregistré (sessions Démarrer/Reprendre, ou temps saisi à la clôture pour une tâche jamais démarrée via l'application) — hors nuits, week-ends et pauses. L'écart compare les deux sur les tâches déjà comptées dans la période, y compris en cours (le prévu couvre alors toute la quantité). Un ⚠️ signale une tâche ayant dépassé son temps prévu de plus de 50% (et d'au moins 15 minutes). La présence théorique est celle attendue par l'horaire de la personne (jours ouvrés hors fériés, moins ses congés approuvés) — l'application ne fait pas de pointage réel ; le taux d'occupation compare le temps passé sur des tâches suivies à cette présence théorique (peut dépasser 100% en cas d'heures supplémentaires ou de travail à plusieurs sur une même pièce). Un salarié attendu sur la période mais sans aucune tâche suivie apparaît quand même, à 0% — pour le repérer, pas parce que l'application sait s'il était réellement absent.</div>
   </div></section>
   ${renderMachineOccupationSection(start, end)}`;
 }
@@ -9722,19 +9837,25 @@ function renderTempsProdPage(){
 // le tableau par salarié (mêmes bornes, jamais un second sélecteur de période à maintenir).
 function renderMachineOccupationSection(start, end){
   const rows = computeMachineOccupationRows(state, start, end);
-  const rowsHtml = rows.map(r => `<tr>
-      <td>${escapeHtml(r.machineNom)}</td>
-      <td>${formatHeures(r.totalH)}</td>
-      <td>${formatHeures(r.capaciteH)}</td>
-      <td>${renderOccupationBar(r.taux)}</td>
-    </tr>`).join('');
+  const cardsHtml = rows.map(r => {
+    const m = state.machines.find(mm=>mm.id===r.machineId);
+    const borderStyle = (m && m.couleur) ? `style="border-left-color:${escapeHtml(m.couleur)};"` : '';
+    return `<div class="occ-machine-card" ${borderStyle}>
+      <div class="occ-machine-head">
+        ${(m && m.icone) ? `<span class="occ-machine-icon">${m.icone}</span>` : ''}
+        <span class="occ-machine-nom" title="${escapeHtml(r.machineNom)}">${escapeHtml(r.machineNom)}</span>
+      </div>
+      <div class="occ-machine-stats">
+        <span>Temps réel : ${formatHeures(r.totalH)}</span>
+        <span>Capacité théorique : ${formatHeures(r.capaciteH)}</span>
+      </div>
+      ${renderOccupationBar(r.taux)}
+    </div>`;
+  }).join('');
   return `
   <section class="panel"><div class="panel-body">
-    <h3 style="margin-top:0;">Taux d'occupation par poste</h3>
-    <table class="ops-table">
-      <thead><tr><th>Poste</th><th>Temps réel</th><th>Capacité théorique</th><th>Taux d'occupation</th></tr></thead>
-      <tbody>${rowsHtml || `<tr><td colspan="4" style="text-align:center; color:var(--text-faint);">Aucun poste configuré</td></tr>`}</tbody>
-    </table>
+    <div class="trend-section-title" style="margin-top:0;">Taux d'occupation par poste</div>
+    <div class="occ-machine-grid">${cardsHtml || `<div class="footer-note">Aucun poste configuré</div>`}</div>
     <div class="footer-note" style="text-align:left; padding-top:10px;">Temps réel = somme des sessions/temps réellement passé sur ce poste (toutes commandes actives et archivées confondues) sur la période affichée ci-dessus. Capacité théorique = horaires nominaux du poste sur cette même période (jours ouvrés, hors fériés et indisponibilités programmées). Un poste durablement sous 50% peut être sous-utilisé ; un poste régulièrement au-delà de 100% (heures supplémentaires, ou deux pièces qui se chevauchent réellement) est un goulot d'étranglement structurel à surveiller.</div>
   </div></section>`;
 }
@@ -12483,6 +12604,7 @@ function dispatchClickAction(action, el){
     case 'temps-prod-today': tempsProdToday(); break;
     case 'temps-prod-export': exportTempsProdExcel(canSupervise() ? undefined : activeIdentityId()); break;
     case 'temps-prod-sort': setTempsProdSort(el.dataset.key); break;
+    case 'temps-prod-sort-dir': toggleTempsProdSortDir(); break;
     case 'temps-prod-detail-sort': setTempsProdDetailSort(el.dataset.userId, el.dataset.key); break;
     case 'temps-prod-toggle': tempsProdExpanded[el.dataset.userId] = !tempsProdExpanded[el.dataset.userId]; render(); break;
     case 'show-temps-prod-sessions': showTempsProdSessions(el.dataset.cid, el.dataset.oid); break;
@@ -12661,6 +12783,7 @@ function dispatchChangeAction(el, action){
     case 'update-machine-dispo': updateMachine(el.dataset.id, 'dispo', el.value); break;
     case 'update-machine-color': updateMachine(el.dataset.id, 'couleur', el.value); break;
     case 'update-machine-icone': updateMachine(el.dataset.id, 'icone', el.value || null); break;
+    case 'temps-prod-sort-select': setTempsProdSortKey(el.value); break;
     case 'update-allee-code': updateStorageAllee(el.dataset.id, 'code', el.value); break;
     case 'update-allee-nom': updateStorageAllee(el.dataset.id, 'nom', el.value); break;
     case 'update-allee-nb': updateStorageAllee(el.dataset.id, 'nbEmplacements', el.value); break;
