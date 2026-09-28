@@ -502,11 +502,52 @@
   .risque-days-late{font-size:12px; font-weight:600; color:var(--red); white-space:nowrap;}
   .risque-piece-row td{background:var(--panel-2); font-weight:600; font-size:12px; color:var(--text-dim); padding-top:8px;}
   .risque-row-blocking{background:var(--amber-dim);}
-  /* Page "📊 Vue d'ensemble" (tableau de bord atelier, voir renderDashboardPage/CLAUDE.md) — teinte
-     légère par ligne de poste selon son état instantané, même principe que .risque-row-blocking. */
-  .dash-poste-actif td{background:rgba(53,117,87,0.10);}
-  .dash-poste-pause td{background:var(--amber-dim);}
-  .dash-poste-arret td{color:var(--text-faint);}
+  /* Page "📊 Vue d'ensemble" (tableau de bord atelier, voir renderDashboardPage/CLAUDE.md) — retour
+     utilisateur réel, maquette fournie (tuiles colorées + grille de cartes par poste) : la sobre
+     table à trois colonnes d'origine est remplacée par ces deux blocs, en gardant le fond CLAIR de
+     l'appli partout (jamais le thème sombre de la maquette — demande explicite : « je ne veux pas de
+     noir ») — seules les COULEURS d'accent (vert/ambre/rouge, déjà utilisées ailleurs dans l'appli
+     pour ce même vocabulaire actif/pause/alerte) reprennent l'esprit de la maquette. */
+  .dash-stat-grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-top:4px;}
+  .dash-stat-tile{
+    border-radius:var(--radius); padding:12px 14px; border:1px solid var(--line);
+    background:var(--panel-2); display:flex; flex-direction:column; gap:4px; min-width:0;
+  }
+  .dash-stat-tile .dst-top{display:flex; align-items:center; justify-content:space-between; gap:8px;}
+  .dash-stat-tile .dst-num{font-family:'IBM Plex Mono',monospace; font-size:26px; font-weight:600; line-height:1;}
+  .dash-stat-tile .dst-icon{font-size:18px; line-height:1; flex:none;}
+  .dash-stat-tile .dst-lbl{font-size:11px; text-transform:uppercase; letter-spacing:0.4px; font-weight:600;}
+  .dash-stat-tile .dst-sub{font-size:11px; line-height:1.5; opacity:0.85; white-space:pre-line;}
+  .dash-stat-tile .dst-bar{height:5px; border-radius:3px; background:rgba(255,255,255,0.4); overflow:hidden; margin-top:2px;}
+  .dash-stat-tile .dst-bar-fill{height:100%; border-radius:3px;}
+  .dash-stat-tile.tone-green{background:rgba(53,117,87,0.12); border-color:rgba(53,117,87,0.4);}
+  .dash-stat-tile.tone-green .dst-num, .dash-stat-tile.tone-green .dst-lbl{color:var(--green);}
+  .dash-stat-tile.tone-green .dst-bar{background:rgba(53,117,87,0.18);}
+  .dash-stat-tile.tone-green .dst-bar-fill{background:var(--green);}
+  .dash-stat-tile.tone-amber{background:var(--amber-dim); border-color:rgba(160,109,26,0.4);}
+  .dash-stat-tile.tone-amber .dst-num, .dash-stat-tile.tone-amber .dst-lbl{color:var(--amber);}
+  .dash-stat-tile.tone-red{background:rgba(178,58,48,0.10); border-color:rgba(178,58,48,0.4);}
+  .dash-stat-tile.tone-red .dst-num, .dash-stat-tile.tone-red .dst-lbl{color:var(--red);}
+  .dash-stat-tile.tone-neutral .dst-num, .dash-stat-tile.tone-neutral .dst-lbl{color:var(--text-dim);}
+  .dash-stat-tile.dst-clickable{cursor:pointer;}
+  .dash-stat-tile.dst-clickable:hover{filter:brightness(0.97);}
+
+  .dash-machine-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:10px; margin-top:4px;}
+  .dash-machine-card{
+    border-radius:var(--radius); padding:10px 12px; background:var(--panel-2);
+    border:1px solid var(--line); border-left:4px solid var(--line); min-width:0;
+  }
+  .dash-machine-card .dmc-top{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;}
+  .dash-machine-card .dmc-nom{font-family:'Oswald',sans-serif; font-size:12.5px; font-weight:600; letter-spacing:0.4px; text-transform:uppercase; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .dash-machine-card .dmc-badge{font-size:9.5px; font-weight:700; letter-spacing:0.4px; padding:2px 7px; border-radius:10px; flex:none; text-transform:uppercase;}
+  .dash-machine-card .dmc-badge.st-actif{background:var(--green); color:#fff;}
+  .dash-machine-card .dmc-badge.st-pause{background:var(--amber); color:#fff;}
+  .dash-machine-card .dmc-badge.st-arret{background:var(--red); color:#fff;}
+  .dash-machine-card .dmc-commande{font-family:'IBM Plex Mono',monospace; font-size:13.5px; font-weight:600; margin-bottom:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .dash-machine-card.st-actif .dmc-commande{color:var(--green);}
+  .dash-machine-card.st-pause .dmc-commande{color:var(--amber);}
+  .dash-machine-card .dmc-client, .dash-machine-card .dmc-piece{font-size:11px; color:var(--text-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .dash-machine-card .dmc-empty{font-size:13px; color:var(--text-faint);}
   .risque-blocking-tag{font-size:11px; color:var(--amber-strong,#a06d1a); font-weight:600;}
   .risque-context-row td{font-size:11.5px; color:var(--text-dim); padding-top:2px; padding-bottom:8px; border-top:none;}
   .risque-context-row .commande-link-inline{background:none; border:none; padding:0; font-weight:600; color:inherit; cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px;}
@@ -961,7 +1002,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.57.0';
+const APP_VERSION = '1.58.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Zones physiques d'entreposage des pièces en cours de production — configurables (Paramètres →
 // Zones de stockage, state.config.storageZones), voir computeStorageZones()/CLAUDE.md.
@@ -8453,8 +8494,9 @@ function computeMachineStatusSnapshot(st){
       else if(o.statut === 'en_pause' && statut !== 'actif'){ statut = 'pause'; if(!ctx) ctx = { kind:'pause', c, o }; }
     }));
     return {
-      machineId: m.id, machineNom: m.nom, statut,
+      machineId: m.id, machineNom: m.nom, couleur: m.couleur || null, statut,
       commandeNom: ctx ? ctx.c.nom : null,
+      refClient: ctx ? (ctx.c.refClient || null) : null,
       pieceLabel: ctx ? [ctx.o.piece, ctx.o.etape].filter(Boolean).join(' / ') : null
     };
   });
@@ -8750,10 +8792,25 @@ function renderDashboardPage(){
   const pausesSuspectes = computePausesARisque(atRisk, now);
   const pausesVeille = pausedSinceEarlierTasks();
 
-  const statutLabel = { actif:'🟢 Actif', pause:'🟠 En pause', arret:'⚪ À l\'arrêt' };
-  const machineRows = machineStatus.map(m => {
-    const detail = m.commandeNom ? `${escapeHtml(m.commandeNom)} — ${escapeHtml(m.pieceLabel||'—')}` : '—';
-    return `<tr class="dash-poste-${m.statut}"><td>${escapeHtml(m.machineNom)}</td><td>${statutLabel[m.statut]}</td><td>${detail}</td></tr>`;
+  // Listes de noms sous les tuiles "Postes en pause"/"Postes à l'arrêt" (retour utilisateur réel,
+  // maquette fournie) — juste une lecture supplémentaire de machineStatus, déjà calculé ci-dessus.
+  const pauseNames = machineStatus.filter(m=>m.statut==='pause').map(m=>m.machineNom);
+  const arretNames = machineStatus.filter(m=>m.statut==='arret').map(m=>m.machineNom);
+  const badgeLabel = { actif:'Actif', pause:'En pause', arret:'À l\'arrêt' };
+  const machineCards = machineStatus.map(m => {
+    const borderStyle = m.couleur ? `style="border-left-color:${escapeHtml(m.couleur)};"` : '';
+    const body = (m.statut !== 'arret' && m.commandeNom)
+      ? `<div class="dmc-commande">${escapeHtml(m.commandeNom)}</div>
+         ${m.refClient ? `<div class="dmc-client">Client : ${escapeHtml(m.refClient)}</div>` : ''}
+         <div class="dmc-piece">${escapeHtml(m.pieceLabel || '—')}</div>`
+      : `<div class="dmc-empty">—</div>`;
+    return `<div class="dash-machine-card st-${m.statut}" ${borderStyle}>
+      <div class="dmc-top">
+        <div class="dmc-nom" title="${escapeHtml(m.machineNom)}">${escapeHtml(m.machineNom)}</div>
+        <span class="dmc-badge st-${m.statut}">${badgeLabel[m.statut]}</span>
+      </div>
+      ${body}
+    </div>`;
   }).join('');
 
   const pausesSuspectesHtml = pausesSuspectes.length ? `
@@ -8783,19 +8840,42 @@ function renderDashboardPage(){
     </div>
     <div class="panel-body">
     ${absenceBannerHtml([now])}
-    <div class="stat-row">
-      <div class="stat"><div class="num mono">${nbActifs}/${machineStatus.length}</div><div class="lbl">Postes actifs</div></div>
-      <div class="stat ${nbPause>0?'alert':''}"><div class="num mono">${nbPause}</div><div class="lbl">Postes en pause</div></div>
-      <div class="stat"><div class="num mono">${nbArret}</div><div class="lbl">Postes à l'arrêt</div></div>
-      <div class="stat ${atRisk.length>0?'alert stat-clickable':''}" ${atRisk.length>0?'data-action="goto-risques"':''}><div class="num mono">${atRisk.length}</div><div class="lbl">Commandes à risque</div></div>
-      <div class="stat ${retardsDetail.length>0?'alert':''}"><div class="num mono">${retardsDetail.length}</div><div class="lbl">Tâches démarrées en retard</div></div>
-      <div class="stat ${pausesSuspectes.length>0?'alert':''}"><div class="num mono">${pausesSuspectes.length}</div><div class="lbl">Pauses suspectes en cours</div></div>
-      <div class="stat ${pausesVeille.length>0?'alert':''}"><div class="num mono">${pausesVeille.length}</div><div class="lbl">En pause depuis la veille</div></div>
+    <div class="dash-stat-grid">
+      <div class="dash-stat-tile tone-green">
+        <div class="dst-top"><div class="dst-num">${nbActifs}/${machineStatus.length}</div><span class="dst-icon">🏃</span></div>
+        <div class="dst-lbl">Postes actifs</div>
+        <div class="dst-bar"><div class="dst-bar-fill" style="width:${machineStatus.length ? Math.round(nbActifs/machineStatus.length*100) : 0}%;"></div></div>
+      </div>
+      <div class="dash-stat-tile tone-amber">
+        <div class="dst-top"><div class="dst-num">${nbPause}</div><span class="dst-icon">⏸</span></div>
+        <div class="dst-lbl">Postes en pause</div>
+        ${pauseNames.length ? `<div class="dst-sub">${pauseNames.map(n=>'• '+escapeHtml(n)).join('\n')}</div>` : ''}
+      </div>
+      <div class="dash-stat-tile tone-red">
+        <div class="dst-top"><div class="dst-num">${nbArret}</div><span class="dst-icon">⏹</span></div>
+        <div class="dst-lbl">Postes à l'arrêt</div>
+        ${arretNames.length ? `<div class="dst-sub">${arretNames.map(n=>'• '+escapeHtml(n)).join('\n')}</div>` : ''}
+      </div>
+      <div class="dash-stat-tile tone-red ${atRisk.length>0?'dst-clickable':''}" ${atRisk.length>0?'data-action="goto-risques"':''}>
+        <div class="dst-top"><div class="dst-num">${atRisk.length}</div><span class="dst-icon">⚠️</span></div>
+        <div class="dst-lbl">Commandes à risque</div>
+      </div>
+      <div class="dash-stat-tile tone-red">
+        <div class="dst-top"><div class="dst-num">${retardsDetail.length}</div><span class="dst-icon">🕓</span></div>
+        <div class="dst-lbl">Tâches démarrées en retard</div>
+      </div>
+      <div class="dash-stat-tile tone-red">
+        <div class="dst-top"><div class="dst-num">${pausesSuspectes.length}</div><span class="dst-icon">🔔</span></div>
+        <div class="dst-lbl">Pauses suspectes en cours</div>
+      </div>
+      <div class="dash-stat-tile tone-red">
+        <div class="dst-top"><div class="dst-num">${pausesVeille.length}</div><span class="dst-icon">🌙</span></div>
+        <div class="dst-lbl">En pause depuis la veille</div>
+      </div>
     </div>
 
     <div class="trend-section-title" style="margin-top:20px;">Postes</div>
-    <table class="ops-table"><thead><tr><th>Poste</th><th>État</th><th>Tâche en cours</th></tr></thead>
-      <tbody>${machineRows}</tbody></table>
+    <div class="dash-machine-grid">${machineCards}</div>
     ${pausesSuspectesHtml}
 
     <div class="trend-section-title" style="margin-top:24px;">⏱ Temps de production par poste (12 derniers mois)</div>

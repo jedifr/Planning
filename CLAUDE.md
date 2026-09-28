@@ -2158,6 +2158,28 @@ production/Risques/Pointages/Historique — voir « Planning sur téléphone »)
   depuis la veille), un tableau détaillant l'état de chaque poste (teinte de ligne selon l'état, voir
   `.dash-poste-actif`/`.dash-poste-pause`/`.dash-poste-arret`), et le détail des pauses suspectes en
   cours si non vide (même colonnes que la section C de la page Risques de retard).
+  - **Refonte visuelle (retour utilisateur réel, maquette externe fournie en capture d'écran)** : la
+    rangée `.stat`/le tableau des postes ci-dessus ont été remplacés par des tuiles colorées
+    (`.dash-stat-grid`/`.dash-stat-tile`, une par indicateur, teinte `tone-green`/`tone-amber`/
+    `tone-red` selon la gravité) et une grille de cartes par poste (`.dash-machine-grid`/
+    `.dash-machine-card`, badge `ACTIF`/`EN PAUSE`/`À L'ARRÊT` coloré, commande + « Client : {réf.
+    client} » + pièce/étape en cours si actif/en pause, bordure gauche dans la couleur du poste —
+    `machine.couleur`, comme le Kanban/les camemberts). **Fond de page volontairement resté CLAIR**
+    (jamais le thème sombre de la maquette source) — demande explicite : « je ne veux pas de noir » ;
+    seules les COULEURS d'accent (vert/ambre/rouge, déjà établies ailleurs dans l'appli pour ce même
+    vocabulaire actif/pause/alerte, ex. `.badge-overdue`/`renderOccupationBar`) reprennent l'esprit
+    de la maquette, jamais son fond. Pas d'icône par TYPE de machine (Laser/Tour/Fraiseuse...) comme
+    sur la maquette source : l'appli n'a aucune notion de "type" de poste dans son modèle de données
+    (seulement un nom et une couleur libres, voir modèle de données) — inventer un mapping nom→icône
+    aurait été fragile (dépendant des intitulés exacts choisis par CET atelier) pour un bénéfice
+    esthétique seul ; la couleur du poste, déjà configurée par ailleurs, en tient lieu.
+  - `computeMachineStatusSnapshot(st)` porte désormais aussi `couleur` (recopiée de `machine.couleur`,
+    `null` si non définie) et `refClient` (recopié de la commande en cours de contexte, `null` sinon)
+    — les deux nécessaires à cette refonte visuelle, aucun changement de la logique de classification
+    actif/pause/arrêt elle-même.
+  - Sous les tuiles "Postes en pause"/"Postes à l'arrêt" : la liste des noms de postes concernés
+    (`• Nom`, un par ligne), directement dérivée de `machineStatus` déjà calculé — aucun second calcul,
+    juste une seconde lecture du même tableau, comme sur la maquette source.
 - **Instantané recalculé à chaque rendu, aucun historique conservé ici** — pour une vue dans le temps
   plutôt qu'un instantané, voir « Historique / Tendances » ci-dessous, une page volontairement
   distincte répondant à une question différente.
