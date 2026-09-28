@@ -500,20 +500,33 @@
   }
   .risque-card{
     padding:12px 14px; background:var(--panel); border:1px solid var(--line);
-    border-left:3px solid var(--red); border-radius:2px; min-width:0;
+    border-left:3px solid var(--red); border-radius:2px; min-width:0; margin-bottom:12px;
   }
-  /* Deux colonnes (retour utilisateur réel) — chaque carte gardait toute la largeur de la page,
-     jamais nécessaire pour son contenu (chaîne + tableau), et forçait un long défilement vertical
-     dès quelques commandes à risque. `align-items:start` : une carte plus haute (plus de pièces/
-     étapes) ne doit jamais étirer sa voisine de la même ligne à sa hauteur. Repasse à une seule
-     colonne sous 1100px (chaîne en pastilles + tableau ont besoin d'assez de largeur chacun). */
-  .risque-cards-grid{display:grid; grid-template-columns:repeat(2, 1fr); gap:16px; align-items:start;}
-  @media (max-width:1100px){ .risque-cards-grid{grid-template-columns:1fr;} }
-  /* Une carte deux fois moins large peut ne plus suffire à la chaîne de pastilles/au tableau —
-     défilement horizontal propre à CHAQUE carte plutôt que de casser la grille ou de rétrécir le
-     contenu au point de le rendre illisible. */
-  .risque-cards-grid .rc-track{overflow-x:auto; padding-bottom:4px;}
-  .risque-cards-grid table.ops-table{display:block; overflow-x:auto;}
+  .risque-card:last-child{margin-bottom:0;}
+  /* Page en deux colonnes (retour utilisateur réel) — Risques de retard à gauche, Pauses de
+     production + Retards de démarrage empilés à droite : évite le partage de hauteur de ligne
+     d'une grille à deux colonnes de CARTES (essayé d'abord, revenu en arrière — deux cartes
+     "Risques" de hauteurs très différentes forcées sur la même ligne laissaient des sauts
+     visuels sous la plus courte, comportement normal mais indésirable d'un display:grid, qui
+     n'est pas un layout en cascade). Ici chaque COLONNE contient un ensemble de sections
+     différent, jamais deux cartes comparables sur une même ligne — le problème ne se pose plus.
+     `align-items:start` : une colonne plus haute ne doit jamais étirer l'autre. Repasse à une
+     seule colonne sous 1100px, DANS L'ORDRE Pauses/Retards de démarrage/Risques (via `order`) —
+     même priorité que celle déjà documentée pour ces sections (signal le plus actionnable en
+     premier), pas l'ordre visuel gauche/droite du bureau. */
+  .risques-two-col{display:flex; gap:16px; align-items:flex-start;}
+  .risques-col-left{flex:1 1 0; min-width:0;}
+  .risques-col-right{flex:1 1 0; min-width:0; display:flex; flex-direction:column; gap:16px;}
+  @media (max-width:1100px){
+    .risques-two-col{flex-direction:column;}
+    .risques-col-left{order:2;}
+    .risques-col-right{order:1;}
+  }
+  /* Une colonne à moitié moins large que la page entière peut ne plus suffire à la chaîne de
+     pastilles/au tableau — défilement horizontal propre plutôt que de rétrécir le contenu au
+     point de le rendre illisible. */
+  .risque-card .rc-track{overflow-x:auto; padding-bottom:4px;}
+  .risque-card table.ops-table{display:block; overflow-x:auto;}
   .risque-card-head{display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:8px;}
   .risque-days-late{font-size:12px; font-weight:600; color:var(--red); white-space:nowrap;}
   .risque-piece-row td{background:var(--panel-2); font-weight:600; font-size:12px; color:var(--text-dim); padding-top:8px;}
@@ -1103,7 +1116,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.63.1';
+const APP_VERSION = '1.63.2';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -9003,9 +9016,7 @@ function renderRisquesPage(){
       </table>` : ''}
     </div>`;
   }).join('') : '';
-  // Grille à deux colonnes (retour utilisateur réel) — jamais autour du message d'état vide, qui
-  // n'a rien d'une liste de cartes à ranger en colonnes.
-  const body = atRisk.length ? `<div class="risque-cards-grid">${bodyCards}</div>` : `<div class="empty-state"><strong>Aucune commande à risque</strong>Toutes les commandes en cours respectent leur échéance estimée.</div>`;
+  const body = atRisk.length ? bodyCards : `<div class="empty-state"><strong>Aucune commande à risque</strong>Toutes les commandes en cours respectent leur échéance estimée.</div>`;
   const nowPauses = new Date();
   const pauseParPoste = computePauseTimeParPoste(state, nowPauses);
   const pausesARisque = computePausesARisque(atRisk, nowPauses);
@@ -9102,10 +9113,7 @@ function renderRisquesPage(){
       </div>
     </div>
   </section>`;
-  return `
-  ${summaryHtml}
-  ${pausesHtml}
-  ${retardsDemarrageHtml}
+  const risquesHtml = `
   <section class="panel">
     <div class="panel-head">
       <h2>⚠️ Risques de retard</h2>
@@ -9119,6 +9127,16 @@ function renderRisquesPage(){
       ${body}
     </div>`}
   </section>`;
+  // Page en deux colonnes (retour utilisateur réel, voir CSS .risques-two-col) : Risques de retard
+  // à gauche (des cartes, profitent d'une colonne pleine largeur plutôt que de se partager une
+  // grille avec d'autres cartes de hauteur très différente) ; Pauses de production + Retards de
+  // démarrage empilés à droite (des tableaux par poste, plus courts et plus réguliers en hauteur).
+  return `
+  ${summaryHtml}
+  <div class="risques-two-col">
+    <div class="risques-col-left">${risquesHtml}</div>
+    <div class="risques-col-right">${pausesHtml}${retardsDemarrageHtml}</div>
+  </div>`;
 }
 
 /* ---------------- Vue d'ensemble atelier (voir CLAUDE.md « Vue d'ensemble atelier ») ---------------- */

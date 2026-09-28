@@ -3356,19 +3356,48 @@ bouton "Détail" »*.
   toast de succès/absence de destinataire/échec réseau, bouton réactivé et son libellé restauré dans
   tous les cas).
 
-**Cartes en deux colonnes (retour utilisateur réel).** Avec la chaîne en pastilles + le tableau
-replié par défaut, chaque carte est devenue bien moins haute qu'avant — occuper toute la largeur de
-la page pour autant ne se justifiait plus, et forçait un long défilement vertical dès plusieurs
-commandes à risque. `.risque-cards-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:16px;
-align-items:start;}` enrobe désormais `bodyCards` (jamais le message d'état vide "Aucune commande à
-risque", qui n'a rien d'une liste de cartes) — `align-items:start` pour qu'une carte plus chargée
-(plusieurs pièces/étapes) n'étire jamais sa voisine de la même ligne à sa hauteur. Repasse à une
-seule colonne sous 1100px (`@media`), la chaîne de pastilles et le tableau ayant chacun besoin d'une
-largeur minimale pour rester lisibles. Une carte deux fois moins large peut ne plus suffire à son
-contenu le plus large (beaucoup d'étapes dans une chaîne, ou le tableau à 5 colonnes) :
-`.risque-cards-grid .rc-track`/`table.ops-table` reçoivent un défilement horizontal propre à chaque
-carte (`overflow-x:auto`) plutôt que de casser la grille ou de rétrécir le contenu au point de le
-rendre illisible.
+### Page en deux colonnes (Risques de retard à gauche, Pauses + Retards de démarrage à droite)
+
+**Premier essai, abandonné : une grille à deux colonnes de CARTES** (`.risque-cards-grid{display:grid;
+grid-template-columns:repeat(2,1fr);...}`, `bodyCards` réparti sur deux colonnes). Retour utilisateur
+réel après déploiement, capture d'écran à l'appui : des « sauts » visuels nets entre les cartes d'une
+même ligne — comportement NORMAL de `display:grid` (pas un bug), mais indésirable ici. Une grille
+`repeat(2,1fr)` place les items en ordre strict ligne par ligne et dimensionne chaque LIGNE sur son
+item le plus haut, sur LES DEUX colonnes à la fois — ce n'est jamais un layout en cascade
+(masonry/Pinterest) où chaque colonne s'empile indépendamment. Les cartes "Risques de retard" variant
+beaucoup en hauteur (nombre de chaînes de pièces/étapes très différent d'une commande à l'autre), une
+carte courte se retrouvait fréquemment sur la même ligne qu'une carte bien plus haute de l'autre
+colonne, laissant un vide visible en dessous avant le début de la ligne suivante.
+
+**Solution retenue, suggérée par l'utilisateur : ne plus mettre deux CARTES comparables côte à côte,
+mais deux ENSEMBLES DE SECTIONS différents.** *« Est-ce que ce serait plus simple si on décomposait
+verticalement cette page ? Risque de retard sur une colonne de gauche et à droite on empilerait
+Pauses de production et Retards de démarrage constatés. »* — `.risques-two-col{display:flex; gap:16px;
+align-items:flex-start;}` avec deux enfants directs : `.risques-col-left` (la section "⚠️ Risques de
+retard" entière, ses cartes repassées en simple empilement vertical — `.risque-cards-grid` supprimée,
+`.risque-card` reprend un `margin-bottom` classique) et `.risques-col-right` (`display:flex;
+flex-direction:column; gap:16px;`, les sections "⏸ Pauses de production" et "🕓 Retards de démarrage
+constatés" empilées dans cet ordre). Le problème de la grille ne se pose plus : chaque colonne
+contient un ensemble de sections de nature différente, jamais deux cartes comparables forcées sur une
+même ligne — `align-items:flex-start` évite simplement qu'une colonne plus haute n'étire l'autre à sa
+hauteur, sans le moindre effet de "ligne partagée" à gérer. `summaryHtml` (« 📊 Tableau de bord des
+risques ») reste seul, en pleine largeur, au-dessus des deux colonnes — inchangé.
+- **Repli sous 1100px : une seule colonne, mais dans l'ordre Pauses → Retards de démarrage → Risques**
+  (`order` CSS), pas l'ordre visuel gauche/droite du bureau : `.risques-col-left{order:2;}`/
+  `.risques-col-right{order:1;}` sous `@media(max-width:1100px)`, cohérent avec la priorité déjà
+  documentée pour ces sections (« le signal le plus immédiatement actionnable » en premier, voir
+  "Pauses de production à risque" plus haut) — jamais l'ordre de lecture gauche-à-droite d'un écran
+  large, qui n'a plus de sens une fois empilé.
+- Chaque carte "Risques" profite à nouveau de toute la largeur de sa colonne (la moitié de la page,
+  pas la largeur entière comme avant le tout premier essai) : `.risque-card .rc-track`/
+  `table.ops-table` gardent leur défilement horizontal de secours (`overflow-x:auto`) pour le cas où
+  une chaîne à beaucoup d'étapes ou le tableau à 5 colonnes ne tiendrait quand même pas.
+- **Réflexe retenu de cet aller-retour** : un `display:grid` à colonnes multiples n'est un bon choix
+  que pour des items de nature comparable dont on accepte qu'ils partagent une hauteur de ligne (ou
+  dont la hauteur varie peu). Dès que les items diffèrent significativement en hauteur (comme des
+  cartes dont le contenu dépend du nombre d'étapes/pièces), soit passer à un layout en colonnes CSS
+  (`column-count`, cascade indépendante par colonne), soit — comme ici — repenser le découpage en
+  colonnes de CONTENUS différents plutôt que de répéter le même type d'item côte à côte.
 
 ### Alerte de démarrage tardif (pop-up à l'opérateur, activable dans Paramètres)
 
