@@ -3288,6 +3288,74 @@ retard) — jamais un second calcul divergent.
   démarrage sans aucune pause en cours), et présence/ordre du résumé dans `renderRisquesPage()`
   (rendu avant « ⏸ Pauses de production », tuiles claires réutilisées).
 
+### Chaîne de phases en pastilles + actions de carte (🔄 Replanifier / 📣 Avertir chef d'atelier)
+
+Retour utilisateur réel, maquette externe fournie (capture d'écran d'un « TABLEAU DE BORD DE
+PILOTAGE D'ATELIER ») : *« ce n'est pas possible de faire comme sur cette capture d'écran ? Pour les
+dates de début et fin d'opérations terminées, elles seraient visibles en passant la souris sur le
+point. »* — un aperçu (artefact) a d'abord été soumis avant toute modification de code (demande
+explicite), puis complété une fois validé : *« Garde le tableau en dessous, et ajoute les deux
+boutons aussi. »* Suite immédiate : *« Le tableau détaillé peut être affiché en cliquant sur un
+bouton "Détail" »*.
+
+- **Chaîne en pastilles, au-dessus du tableau détaillé — jamais à sa place.** `renderRisqueChainBlockHtml(chain,
+  machineTimelines, c)` relit `chain.rows`/`chain.blockingId`, déjà produits par
+  `pieceChainsForCommande` — aucun second calcul métier, purement une seconde présentation de la même
+  donnée. `risqueChainDotState(o, chain)` classe chaque étape `'done'` (déjà `termine`, quel que soit
+  son rang), `'blocking'` (celle dont l'id correspond à `chain.blockingId`) ou `'pending'` (toutes les
+  suivantes, quel que soit leur propre statut réel — retenues par la bloquante, comme le reste de la
+  page le documente déjà). Pastilles reliées par un trait, vert si l'étape précédente est `'done'`,
+  gris sinon. Sous la chaîne : une note « ⛔ {étape} bloque la suite » avec la date de mise en pause/
+  début prévu, et le même contexte inter-commandes (`machineNeighbors`, "🔒 Retenue par"/"➡ Retient à
+  son tour") déjà affiché dans le tableau — recalculé une seule fois par `renderRisqueChainBlockHtml`
+  puis réutilisé tel quel par le tableau, pas deux calculs divergents.
+- **Dates en infobulle sur chaque pastille, pas en colonnes fixes.** `risqueRowDateInfo(o)` factorise
+  le calcul « réalisé dès que l'horaire réel existe, prévu sinon » (déjà présent avant cette
+  fonctionnalité, simplement extrait pour être partagé entre la pastille et la cellule du tableau) ;
+  la pastille porte ce texte dans son attribut `title` (survol), le tableau garde l'affichage textuel
+  existant sous chaque date — les deux restent cohérents par construction puisqu'ils lisent la même
+  fonction, jamais recalculés séparément.
+- **Le tableau détaillé reste affiché à l'identique, mais replié par défaut derrière « ▸ Détail ».**
+  `risquesCardExpanded` (`{[commandeId]:true}`, purement transitoire côté client, jamais persisté —
+  comme `tempsProdExpanded`) et `toggleRisqueCardDetail(cid)` : la chaîne en pastilles donne déjà le
+  coup d'œil essentiel (quelle étape bloque, depuis quand), le tableau complet (poste/statut/dates
+  colonne par colonne, contexte inter-commandes) reste consultable d'un clic, jamais retiré. Un état
+  par commande, indépendant d'une carte à l'autre.
+- **🔄 Replanifier** — réutilise **tel quel** `data-action="isolate-commande-goto-planning"` (même
+  action que cliquer le nom de la commande) : l'application recalcule déjà le planning en continu à
+  chaque `render()`/`commit()` (voir « Moteur de planification »), il n'y a pas de "replanification"
+  distincte à déclencher côté serveur — le bouton n'est qu'un second point d'entrée, plus visible,
+  vers la même action d'isolement déjà existante.
+- **📣 Avertir chef d'atelier** — réutilise **tel quel** `POST /api/notify-admins` (déjà en place et
+  battle-tested pour les notifications de congés, `notifyAdminsOfRequest`) : envoie un e-mail aux
+  comptes de rôle `admin` ayant une adresse renseignée, via la même configuration SMTP
+  (`sendNotificationEmail`, `backup.js`). Aucune nouvelle route serveur, aucun nouveau champ de
+  configuration (délibérément **pas** `config.emailReport.destinataires`, qui vise les rapports
+  programmés, un besoin différent). `avertirChefAtelier(cid, btn)` construit le sujet/corps à partir
+  de la même donnée que la carte (nom de commande, jours de retard, chaîne bloquante par pièce avec
+  poste et statut de chaque étape bloquante) — jamais un second calcul de `commandeRiskDaysLate`.
+  Contrairement à `notifyAdminsOfRequest` (envoi silencieux en arrière-plan d'une autre action), un
+  clic explicite sur ce bouton doit confirmer que l'alerte est bien partie : `showToast()` après
+  réponse du serveur (succès avec le nombre d'administrateurs touchés, "aucun administrateur n'a
+  d'adresse configurée" si `sent===0` sans que ce soit une erreur, ou un message d'échec réseau
+  explicite) — jamais un `alert()` bloquant comme les boutons "Tester l'envoi" de Paramètres, pensés
+  eux pour un contexte de configuration, pas une action ponctuelle en plein travail. Bouton
+  désactivé/libellé "Envoi…" le temps de la requête, restauré ensuite quelle que soit l'issue.
+  **Champ de portée volontairement laissé de côté** : `/api/notify-admins` ne cible que le rôle
+  `admin`, jamais `superviseur` (même limite déjà présente pour les notifications de congés) — un
+  éventuel élargissement à `canSupervise()` toucherait aussi ce mécanisme existant, hors périmètre de
+  cette demande.
+- `opStatutLabel(statut)` — nouveau, factorise le libellé texte brut déjà encodé dans
+  `opStatutPillHtml` (qui l'utilise désormais en interne) : nécessaire pour le corps de l'e-mail
+  d'alerte et pour l'infobulle des pastilles, qui ont besoin du texte seul, jamais du HTML de la
+  pastille colorée.
+- Couvert par `test_risque_chain_ui.js` : `opStatutLabel`/`risqueChainDotState` (cas done/blocking/
+  pending), rendu de la chaîne en pastilles avec la note de blocage et les deux boutons, tableau
+  détaillé absent par défaut puis affiché après `toggleRisqueCardDetail`, indépendance du repli/dépli
+  entre deux commandes, et `avertirChefAtelier` (contenu du message envoyé à `/api/notify-admins`,
+  toast de succès/absence de destinataire/échec réseau, bouton réactivé et son libellé restauré dans
+  tous les cas).
+
 ### Alerte de démarrage tardif (pop-up à l'opérateur, activable dans Paramètres)
 
 Demande utilisateur directe : que chaque tâche démarrée en retard soit signalée à l'opérateur, par

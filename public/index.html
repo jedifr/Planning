@@ -607,8 +607,40 @@
   .occ-machine-stats{font-size:11px; color:var(--text-dim); display:flex; flex-direction:column; gap:1px;}
   .risque-blocking-tag{font-size:11px; color:var(--amber-strong,#a06d1a); font-weight:600;}
   .risque-context-row td{font-size:11.5px; color:var(--text-dim); padding-top:2px; padding-bottom:8px; border-top:none;}
-  .risque-context-row .commande-link-inline{background:none; border:none; padding:0; font-weight:600; color:inherit; cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px;}
-  .risque-context-row .commande-link-inline:hover{color:var(--accent);}
+  .risque-context-row .commande-link-inline, .rc-context-line .commande-link-inline{background:none; border:none; padding:0; font-weight:600; color:inherit; cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px;}
+  .risque-context-row .commande-link-inline:hover, .rc-context-line .commande-link-inline:hover{color:var(--accent);}
+  /* Chaîne d'étapes en pastilles + actions de carte (voir CLAUDE.md « Chaîne de phases en pastilles »)
+     — retour utilisateur réel, maquette externe fournie : coup d'œil visuel avant le détail
+     tabulaire, qui reste affiché tel quel derrière "▸ Détail" (jamais retiré, seulement replié). */
+  .rc-actions{display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end;}
+  .rc-btn{font-size:11px; font-weight:600; letter-spacing:0.2px; padding:6px 11px; white-space:nowrap;}
+  .rc-btn-alert{border-color:rgba(178,58,48,0.4); color:var(--red); background:rgba(178,58,48,0.06);}
+  .rc-btn-alert:hover{border-color:var(--red); background:rgba(178,58,48,0.12);}
+  .rc-chain-block{margin:10px 0 10px; padding:12px 6px 4px; background:var(--panel-2); border-radius:2px;}
+  .rc-chain-piece-lbl{font-size:11px; font-weight:600; color:var(--text-dim); margin:0 8px 8px; text-transform:uppercase; letter-spacing:0.4px;}
+  .rc-track{display:flex; align-items:flex-start; padding:0 4px;}
+  .rc-step{display:flex; flex-direction:column; align-items:center; flex:0 0 auto; width:96px; min-width:0;}
+  .rc-connector{flex:1 1 auto; height:3px; margin-top:16px; background:var(--line);}
+  .rc-connector.done{background:var(--green);}
+  .rc-dot{
+    width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-size:14px; font-weight:700; color:#fff; border:3px solid transparent; cursor:default; flex:none;
+  }
+  .rc-dot.done{background:var(--green);}
+  .rc-dot.pending{background:var(--panel); border-color:var(--line); color:var(--text-faint);}
+  .rc-dot.blocking{background:var(--red); border-color:rgba(178,58,48,0.3); box-shadow:0 0 0 4px rgba(178,58,48,0.16);}
+  .rc-label{
+    font-size:10px; text-transform:uppercase; letter-spacing:0.3px; color:var(--text-dim); margin-top:7px;
+    text-align:center; max-width:94px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .rc-label.blocking{color:var(--red); font-weight:700;}
+  .rc-blocking-note{text-align:center; margin:8px 8px 4px;}
+  .rc-blocking-note .tag{color:var(--red); font-weight:700; font-size:12px; letter-spacing:0.2px;}
+  .rc-blocking-note .sub{color:var(--text-dim); font-size:11px; margin-top:2px;}
+  .rc-context-line{font-size:11.5px; color:var(--text-dim); text-align:center; margin:2px 8px 0;}
+  @media (max-width:720px){
+    .rc-track{overflow-x:auto;}
+  }
   .commandes-columns{display:grid; grid-template-columns:1fr 9px 1fr; gap:10px; align-items:start;}
   .columns-resize-handle{
     align-self:stretch; display:flex; align-items:center; justify-content:center;
@@ -1059,7 +1091,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.62.0';
+const APP_VERSION = '1.63.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -8777,6 +8809,111 @@ function computeRisquesSummaryStats(atRisk, pauseParPoste, retardsDemarrage){
   else if(retardsDemarrage.length) posteCritique = { machineNom: retardsDemarrage[0].machineNom, totalH: retardsDemarrage[0].totalJours*8.75 };
   return { nbRisque: atRisk.length, pireRisque, cumulH: cumulPauseH + cumulRetardH, posteCritique };
 }
+// Détail du tableau ⛔ "Étape/Poste/Statut/Début/Fin" masqué par défaut derrière un bouton "▸ Détail"
+// (retour utilisateur réel, suite à l'ajout de la chaîne en pastilles ci-dessous — la carte reste
+// lisible d'un coup d'œil sans le tableau complet systématiquement déplié). Purement transitoire côté
+// client, comme tempsProdExpanded — jamais persisté, jamais dans state.
+let risquesCardExpanded = {};
+function toggleRisqueCardDetail(cid){ risquesCardExpanded[cid] = !risquesCardExpanded[cid]; render(); }
+// Début/fin d'une étape pour la chaîne en pastilles ET pour le tableau de détail — factorisé pour ne
+// calculer qu'une fois "réalisé dès que l'horaire réel existe, prévu sinon" (voir renderRisquesPage,
+// piège déjà documenté : une tâche en_cours a un début réel mais une fin encore projetée).
+function risqueRowDateInfo(o){
+  const debutVal = o.debutReel ? new Date(o.debutReel) : o.start;
+  const finVal = o.finReel ? new Date(o.finReel) : o.end;
+  return {
+    debutVal, finVal,
+    debutLabel: debutVal ? `${formatDT(debutVal)} (${o.debutReel?'réalisé':'prévu'})` : '—',
+    finLabel: finVal ? `${formatDT(finVal)} (${o.finReel?'réalisé':'prévu'})` : '—'
+  };
+}
+// État d'une pastille de la chaîne — 'done' (déjà terminée), 'blocking' (la première pas encore
+// terminée, celle qui retient les suivantes), 'pending' (retenue par elle, quel que soit son propre
+// statut réel — voir pieceChainsForCommande : chain.blockingId est déjà le seul point de vérité).
+function risqueChainDotState(o, chain){
+  if(o.statut === 'termine') return 'done';
+  return o.id === chain.blockingId ? 'blocking' : 'pending';
+}
+// Chaîne d'étapes en pastilles reliées, au-dessus du tableau détaillé (voir CLAUDE.md « Chaîne de
+// phases en pastilles ») — retour utilisateur réel, maquette externe fournie : un coup d'œil visuel
+// avant le détail tabulaire, qui reste affiché tel quel juste en dessous (derrière "▸ Détail").
+// Purement de la composition : aucun second calcul, relit chain.rows/chain.blockingId déjà produits
+// par pieceChainsForCommande, et le même calcul before/after que le tableau pour le contexte
+// inter-commandes (machineNeighbors) — jamais un second calcul divergent.
+function renderRisqueChainBlockHtml(chain, machineTimelines, c){
+  const stepsHtml = chain.rows.map((o, idx) => {
+    const st = risqueChainDotState(o, chain);
+    const info = risqueRowDateInfo(o);
+    const dot = st==='done' ? '✓' : st==='blocking' ? '⚠' : '–';
+    const title = st==='done'
+      ? `Terminé — ${info.debutLabel} → ${info.finLabel}`
+      : `${opStatutLabel(o.statut)} — début ${info.debutLabel}${info.finVal?` → fin ${info.finLabel}`:''}`;
+    const connector = idx>0 ? `<div class="rc-connector ${risqueChainDotState(chain.rows[idx-1], chain)==='done'?'done':''}"></div>` : '';
+    return `${connector}<div class="rc-step"><div class="rc-dot ${st}" title="${escapeHtml(title)}">${dot}</div><div class="rc-label ${st==='blocking'?'blocking':''}">${escapeHtml(o.etape||'—')}</div></div>`;
+  }).join('');
+
+  const blockingRow = chain.rows.find(o => o.id === chain.blockingId);
+  let blockingNoteHtml = '', contextHtml = '';
+  if(blockingRow){
+    const info = risqueRowDateInfo(blockingRow);
+    const sub = blockingRow.statut === 'a_faire'
+      ? `Pas encore commencée · début prévu le ${info.debutVal ? formatDT(info.debutVal) : '—'}`
+      : `${opStatutLabel(blockingRow.statut)} depuis le ${info.debutVal ? formatDT(info.debutVal) : '—'}${info.finVal ? ' · reprise prévue le '+formatDT(info.finVal) : ''}`;
+    blockingNoteHtml = `<div class="rc-blocking-note"><div class="tag">⛔ ${escapeHtml(blockingRow.etape||'—')} bloque la suite</div><div class="sub">${escapeHtml(sub)}</div></div>`;
+
+    if(blockingRow.machineId){
+      const m = state.machines.find(mm=>mm.id===blockingRow.machineId);
+      const { before, after } = machineNeighbors(machineTimelines, blockingRow.machineId, blockingRow.id);
+      const beforeOther = before && before.cid !== c.id ? before : null;
+      const afterOther = after && after.cid !== c.id ? after : null;
+      if(beforeOther || afterOther){
+        const posteNom = m ? m.nom : 'ce poste';
+        const parts = [];
+        if(beforeOther) parts.push(`🔒 Retenue par <button class="commande-link-inline" data-action="isolate-commande-goto-planning" data-cid="${beforeOther.cid}">${escapeHtml(beforeOther.commandeNom)}</button> — ${escapeHtml(beforeOther.piece||'—')}${beforeOther.etape?' / '+escapeHtml(beforeOther.etape):''} (occupe ${escapeHtml(posteNom)} jusqu'au ${formatDT(beforeOther.end)})`);
+        if(afterOther) parts.push(`➡ Retient à son tour <button class="commande-link-inline" data-action="isolate-commande-goto-planning" data-cid="${afterOther.cid}">${escapeHtml(afterOther.commandeNom)}</button> — ${escapeHtml(afterOther.piece||'—')}${afterOther.etape?' / '+escapeHtml(afterOther.etape):''} (prévue dès le ${formatDT(afterOther.start)})`);
+        contextHtml = `<div class="rc-context-line">${parts.join(' · ')}</div>`;
+      }
+    }
+  }
+  return `<div class="rc-chain-block">
+    <div class="rc-chain-piece-lbl">${escapeHtml(chain.nom)}</div>
+    <div class="rc-track">${stepsHtml}</div>
+    ${blockingNoteHtml}
+    ${contextHtml}
+  </div>`;
+}
+// "📣 Avertir chef d'atelier" (bouton de carte, voir CLAUDE.md) — réutilise TEL QUEL
+// POST /api/notify-admins, déjà en place pour les notifications de congés (server.js) : envoie aux
+// comptes de rôle admin, aucune nouvelle route serveur ni nouveau champ de configuration nécessaire.
+// "Réponse" visible à l'opérateur (contrairement à notifyAdminsOfRequest, un envoi silencieux en
+// arrière-plan d'une autre action) : un clic explicite sur ce bouton doit confirmer que l'alerte est
+// bien partie, ou dire pourquoi elle ne l'est pas — showToast plutôt qu'un alert() bloquant.
+async function avertirChefAtelier(cid, btn){
+  const schedule = getSchedule();
+  const c = schedule.find(cc => cc.id === cid);
+  if(!c) return;
+  const joursRetard = Math.ceil(commandeRiskDaysLate(c));
+  const lignes = pieceChainsForCommande(c).map(chain => {
+    const o = chain.rows.find(r => r.id === chain.blockingId);
+    if(!o) return null;
+    const m = state.machines.find(mm=>mm.id===o.machineId);
+    return `- ${chain.nom} : bloquée sur "${o.etape||'—'}" (${m?m.nom:'poste inconnu'}, ${opStatutLabel(o.statut)})`;
+  }).filter(Boolean).join('\n');
+  const subject = `⚠️ Commande à risque — ${c.nom}`;
+  const text = `La commande "${c.nom}"${c.refClient?` (${c.refClient})`:''} est estimée en retard de ${joursRetard} j sur son échéance du ${formatDateFr(c.dateBesoin)}.\n\n${lignes}\n\nÀ consulter dans Planning Atelier, page « ⚠️ Risques de retard ».`;
+  const originalLabel = btn ? btn.textContent : null;
+  if(btn){ btn.disabled = true; btn.textContent = 'Envoi…'; }
+  try{
+    const res = await fetch('/api/notify-admins', { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subject, text }) });
+    const json = await res.json();
+    if(res.ok && json.ok && json.sent > 0) showToast(`Alerte envoyée à ${json.sent} administrateur(s).`);
+    else if(res.ok && json.ok) showToast("Aucun administrateur n'a d'adresse e-mail configurée.");
+    else showToast("Échec de l'envoi de l'alerte.");
+  }catch(e){
+    showToast("Impossible de contacter le serveur pour envoyer l'alerte.");
+  }
+  if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
+}
 function renderRisquesPage(){
   const schedule = getSchedule();
   // Même filtre "commande active" que la liste principale (renderCommandes) : une commande
@@ -8788,11 +8925,15 @@ function renderRisquesPage(){
   const body = atRisk.length ? atRisk.map(c => {
     const joursRetard = Math.ceil(commandeRiskDaysLate(c));
     const urgenceTxt = c.urgence==='urgente' ? 'Urgente' : c.urgence==='importante' ? 'Importante' : 'Normale';
+    const chains = pieceChainsForCommande(c);
+    // Chaîne en pastilles (voir renderRisqueChainBlockHtml) : un coup d'œil visuel avant le détail
+    // tabulaire, qui reste affiché tel quel juste en dessous, derrière "▸ Détail".
+    const chainsHtml = chains.map(chain => renderRisqueChainBlockHtml(chain, machineTimelines, c)).join('');
     // Un seul tableau, un seul en-tête, par commande — chaque pièce distincte n'introduit qu'une
     // ligne de titre (même principe que les tableaux de détail de fusion ailleurs dans l'appli),
     // jamais son propre <table> : sinon chaque mini-tableau recalcule ses largeurs de colonnes
     // indépendamment et rien ne s'aligne d'une pièce à l'autre.
-    const rowsHtml = pieceChainsForCommande(c).map(chain => {
+    const rowsHtml = chains.map(chain => {
       const pieceHeaderRow = `<tr class="risque-piece-row"><td colspan="5">${escapeHtml(chain.nom)}</td></tr>`;
       const chainRowsHtml = chain.rows.map(o => {
         const isBlocking = o.id === chain.blockingId;
@@ -8801,10 +8942,9 @@ function renderRisquesPage(){
         // tâche en_cours a un début réel (debutReel) mais une fin encore prévue (o.end, projetée par
         // le moteur), les deux ne basculent jamais ensemble. Pour une tâche déjà Terminée, le moteur
         // ancre justement start/end sur debutReel/finReel (voir CLAUDE.md) : les deux sont "réalisé".
-        const debutVal = o.debutReel ? new Date(o.debutReel) : o.start;
-        const finVal = o.finReel ? new Date(o.finReel) : o.end;
-        const debutCell = debutVal ? `${formatDT(debutVal)}<div class="footer-note" style="margin:0;">${o.debutReel?'réalisé':'prévu'}</div>` : '—';
-        const finCell = finVal ? `${formatDT(finVal)}<div class="footer-note" style="margin:0;">${o.finReel?'réalisé':'prévu'}</div>` : '—';
+        const info = risqueRowDateInfo(o);
+        const debutCell = info.debutVal ? `${formatDT(info.debutVal)}<div class="footer-note" style="margin:0;">${o.debutReel?'réalisé':'prévu'}</div>` : '—';
+        const finCell = info.finVal ? `${formatDT(info.finVal)}<div class="footer-note" style="margin:0;">${o.finReel?'réalisé':'prévu'}</div>` : '—';
         const mainRow = `<tr class="${isBlocking?'risque-row-blocking':''}">
           <td>${escapeHtml(o.etape||'—')}${o.numeroLigne?` <span class="footer-note" style="margin:0;">(n°${escapeHtml(o.numeroLigne)})</span>`:''}</td>
           <td>${escapeHtml(m?m.nom:'—')}</td>
@@ -8828,18 +8968,27 @@ function renderRisquesPage(){
       }).join('');
       return pieceHeaderRow + chainRowsHtml;
     }).join('');
+    const expanded = !!risquesCardExpanded[c.id];
     return `<div class="risque-card">
       <div class="risque-card-head">
         <div>
           <button class="temps-prod-commande-link" data-action="isolate-commande-goto-planning" data-cid="${c.id}" style="font-weight:600; font-size:14px; background:none; border:none; padding:0; color:var(--text);">${escapeHtml(c.nom)}</button>${c.refClient?` <span class="footer-note" style="margin:0;">(${escapeHtml(c.refClient)})</span>`:''}
           <div class="footer-note" style="margin:2px 0 0;">Échéance : ${formatDateFr(c.dateBesoin)} · Urgence : ${urgenceTxt}</div>
         </div>
-        <div class="risque-days-late">+${joursRetard} j de dépassement estimé</div>
+        <div class="rc-actions">
+          <span class="risque-days-late">+${joursRetard} j de dépassement estimé</span>
+          <button class="rc-btn" data-action="isolate-commande-goto-planning" data-cid="${c.id}" title="Isoler cette commande dans le planning">🔄 Replanifier</button>
+          <button class="rc-btn rc-btn-alert" data-action="risque-avertir-chef" data-cid="${c.id}" title="Envoyer un e-mail d'alerte aux administrateurs">📣 Avertir chef d'atelier</button>
+        </div>
       </div>
-      <table class="ops-table">
+      ${chainsHtml}
+      <div style="text-align:center;">
+        <button class="ghost small" data-action="toggle-risque-detail" data-cid="${c.id}">${expanded ? '▾ Masquer le détail' : '▸ Détail'}</button>
+      </div>
+      ${expanded ? `<table class="ops-table" style="margin-top:8px;">
         <thead><tr><th>Étape</th><th>Poste</th><th>Statut</th><th>Début</th><th>Fin</th></tr></thead>
         <tbody>${rowsHtml}</tbody>
-      </table>
+      </table>` : ''}
     </div>`;
   }).join('') : `<div class="empty-state"><strong>Aucune commande à risque</strong>Toutes les commandes en cours respectent leur échéance estimée.</div>`;
   const nowPauses = new Date();
@@ -11380,15 +11529,15 @@ let fusionPanelsCollapsed = { detect: false, active: true }; // repliés par dé
 let fusionDetailModalGroupId = null; // pop-up de détail affichée au clic sur une barre fusionnée
 function showFusionGroupDetail(groupId){ fusionDetailModalGroupId = groupId; render(); }
 // Pastille de statut d'une tâche — évite d'afficher les valeurs brutes ("a_faire") à l'utilisateur.
+// Libellé texte brut d'un statut de tâche — factorisé pour être réutilisable hors HTML (ex. le
+// corps d'un e-mail d'alerte, voir avertirChefAtelier), pas seulement dans la pastille colorée.
+function opStatutLabel(statut){
+  const labels = { a_faire:'À faire', en_cours:'En cours', en_pause:'En pause', termine:'Terminée' };
+  return labels[statut] || (statut || '—');
+}
 function opStatutPillHtml(statut){
-  const map = {
-    a_faire:  { label:'À faire',  cls:'statut-pill-afaire' },
-    en_cours: { label:'En cours', cls:'statut-pill-encours' },
-    en_pause: { label:'En pause', cls:'statut-pill-enpause' },
-    termine:  { label:'Terminée', cls:'statut-pill-termine' }
-  };
-  const m = map[statut] || { label: statut || '—', cls:'statut-pill-afaire' };
-  return `<span class="statut-pill ${m.cls}">${escapeHtml(m.label)}</span>`;
+  const clsMap = { a_faire:'statut-pill-afaire', en_cours:'statut-pill-encours', en_pause:'statut-pill-enpause', termine:'statut-pill-termine' };
+  return `<span class="statut-pill ${clsMap[statut] || 'statut-pill-afaire'}">${escapeHtml(opStatutLabel(statut))}</span>`;
 }
 function closeFusionGroupDetail(){ fusionDetailModalGroupId = null; render(); }
 // Casse réellement un regroupement : chaque pièce redevient indépendante, avec sa propre durée.
@@ -12871,6 +13020,8 @@ function dispatchClickAction(action, el){
     case 'archive-now': manualArchiveNow(); break;
     case 'clear-isolate': selectedCommandeId = null; render(); break;
     case 'isolate-commande-goto-planning': isolateCommandeFromElsewhere(el.dataset.cid); break;
+    case 'toggle-risque-detail': toggleRisqueCardDetail(el.dataset.cid); break;
+    case 'risque-avertir-chef': avertirChefAtelier(el.dataset.cid, el); break;
     case 'toggle-zone-active': toggleStorageZoneActive(el.dataset.zone); break;
     case 'toggle-select-commande': toggleIsolateCommande(el.dataset.id); if(selectedCommandeId) maybeJumpToHighlight(); render(); break;
     case 'toggle-panel-collapse': togglePanelCollapse(el.dataset.key); break;
