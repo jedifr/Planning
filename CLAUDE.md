@@ -1397,6 +1397,21 @@ puis l'expose à deux endroits : l'onglet Pointages (ci-dessous) et la page « �
   (voir plus bas, page Risques de retard) qui exclut les pauses déjà expliquées par l'appli
   (déjeuner, hors-horaires) de la liste des signaux à investiguer — les deux notions sont
   volontairement séparées : l'une mesure, l'autre alerte.
+- **Affichage en jours CALENDAIRES (`calendarDurationLabel`, 24h = 1 j), jamais `durationLabel`.**
+  Bug réel signalé (tuile « Poste le plus critique » : « 96,8 j » sur Jet d'eau) : ces durées
+  d'horloge murale passaient par `durationLabel`, qui divise par 8,75h (journée OUVRÉE type) — une
+  pause de 282h (11,8 jours calendaires) s'affichait donc « 32,3 j », gonflée d'un facteur ~2,7.
+  `calendarDurationLabel` sert à `pauseTimeCellHtml` (Pointages, Risques), aux cumuls de pause et
+  aux tuiles « Temps d'arrêt cumulé »/« Poste le plus critique » (`computeRisquesSummaryStats`, qui
+  convertit aussi les retards de démarrage — déjà un écart calendaire via `retardDemarrageJours` —
+  en ×24, plus en ×8,75). Réflexe : une durée mesurée en temps réel s'affiche en calendaire ; seule
+  une durée de TRAVAIL (heures ouvrées, `workingHoursBetween`/durée prévue) passe par `durationLabel`.
+- **Lot fusionné compté une seule fois** (`computePauseTimeParPoste`, `computePausesARisque`, et
+  `pausesSuspectesEnCours` côté serveur dans `reportEmail.js`) — même bug, second facteur : un lot
+  de 3 pièces mis en pause d'un seul geste (mêmes sessions sur chaque membre, voir « Regroupement »)
+  comptait 3 pauses sur son poste (3 × 282h = 847h ⇒ « 96,8 j »). Dédoublonnage par
+  `fusionGroupId`, comme partout ailleurs (voir « Temps de production vs présence théorique ») ;
+  `computePausesARisque` libelle la ligne restante « {pièce} (+N pièces du même lot) ».
 
 ### Colonne « Temps en pause » (onglet Pointages)
 
@@ -3734,6 +3749,15 @@ horizontal exactement comme `.title-block` en aurait souffert sans son propre `f
   badges purement informatifs ci-dessus.
 - Vérifié à 390px (Playwright) : `document.documentElement.scrollWidth === clientWidth` après
   connexion, plus aucun débordement horizontal.
+- **Badges remplacés depuis par des voyants à infobulle** (retour utilisateur réel, bureau) :
+  `renderShiftLed()`/`renderSyncBadge()` rendent chacun un simple `.status-led` (pastille de 10px)
+  dans un conteneur commun `.status-leds` — le texte (« Poste en cours/Hors horaires · heure »,
+  « Synchronisé · heure », « Enregistrement… », « Serveur injoignable », « Conflit — mis à jour »)
+  ne vit plus que dans l'infobulle (`title`). Couleurs : horaires vert (en poste) / gris (hors
+  horaires) ; synchro vert (ok) / ambre clignotant (enregistrement) / rouge (serveur injoignable) /
+  ambre (conflit). Toujours masqués sur téléphone (`mobileHeader`) : une infobulle n'existe pas au
+  doigt, un voyant sans explication accessible n'y aurait pas de sens. Les classes `.shift-badge`/
+  `.shift-dot` ont été supprimées (plus aucun usage).
 
 ## Tests
 

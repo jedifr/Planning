@@ -85,10 +85,14 @@ function sousTraitancesEnRetard(state, now){
 // rapport, sans dupliquer une fonction plus élaborée pour ce seul besoin.
 function pausesSuspectesEnCours(state, now, seuilH){
   const rows = [];
+  // Un lot fusionné = une seule pause physique : une ligne par lot (même règle que
+  // computePauseTimeParPoste côté client).
+  const seenFusion = new Set();
   (state.commandes||[]).forEach(c => {
     if(isCommandeFullyDone(c)) return;
     c.pieces.forEach(o => {
       if(o.statut !== 'en_pause' || o.autoPaused || o.autoPausedOutOfHours) return;
+      if(o.fusionGroupId){ if(seenFusion.has(o.fusionGroupId)) return; seenFusion.add(o.fusionGroupId); }
       const sessions = o.sessions || [];
       const last = sessions[sessions.length-1];
       if(!last || !last.fin) return;

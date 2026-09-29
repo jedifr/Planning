@@ -98,14 +98,16 @@
     text-transform:uppercase; font-size:22px; margin:0; color:var(--text);
   }
   header.top .sub{color:var(--text-dim); font-size:12.5px;}
-  .shift-badge{
-    font-family:'IBM Plex Mono', monospace; font-size:11.5px; padding:4px 10px;
-    border-radius:2px; border:1px solid var(--line); color:var(--text-dim);
-    display:flex; align-items:center; gap:7px; white-space:nowrap;
-  }
-  .shift-dot{width:7px;height:7px;border-radius:50%;background:var(--text-faint);}
-  .shift-badge.on .shift-dot{background:var(--green); box-shadow:0 0 6px var(--green);}
-  .shift-badge.off .shift-dot{background:var(--text-faint);}
+  /* Voyants d'état de l'en-tête (horaires, synchronisation) — remplacent les anciens badges texte
+     (retour utilisateur réel) : le détail passe dans l'infobulle (title), seule la couleur reste
+     visible en permanence. */
+  .status-leds{display:flex; align-items:center; gap:8px; padding:4px 8px; border:1px solid var(--line); border-radius:2px;}
+  .status-led{width:10px; height:10px; border-radius:50%; background:var(--text-faint); cursor:help; flex:none;}
+  .status-led.green{background:var(--green); box-shadow:0 0 6px var(--green);}
+  .status-led.amber{background:var(--amber); box-shadow:0 0 6px var(--amber);}
+  .status-led.red{background:var(--red); box-shadow:0 0 6px var(--red);}
+  .status-led.pulse{animation:led-pulse 1s ease-in-out infinite;}
+  @keyframes led-pulse{50%{opacity:0.35;}}
 
   section.panel{
     background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
@@ -1116,7 +1118,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.63.2';
+const APP_VERSION = '1.64.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -2506,6 +2508,14 @@ function durationLabel(hours){
   if(hours < 8.75) return (Math.round(hours*10)/10) + ' h';
   const days = hours/8.75;
   return (Math.round(days*10)/10) + ' j';
+}
+// Durée d'horloge murale (pause, retard de démarrage) : 24h = 1 jour calendaire. Jamais
+// durationLabel ici — lui divise par 8,75h (journée OUVRÉE type) et gonflait près de ×2,7 une pause
+// mesurée en temps réel (bug réel : une pause de 11,8 jours calendaires affichée "32,3 j").
+function calendarDurationLabel(hours){
+  if(hours < 1) return Math.round(hours*60) + ' min';
+  if(hours < 24) return (Math.round(hours*10)/10) + ' h';
+  return (Math.round(hours/24*10)/10) + ' j';
 }
 function hexToRgba(hex, alpha){
   hex = String(hex||'').replace('#','');
@@ -7137,19 +7147,25 @@ function isCurrentlyWorking(cfg){
   return now >= dStart && now <= dEnd;
 }
 
+function renderShiftLed(){
+  const on = isCurrentlyWorking(state.config);
+  const quand = new Date().toLocaleString('fr-FR',{weekday:'short',hour:'2-digit',minute:'2-digit'});
+  const title = `${on?'Poste en cours':'Hors horaires'} · ${quand}`;
+  return `<span class="status-led ${on?'green':''}" title="${escapeHtml(title)}"></span>`;
+}
 function renderSyncBadge(){
   const map = {
-    ok: { cls:'on', label: lastSyncAt ? `Synchronisé · ${pad(lastSyncAt.getHours())}:${pad(lastSyncAt.getMinutes())}` : 'Synchronisé' },
-    saving: { cls:'off', label: 'Enregistrement…' },
-    error: { cls:'off', label: 'Serveur injoignable' },
-    conflict: { cls:'off', label: 'Conflit — mis à jour' }
+    ok: { cls:'green', label: lastSyncAt ? `Synchronisé · ${pad(lastSyncAt.getHours())}:${pad(lastSyncAt.getMinutes())}` : 'Synchronisé' },
+    saving: { cls:'amber pulse', label: 'Enregistrement…' },
+    error: { cls:'red', label: 'Serveur injoignable' },
+    conflict: { cls:'amber', label: 'Conflit — mis à jour' }
   };
   const s = map[syncStatus] || map.ok;
-  return `<div class="shift-badge ${s.cls}" title="Ce planning est partagé avec les autres postes du réseau"><span class="shift-dot"></span>${s.label}</div>`;
+  const title = `${s.label} — ce planning est partagé avec les autres postes du réseau`;
+  return `<span class="status-led ${s.cls}" title="${escapeHtml(title)}"></span>`;
 }
 
 function renderHeader(){
-  const on = isCurrentlyWorking(state.config);
   const logoHtml = state.config.logoDataUrl ? `<img src="${state.config.logoDataUrl}" class="app-logo" alt="Logo">` : '';
   const congesActif = state.config.modules && state.config.modules.conges;
   const pendingCount = congesActif ? state.leaveRequests.filter(r=>r.statut==='en_attente').length : 0;
@@ -7226,8 +7242,7 @@ function renderHeader(){
       ${pageSwitcher}
     </div>
     <div class="toolbar-mini">
-      ${!mobileHeader ? `<div class="shift-badge ${on?'on':'off'}"><span class="shift-dot"></span>${on?'Poste en cours':'Hors horaires'} · ${new Date().toLocaleString('fr-FR',{weekday:'short',hour:'2-digit',minute:'2-digit'})}</div>` : ''}
-      ${!mobileHeader ? renderSyncBadge() : ''}
+      ${!mobileHeader ? `<div class="status-leds">${renderShiftLed()}${renderSyncBadge()}</div>` : ''}
       ${(() => { const n = pausedSinceEarlierTasks().length; return n>0 ? `<button class="small" data-action="show-paused-banner" title="Revoir les tâches en pause depuis la veille ou avant">⏸ ${n} en pause</button>` : ''; })()}
       <button class="small" data-action="open-settings" title="${isAdmin()?'Paramétrer les horaires de travail':'Mon compte — mot de passe, page d’accueil par défaut...'}">⚙ ${isAdmin()?'Paramétrer':'Mon compte'}</button>
       ${usersList.length > 1 ? `
@@ -8766,10 +8781,15 @@ const PAUSE_ANOMALIE_SEUIL_H = 1;
 // requêter session_history poste par poste, hors périmètre ici.
 function computePauseTimeParPoste(st, now){
   const byMachine = {};
+  // Un lot fusionné est mis en pause d'un seul geste sur tout le groupe (mêmes horodatages sur chaque
+  // membre) : une seule pause physique, comptée une fois — jamais une fois par pièce (bug réel : un
+  // lot de 3 pièces triplait le temps d'arrêt de son poste).
+  const seenFusion = new Set();
   st.commandes.forEach(c => {
     if(isCommandeFullyDone(c)) return; // commande déjà terminée : rien à surveiller
     c.pieces.forEach(o => {
       if(!isUnexplainedPause(o)) return;
+      if(o.fusionGroupId){ if(seenFusion.has(o.fusionGroupId)) return; seenFusion.add(o.fusionGroupId); }
       const gap = pieceCurrentPauseGap(o, now);
       if(!gap) return;
       const key = o.machineId || '_sans_poste';
@@ -8790,15 +8810,21 @@ function computePauseTimeParPoste(st, now){
 // pauses dépassant PAUSE_ANOMALIE_SEUIL_H sont retenues, triées de la plus longue à la plus courte.
 function computePausesARisque(atRiskCommandes, now){
   const rows = [];
+  // Même dédoublonnage par lot fusionné que computePauseTimeParPoste : une ligne par lot.
+  const fusionCounts = {};
+  atRiskCommandes.forEach(c => c.pieces.forEach(o => { if(o.fusionGroupId) fusionCounts[o.fusionGroupId] = (fusionCounts[o.fusionGroupId]||0) + 1; }));
+  const seenFusion = new Set();
   atRiskCommandes.forEach(c => {
     c.pieces.forEach(o => {
       if(!isUnexplainedPause(o)) return;
+      if(o.fusionGroupId){ if(seenFusion.has(o.fusionGroupId)) return; seenFusion.add(o.fusionGroupId); }
       const gap = pieceCurrentPauseGap(o, now);
       if(!gap || gap.h < PAUSE_ANOMALIE_SEUIL_H) return;
       const m = state.machines.find(mm=>mm.id===o.machineId);
+      const nbLot = o.fusionGroupId ? fusionCounts[o.fusionGroupId] : 1;
       rows.push({
         commandeId: c.id, commandeNom: c.nom,
-        piece: o.piece, etape: o.etape, numeroLigne: o.numeroLigne,
+        piece: nbLot > 1 ? `${o.piece||'—'} (+${nbLot-1} pièce${nbLot>2?'s':''} du même lot)` : o.piece, etape: o.etape, numeroLigne: o.numeroLigne,
         machineNom: m ? m.nom : (o.machineId ? 'Poste supprimé' : '—'),
         depuis: gap.debut, dureeH: gap.h,
         cumulH: pieceCumulPauseHours(o, now)
@@ -8827,11 +8853,13 @@ function computeRisquesSummaryStats(atRisk, pauseParPoste, retardsDemarrage){
     if(!pireRisque || j > pireRisque.jours) pireRisque = { commandeNom: c.nom, jours: j };
   });
   const cumulPauseH = pauseParPoste.reduce((s,r) => s + r.totalH, 0);
-  // jours -> heures, même conversion que durationLabel (8,75h = une journée ouvrée "type")
-  const cumulRetardH = retardsDemarrage.reduce((s,r) => s + r.totalJours, 0) * 8.75;
+  // Pauses (horloge murale) et retards de démarrage (écart calendaire, retardDemarrageJours) sont
+  // tous deux du temps CALENDAIRE : un jour de retard = 24h, affiché via calendarDurationLabel —
+  // jamais 8,75h/durationLabel, qui gonflait les pauses d'un facteur ~2,7.
+  const cumulRetardH = retardsDemarrage.reduce((s,r) => s + r.totalJours, 0) * 24;
   let posteCritique = null;
   if(pauseParPoste.length) posteCritique = { machineNom: pauseParPoste[0].machineNom, totalH: pauseParPoste[0].totalH };
-  else if(retardsDemarrage.length) posteCritique = { machineNom: retardsDemarrage[0].machineNom, totalH: retardsDemarrage[0].totalJours*8.75 };
+  else if(retardsDemarrage.length) posteCritique = { machineNom: retardsDemarrage[0].machineNom, totalH: retardsDemarrage[0].totalJours*24 };
   return { nbRisque: atRisk.length, pireRisque, cumulH: cumulPauseH + cumulRetardH, posteCritique };
 }
 // Détail du tableau ⛔ "Étape/Poste/Statut/Début/Fin" masqué par défaut derrière un bouton "▸ Détail"
@@ -9046,7 +9074,7 @@ function renderRisquesPage(){
           <td>${escapeHtml(r.machineNom)}</td>
           <td>${formatDT(r.depuis)}</td>
           <td>${pauseTimeCellHtml(r.dureeH)}</td>
-          <td>${r.cumulH!=null ? durationLabel(r.cumulH) : '—'}</td>
+          <td>${r.cumulH!=null ? calendarDurationLabel(r.cumulH) : '—'}</td>
         </tr>`).join('')}</tbody>
       </table>` : ''}
     </div>`}
@@ -9101,12 +9129,12 @@ function renderRisquesPage(){
           ${summary.pireRisque ? `<div class="dst-sub">${escapeHtml(summary.pireRisque.commandeNom)}</div>` : ''}
         </div>
         <div class="dash-stat-tile tone-amber">
-          <div class="dst-top"><div class="dst-num">${durationLabel(summary.cumulH)}</div><span class="dst-icon">⏸</span></div>
+          <div class="dst-top"><div class="dst-num">${calendarDurationLabel(summary.cumulH)}</div><span class="dst-icon">⏸</span></div>
           <div class="dst-lbl">Temps d'arrêt cumulé</div>
-          <div class="dst-sub">Pauses + retards de démarrage</div>
+          <div class="dst-sub">Pauses + retards de démarrage (jours calendaires)</div>
         </div>
         <div class="dash-stat-tile ${summary.posteCritique ? 'tone-red' : 'tone-neutral'}">
-          <div class="dst-top"><div class="dst-num">${summary.posteCritique ? durationLabel(summary.posteCritique.totalH) : '—'}</div><span class="dst-icon">⚠️</span></div>
+          <div class="dst-top"><div class="dst-num">${summary.posteCritique ? calendarDurationLabel(summary.posteCritique.totalH) : '—'}</div><span class="dst-icon">⚠️</span></div>
           <div class="dst-lbl">Poste le plus critique</div>
           ${summary.posteCritique ? `<div class="dst-sub">${escapeHtml(summary.posteCritique.machineNom)}</div>` : ''}
         </div>
@@ -9631,9 +9659,9 @@ function formatEcart(h){
 // (donnée indisponible, sessions[] déjà archivée) affiche "—", jamais un 0 h trompeur.
 function pauseTimeCellHtml(h){
   if(h == null) return '—';
-  if(h <= 0.05) return durationLabel(h);
+  if(h <= 0.05) return calendarDurationLabel(h);
   const color = h >= 8 ? 'var(--red)' : (h >= 2 ? 'var(--amber)' : null);
-  return color ? `<span style="color:${color}; font-weight:600;">${durationLabel(h)}</span>` : durationLabel(h);
+  return color ? `<span style="color:${color}; font-weight:600;">${calendarDurationLabel(h)}</span>` : calendarDurationLabel(h);
 }
 // Taux d'occupation (production réelle ÷ présence théorique) : rouge sous 50% (temps largement
 // inoccupé sur les tâches suivies par l'appli), ambre entre 50 et 80%, vert au-delà de 80%. Peut
