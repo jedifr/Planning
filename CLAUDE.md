@@ -81,7 +81,7 @@ rendent ce geste manuel inutile dans le cas courant :
 | `server.js` | Express + better-sqlite3. Sert le statique, expose l'API d'état, gère les congés. |
 | `auth.js` | Sessions (express-session), bcryptjs, rôles, réinitialisation de mot de passe. |
 | `backup.js` | Sauvegarde automatique par e-mail (nodemailer). |
-| `sessionHistory.js` | Historique des sessions de travail archivées (voir plus bas). |
+| `sessionHistory.js` | Historique des sessions de travail archivées (voir plus bas), y compris par salarié pour la fiche salarié. |
 | `previsionHistory.js` | Historique des prévisions du moteur avant clôture d'une tâche (voir plus bas). |
 | `autoPauseResume.js` | Reprise automatique de pause déjeuner par personne, tournée côté serveur (voir plus bas). |
 | `reportEmail.js` | Rapport quotidien/hebdomadaire par e-mail (échéances dépassées, retards, rebuts...), voir plus bas. |
@@ -1212,6 +1212,58 @@ et l'ancien `prompt()` « minutes » remplacé partout par la même pop-up.
   invalides, enregistrement, crédit, à valider/validée d'office, badge, filtre, refus → 0 et toujours
   corrigeable, correction = validation, réouverture, lot fusionné (objets distincts, compté une fois,
   validation propagée), tuile. Rendu vérifié (Playwright).
+
+## Fiche salarié
+
+Question utilisateur réelle : *« si je souhaite obtenir une synthèse complète d'un salarié (temps de
+présence, temps de travail et pauses), comment dois-je faire ? »* — maquette validée avant codage
+(artefact « Fiche salarié »), puis choix : accessible depuis les **deux** emplacements, visible par le
+salarié pour **sa propre** fiche, export **Excel et impression A4**.
+
+- **Page à part** (`currentPage==='ficheSalarie'`, `renderFicheSalariePage`), jamais dans le menu :
+  ouverte par `openFicheSalarie(uid, from)` depuis le bouton « 📋 Fiche » de la carte salarié
+  (`renderEmployeeCard`, option `fiche` — vue superviseur ET « Mon temps de production ») et depuis le
+  nom d'un salarié dans la frise « Pointage de l'équipe » de la Vue d'ensemble. « ← Retour » ramène à
+  la page d'origine (`ficheSalarie.from`). Un employé ne peut ouvrir que la fiche de l'identité active
+  du poste (même règle que « Mon temps de production ») ; la restriction est dans l'interface, la
+  route serveur a le même niveau d'accès que celle par pièce (l'état synchronisé expose déjà à chacun
+  les séances en cours, et un poste partagé cible une autre identité que le compte connecté).
+- `ficheSalarie` (`{ uid, mode, anchor, rangeDebut, rangeFin, from }`, transitoire) : **période par
+  défaut** = celle choisie dans Temps de production si ouverte de là, sinon la semaine en cours ;
+  mêmes modes Jour/Semaine/Mois/Année/Plage, réglés indépendamment. `periodBoundsFor`/
+  `shiftPeriodAnchor` factorisent le calcul de bornes, désormais partagé avec `tempsProdPeriodBounds`.
+- **Séances archivées** : `GET /api/session-history-user/:uid?from=&to=` (`getSessionHistoryForUser`,
+  `sessionHistory.js`) renvoie les séances de la personne qui recoupent la période (une séance sans
+  `operator_user_id` est rattachée côté client à l'opérateur assigné) et `pieceIds`
+  (`getSessionHistoryPieceIdsForUser`, pièces ayant au moins une séance archivée, toutes dates).
+  `ensureFicheHistory` charge à la demande, une requête par (personne, période), `ficheHistoryCache`
+  ; l'écran s'affiche tout de suite avec les séances de l'état et se complète au retour. Dédoublonnage
+  état/historique par pièce + début + fin. Pas de nouveau fichier serveur (Dockerfile inchangé).
+- `computeFicheSalarie(st, uid, start, end, history, now)` — par jour : horaire attendu
+  (`dayIntervals` de `baseConfigForUser`, jours ouvrés hors fériés, congé retiré — demi-journée coupée
+  à la première pause, comme `computeTeamPointage`), pauses prévues, séances, temps déclarés
+  (`pieces[].declaration` non refusée, intervalle `debutReel`→`finReel`). Découpage de l'horaire
+  **écoulé** (jamais le futur) : pointé dans l'horaire + déclaré + non pointé = horaire écoulé (testé).
+  Travail hors de SON horaire : **compté** s'il tombe dans l'horaire du POSTE (`configForPiece`, ce
+  que fait `countedHoursBetween`) ou sous une exception déclarée (bleu), sinon « non compté ».
+  Pauses côté salarié : trous entre SES séances bornés par une séance avant et après — déjeuner
+  réel/dépassement (mesuré seulement les jours pointés avant et après midi), pauses en journée.
+- **Cohérence avec Temps de production** : temps compté, tâches et dépassements viennent de
+  `computeProductionTimeByUser`, la présence théorique suit la règle de `theoreticalPresenceHoursForUser`
+  (mêmes valeurs que la carte, testé). Une tâche close **sans détail** (pas de séances dans l'état ni
+  dans l'historique — close avant l'archivage des séances, ou temps saisi à la clôture) est comptée
+  mais absente de la frise : signalée (« sans détail », alerte, ligne dédiée) car le non pointé est
+  alors surestimé d'au plus ce temps. Sur l'export réel : pointé + hors horaire compté + sans détail
+  = temps compté.
+- Alertes : plus longs trous dans l'horaire au-delà du seuil de Paramètres → Pointage (contexte :
+  tâche d'avant, reprise), temps déclarés à valider, déjeuners prolongés, séances un jour de congé
+  approuvé, tâches sans détail, travail hors de tout horaire non compté.
+- Frise jour par jour (≤ 31 jours ; au-delà, note et détail dans l'Excel), week-ends vides masqués,
+  infobulle par segment. Excel (`exportFicheSalarieExcel`) : feuilles Synthèse, Jours, Séances,
+  Tâches. Impression : `window.print()` ; la règle d'impression générale masque tout `#app` sauf le
+  planning — `#app > #fiche-salarie-page` y est ajouté, `.fiche-noprint` masqué (vérifié : 2 pages A4).
+- Couvert par un test sur l'export réel (scratchpad `fiche_test.js`, 52 assertions) et rendu vérifié
+  (Playwright : 1500/1280/390 px, sans débordement, et aperçu d'impression).
 
 ## Onglet « Pointages »
 

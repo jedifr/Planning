@@ -660,6 +660,113 @@
   .pt-row:first-child{border-top:none;}
   .pt-who{display:flex; gap:10px; align-items:center; min-width:0;}
   .pt-name{font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .pt-name-link{display:block; max-width:100%; background:none; border:none; padding:0; margin:0; font:inherit; font-weight:600; color:var(--text); text-align:left; cursor:pointer;}
+  .pt-name-link:hover{color:var(--accent); text-decoration:underline;}
+  .pt-fiche-ico{font-size:10px; opacity:.55;}
+  /* Fiche salarié (voir CLAUDE.md « Fiche salarié ») — préfixe fs- : aucune collision avec pt-/dp-. */
+  .fs-page{display:flex; flex-direction:column; gap:0;}
+  .fs-crumb{display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-faint); margin:2px 0 10px;}
+  .fs-crumb b{color:var(--text-dim); font-weight:500;}
+  .fs-who{display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:14px 16px;}
+  .fs-who .tp-avatar{width:48px; height:48px; font-size:17px;}
+  .fs-who-main{flex:1; min-width:220px;}
+  .fs-who-main h1{margin:0; font-size:20px; font-family:'Oswald',sans-serif; font-weight:600;}
+  .fs-meta{color:var(--text-dim); font-size:12.5px; margin-top:2px;}
+  .fs-range{font-family:'IBM Plex Mono',monospace; font-size:12.5px; margin-top:4px;}
+  .fs-range::first-letter{text-transform:uppercase;}
+  .fs-period{display:flex; align-items:center; gap:6px; flex-wrap:wrap;}
+  .fs-note{font-size:11.5px; color:var(--text-faint); margin-top:8px;}
+  .fs-split{display:flex; height:30px; border-radius:3px; overflow:hidden; border:1px solid var(--line);}
+  .fs-split > div{display:flex; align-items:center; justify-content:center; font-size:11.5px; font-weight:600; white-space:nowrap; overflow:hidden; min-width:0;}
+  .fs-split .s-pointe{background:var(--green); color:#fff;}
+  .fs-split .s-decl{background:repeating-linear-gradient(135deg,#dcebe3 0 6px,#fff 6px 12px); color:var(--green); border-left:1px dashed var(--green);}
+  .fs-split .s-trou{background:var(--red); color:#fff;}
+  .fs-split .s-exc{background:var(--blue); color:#fff; margin-left:6px; border-left:2px solid var(--panel);}
+  .fs-legend{display:flex; gap:12px; flex-wrap:wrap; margin-top:8px; font-size:11.5px; color:var(--text-dim);}
+  .fs-legend span{display:inline-flex; align-items:center; gap:5px;}
+  .fs-legend .sw{width:12px; height:10px; border-radius:2px; display:inline-block;}
+  .sw.pointe{background:var(--green);} .sw.trou{background:var(--red);} .sw.exc{background:var(--blue);}
+  .sw.decl{background:repeating-linear-gradient(135deg,#dcebe3 0 3px,#fff 3px 6px); border:1px dashed var(--green);}
+  .sw.hors{background:#c3d9cc; border:1px solid var(--green);}
+  .sw.lunch{background:repeating-linear-gradient(135deg,rgba(34,38,42,.14) 0 3px,transparent 3px 6px); border:1px solid var(--line);}
+  .sw.conge{background:repeating-linear-gradient(135deg,var(--amber-dim) 0 3px,transparent 3px 6px); border:1px dashed var(--amber);}
+  .fs-kpis{display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:10px; margin-top:14px;}
+  .fs-kpi{border:1px solid var(--line-soft); background:var(--panel-2); border-radius:3px; padding:10px 12px; min-width:0;}
+  .fs-kpi .l{font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim); font-weight:600;}
+  .fs-kpi .v{font-family:'IBM Plex Mono',monospace; font-size:21px; font-weight:600; margin-top:3px; font-variant-numeric:tabular-nums;}
+  .fs-kpi .s{font-size:11px; color:var(--text-faint); margin-top:1px;}
+  .fs-kpi.warn{border-color:var(--red); background:rgba(178,58,48,0.08);} .fs-kpi.warn .v{color:var(--red);}
+  .fs-kpi.ok .v{color:var(--green);}
+  .fs-alerts{display:flex; flex-direction:column; gap:6px; margin-top:14px;}
+  .fs-alert{display:flex; gap:10px; align-items:baseline; padding:7px 10px; border-radius:3px; font-size:12.5px; border:1px solid;}
+  .fs-alert.red{background:rgba(178,58,48,0.08); border-color:var(--red);}
+  .fs-alert.amber{background:var(--amber-dim); border-color:var(--amber);}
+  .fs-alert .tag{font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; flex:none;}
+  .fs-alert.red .tag{color:var(--red);} .fs-alert.amber .tag{color:var(--amber);}
+  .fs-frise-scroll{overflow-x:auto;}
+  .fs-frise{min-width:720px;}
+  .fs-axis, .fs-row{display:grid; grid-template-columns:108px 1fr 116px; gap:10px; align-items:center;}
+  .fs-ticks{position:relative; height:18px; font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--text-faint);}
+  .fs-ticks span{position:absolute; transform:translateX(-50%);}
+  .fs-row{padding:4px 0; border-top:1px solid var(--line-soft);}
+  .fs-row.we .fs-day{color:var(--text-faint);}
+  .fs-row.today .fs-day{color:var(--accent);}
+  .fs-day{font-weight:600; font-size:12.5px;}
+  .fs-day small{display:block; font-weight:400; color:var(--text-faint); font-size:11px;}
+  .fs-track{position:relative; height:26px; background:var(--panel-2); border-radius:2px;}
+  .fs-gl{position:absolute; top:0; bottom:0; width:1px; background:var(--line-soft);}
+  .fs-seg{position:absolute; top:3px; bottom:3px; border-radius:2px;}
+  .fs-seg.horaire{top:0; bottom:0; background:transparent; border-top:2px solid #b9bfb9; border-bottom:2px solid #b9bfb9; border-radius:0;}
+  .fs-seg.pointe{background:var(--green);}
+  .fs-seg.exc{background:var(--blue);}
+  .fs-seg.hors{background:#c3d9cc; border:1px solid var(--green);}
+  .fs-seg.trou{background:var(--red); opacity:.85;}
+  .fs-seg.lunch{background:repeating-linear-gradient(135deg,rgba(34,38,42,.12) 0 4px,transparent 4px 8px); top:0; bottom:0; border-radius:0;}
+  .fs-seg.conge{background:repeating-linear-gradient(135deg,var(--amber-dim) 0 5px,transparent 5px 10px); top:0; bottom:0; border:1px dashed var(--amber); border-radius:0;}
+  .fs-seg.decl{background:repeating-linear-gradient(135deg,#dcebe3 0 5px,#fff 5px 10px); border:1px dashed var(--green);}
+  .fs-lbl{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:600; color:var(--amber); white-space:nowrap; overflow:hidden;}
+  .fs-now{position:absolute; top:-2px; bottom:-2px; width:2px; background:var(--accent);}
+  .fs-tot{font-family:'IBM Plex Mono',monospace; font-size:12px; text-align:right; font-variant-numeric:tabular-nums;}
+  .fs-tot small{display:block; color:var(--red); font-size:11px;}
+  .fs-tot small.ok{color:var(--text-faint);}
+  .fs-cols{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:16px;}
+  .fs-cols > .panel{margin-bottom:0;}
+  .fs-cols{margin-bottom:16px;}
+  .fs-kv{display:grid; grid-template-columns:1fr auto; gap:6px 12px; font-size:13px; margin:0;}
+  .fs-kv dt{color:var(--text-dim);}
+  .fs-kv dd{margin:0; font-family:'IBM Plex Mono',monospace; text-align:right; font-variant-numeric:tabular-nums;}
+  .fs-kv .sub{padding-left:14px; font-size:12px;}
+  .fs-kv .tot{border-top:1px solid var(--line); padding-top:6px; font-weight:600; color:var(--text);}
+  .fs-kv .neg{color:var(--red);}
+  .fs-kv dd small{font-family:'IBM Plex Sans',sans-serif; color:var(--text-faint);}
+  .fs-table{width:100%; border-collapse:collapse; font-size:12.5px;}
+  .fs-table th{font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-faint); font-weight:600; text-align:left; padding:6px 8px; border-bottom:1px solid var(--line);}
+  .fs-table td{padding:6px 8px; border-bottom:1px solid var(--line-soft); vertical-align:top;}
+  .fs-table .r{text-align:right;} .fs-table .mono{font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; white-space:nowrap;}
+  .fs-table td:first-child{white-space:nowrap;}
+  .fs-table .temps-prod-commande-link{text-align:left;}
+  .fs-print-foot{display:none;}
+  .fs-sans-detail{font-size:10.5px; color:var(--text-faint); border:1px dashed var(--line); border-radius:8px; padding:0 6px; white-space:nowrap;}
+  @media (max-width:1000px){ .fs-kpis{grid-template-columns:repeat(2,minmax(0,1fr));} .fs-cols{grid-template-columns:1fr;} }
+  @media (max-width:520px){ .fs-kpis{grid-template-columns:1fr;} }
+  /* Impression A4 de la fiche : la règle générale d'impression masque tout #app sauf le planning —
+     on y ajoute la fiche, sans l'en-tête, les boutons ni les réglages de période. */
+  @media print{
+    #app > #fiche-salarie-page{ display:flex !important; }
+    #fiche-salarie-page .fiche-noprint{ display:none !important; }
+    #fiche-salarie-page .panel{ box-shadow:none !important; break-inside:avoid; border-color:#bbb; }
+    #fiche-salarie-page .fs-break{ break-inside:auto; }
+    #fiche-salarie-page .fs-row{ break-inside:avoid; }
+    #fiche-salarie-page .fs-frise{ min-width:0; }
+    #fiche-salarie-page .fs-kpis{ grid-template-columns:repeat(5, minmax(0,1fr)); }
+    #fiche-salarie-page .fs-cols{ grid-template-columns:repeat(3, minmax(0,1fr)); }
+    #fiche-salarie-page .fiche-noprint-btn{ color:#000 !important; }
+    #fiche-salarie-page .fs-print-foot{ display:block; font-size:10px; color:#666; margin-top:8px; }
+    #fiche-salarie-page .fs-kv{ font-size:11.5px; }
+    #fiche-salarie-page .fs-table{ font-size:11px; }
+    #fiche-salarie-page .fs-kpi .v{ font-size:18px; }
+    #fiche-salarie-page *{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  }
   .pt-sub{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--text-faint);}
   .pt-chip{display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; padding:1px 8px; border-radius:10px; margin-top:3px; white-space:nowrap;}
   .pt-chip .dot{width:7px; height:7px; border-radius:50%; background:currentColor;}
@@ -1292,7 +1399,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.72.1';
+const APP_VERSION = '1.73.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1928,6 +2035,11 @@ let tempsProdRangeFin = null; // 'AAAA-MM-JJ', mode 'plage'
 let tempsProdSort = { key:'total', dir:'desc' }; // tri du tableau par salarié
 let tempsProdDetailSort = {}; // { [userId]: {key,dir} } — tri du détail déplié, par salarié
 let tempsProdExpanded = {}; // { [userId]: true } — lignes salarié dépliées
+// Fiche salarié (voir CLAUDE.md « Fiche salarié ») — page à part, purement transitoire : qui, quelle
+// période (mêmes modes que Temps de production, réglés indépendamment) et d'où on vient (← Retour).
+let ficheSalarie = null; // { uid, mode, anchor, rangeDebut, rangeFin, from } | null
+// Séances archivées (session_history) de la personne sur la période affichée, chargées à la demande.
+let ficheHistoryCache = { key: null, status: null, entries: [], pieceIds: null };
 function showToast(msg){
   toastMessage = msg;
   if(toastTimer) clearTimeout(toastTimer);
@@ -10200,7 +10312,7 @@ function renderTeamPointageSection(now){
     const exp = r.expected.length ? `${pointageHm(r.expected[0][0])} – ${pointageHm(r.expected[r.expected.length-1][1])}` : (r.leave ? '' : 'hors horaires');
     return `<div class="pt-row st-${r.status}">
       <div class="pt-who">${renderAvatar(r.username)}<div style="min-width:0">
-        <div class="pt-name">${escapeHtml(r.username)}</div>
+        <button class="pt-name pt-name-link" data-action="open-fiche-salarie" data-user-id="${r.userId}" data-from="dashboard" title="Ouvrir la fiche salarié (semaine en cours)">${escapeHtml(r.username)} <span class="pt-fiche-ico">📋</span></button>
         <div class="pt-sub">${exp}</div>
         <span class="pt-chip ${chipCls}"><span class="dot"></span>${chipLbl}</span></div></div>
       <div class="pt-tl"><div class="pt-track">${track}</div><div class="pt-scale">${ticks.join('')}</div></div>
@@ -10669,27 +10781,28 @@ function renderHistoriqueDetailModal(){
 /* ---------------- Temps de production (superviseurs/administrateurs) ---------------- */
 // Bornes [start, end[ de la période choisie, à partir de tempsProdPeriodMode/tempsProdAnchor
 // (jour/mois/année) ou tempsProdRangeDebut/Fin (plage personnalisée, bornes incluses).
-function tempsProdPeriodBounds(){
-  const a = tempsProdAnchor;
-  if(tempsProdPeriodMode === 'semaine'){
+// Bornes [start, end[ et libellé d'une période (Jour/Semaine/Mois/Année/Plage) — partagé par l'onglet
+// Temps de production et la fiche salarié, chacun avec ses propres réglages de période.
+function periodBoundsFor(mode, a, rangeDebut, rangeFin){
+  if(mode === 'semaine'){
     const start = startOfWeek(a); start.setHours(0,0,0,0);
     const end = new Date(start.getFullYear(), start.getMonth(), start.getDate()+7, 0,0,0,0);
     const finSemaine = new Date(end.getTime()-86400000);
     return { start, end, label: `Semaine du ${formatDateFr(toDateInputValue(start))} au ${formatDateFr(toDateInputValue(finSemaine))}` };
   }
-  if(tempsProdPeriodMode === 'mois'){
+  if(mode === 'mois'){
     const start = new Date(a.getFullYear(), a.getMonth(), 1, 0,0,0,0);
     const end = new Date(a.getFullYear(), a.getMonth()+1, 1, 0,0,0,0);
     return { start, end, label: start.toLocaleDateString('fr-FR', { month:'long', year:'numeric' }) };
   }
-  if(tempsProdPeriodMode === 'annee'){
+  if(mode === 'annee'){
     const start = new Date(a.getFullYear(), 0, 1, 0,0,0,0);
     const end = new Date(a.getFullYear()+1, 0, 1, 0,0,0,0);
     return { start, end, label: String(a.getFullYear()) };
   }
-  if(tempsProdPeriodMode === 'plage'){
-    const debutStr = tempsProdRangeDebut || toDateInputValue(weeksAgo(1));
-    const finStr = tempsProdRangeFin || toDateInputValue(new Date());
+  if(mode === 'plage'){
+    const debutStr = rangeDebut || toDateInputValue(weeksAgo(1));
+    const finStr = rangeFin || toDateInputValue(new Date());
     const start = new Date(debutStr+'T00:00:00');
     const finDay = new Date(finStr+'T00:00:00');
     const end = new Date(finDay.getFullYear(), finDay.getMonth(), finDay.getDate()+1, 0,0,0,0);
@@ -10700,12 +10813,18 @@ function tempsProdPeriodBounds(){
   const end = new Date(start.getFullYear(), start.getMonth(), start.getDate()+1, 0,0,0,0);
   return { start, end, label: start.toLocaleDateString('fr-FR', { weekday:'long', day:'2-digit', month:'long', year:'numeric' }) };
 }
-function navigateTempsProdPeriod(dir){
+function shiftPeriodAnchor(mode, a, dir){
   const delta = dir==='prev' ? -1 : 1;
-  if(tempsProdPeriodMode==='mois') tempsProdAnchor = new Date(tempsProdAnchor.getFullYear(), tempsProdAnchor.getMonth()+delta, 1);
-  else if(tempsProdPeriodMode==='annee') tempsProdAnchor = new Date(tempsProdAnchor.getFullYear()+delta, 0, 1);
-  else if(tempsProdPeriodMode==='semaine') tempsProdAnchor = new Date(tempsProdAnchor.getFullYear(), tempsProdAnchor.getMonth(), tempsProdAnchor.getDate()+delta*7);
-  else tempsProdAnchor = new Date(tempsProdAnchor.getFullYear(), tempsProdAnchor.getMonth(), tempsProdAnchor.getDate()+delta);
+  if(mode==='mois') return new Date(a.getFullYear(), a.getMonth()+delta, 1);
+  if(mode==='annee') return new Date(a.getFullYear()+delta, 0, 1);
+  if(mode==='semaine') return new Date(a.getFullYear(), a.getMonth(), a.getDate()+delta*7);
+  return new Date(a.getFullYear(), a.getMonth(), a.getDate()+delta);
+}
+function tempsProdPeriodBounds(){
+  return periodBoundsFor(tempsProdPeriodMode, tempsProdAnchor, tempsProdRangeDebut, tempsProdRangeFin);
+}
+function navigateTempsProdPeriod(dir){
+  tempsProdAnchor = shiftPeriodAnchor(tempsProdPeriodMode, tempsProdAnchor, dir);
   render();
 }
 function tempsProdToday(){
@@ -11353,6 +11472,7 @@ function renderEmployeeCard(row, opts){
     <div class="tp-emp-head">
       ${renderAvatar(row.username)}
       <div class="tp-emp-name" title="${escapeHtml(row.username)}">${escapeHtml(row.username)}</div>
+      ${opts.fiche ? `<button class="ghost small" data-action="open-fiche-salarie" data-user-id="${row.uid}" data-from="tempsProd" title="Fiche salarié : présence, travail, non pointé et pauses sur la période">📋 Fiche</button>` : ''}
       ${expandable ? `<button class="ghost small" data-action="temps-prod-toggle" data-user-id="${row.uid}" title="Voir le détail des tâches">${expanded?'▾':'▸'} Détail</button>` : ''}
     </div>
     <div class="tp-bar-block">
@@ -11406,7 +11526,7 @@ function renderTempsProdSelfPage(start, end, label){
   </section>
   <section class="panel"><div class="panel-body">
     <div class="tp-employee-grid" style="grid-template-columns:1fr; max-width:420px;">
-      ${renderEmployeeCard(row, { expandable:false })}
+      ${renderEmployeeCard(row, { expandable:false, fiche:true })}
     </div>
   </div></section>
   <section class="panel"><div class="panel-body">
@@ -11435,7 +11555,7 @@ function renderTempsProdPage(){
     </select>
     <button class="ghost small" data-action="temps-prod-sort-dir" title="Inverser l'ordre">${tempsProdSort.dir==='asc'?'▲ Croissant':'▼ Décroissant'}</button>
   </div>`;
-  const cardsHtml = rows.map(r => renderEmployeeCard(r, { expandable:true, expanded: !!tempsProdExpanded[r.uid] })).join('');
+  const cardsHtml = rows.map(r => renderEmployeeCard(r, { expandable:true, expanded: !!tempsProdExpanded[r.uid], fiche:true })).join('');
   return `
   <section class="panel">
     <div class="panel-head">
@@ -11481,6 +11601,543 @@ function renderMachineOccupationSection(start, end){
     <div class="occ-machine-grid">${cardsHtml || `<div class="footer-note">Aucun poste configuré</div>`}</div>
     <div class="footer-note" style="text-align:left; padding-top:10px;">Temps réel = somme des sessions/temps réellement passé sur ce poste (toutes commandes actives et archivées confondues) sur la période affichée ci-dessus. Capacité théorique = horaires nominaux du poste sur cette même période (jours ouvrés, hors fériés et indisponibilités programmées). Un poste durablement sous 50% peut être sous-utilisé ; un poste régulièrement au-delà de 100% (heures supplémentaires, ou deux pièces qui se chevauchent réellement) est un goulot d'étranglement structurel à surveiller.</div>
   </div></section>`;
+}
+// ====================== Fiche salarié ======================
+// Synthèse d'UNE personne sur une période : présence théorique (horaire − congés − fériés), travail
+// (séances pointées dans l'horaire, temps déclarés, travail hors de son horaire mais compté), non pointé
+// (horaire écoulé sans séance ni déclaration) et pauses VUES CÔTÉ SALARIÉ (trous entre SES séances —
+// une tâche restée en pause pendant qu'il travaille ailleurs ne compte pas). Aucune donnée nouvelle :
+// séances de l'état (actives et archivées encore peuplées) + séances archivées côté serveur
+// (session_history, chargées à la demande), temps déclarés (pieces[].declaration), congés approuvés.
+// Le temps compté et le détail des tâches viennent de computeProductionTimeByUser, exactement comme
+// la carte du salarié dans Temps de production — jamais un second calcul qui divergerait.
+function ficheHistoryKey(uid, start, end){ return `${uid}|${toInputValue(start)}|${toInputValue(end)}`; }
+function ficheFindPiece(st, cid, oid){
+  for(const list of [st.commandes||[], st.commandesArchivees||[]]){
+    const c = list.find(cc => cc.id===cid);
+    if(c){ const o = c.pieces.find(oo => oo.id===oid); if(o) return { c, o }; }
+  }
+  return null;
+}
+// Séances de la personne qui recoupent [start, end[ — état d'abord, puis historique serveur (une même
+// séance présente des deux côtés n'est comptée qu'une fois : même pièce, même début, même fin).
+function ficheWorkSegments(st, uid, start, end, historyEntries, now){
+  const out = [];
+  const seen = new Set();
+  const add = (c, o, cid, oid, info, se) => {
+    const key = `${oid}|${se.debut}|${se.fin||''}`;
+    if(seen.has(key)) return;
+    seen.add(key);
+    const a = new Date(se.debut);
+    const b = se.fin ? new Date(se.fin) : now;
+    if(isNaN(a.getTime()) || isNaN(b.getTime()) || b <= a || b <= start || a >= end) return;
+    out.push({ a, b, open: !se.fin, cid, oid, commandeNom: info.commandeNom, piece: info.piece, etape: info.etape,
+      machineNom: info.machineNom, fusionGroupId: o ? (o.fusionGroupId||null) : null, windows: o ? exceptionWindowsFor(o) : [],
+      pcfg: o ? configForPiece(o, st) : null });
+  };
+  [...(st.commandes||[]), ...(st.commandesArchivees||[])].forEach(c => c.pieces.forEach(o => (o.sessions||[]).forEach(se => {
+    if(String(se.operatorUserId || o.operatorUserId || '') !== uid) return;
+    const m = (st.machines||[]).find(mm => mm.id===o.machineId);
+    add(c, o, c.id, o.id, { commandeNom: c.nom, piece: o.piece, etape: o.etape, machineNom: m ? m.nom : 'Sans poste' }, se);
+  })));
+  (historyEntries||[]).forEach(h => {
+    const found = ficheFindPiece(st, h.cid, h.oid);
+    // Séance archivée avant le suivi par séance (operator_user_id vide) : rattachée à l'opérateur
+    // assigné de la pièce, même repli que partout ailleurs.
+    const op = String(h.operatorUserId || (found && found.o.operatorUserId) || '');
+    if(op !== uid) return;
+    add(found && found.c, found && found.o, h.cid, h.oid, {
+      commandeNom: h.commandeNom || (found ? found.c.nom : ''), piece: h.piece || (found ? found.o.piece : ''),
+      etape: h.etape || (found ? found.o.etape : ''), machineNom: h.machineNom || 'Sans poste'
+    }, h);
+  });
+  return out.sort((x,y) => x.a - y.a);
+}
+// Temps déclarés (tâche jamais démarrée, déclarée terminée — voir « Déclarer terminée... ») crédités à
+// la personne : intervalle début → fin déclaré. Un temps refusé (remis à zéro) n'est plus un travail.
+function ficheDeclaredIntervals(st, uid, start, end){
+  const out = [];
+  const seen = new Set();
+  [...(st.commandes||[]), ...(st.commandesArchivees||[])].forEach(c => c.pieces.forEach(o => {
+    const d = o.declaration;
+    if(!d || d.statut==='refusee' || !o.debutReel || !o.finReel) return;
+    const par = o.dureeReelleParOperateur || {};
+    if(!(par[uid] > 0) && !(!Object.keys(par).length && String(o.operatorUserId||'')===uid)) return;
+    if(o.fusionGroupId){ if(seen.has(o.fusionGroupId)) return; seen.add(o.fusionGroupId); }
+    const a = new Date(o.debutReel), b = new Date(o.finReel);
+    if(isNaN(a.getTime()) || isNaN(b.getTime()) || b <= a || b <= start || a >= end) return;
+    out.push({ a, b, cid: c.id, oid: o.id, commandeNom: c.nom, piece: o.piece, etape: o.etape, statut: d.statut, h: par[uid] || o.dureeReelleH || 0 });
+  }));
+  return out;
+}
+// history : { entries, pieceIds } — séances archivées de la période et ids des pièces ayant un
+// détail archivé (null = inconnu : serveur pas encore répondu ou injoignable).
+function computeFicheSalarie(st, uid, start, end, history, now){
+  uid = String(uid);
+  now = now || new Date();
+  const historyEntries = Array.isArray(history) ? history : ((history && Array.isArray(history.entries)) ? history.entries : []);
+  const historyPieceIds = (history && Array.isArray(history.pieceIds)) ? new Set(history.pieceIds.map(String)) : null;
+  const cfg = baseConfigForUser(uid, st);
+  const settings = pointageSettings(st);
+  const segs = ficheWorkSegments(st, uid, start, end, historyEntries, now);
+  const decls = ficheDeclaredIntervals(st, uid, start, end);
+  const leavesAll = (st.leaveRequests||[]).filter(r => String(r.userId)===uid && r.statut==='approuve');
+  const clip = (list, a, b) => list.filter(x => x.b > a && x.a < b).map(x => ({ ...x, a: x.a < a ? a : x.a, b: x.b > b ? b : x.b }));
+  const mins = list => Math.round(timeIntervalsMinutes(list));
+  const presence = { brutH: 0, feriesH: 0, nbFeries: 0, conges: {}, joursLJ: 0, hLJ: 0, joursV: 0, hV: 0 };
+  const days = [];
+  let d = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  let guard = 0;
+  while(d < end && guard++ < 400){
+    const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const dayEnd = nextDayStart(dayStart);
+    const dayKey = toDateInputValue(dayStart);
+    const dow = dayStart.getDay();
+    const weekday = dow!==0 && dow!==6;
+    const holiday = weekday && isFrenchPublicHoliday(dayStart);
+    const workDay = weekday && !holiday;
+    // Présence théorique, même règle que theoreticalPresenceHoursForUser (fraction de jour couverte
+    // par un ou plusieurs congés approuvés, demi-journées complémentaires comprises).
+    if(weekday){
+      const dh = dayHoursFor(dow, cfg);
+      presence.brutH += dh;
+      if(dow===5){ presence.joursV++; presence.hV = dh; } else { presence.joursLJ++; presence.hLJ = dh; }
+      if(holiday){ presence.feriesH += dh; presence.nbFeries++; }
+      else {
+        const dl = leavesAll.filter(r => r.debut && r.fin && dayKey>=r.debut && dayKey<=r.fin);
+        let off = 0;
+        if(dl.some(r => !r.demiJournee)) off = 1;
+        else {
+          const m = dl.some(r => r.demiJournee==='matin'), am = dl.some(r => r.demiJournee==='apres-midi');
+          off = (m && am) ? 1 : (m || am) ? 0.5 : 0;
+        }
+        if(off > 0){
+          const t = (st.leaveTypes||[]).find(tt => tt.id===dl[0].typeId);
+          const lbl = t ? t.nom : 'Congé';
+          presence.conges[lbl] = (presence.conges[lbl]||0) + dh*off;
+        }
+      }
+    }
+    const nominal = workDay ? dayIntervals(dayStart, cfg).map(([a,b]) => [a,b]) : [];
+    const leave = workDay ? userLeaveOnDay(uid, st, dayKey) : null;
+    const pauses = workDay ? pauseWindowsFor(dayStart, cfg).map(p => [p.start, p.end]) : [];
+    let expected = nominal;
+    let leaveIv = [];
+    const nominalWin = nominal.length ? [[nominal[0][0], nominal[nominal.length-1][1]]] : [];
+    if(leave && !leave.demiJournee){ leaveIv = nominalWin; expected = []; }
+    else if(leave && leave.demiJournee && expected.length){
+      const cut = pauses.length ? pauses[0][0] : new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate(), 12);
+      const off = leave.demiJournee==='matin' ? [[dayStart, cut]] : [[cut, dayEnd]];
+      leaveIv = intersectTimeIntervals(nominalWin, off);
+      expected = subtractTimeIntervals(expected, off);
+    }
+    const expWin = expected.length ? [[expected[0][0], expected[expected.length-1][1]]] : [];
+    const lunch = intersectTimeIntervals(pauses, expWin);
+    const daySegs = clip(segs, dayStart, dayEnd);
+    const dayDecls = clip(decls, dayStart, dayEnd);
+    const work = mergeTimeIntervals(daySegs.map(s => [s.a, s.b]));
+    const declIv = mergeTimeIntervals(dayDecls.map(x => [x.a, x.b]));
+    const busy = mergeTimeIntervals([...work, ...declIv]);
+    const elapsedEnd = now < dayEnd ? now : dayEnd;
+    const expectedElapsed = elapsedEnd > dayStart ? intersectTimeIntervals(expected, [[dayStart, elapsedEnd]]) : [];
+    const pointeIn = intersectTimeIntervals(work, expected);
+    const declIn = intersectTimeIntervals(subtractTimeIntervals(declIv, work), expected);
+    const gaps = subtractTimeIntervals(expectedElapsed, busy);
+    // Travail hors de SON horaire attendu : le temps de production le compte quand même s'il tombe
+    // dans l'horaire du POSTE (countedHoursBetween raisonne sur configForPiece, pas sur l'horaire de
+    // la personne) ou sous une exception déclarée (« 🕐 Je travaille maintenant » / « 🍽 Je travaille
+    // pendant la pause ») — sinon il est affiché mais non compté.
+    let excIv = [], horsIv = [];
+    daySegs.forEach(sg => {
+      const outside = subtractTimeIntervals([[sg.a, sg.b]], expected);
+      if(!outside.length) return;
+      const pc = sg.pcfg || st.config;
+      const posteIv = (weekday && !isDateBlocked(dayStart, pc)) ? dayIntervals(dayStart, pc) : [];
+      const countedWin = mergeTimeIntervals([...posteIv, ...sg.windows]);
+      excIv.push(...intersectTimeIntervals(outside, countedWin));
+      horsIv.push(...subtractTimeIntervals(outside, countedWin));
+    });
+    excIv = mergeTimeIntervals(excIv);
+    horsIv = subtractTimeIntervals(mergeTimeIntervals(horsIv), excIv);
+    // Pauses côté salarié : intervalles sans travail bornés par une séance avant ET après.
+    const noWork = busy.length ? subtractTimeIntervals([[busy[0][0], busy[busy.length-1][1]]], busy) : [];
+    let lunchPlannedMin = 0, lunchRealMin = 0, lunchOverrunMin = 0, lunchReprise = null;
+    lunch.forEach(([pa, pb]) => {
+      if(!busy.length || busy[0][0] >= pa || busy[busy.length-1][1] <= pb) return; // pas là autour de midi : non mesurable
+      lunchPlannedMin += (pb - pa)/60000;
+      noWork.filter(([a,b]) => b > pa && a < pb).forEach(([a,b]) => {
+        const len = (b - a)/60000;
+        const ov = timeIntervalsMinutes(intersectTimeIntervals([[a,b]], [[pa,pb]]));
+        lunchRealMin += len;
+        if(len - ov > 0.5){ lunchOverrunMin += len - ov; if(b > pb) lunchReprise = b; }
+      });
+    });
+    const manualPauses = noWork.filter(([a,b]) => (b - a) >= 60000 && !lunch.some(([pa,pb]) => b > pa && a < pb))
+      .map(([a,b]) => ({ a, b, min: Math.round((b - a)/60000) }));
+    const worstGap = gaps.reduce((w, g) => (!w || (g[1]-g[0]) > (w[1]-w[0])) ? g : w, null);
+    let worst = null;
+    if(worstGap && (worstGap[1]-worstGap[0])/60000 >= settings.seuilSansPointageMin){
+      const before = daySegs.filter(s => s.b <= worstGap[0]).sort((x,y) => y.b - x.b)[0] || null;
+      const after = daySegs.filter(s => s.a >= worstGap[1]).sort((x,y) => x.a - y.a)[0] || null;
+      worst = { a: worstGap[0], b: worstGap[1], min: Math.round((worstGap[1]-worstGap[0])/60000), before, after };
+    }
+    days.push({
+      date: dayStart, dayKey, weekday, workDay, holiday, leave, nominal, expected, leaveIv, lunch,
+      segs: daySegs, decls: dayDecls, work, gaps, excIv, horsIv,
+      expectedMin: mins(expected), expectedElapsedMin: mins(expectedElapsed),
+      pointeMin: mins(pointeIn), declMin: mins(declIn), excMin: mins(excIv), horsMin: mins(horsIv), gapMin: mins(gaps),
+      workMin: mins(work), lunchPlannedMin: Math.round(lunchPlannedMin), lunchRealMin: Math.round(lunchRealMin),
+      lunchOverrunMin: Math.round(lunchOverrunMin), lunchReprise, manualPauses,
+      manualPauseMin: manualPauses.reduce((s,p) => s + p.min, 0), worst
+    });
+    d = dayEnd;
+  }
+  const sum = k => days.reduce((s,x) => s + x[k], 0);
+  const congesH = Object.values(presence.conges).reduce((s,h) => s + h, 0);
+  presence.presenceH = presence.brutH - presence.feriesH - congesH;
+  const rec = computeProductionTimeByUser(st, start, end)[uid] || { totalH:0, totalPrevuH:0, details:[] };
+  const tasks = rec.details.slice().sort((a,b) => (a.date?a.date.getTime():0) - (b.date?b.date.getTime():0)).map(t => {
+    const found = ficheFindPiece(st, t.cid, t.oid);
+    const o = found ? found.o : null;
+    const rebuts = o ? (o.rebuts||[]).filter(r => { const rd = r.date ? new Date(r.date) : null; return rd && rd >= start && rd < end; }).reduce((s,r) => s + (Number(r.quantite)||0), 0) : 0;
+    // Tâche close dont seul le total est connu (séances vidées avant l'archivage côté serveur, ou
+    // temps saisi à la clôture) : comptée dans le temps compté, mais sans horaires à placer sur la
+    // frise — le non pointé de la période est donc surestimé d'au plus ce temps-là.
+    const sansDetail = !!(o && o.statut==='termine' && !(o.sessions||[]).length && !o.declaration
+      && !segs.some(sg => sg.oid===t.oid) && !(historyPieceIds && historyPieceIds.has(String(t.oid))));
+    return { ...t, statut: o ? o.statut : null, declaration: o ? o.declaration : null, pauseEnCours: o && o.statut==='en_pause' ? pieceCurrentPauseGap(o, now) : null, rebuts, sansDetail,
+      debutReel: o ? o.debutReel : null, finReel: o ? o.finReel : null };
+  });
+  const expectedElapsedMin = sum('expectedElapsedMin');
+  const gapMin = sum('gapMin');
+  const worstDay = days.filter(x => x.gapMin > 0).sort((a,b) => b.gapMin - a.gapMin)[0] || null;
+  const totals = {
+    expectedMin: sum('expectedMin'), expectedElapsedMin, pointeMin: sum('pointeMin'), declMin: sum('declMin'),
+    excMin: sum('excMin'), horsMin: sum('horsMin'), gapMin, workMin: sum('workMin'),
+    lunchPlannedMin: sum('lunchPlannedMin'), lunchRealMin: sum('lunchRealMin'), lunchOverrunMin: sum('lunchOverrunMin'),
+    nbLunch: days.filter(x => x.lunchPlannedMin > 0).length,
+    manualPauseMin: sum('manualPauseMin'), nbManualPauses: days.reduce((s,x) => s + x.manualPauses.length, 0),
+    tempsCompteH: rec.totalH, totalPrevuH: rec.totalPrevuH, presenceH: presence.presenceH,
+    taux: presence.presenceH > 1e-6 ? rec.totalH / presence.presenceH : null,
+    nbTaches: tasks.length, nbOverrun: tasks.filter(t => isOverrunTask(t.prevuH, t.h)).length,
+    rebuts: tasks.reduce((s,t) => s + t.rebuts, 0),
+    declAValider: decls.filter(x => x.statut==='a_valider').length,
+    sansDetailH: tasks.filter(t => t.sansDetail).reduce((s,t) => s + t.h, 0),
+    nbSansDetail: tasks.filter(t => t.sansDetail).length,
+    worstDay
+  };
+  totals.pausesMin = totals.lunchRealMin + totals.manualPauseMin;
+  // Alertes : plus longs trous dans l'horaire (au-delà du seuil de Paramètres → Pointage), temps
+  // déclarés à valider, déjeuners prolongés, travail hors horaires non compté.
+  const alerts = [];
+  days.filter(x => x.worst).sort((a,b) => b.worst.min - a.worst.min).slice(0, 6).forEach(x => {
+    const w = x.worst;
+    const ctx = w.before ? `après ${w.before.commandeNom}${w.before.piece ? ' · '+w.before.piece : ''}` : 'avant la première tâche';
+    const suite = w.after ? `, reprise à ${pointageHm(w.b)} sur ${w.after.commandeNom}` : (w.b >= now ? ', toujours rien en cours' : `, jusqu'à ${pointageHm(w.b)}`);
+    alerts.push({ kind: 'red', dayKey: x.dayKey, tag: `${ficheJourCourt(x.date)} ${pointageHm(w.a)}`, text: `<b>${pointageDurLabel(w.min)} sans pointage</b> dans l'horaire — ${escapeHtml(ctx)}${escapeHtml(suite)}.` });
+  });
+  decls.filter(x => x.statut==='a_valider').forEach(x => alerts.push({ kind: 'amber', dayKey: toDateInputValue(x.a), tag: `${ficheJourCourt(x.a)} ${pointageHm(x.a)}`,
+    text: `<b>${pointageDurLabel(x.h*60)} déclarées</b> après coup (oubli de démarrage) sur ${escapeHtml(x.commandeNom)} — <span class="decl-badge pending">⏳ à valider</span>` }));
+  if(totals.lunchOverrunMin >= 5){
+    const wd = days.filter(x => x.lunchOverrunMin > 0).sort((a,b) => b.lunchOverrunMin - a.lunchOverrunMin)[0];
+    alerts.push({ kind: 'amber', dayKey: wd.dayKey, tag: 'DÉJEUNER', text: `Pauses déjeuner prolongées de <b>${pointageDurLabel(totals.lunchOverrunMin)}</b> au total${wd.lunchReprise ? ` (le plus long : ${ficheJourCourt(wd.date).toLowerCase()}, reprise à ${pointageHm(wd.lunchReprise)})` : ''}.` });
+  }
+  days.filter(x => x.leave && !x.leave.demiJournee && x.workMin > 0).forEach(x => alerts.push({ kind: 'amber', dayKey: x.dayKey, tag: ficheJourCourt(x.date),
+    text: `<b>${pointageDurLabel(x.workMin)} pointées un jour de congé approuvé</b> (${escapeHtml(x.leave.label)}) — congé à corriger ou séances à vérifier.` }));
+  if(totals.nbSansDetail) alerts.push({ kind: 'amber', dayKey: null, tag: 'SANS DÉTAIL', text: `<b>${formatHeures(totals.sansDetailH)}</b> de temps compté sur ${totals.nbSansDetail} tâche${totals.nbSansDetail>1?'s':''} close${totals.nbSansDetail>1?'s':''} sans détail des séances (seul le total est connu) — absentes de la frise ; le non pointé est surestimé d'au plus ce temps.` });
+  if(totals.horsMin >= 5) alerts.push({ kind: 'amber', dayKey: null, tag: 'HORS HORAIRES', text: `<b>${pointageDurLabel(totals.horsMin)}</b> pointées en dehors de tout horaire (le sien comme celui du poste), sans exception déclarée — non comptées dans le temps de production.` });
+  return { uid, cfg, days, presence, totals, tasks, alerts, segs, decls };
+}
+function ficheJourCourt(d){ return ['DIM.','LUN.','MAR.','MER.','JEU.','VEN.','SAM.'][d.getDay()]; }
+function ficheJourLong(d){ return d.toLocaleDateString('fr-FR', { weekday:'long' }).replace(/^./, c => c.toUpperCase()); }
+function ficheMinLabel(min){ return min > 0 ? pointageDurLabel(min) : '—'; }
+
+function openFicheSalarie(uid, from){
+  uid = String(uid);
+  // Un employé ne voit que SA fiche (identité active du poste, comme « Mon temps de production »).
+  if(!canSupervise() && uid !== String(activeIdentityId())) return;
+  const fromTempsProd = from === 'tempsProd';
+  ficheSalarie = {
+    uid, from: from || currentPage,
+    mode: fromTempsProd ? tempsProdPeriodMode : 'semaine',
+    anchor: fromTempsProd ? new Date(tempsProdAnchor.getTime()) : new Date(),
+    rangeDebut: fromTempsProd ? tempsProdRangeDebut : null,
+    rangeFin: fromTempsProd ? tempsProdRangeFin : null
+  };
+  currentPage = 'ficheSalarie';
+  render();
+  try{ window.scrollTo(0, 0); }catch(e){ /* environnement sans fenêtre */ }
+}
+function closeFicheSalarie(){
+  const back = ficheSalarie ? ficheSalarie.from : 'tempsProd';
+  ficheSalarie = null;
+  currentPage = (back && back !== 'ficheSalarie') ? back : 'tempsProd';
+  render();
+}
+function ficheSalarieBounds(){
+  const f = ficheSalarie;
+  return periodBoundsFor(f.mode, f.anchor, f.rangeDebut, f.rangeFin);
+}
+// Séances archivées côté serveur pour la période affichée — une requête par (personne, période),
+// relancée seulement quand l'une des deux change ; l'écran s'affiche tout de suite avec les séances
+// de l'état et se complète au retour.
+function ensureFicheHistory(uid, start, end){
+  const key = ficheHistoryKey(uid, start, end);
+  if(ficheHistoryCache.key === key) return ficheHistoryCache;
+  ficheHistoryCache = { key, status: 'loading', entries: [], pieceIds: null };
+  if(typeof fetch !== 'function'){ ficheHistoryCache.status = 'error'; return ficheHistoryCache; }
+  const qs = `from=${encodeURIComponent(toInputValue(start))}&to=${encodeURIComponent(toInputValue(end))}`;
+  fetch(`/api/session-history-user/${encodeURIComponent(uid)}?${qs}`, { credentials: 'same-origin' })
+    .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+    .then(data => {
+      if(ficheHistoryCache.key !== key) return;
+      ficheHistoryCache = { key, status: 'ok', entries: Array.isArray(data.entries) ? data.entries : [], pieceIds: Array.isArray(data.pieceIds) ? data.pieceIds : null };
+      if(currentPage === 'ficheSalarie') render();
+    })
+    .catch(() => {
+      if(ficheHistoryCache.key !== key) return;
+      ficheHistoryCache = { key, status: 'error', entries: [], pieceIds: null };
+      if(currentPage === 'ficheSalarie') render();
+    });
+  return ficheHistoryCache;
+}
+function ficheUserMeta(uid){
+  const u = (usersList||[]).find(uu => String(uu.id)===String(uid));
+  const cfg = baseConfigForUser(String(uid), state);
+  const hm = (h, m) => `${String(h).padStart(2,'0')}h${String(m||0).padStart(2,'0')}`;
+  const segs = dayIntervals(startOfWeek(new Date()), cfg);
+  const pauses = pauseWindowsFor(startOfWeek(new Date()), cfg);
+  const perso = !!((state.userLunch||{})[uid] && (state.userLunch[uid].horaireActif || (state.userLunch[uid].pauses||[]).length));
+  const postes = ((state.userMachines||{})[uid]||[]).map(mid => (state.machines.find(m => m.id===mid)||{}).nom).filter(Boolean);
+  const parts = [];
+  if(u && u.role) parts.push(roleLabel(u.role));
+  if(postes.length) parts.push(`poste${postes.length>1?'s':''} ${postes.join(', ')}`);
+  if(segs.length) parts.push(`horaire${perso?' perso':''} ${pointageHm(segs[0][0])}–${pointageHm(segs[segs.length-1][1])} (lun.)`);
+  if(pauses.length) parts.push(`pause ${pauses.map(p => `${pointageHm(p.start)}–${pointageHm(p.end)}`).join(', ')}`);
+  return { username: u ? u.username : (String(uid)===String(activeIdentityId()) ? activeIdentityUsername() : '(compte supprimé)'), meta: parts.join(' · ') };
+}
+function renderFicheFriseHtml(fiche, now){
+  const days = fiche.days;
+  if(days.length > 31) return `<div class="footer-note" style="text-align:left;">Frise affichée pour une période d'un mois au plus — choisissez Jour, Semaine ou Mois (le détail jour par jour reste dans l'export Excel).</div>`;
+  const pts = [];
+  days.forEach(x => { [...x.nominal, ...x.work, ...x.decls.map(y => [y.a, y.b])].forEach(([a,b]) => {
+    pts.push(a.getHours()*60 + a.getMinutes());
+    pts.push(b.getHours()*60 + b.getMinutes() + (b.getDate() !== a.getDate() && b.getHours()===0 && b.getMinutes()===0 ? 24*60 : 0));
+  }); });
+  let A0 = pts.length ? Math.floor(Math.min(...pts)/60)*60 : 7*60;
+  let A1 = pts.length ? Math.ceil(Math.max(...pts)/60)*60 : 18*60;
+  A0 = Math.min(A0, 7*60); A1 = Math.max(A1, 17*60);
+  const span = A1 - A0;
+  const pctOf = (date, day) => Math.max(0, Math.min(100, (((date - day.date)/60000) - A0) / span * 100));
+  const seg = (cls, a, b, day, tip, inner) => {
+    const l = pctOf(a, day), r = pctOf(b, day);
+    if(r - l <= 0) return '';
+    return `<div class="fs-seg ${cls}" style="left:${l.toFixed(3)}%;width:${Math.max(0.25, r-l).toFixed(3)}%"${tip?` title="${escapeHtml(tip)}"`:''}>${inner||''}</div>`;
+  };
+  const range = (a, b) => `${pointageHm(a)}–${pointageHm(b)} (${pointageDurLabel((b-a)/60000)})`;
+  let ticks = '';
+  for(let m = A0 + 60; m < A1; m += 60){
+    if(span > 13*60 && (m/60) % 2) continue;
+    ticks += `<span style="left:${((m-A0)/span*100).toFixed(3)}%">${m/60}h</span>`;
+  }
+  const gl = [];
+  for(let m = A0 + 60; m < A1; m += 60) gl.push(`<i class="fs-gl" style="left:${((m-A0)/span*100).toFixed(3)}%"></i>`);
+  const rows = days.map(x => {
+    let track = gl.join('');
+    x.nominal.forEach(([a,b]) => { track += seg('horaire', a, b, x, ''); });
+    x.lunch.forEach(([a,b]) => { track += seg('lunch', a, b, x, `Pause prévue ${pointageHm(a)}–${pointageHm(b)}`); });
+    x.leaveIv.forEach(([a,b]) => { track += seg('conge', a, b, x, `${x.leave ? x.leave.label : 'Congé'}${x.leave && x.leave.demiJournee ? ` (${demiJourneeLabel(x.leave.demiJournee)})` : ''}`, x.work.length ? '' : `<span class="fs-lbl">${escapeHtml(x.leave ? x.leave.label : 'Congé')}</span>`); });
+    x.gaps.forEach(([a,b]) => {
+      const before = x.segs.filter(s => s.b <= a).sort((p,q) => q.b - p.b)[0];
+      track += seg('trou', a, b, x, `Non pointé · ${range(a,b)}${before ? ` · après ${before.commandeNom}` : ''}`);
+    });
+    const shown = new Set();
+    x.segs.forEach(s => {
+      const k = `${s.fusionGroupId||s.oid}|${+s.a}|${+s.b}`;
+      if(shown.has(k)) return; shown.add(k);
+      track += seg('pointe', s.a, s.b, x, `Pointé · ${range(s.a, s.b)} · ${s.commandeNom}${s.piece?' · '+s.piece:''}${s.etape?' / '+s.etape:''} · ${s.machineNom}${s.open?' · en cours':''}`);
+    });
+    x.excIv.forEach(([a,b]) => { track += seg('exc', a, b, x, `Hors de son horaire · ${range(a,b)} — compté (horaire du poste ou exception déclarée)`); });
+    x.horsIv.forEach(([a,b]) => { track += seg('hors', a, b, x, `Hors horaires · ${range(a,b)} — non compté (ni horaire du poste, ni exception)`); });
+    x.decls.forEach(y => { track += seg('decl', y.a, y.b, x, `Déclaré (oubli de démarrage) · ${range(y.a, y.b)} · ${y.commandeNom}${y.statut==='a_valider' ? ' · à valider' : ''}`); });
+    const isToday = toDateInputValue(now) === x.dayKey;
+    if(isToday){ const p = pctOf(now, x); if(p > 0 && p < 100) track += `<div class="fs-now" style="left:${p.toFixed(3)}%"></div>`; }
+    const sub = x.holiday ? 'Férié' : (!x.weekday ? 'Week-end' : (x.leave && !x.leave.demiJournee ? escapeHtml(x.leave.label) : x.date.toLocaleDateString('fr-FR', { day:'numeric', month:'short' })));
+    const workTot = x.pointeMin + x.declMin + x.excMin;
+    const horsNote = x.horsMin ? `<small class="ok">+ ${pointageDurLabel(x.horsMin)} non compté</small>` : '';
+    const tot = (x.expectedMin || workTot) ? `${pointageDurLabel(workTot)}<small class="${x.gapMin >= 15 ? '' : 'ok'}">${x.gapMin ? pointageDurLabel(x.gapMin) + ' non pointé' : (x.expectedMin ? '—' : '')}</small>${horsNote}` : (horsNote || `<small class="ok">—</small>`);
+    return `<div class="fs-row${x.weekday ? '' : ' we'}${isToday ? ' today' : ''}"><div class="fs-day">${ficheJourLong(x.date)}<small>${sub}</small></div><div class="fs-track">${track}</div><div class="fs-tot">${tot}</div></div>`;
+  });
+  // Week-end sans rien : on ne garde pas des lignes vides qui allongent la frise.
+  const kept = rows.filter((r, i) => days[i].weekday || days[i].work.length || days[i].decls.length);
+  return `<div class="fs-frise"><div class="fs-axis"><div></div><div class="fs-ticks">${ticks}</div><div></div></div>${kept.join('')}</div>`;
+}
+function renderFicheSalariePage(){
+  const f = ficheSalarie;
+  if(!f) return '';
+  const now = new Date();
+  const { start, end, label } = ficheSalarieBounds();
+  const hist = ensureFicheHistory(f.uid, start, end);
+  const fiche = computeFicheSalarie(state, f.uid, start, end, hist, now);
+  const T = fiche.totals, P = fiche.presence;
+  const who = ficheUserMeta(f.uid);
+  const periodWord = { jour:'de la journée', semaine:'de la semaine', mois:'du mois', annee:"de l'année", plage:'de la période' }[f.mode] || 'de la période';
+  const modes = [{key:'jour',label:'Jour'},{key:'semaine',label:'Semaine'},{key:'mois',label:'Mois'},{key:'annee',label:'Année'},{key:'plage',label:'Plage'}];
+  const periodCtl = `<div class="fs-period fiche-noprint">
+      <div class="view-tabs" style="margin:0;">${modes.map(m => `<button class="${f.mode===m.key?'active':''}" data-action="fiche-mode" data-mode="${m.key}">${m.label}</button>`).join('')}</div>
+      ${f.mode==='plage' ? `<label class="field" style="margin:0;">Du</label><input type="date" data-action="fiche-range-debut" value="${f.rangeDebut||toDateInputValue(start)}" style="width:auto;">
+        <label class="field" style="margin:0;">Au</label><input type="date" data-action="fiche-range-fin" value="${f.rangeFin||toDateInputValue(new Date(end.getTime()-86400000))}" style="width:auto;">`
+      : `<button class="ghost small" data-action="fiche-nav" data-dir="prev" aria-label="Période précédente">◀</button>
+        <button class="ghost small" data-action="fiche-nav" data-dir="next" aria-label="Période suivante">▶</button>
+        <button class="small" data-action="fiche-today">Aujourd'hui</button>`}
+      <button class="small" data-action="fiche-export" title="Synthèse, détail jour par jour, séances et tâches">⬇ Excel</button>
+      <button class="small" data-action="fiche-print" title="Imprimer la fiche (A4)">🖨 Imprimer</button>
+    </div>`;
+  // Bande de synthèse : répartition de l'horaire attendu écoulé (pointé / déclaré / non pointé),
+  // plus, à part, le temps travaillé hors de son horaire mais compté.
+  const baseMin = T.pointeMin + T.declMin + T.gapMin;
+  const part = (cls, min, txt, tip) => min > 0 ? `<div class="${cls}" style="flex:${min}" title="${escapeHtml(tip)}">${min/Math.max(1, baseMin + T.excMin) > 0.08 ? txt : ''}</div>` : '';
+  const split = (baseMin + T.excMin) > 0 ? `<div class="fs-split" role="img" aria-label="Horaire attendu écoulé : ${pointageDurLabel(T.pointeMin)} pointées, ${pointageDurLabel(T.declMin)} déclarées, ${pointageDurLabel(T.gapMin)} non pointées, plus ${pointageDurLabel(T.excMin)} hors horaires">
+      ${part('s-pointe', T.pointeMin, `Pointé ${pointageDurLabel(T.pointeMin)}`, `Pointé dans l'horaire : ${pointageDurLabel(T.pointeMin)}`)}
+      ${part('s-decl', T.declMin, pointageDurLabel(T.declMin), `Temps déclaré (oubli de démarrage) : ${pointageDurLabel(T.declMin)}`)}
+      ${part('s-trou', T.gapMin, pointageDurLabel(T.gapMin), `Non pointé dans l'horaire : ${pointageDurLabel(T.gapMin)}`)}
+      ${T.excMin > 0 ? `<div class="s-exc" style="flex:${T.excMin}" title="En plus, hors de son horaire mais compté : ${pointageDurLabel(T.excMin)}">${T.excMin/Math.max(1, baseMin + T.excMin) > 0.08 ? '+' + pointageDurLabel(T.excMin) : ''}</div>` : ''}
+    </div>` : `<div class="footer-note" style="text-align:left;">Aucun horaire attendu ni aucune séance sur cette période.</div>`;
+  const legend = `<div class="fs-legend">
+      <span><i class="sw pointe"></i>Pointé</span><span><i class="sw decl"></i>Déclaré (oubli de démarrage)</span>
+      <span><i class="sw trou"></i>Non pointé dans l'horaire</span><span><i class="sw exc"></i>Hors de son horaire, compté</span>
+      <span><i class="sw hors"></i>Hors horaires, non compté</span><span><i class="sw lunch"></i>Pause prévue</span><span><i class="sw conge"></i>Congé</span>
+    </div>`;
+  const congesTxt = Object.keys(P.conges).length ? Object.entries(P.conges).map(([k,h]) => `${formatHeures(h)} ${k.toLowerCase()}`).join(', ') : '';
+  const pctGap = T.expectedElapsedMin > 0 ? Math.round(T.gapMin / T.expectedElapsedMin * 1000)/10 : 0;
+  const kpis = `<div class="fs-kpis">
+      <div class="fs-kpi"><div class="l">Présence théorique</div><div class="v">${formatHeures(P.presenceH)}</div><div class="s">${[P.nbFeries ? `${P.nbFeries} férié${P.nbFeries>1?'s':''}` : '', congesTxt ? '− ' + congesTxt : ''].filter(Boolean).join(' · ') || "horaire complet"}</div></div>
+      <div class="fs-kpi ok"><div class="l">Temps compté</div><div class="v">${formatHeures(T.tempsCompteH)}</div><div class="s">${T.excMin ? `dont ${pointageDurLabel(T.excMin)} hors de son horaire` : 'sur des tâches suivies'}</div></div>
+      <div class="fs-kpi${T.gapMin >= pointageSettings().seuilSansPointageMin ? ' warn' : ''}"><div class="l">Non pointé</div><div class="v">${ficheMinLabel(T.gapMin)}</div><div class="s">${T.gapMin ? `${pctGap.toLocaleString('fr-FR')} % de l'horaire écoulé${T.worstDay && fiche.days.length > 1 ? ` · pire : ${ficheJourCourt(T.worstDay.date).toLowerCase()} ${T.worstDay.date.getDate()} (${pointageDurLabel(T.worstDay.gapMin)})` : ''}` : "tout l'horaire écoulé est couvert"}</div></div>
+      <div class="fs-kpi"><div class="l">Pauses</div><div class="v">${ficheMinLabel(T.pausesMin)}</div><div class="s">déjeuner ${ficheMinLabel(T.lunchRealMin)} · manuelles ${ficheMinLabel(T.manualPauseMin)}</div></div>
+      <div class="fs-kpi"><div class="l">Taux d'occupation</div><div class="v">${T.taux!=null ? Math.round(T.taux*100) + ' %' : '—'}</div>${renderOccupationBar(T.taux)}</div>
+    </div>`;
+  const alerts = fiche.alerts.length ? `<div class="fs-alerts">${fiche.alerts.map(a => `<div class="fs-alert ${a.kind}"><span class="tag">${escapeHtml(a.tag)}</span><span>${a.text}</span></div>`).join('')}</div>` : '';
+  const histNote = hist.status==='loading' ? `<span class="fs-note">Chargement des séances archivées…</span>`
+    : hist.status==='error' ? `<span class="fs-note" style="color:var(--amber);">Séances archivées indisponibles (serveur injoignable) — seules les séances encore dans le planning sont affichées.</span>` : '';
+  const kv = (dt, dd, cls) => `<dt class="${cls||''}">${dt}</dt><dd class="${cls||''}">${dd}</dd>`;
+  const presenceBlock = `<dl class="fs-kv">
+      ${P.joursLJ ? kv('Horaire lun.–jeu.', `${P.joursLJ} × ${formatHeures(P.hLJ)}`) : ''}
+      ${P.joursV ? kv('Horaire vendredi', `${P.joursV} × ${formatHeures(P.hV)}`) : ''}
+      ${kv('Horaire de la période', formatHeures(P.brutH), 'tot')}
+      ${kv('Jours fériés', P.nbFeries ? `− ${formatHeures(P.feriesH)}` : '—', 'sub' + (P.nbFeries ? ' neg' : ''))}
+      ${Object.keys(P.conges).length ? Object.entries(P.conges).map(([k,h]) => kv(escapeHtml(k), `− ${formatHeures(h)}`, 'sub neg')).join('') : kv('Congés approuvés', '—', 'sub')}
+      ${kv('Présence théorique', formatHeures(P.presenceH), 'tot')}
+    </dl><div class="fs-note">Théorique : l'appli n'a pas de badgeuse. C'est ce que l'horaire attendait, moins les congés approuvés et les jours fériés.</div>`;
+  const doneTasks = fiche.tasks.filter(t => t.statut==='termine');
+  const travailBlock = `<dl class="fs-kv">
+      ${kv("Pointé dans l'horaire", ficheMinLabel(T.pointeMin))}
+      ${kv(`Déclaré${T.declAValider ? ' <span class="decl-badge pending">à valider</span>' : ''}`, ficheMinLabel(T.declMin))}
+      ${kv('Hors de son horaire, compté', ficheMinLabel(T.excMin))}
+      ${T.horsMin ? kv('Hors horaires', `${pointageDurLabel(T.horsMin)} <small>non compté</small>`, 'neg') : ''}
+      ${kv('Temps compté', formatHeures(T.tempsCompteH), 'tot')}
+      ${T.nbSansDetail ? kv('dont tâches closes sans détail', `${formatHeures(T.sansDetailH)} <small>${T.nbSansDetail} tâche${T.nbSansDetail>1?'s':''}</small>`, 'sub') : ''}
+      ${kv('Tâches travaillées', String(T.nbTaches))}
+      ${kv('Prévu / passé (tâches finies)', doneTasks.length ? `${formatHeures(doneTasks.reduce((s,t) => s + t.prevuH, 0))} / ${formatHeures(doneTasks.reduce((s,t) => s + t.h, 0))}` : '—')}
+      ${kv('Dépassements notables', String(T.nbOverrun), T.nbOverrun ? 'neg' : '')}
+      ${kv('Rebuts déclarés', T.rebuts ? `${T.rebuts} pièce${T.rebuts>1?'s':''}` : '—')}
+    </dl><div class="fs-note">Temps compté : même calcul que la carte du salarié dans Temps de production (heures des séances dans l'horaire du poste + exceptions déclarées, ou temps saisi à la clôture).</div>`;
+  const pausesBlock = `<dl class="fs-kv">
+      ${kv('Déjeuner prévu', T.nbLunch ? `${T.nbLunch} × ${pointageDurLabel(T.lunchPlannedMin / T.nbLunch)}` : '—')}
+      ${kv('Déjeuner réel', ficheMinLabel(T.lunchRealMin))}
+      ${kv('dont dépassement', T.lunchOverrunMin ? `+ ${pointageDurLabel(T.lunchOverrunMin)}` : '—', 'sub' + (T.lunchOverrunMin ? ' neg' : ''))}
+      ${kv('Pauses en journée (hors déjeuner)', T.nbManualPauses ? `${T.nbManualPauses} · ${pointageDurLabel(T.manualPauseMin)}` : '—')}
+      ${kv('Total pauses', ficheMinLabel(T.pausesMin), 'tot')}
+    </dl><div class="fs-note">Pauses vues côté salarié : trous entre SES séances, bornés par une séance avant et après. Une tâche restée en pause pendant qu'il travaille ailleurs ne compte pas ; un déjeuner n'est mesuré que les jours où il a pointé avant et après.</div>`;
+  const tasksRows = fiche.tasks.map(t => {
+    let etat = t.statut ? opStatutPillHtml(t.statut) : '—';
+    if(t.statut==='en_pause' && t.pauseEnCours) etat = `<span class="statut-pill statut-pill-enpause">En pause ${calendarDurationLabel(t.pauseEnCours.h)}</span>`;
+    if(t.declaration) etat += ' ' + declarationBadgeHtml({ declaration: t.declaration });
+    if(t.sansDetail) etat += ` <span class="fs-sans-detail" title="Tâche close dont seul le total est connu (séances non archivées) — absente de la frise">sans détail</span>`;
+    const ec = t.h - t.prevuH;
+    return `<tr>
+      <td>${t.date ? t.date.toLocaleDateString('fr-FR', { weekday:'short', day:'numeric' }) : '—'}</td>
+      <td><button class="temps-prod-commande-link fiche-noprint-btn" data-action="isolate-commande-goto-planning" data-cid="${t.cid}" style="background:none;border:none;padding:0;color:var(--text);font-weight:600;cursor:pointer;">${escapeHtml(t.commandeNom)}</button></td>
+      <td>${escapeHtml([t.piece, t.etape].filter(Boolean).join(' / '))}</td>
+      <td>${escapeHtml(t.machineNom||'—')}</td>
+      <td class="r mono">${formatHeures(t.prevuH)}</td>
+      <td class="r mono">${formatHeures(t.h)}${isOverrunTask(t.prevuH, t.h) ? ' ⚠️' : ''}</td>
+      <td class="r mono">${t.statut==='termine' ? formatEcart(ec) : '—'}</td>
+      <td>${etat}</td>
+    </tr>`;
+  }).join('');
+  const back = f.from==='dashboard' ? "Vue d'ensemble" : (f.from==='planning' ? 'Planning' : 'Temps de production');
+  return `<div id="fiche-salarie-page" class="fs-page">
+  <div class="fs-crumb fiche-noprint"><button class="ghost small" data-action="fiche-back">← ${escapeHtml(back)}</button><span>›</span><b>Fiche salarié</b></div>
+  <section class="panel"><div class="fs-who">
+    ${renderAvatar(who.username)}
+    <div class="fs-who-main"><h1>${escapeHtml(who.username)}</h1><div class="fs-meta">${escapeHtml(who.meta)}</div>
+      <div class="fs-range">${escapeHtml(label)}</div></div>
+    ${periodCtl}
+  </div></section>
+  <section class="panel">
+    <div class="panel-head"><h2>Synthèse ${periodWord}</h2><span class="fs-note" style="margin:0;">Base : horaire attendu écoulé de ${pointageDurLabel(T.expectedElapsedMin)}${T.expectedMin > T.expectedElapsedMin ? ` (sur ${pointageDurLabel(T.expectedMin)} — le reste est à venir)` : ''}</span>${histNote}</div>
+    <div class="panel-body">${split}${legend}${kpis}${alerts}</div>
+  </section>
+  <section class="panel fs-break">
+    <div class="panel-head"><h2>Frise ${periodWord}</h2></div>
+    <div class="panel-body fs-frise-scroll">${renderFicheFriseHtml(fiche, now)}
+      <div class="fs-note">Le trait gris au-dessus et en dessous marque l'horaire attendu. Survoler un segment affiche les heures exactes et la tâche concernée.</div></div>
+  </section>
+  <div class="fs-cols">
+    <section class="panel"><div class="panel-head"><h2>Présence</h2></div><div class="panel-body">${presenceBlock}</div></section>
+    <section class="panel"><div class="panel-head"><h2>Travail</h2></div><div class="panel-body">${travailBlock}</div></section>
+    <section class="panel"><div class="panel-head"><h2>Pauses</h2></div><div class="panel-body">${pausesBlock}</div></section>
+  </div>
+  <section class="panel fs-break">
+    <div class="panel-head"><h2>Tâches ${periodWord}</h2><span class="fs-note" style="margin:0;">${fiche.tasks.length} tâche${fiche.tasks.length>1?'s':''} · triées par date</span></div>
+    <div class="panel-body" style="overflow-x:auto;">${fiche.tasks.length ? `<table class="fs-table"><thead><tr><th>Jour</th><th>Commande</th><th>Pièce / étape</th><th>Poste</th><th class="r">Prévu</th><th class="r">Passé</th><th class="r">Écart</th><th>État</th></tr></thead><tbody>${tasksRows}</tbody></table>` : `<div class="footer-note" style="text-align:left;">Aucune tâche comptée sur cette période.</div>`}</div>
+  </section>
+  <div class="fs-print-foot">Fiche salarié — ${escapeHtml(who.username)} — ${escapeHtml(label)} — imprimée le ${now.toLocaleString('fr-FR')}</div>
+</div>`;
+}
+function exportFicheSalarieExcel(){
+  if(typeof XLSX === 'undefined'){ alert("La bibliothèque Excel n'a pas pu se charger (connexion internet requise pour cette fonction)."); return; }
+  const f = ficheSalarie; if(!f) return;
+  const now = new Date();
+  const { start, end, label } = ficheSalarieBounds();
+  const fiche = computeFicheSalarie(state, f.uid, start, end, ficheHistoryCache.key === ficheHistoryKey(f.uid, start, end) ? ficheHistoryCache : null, now);
+  const who = ficheUserMeta(f.uid);
+  const T = fiche.totals, P = fiche.presence;
+  const h2 = min => Math.round(min/60*100)/100;
+  const r2 = h => Math.round(h*100)/100;
+  const synth = [
+    [`Fiche salarié — ${who.username}`], [`Période : ${label}`], [],
+    ['Présence théorique (h)', r2(P.presenceH)], ['Horaire de la période (h)', r2(P.brutH)], ['Jours fériés (h)', r2(P.feriesH)],
+    ...Object.entries(P.conges).map(([k,h]) => [`${k} (h)`, r2(h)]),
+    [], ['Horaire attendu écoulé (h)', h2(T.expectedElapsedMin)], ["Pointé dans l'horaire (h)", h2(T.pointeMin)], ['Déclaré (h)', h2(T.declMin)],
+    ["Non pointé dans l'horaire (h)", h2(T.gapMin)], ['Hors de son horaire, compté (h)', h2(T.excMin)], ['Hors horaires, non compté (h)', h2(T.horsMin)],
+    ['Temps compté (h)', r2(T.tempsCompteH)], ["Taux d'occupation (%)", T.taux!=null ? r2(T.taux*100) : ''],
+    [], ['Déjeuner prévu (h)', h2(T.lunchPlannedMin)], ['Déjeuner réel (h)', h2(T.lunchRealMin)], ['Dépassement déjeuner (h)', h2(T.lunchOverrunMin)],
+    ['Pauses en journée (nb)', T.nbManualPauses], ['Pauses en journée (h)', h2(T.manualPauseMin)],
+    [], ['Tâches travaillées', T.nbTaches], ['Dépassements notables', T.nbOverrun], ['Rebuts déclarés (pièces)', T.rebuts]
+  ];
+  const joursH = ['Date','Jour','Congé / férié','Horaire attendu (h)','Pointé dans l\'horaire (h)','Déclaré (h)','Non pointé (h)','Hors de son horaire compté (h)','Hors horaires non compté (h)','Déjeuner réel (h)','Dépassement déjeuner (h)','Pauses en journée (h)','Plus long trou'];
+  const jours = fiche.days.filter(x => x.weekday || x.work.length || x.decls.length).map(x => [
+    x.date.toLocaleDateString('fr-FR'), ficheJourLong(x.date), x.holiday ? 'Férié' : (x.leave ? x.leave.label + (x.leave.demiJournee ? ` (${demiJourneeLabel(x.leave.demiJournee)})` : '') : ''),
+    h2(x.expectedMin), h2(x.pointeMin), h2(x.declMin), h2(x.gapMin), h2(x.excMin), h2(x.horsMin), h2(x.lunchRealMin), h2(x.lunchOverrunMin), h2(x.manualPauseMin),
+    x.worst ? `${pointageHm(x.worst.a)}–${pointageHm(x.worst.b)} (${pointageDurLabel(x.worst.min)})` : ''
+  ]);
+  const seancesH = ['Date','Début','Fin','Durée (h)','Commande','Pièce','Étape','Poste','En cours'];
+  const seen = new Set();
+  const seances = fiche.segs.filter(s => { const k = `${s.fusionGroupId||s.oid}|${+s.a}|${+s.b}`; if(seen.has(k)) return false; seen.add(k); return true; })
+    .map(s => [s.a.toLocaleDateString('fr-FR'), pointageHm(s.a), pointageHm(s.b), r2((s.b-s.a)/3600000), s.commandeNom, s.piece||'', s.etape||'', s.machineNom||'', s.open ? 'Oui' : '']);
+  const tachesH = ['Date','Commande','Réf. client','Pièce','Étape','Poste','Temps prévu (h)','Temps passé (h)','Écart (h)','Statut','Temps déclaré','Rebuts','Détail des séances'];
+  const taches = fiche.tasks.map(t => [t.date ? t.date.toLocaleDateString('fr-FR') : '', t.commandeNom, t.refClient||'', t.piece, t.etape, t.machineNom, r2(t.prevuH), r2(t.h), r2(t.h - t.prevuH),
+    t.statut ? opStatutLabel(t.statut) : '', t.declaration ? ({ a_valider:'À valider', validee:'Validé', refusee:'Refusé' }[t.declaration.statut] || '') : '', t.rebuts || '', t.sansDetail ? 'Non' : 'Oui']);
+  const wb = XLSX.utils.book_new();
+  const sheet = (rows, widths) => { const ws = XLSX.utils.aoa_to_sheet(rows); ws['!cols'] = widths.map(w => ({ wch: w })); return ws; };
+  XLSX.utils.book_append_sheet(wb, sheet(synth, [44, 14]), 'Synthèse');
+  XLSX.utils.book_append_sheet(wb, sheet([[`Période : ${label}`], joursH, ...jours], joursH.map(() => 16)), 'Jours');
+  XLSX.utils.book_append_sheet(wb, sheet([[`Période : ${label}`], seancesH, ...seances], seancesH.map(() => 16)), 'Séances');
+  XLSX.utils.book_append_sheet(wb, sheet([[`Période : ${label}`], tachesH, ...taches], tachesH.map(() => 18)), 'Tâches');
+  const safe = who.username.replace(/[^\w\-]+/g, '_');
+  XLSX.writeFile(wb, `fiche-${safe}_${toDateInputValue(start)}_${toDateInputValue(new Date(end.getTime()-86400000))}.xlsx`);
 }
 // Classeur à 2 feuilles (Résumé / Détail) pour la période actuellement affichée dans l'onglet
 // Temps de production — indépendant du tri choisi à l'écran (toujours trié par salarié puis par
@@ -13984,6 +14641,19 @@ function render(){
     restoreFocusRef(focusRef);
     return;
   }
+  if(currentPage === 'ficheSalarie'){
+    if(!ficheSalarie){ currentPage = 'tempsProd'; return render(); }
+    appEl.innerHTML = [
+      renderHeader(),
+      renderFicheSalariePage(),
+      renderSettingsModal(),
+      renderPauseReminderModal(otherModalOpen),
+      renderToast()
+    ].join('');
+    restoreModalScroll(modalScrollTop);
+    restoreFocusRef(focusRef);
+    return;
+  }
   if(currentPage === 'zones'){
     appEl.innerHTML = [
       renderHeader(),
@@ -14277,6 +14947,13 @@ function dispatchClickAction(action, el){
     case 'temps-prod-sort': setTempsProdSort(el.dataset.key); break;
     case 'temps-prod-sort-dir': toggleTempsProdSortDir(); break;
     case 'temps-prod-detail-sort': setTempsProdDetailSort(el.dataset.userId, el.dataset.key); break;
+    case 'open-fiche-salarie': openFicheSalarie(el.dataset.userId, el.dataset.from); break;
+    case 'fiche-back': closeFicheSalarie(); break;
+    case 'fiche-mode': if(ficheSalarie){ ficheSalarie.mode = el.dataset.mode; render(); } break;
+    case 'fiche-nav': if(ficheSalarie){ ficheSalarie.anchor = shiftPeriodAnchor(ficheSalarie.mode, ficheSalarie.anchor, el.dataset.dir); render(); } break;
+    case 'fiche-today': if(ficheSalarie){ ficheSalarie.anchor = new Date(); render(); } break;
+    case 'fiche-export': exportFicheSalarieExcel(); break;
+    case 'fiche-print': try{ window.print(); }catch(e){ /* impression indisponible */ } break;
     case 'temps-prod-toggle': tempsProdExpanded[el.dataset.userId] = !tempsProdExpanded[el.dataset.userId]; render(); break;
     case 'show-temps-prod-sessions': showTempsProdSessions(el.dataset.cid, el.dataset.oid); break;
     case 'close-temps-prod-sessions': closeTempsProdSessions(); break;
@@ -14495,6 +15172,8 @@ function dispatchChangeAction(el, action){
     case 'leave-type-filter-all': setAllLeaveTypeFilter(true); break;
     case 'leave-type-filter-none': setAllLeaveTypeFilter(false); break;
     case 'temps-prod-range-debut': tempsProdRangeDebut = el.value; render(); break;
+    case 'fiche-range-debut': if(ficheSalarie){ ficheSalarie.rangeDebut = el.value || null; render(); } break;
+    case 'fiche-range-fin': if(ficheSalarie){ ficheSalarie.rangeFin = el.value || null; render(); } break;
     case 'temps-prod-range-fin': tempsProdRangeFin = el.value; render(); break;
     case 'user-pause-field': updateUserPauseField(el.dataset.userId, el.dataset.pauseId, el.dataset.field, el.value); break;
     case 'user-horaire-field': updateUserHoraireField(el.dataset.userId, el.dataset.field, el.value); break;

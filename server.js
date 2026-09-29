@@ -355,6 +355,19 @@ app.get('/api/session-history/:cid/:oid', requireAuth, requireLicense, (req, res
   const rows = sessionHistory.getSessionHistoryForPiece(db, req.params.cid, req.params.oid);
   res.json({ entries: rows });
 });
+// Fiche salarié : séances archivées d'une personne sur une période ([from, to[, "AAAA-MM-JJTHH:mm").
+// Même niveau d'accès que la route par pièce ci-dessus (tout compte connecté) : l'état synchronisé
+// expose déjà à chacun les séances en cours de toute l'équipe, et un poste partagé peut cibler
+// « Mon temps de production » sur une autre identité que le compte connecté (activeIdentityId) —
+// la restriction « un employé ne voit que sa propre fiche » est appliquée par l'interface.
+app.get('/api/session-history-user/:uid', requireAuth, requireLicense, (req, res) => {
+  const re = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
+  const { from, to } = req.query || {};
+  if(!re.test(String(from||'')) || !re.test(String(to||''))) return res.status(400).json({ error: 'Paramètres "from" et "to" (AAAA-MM-JJTHH:mm) requis.' });
+  const rows = sessionHistory.getSessionHistoryForUser(db, req.params.uid, from, to);
+  const pieceIds = sessionHistory.getSessionHistoryPieceIdsForUser(db, req.params.uid);
+  res.json({ entries: rows, pieceIds });
+});
 
 // ---------------- Historique des prévisions avant clôture (voir previsionHistory.js) ----------------
 // Reçoit la dernière estimation du moteur (prévu) juste avant qu'une pièce soit passée Terminée,
