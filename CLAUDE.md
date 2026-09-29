@@ -1550,6 +1550,36 @@ volontairement la même zone (regroupement manuel de petites affaires dans un m�
   - `assignStorageZone`/`setCommandeZone` n'ont pas besoin d'être modifiés : ils lisent déjà
     `occupiedStorageZones`/`commandesInZone`, qui portent maintenant la nouvelle règle.
 
+### Cases figées, recherche et filtres de la page « Zones de stockage »
+
+Retour utilisateur réel, capture à l'appui : cases de tailles irrégulières (la hauteur suivait la
+longueur du nom de commande et la présence d'un bouton « Prêt à expédier »), et besoin de retrouver
+vite une commande ou les casiers qui demandent une action.
+
+- **Cases de taille figée** — `.zone-row-cells{grid-template-columns:repeat(16, minmax(104px,1fr));
+  grid-auto-rows:120px;}` (hauteur FIXE, plus `minmax(78px, auto)`), `.zone-cell{height:100%;
+  overflow:hidden;}` : une case ne grandit plus jamais selon son contenu. Nom de commande tronqué à 3
+  lignes (`-webkit-line-clamp`, nom complet + réf. client en infobulle), 1 ligne par nom pour un
+  casier partagé (`.zone-cell-multi`). `.zones-grid-scroll` : défilement horizontal sur écran étroit
+  plutôt que de rétrécir les cases. Vérifié au rendu (Playwright, export réel) : une seule taille de
+  case (120×104 px) sur les 48.
+- **Recherche** (`#zones-search-input`, `zonesSearchQuery`, même mécanisme de saisie « live » que
+  `#pointages-search-input`) — code de casier, nom de commande ou réf. client.
+- **Filtres** (`zonesFilter` : `'tous'`|`'expedition'`|`'anomalie'`|`'libres'`, onglets `.view-tabs`
+  avec compteur, `data-action="zones-filter"`) — « 🧹 Prêt à expédier » (casier occupé par une
+  commande terminée en attente de libération manuelle — même condition que le bouton de la case,
+  proposé seulement si `config.modules.expedition` est actif, retombe sur « Toutes » sinon), « ⚠
+  Anomalies » (échéance dépassée ou fin estimée au-delà de l'échéance, via `commandeDelayStatus` sur
+  la commande du planning calculé — `finEstimee` n'existe que là), « Libres » (hors casiers
+  désactivés). Recherche et filtre sont transitoires (jamais persistés) et se combinent.
+- **Estomper, jamais retirer** : une case qui ne correspond pas reçoit `.zone-cell-dimmed` (opacité
+  0,18), une case retenue `.zone-cell-match` (contour accent) — la grille garde sa forme physique
+  (une allée = une rangée), repère visuel de l'atelier réel. Règle écrite `.zone-cell.zone-cell-dimmed`
+  (spécificité renforcée) : `.zone-cell-free{opacity:0.55}` l'emportait sinon, les cases libres ne
+  s'estompaient pas (repéré sur la capture de contrôle).
+- **Pastille d'anomalie** à côté du code de casier, toujours visible (filtre ou pas) : ⏰ échéance
+  dépassée (prioritaire), sinon ⚠ retard estimé — détail en infobulle.
+
 ### Zone masquée à tort sur une fusion mono-commande (Kanban)
 
 Bug réel signalé (capture d'écran à l'appui) : une carte Kanban fusionnée (« 🔗 9 pièces —

@@ -446,13 +446,28 @@
   .zone-row:last-child{margin-bottom:0;}
   .zone-row-label{width:76px; flex:0 0 76px; font-family:'IBM Plex Mono',monospace; font-weight:600; color:var(--text-dim); align-self:stretch; display:flex; align-items:center; gap:6px;}
   .zone-row-swatch{width:10px; height:10px; border-radius:50%; flex:0 0 10px; display:inline-block;}
-  .zone-row-cells{display:grid; grid-template-columns:repeat(16, minmax(64px,1fr)); grid-auto-rows:minmax(78px, auto); gap:6px; flex:1 1 auto;}
+  /* Cases de taille FIGÉE (retour utilisateur réel) : hauteur de ligne fixe (plus minmax/auto) et
+     largeur minimale plus confortable — une case ne grandit plus selon la longueur du nom de
+     commande ni la présence d'un bouton "Prêt à expédier", toutes les cases de la grille gardent
+     exactement la même taille. Le texte trop long est tronqué (nom complet en infobulle), jamais
+     d'agrandissement de la case. Défilement horizontal de .zones-grid-scroll sur écran étroit
+     plutôt que de rétrécir les cases. */
+  .zones-grid-scroll{overflow-x:auto; padding-bottom:4px;}
+  .zone-row-cells{display:grid; grid-template-columns:repeat(16, minmax(104px,1fr)); grid-auto-rows:120px; gap:8px; flex:1 1 auto;}
   .zone-cell{
-    border:1px solid var(--line); border-radius:4px; padding:8px 6px; text-align:center; font-family:'IBM Plex Sans',sans-serif;
-    background:var(--panel); cursor:default; min-width:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+    border:1px solid var(--line); border-radius:4px; padding:8px 7px; text-align:center; font-family:'IBM Plex Sans',sans-serif;
+    background:var(--panel); cursor:default; min-width:0; height:100%; box-sizing:border-box; overflow:hidden;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+    transition:opacity .12s;
   }
-  .zone-cell-code{font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:12px;}
-  .zone-cell-label{font-size:10.5px; color:var(--text-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%;}
+  .zone-cell-code{font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:13.5px; display:flex; align-items:center; gap:4px;}
+  .zone-cell-label{font-size:11px; color:var(--text-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%;}
+  .zone-cell-flag{font-size:11px; line-height:1; cursor:help;}
+  .zone-cell.zone-cell-dimmed, .zone-cell.zone-cell-dimmed:hover{opacity:0.18;}
+  .zone-cell-match{box-shadow:0 0 0 2px var(--accent);}
+  .zones-toolbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;}
+  .zones-toolbar input{width:auto; flex:1; min-width:200px; max-width:380px;}
+  .zones-toolbar .view-tabs{margin:0;}
   .zone-cell-free{opacity:0.55; cursor:pointer;}
   .zone-cell-free:hover{opacity:0.9; border-color:var(--text-faint);}
   .zone-cell-inactive{
@@ -461,16 +476,19 @@
   }
   .zone-cell-inactive .zone-cell-code, .zone-cell-inactive .zone-cell-label{color:var(--red);}
   .zone-cell-inactive:hover{border-color:var(--red); opacity:0.85;}
-  .zone-cell-occupied{background:rgba(49,111,152,0.1); border-color:var(--blue);}
-  .zone-cell-occupied .zone-cell-label{white-space:normal; overflow:visible; display:flex; flex-direction:column; gap:3px; width:100%;}
+  .zone-cell-occupied{background:rgba(49,111,152,0.1); border-color:var(--blue); justify-content:flex-start;}
+  .zone-cell-occupied .zone-cell-label{white-space:normal; overflow:hidden; display:flex; flex-direction:column; justify-content:center; gap:3px; width:100%; flex:1 1 auto; min-height:0;}
   .zone-cell-occupant{
-    display:block; width:100%; background:none; border:none; padding:0; margin:0; cursor:pointer;
-    font-family:'IBM Plex Sans',sans-serif; font-size:10.5px; font-weight:600; color:var(--blue);
-    white-space:normal; overflow-wrap:anywhere; text-align:center;
+    display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden;
+    width:100%; background:none; border:none; padding:0; margin:0; cursor:pointer; flex:none;
+    font-family:'IBM Plex Sans',sans-serif; font-size:11.5px; font-weight:600; color:var(--blue);
+    white-space:normal; overflow-wrap:anywhere; text-align:center; line-height:1.25;
   }
+  /* Casier partagé par plusieurs commandes : une ligne par nom, pour que tout tienne dans la case. */
+  .zone-cell-multi .zone-cell-occupant{-webkit-line-clamp:1;}
   .zone-cell-occupant:hover{text-decoration:underline;}
   .zone-cell-release{
-    display:block; width:100%; margin-top:2px; background:var(--amber-dim); border:1px solid var(--amber);
+    display:block; width:100%; margin-top:2px; flex:none; background:var(--amber-dim); border:1px solid var(--amber);
     border-radius:2px; padding:1px 3px; cursor:pointer;
     font-family:'IBM Plex Sans',sans-serif; font-size:9.5px; font-weight:600; color:var(--text-dim);
     white-space:normal; overflow-wrap:anywhere; text-align:center;
@@ -1126,7 +1144,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.64.1';
+const APP_VERSION = '1.65.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1716,6 +1734,11 @@ let pointagesFilters = { personne:'', poste:'', statut:'toutes', range:'thisMont
 // Vue "Liste" (une ligne par pointage, historique) vs "Par référence" (regroupée par pièce, voir
 // computePointagesByReference) — purement transitoire, jamais persistée (comme pointagesFilters).
 let pointagesViewMode = 'liste';
+// Page Zones de stockage : recherche et filtre purement transitoires (comme pointagesFilters),
+// jamais persistés. Les cases qui ne correspondent pas sont ESTOMPÉES, jamais retirées : la grille
+// garde sa forme physique (une allée = une rangée), repère visuel de l'atelier réel.
+let zonesSearchQuery = '';
+let zonesFilter = 'tous'; // 'tous' | 'expedition' | 'anomalie' | 'libres'
 // Nombre de semaines affichées sur la page "Historique / Tendances" (voir computeHistoriqueTrends) —
 // purement transitoire côté client (comme pointagesViewMode), jamais persisté : reprend 12 semaines
 // par défaut à chaque rechargement.
@@ -7816,32 +7839,77 @@ function renderZonesPage(){
   const zonesInfo = computeStorageZones(state);
   const nbOccupied = Object.keys(byZone).filter(z => byZone[z].length && zonesInfo.list.includes(z)).length;
   const allees = state.config.storageZones||[];
+  // finEstimee n'existe que sur les commandes du planning calculé (getSchedule) — nécessaire à
+  // commandeDelayStatus pour repérer une échéance dépassée/à risque (filtre « Anomalies »).
+  const schedById = {};
+  getSchedule().forEach(c => { schedById[c.id] = c; });
+  const isPendingExpedition = o => expeditionGateActive && isCommandeFullyDone(o) && !o.pretExpedition;
+  // « Anomalie » = échéance déjà dépassée, ou fin estimée au-delà de l'échéance (à risque) —
+  // mêmes règles que les badges de la liste « Tâches en cours » (commandeDelayStatus).
+  const delayOf = o => { const sc = schedById[o.id]; return sc ? commandeDelayStatus(sc) : { kind:'unknown' }; };
+  const isAnomalie = o => { const k = delayOf(o).kind; return k === 'overdue' || k === 'atrisk'; };
+  // Le filtre « Prêt à expédier » n'existe que si le module correspondant est actif — retombe sur
+  // « Toutes » s'il a été désactivé depuis, plutôt que d'afficher une grille entièrement estompée.
+  if(zonesFilter === 'expedition' && !expeditionGateActive) zonesFilter = 'tous';
+  const q = zonesSearchQuery.trim().toLowerCase();
+  const cellMatchesSearch = (z, occupants) => !q || z.toLowerCase().includes(q)
+    || (occupants||[]).some(o => (o.nom||'').toLowerCase().includes(q) || (o.refClient||'').toLowerCase().includes(q));
+  const cellMatchesFilter = (z, occupants) => {
+    const occ = occupants && occupants.length;
+    if(zonesFilter === 'expedition') return !!occ && occupants.some(isPendingExpedition);
+    if(zonesFilter === 'anomalie') return !!occ && occupants.some(isAnomalie);
+    if(zonesFilter === 'libres') return !occ && !isZoneInactive(state, z);
+    return true;
+  };
+  const filterActive = !!q || zonesFilter !== 'tous';
+  let nbMatch = 0;
+  const counts = { tous:zonesInfo.list.length, expedition:0, anomalie:0, libres:0 };
+  zonesInfo.list.forEach(z => {
+    const occ = byZone[z];
+    if(occ && occ.length){
+      if(occ.some(isPendingExpedition)) counts.expedition++;
+      if(occ.some(isAnomalie)) counts.anomalie++;
+    } else if(!isZoneInactive(state, z)) counts.libres++;
+  });
   const rowsHtml = allees.map(allee => {
     const n = Math.max(0, Number(allee.nbEmplacements)||0);
     const cellsHtml = Array.from({length:n}, (_,i) => `${allee.code}${i+1}`).map(z => {
       const occupants = byZone[z];
+      // Estompée (jamais retirée) si elle ne correspond pas à la recherche/au filtre : la grille
+      // garde sa forme, les cases retenues ressortent d'un coup d'œil.
+      const match = cellMatchesSearch(z, occupants) && cellMatchesFilter(z, occupants);
+      if(match && filterActive) nbMatch++;
+      const matchCls = filterActive ? (match ? ' zone-cell-match' : ' zone-cell-dimmed') : '';
       if(!occupants || !occupants.length){
         // Case libre : cliquable pour désactiver/réactiver ce casier (cassé, réservé...) — voir
         // toggleStorageZoneActive. Une case occupée ne l'est jamais (il faut d'abord la libérer).
         const inactive = isZoneInactive(state, z);
-        const cls = inactive ? 'zone-cell zone-cell-inactive' : 'zone-cell zone-cell-free';
+        const cls = (inactive ? 'zone-cell zone-cell-inactive' : 'zone-cell zone-cell-free') + matchCls;
         const title = inactive ? `Réactiver ${z}` : `Désactiver ${z} (casier cassé, réservé...)`;
         const labelTxt = inactive ? '🚫 Désactivée' : 'Libre';
         return `<button class="${cls}" data-action="toggle-zone-active" data-zone="${z}" title="${title}"><div class="zone-cell-code">${z}</div><div class="zone-cell-label">${labelTxt}</div></button>`;
       }
       const namesHtml = occupants.map(o => {
-        const nameBtn = `<button class="zone-cell-occupant" data-action="isolate-commande-goto-planning" data-cid="${o.id}" title="Isoler « ${escapeHtml(o.nom)} » dans le planning">${escapeHtml(o.nom)}</button>`;
+        const titleTxt = `${o.nom}${o.refClient?` (${o.refClient})`:''} — cliquer pour l'isoler dans le planning`;
+        const nameBtn = `<button class="zone-cell-occupant" data-action="isolate-commande-goto-planning" data-cid="${o.id}" title="${escapeHtml(titleTxt)}">${escapeHtml(o.nom)}</button>`;
         // Nettoyage/conditionnement en cours (voir renderCommandeCard) : plutôt que d'obliger à
         // retrouver cette commande dans les tâches terminées pour son bandeau, le même bouton de
         // libération est proposé ici directement — retour utilisateur réel.
-        const pendingExpedition = expeditionGateActive && isCommandeFullyDone(o) && !o.pretExpedition;
-        const releaseBtn = pendingExpedition
+        const releaseBtn = isPendingExpedition(o)
           ? `<button class="zone-cell-release" data-action="mark-pret-expedition" data-cid="${o.id}" title="Marquer « ${escapeHtml(o.nom)} » prête à expédier — libère ce casier">🧹 Prêt à expédier</button>`
           : '';
         return nameBtn + releaseBtn;
       }).join('');
-      return `<div class="zone-cell zone-cell-occupied" style="border-color:${allee.couleur}; background:${hexToRgba(allee.couleur,0.14)};">
-        <div class="zone-cell-code" style="color:${readableZoneTextColor(allee.couleur)};">${z}</div><div class="zone-cell-label">${namesHtml}</div>
+      // Pastille d'anomalie à côté du code : ⏰ échéance dépassée (le plus grave), sinon ⚠ à risque.
+      const delays = occupants.map(delayOf);
+      const overdue = delays.find(d => d.kind === 'overdue');
+      const atrisk = delays.find(d => d.kind === 'atrisk');
+      const flag = overdue
+        ? `<span class="zone-cell-flag" title="Échéance dépassée depuis ${overdue.overdueDays} j">⏰</span>`
+        : atrisk ? `<span class="zone-cell-flag" title="Retard estimé ~${atrisk.deltaDays} j sur l'échéance">⚠</span>` : '';
+      const multiCls = occupants.length > 1 ? ' zone-cell-multi' : '';
+      return `<div class="zone-cell zone-cell-occupied${multiCls}${matchCls}" style="border-color:${allee.couleur}; background:${hexToRgba(allee.couleur,0.14)};">
+        <div class="zone-cell-code" style="color:${readableZoneTextColor(allee.couleur)};">${z}${flag}</div><div class="zone-cell-label">${namesHtml}</div>
       </div>`;
     }).join('');
     const label = allee.nom ? `${escapeHtml(allee.code)} — ${escapeHtml(allee.nom)}` : `Allée ${escapeHtml(allee.code)}`;
@@ -7857,6 +7925,17 @@ function renderZonesPage(){
     ? `<div class="footer-note" style="text-align:left; padding-top:10px; color:var(--red);">Hors configuration actuelle : ${orphanNames.map(escapeHtml).join(', ')} — l'allée correspondante a été réduite ou supprimée. Réattribuez une zone valide depuis leur badge "📍 Zone".</div>`
     : '';
   const nbInactive = (state.config.inactiveStorageZones||[]).filter(z => zonesInfo.list.includes(z)).length;
+  const filterDefs = [
+    ['tous', 'Toutes'],
+    ...(expeditionGateActive ? [['expedition', '🧹 Prêt à expédier']] : []),
+    ['anomalie', '⚠ Anomalies'],
+    ['libres', 'Libres']
+  ];
+  const toolbar = `<div class="zones-toolbar">
+      <input type="text" id="zones-search-input" placeholder="🔍 Rechercher une commande, un client ou un casier..." value="${escapeHtml(zonesSearchQuery)}">
+      <div class="view-tabs">${filterDefs.map(([k, lbl]) => `<button class="${zonesFilter===k?'active':''}" data-action="zones-filter" data-filter="${k}">${lbl} (${counts[k]})</button>`).join('')}</div>
+      ${filterActive ? `<span class="footer-note" style="margin:0;">${nbMatch} case${nbMatch>1?'s':''} correspondante${nbMatch>1?'s':''}</span>` : ''}
+    </div>`;
   return `
   <section class="panel">
     <div class="panel-head">
@@ -7864,9 +7943,10 @@ function renderZonesPage(){
       <span class="footer-note" style="margin:0;">${nbOccupied} / ${zonesInfo.list.length} occupées${nbInactive?` · ${nbInactive} désactivée${nbInactive>1?'s':''}`:''}</span>
     </div>
     <div class="panel-body">
-      ${rowsHtml || `<div class="footer-note" style="text-align:left;">Aucune allée configurée — définissez-en dans Paramètres → Zones de stockage.</div>`}
+      ${allees.length ? toolbar : ''}
+      <div class="zones-grid-scroll">${rowsHtml || `<div class="footer-note" style="text-align:left;">Aucune allée configurée — définissez-en dans Paramètres → Zones de stockage.</div>`}</div>
       ${orphanNote}
-      <div class="footer-note" style="text-align:left; padding-top:10px;">Une zone est attribuée automatiquement à la création d'une commande (première libre disponible) et se libère automatiquement dès que toutes ses pièces sont Terminées — pas besoin de la vider à la main. Pour changer la zone d'une commande, utilisez son badge "📍 Zone" dans le planning ; plusieurs commandes peuvent volontairement partager le même casier. Cliquez une case libre pour désactiver un casier indisponible (cassé, réservé...), recliquez pour le réactiver. Les allées se règlent dans Paramètres → Zones de stockage.</div>
+      <div class="footer-note" style="text-align:left; padding-top:10px;">Une zone est attribuée automatiquement à la création d'une commande (première libre disponible) et se libère automatiquement dès que toutes ses pièces sont Terminées — pas besoin de la vider à la main. Pour changer la zone d'une commande, utilisez son badge "📍 Zone" dans le planning ; plusieurs commandes peuvent volontairement partager le même casier. Cliquez une case libre pour désactiver un casier indisponible (cassé, réservé...), recliquez pour le réactiver. ⏰ = échéance dépassée, ⚠ = retard estimé sur l'échéance. Les allées se règlent dans Paramètres → Zones de stockage.</div>
     </div>
   </section>`;
 }
@@ -13092,6 +13172,7 @@ function dispatchClickAction(action, el){
     case 'toggle-risque-detail': toggleRisqueCardDetail(el.dataset.cid); break;
     case 'risque-avertir-chef': avertirChefAtelier(el.dataset.cid, el); break;
     case 'toggle-zone-active': toggleStorageZoneActive(el.dataset.zone); break;
+    case 'zones-filter': zonesFilter = el.dataset.filter || 'tous'; render(); break;
     case 'toggle-select-commande': toggleIsolateCommande(el.dataset.id); if(selectedCommandeId) maybeJumpToHighlight(); render(); break;
     case 'toggle-panel-collapse': togglePanelCollapse(el.dataset.key); break;
     case 'set-view': setView(el.dataset.view); break;
@@ -13658,6 +13739,12 @@ document.addEventListener('input', (e) => {
     archiveSearchQuery = e.target.value;
     renderArchivesSectionOnly();
     const el = document.getElementById('archive-search-input');
+    if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
+  }
+  if(e.target.id === 'zones-search-input'){
+    zonesSearchQuery = e.target.value;
+    render();
+    const el = document.getElementById('zones-search-input');
     if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
   }
   if(e.target.id === 'pointages-search-input'){
