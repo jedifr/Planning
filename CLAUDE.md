@@ -1580,6 +1580,38 @@ vite une commande ou les casiers qui demandent une action.
 - **Pastille d'anomalie** à côté du code de casier, toujours visible (filtre ou pas) : ⏰ échéance
   dépassée (prioritaire), sinon ⚠ retard estimé — détail en infobulle.
 
+### Ancienneté, avancement, alerte « presque plein » et commandes sans casier
+
+Suite directe de la section précédente (propositions faites à l'utilisateur, retenues : 1, 2, 4, 5).
+
+- **Ligne d'infos en bas de case** (`.zone-cell-meta`, occupant unique seulement — place limitée
+  dans une case de taille fixe ; pour un casier partagé, les mêmes infos passent dans l'infobulle
+  de chaque nom) : mini-barre + « étapes terminées/total » (`pieces[]` de la commande, `termine`),
+  puis l'ancienneté dans le casier (« 12 j », « auj. »). `occupantInfo(o)` (locale à
+  `renderZonesPage`) calcule les deux. **L'ancienneté part de `dateCreation`** (la zone est
+  attribuée à la création de la commande, `assignStorageZone`) — inconnue pour une commande créée
+  avant ce champ (5/76 datées sur l'export réel au moment de l'ajout) : rien d'affiché plutôt
+  qu'une durée inventée, infobulle explicite. Limite assumée : une zone changée à la main ensuite
+  (`setCommandeZone`) garde l'ancienneté de la commande, pas celle du changement de casier. Avec
+  cette ligne, le nom se tronque à 2 lignes (`.zone-cell-has-meta`) ; la ligne elle-même ne passe
+  jamais à la ligne (`white-space:nowrap`) et le bloc du nom est centré en `justify-content:safe
+  center` — sans ces deux précautions, repérées sur la capture de contrôle, un débordement rognait le
+  nom par le HAUT (centrage classique), le rendant illisible.
+- **Alerte « presque plein »** (`.zones-alert`, en tête de page) — `state.config.storageZonesAlerteSeuil`
+  (`migrateState` : 3 par défaut ; 0 = jamais ; réglable dans Paramètres → Zones de stockage, champ
+  numérique générique d'`updateConfig`). Ambre quand il reste moins de N casiers libres (hors casiers
+  désactivés), rouge quand il n'en reste aucun (les nouvelles commandes seront alors créées sans
+  casier — `assignStorageZone` ne trouve plus de zone vide).
+- **Commandes en cours sans casier** (`.zones-sans-casier`, sous la grille) — commandes actives
+  (`!isCommandeReadyToFreeZone`) sans `zoneStockage`, jusque-là invisibles sur cette page, triées par
+  échéance. Nom cliquable (isole dans le planning) et sélecteur « Attribuer un casier… » limité aux
+  casiers libres et actifs — réutilise tel quel `data-action="set-commande-zone"`/`setCommandeZone`
+  (mêmes règles que le badge « 📍 Zone » de la carte commande, aucune nouvelle logique d'attribution).
+- Couvert par deux tests de rendu sur l'export réel (scratchpad de session) : seuil migré à 3,
+  avancement affiché, ancienneté « 12 j » pour une commande datée, alerte ambre/rouge/désactivée,
+  commande sans casier listée avec son sélecteur. Vérifié au rendu (Playwright) : toujours une seule
+  taille de case, aucun contenu qui déborde.
+
 ### Zone masquée à tort sur une fusion mono-commande (Kanban)
 
 Bug réel signalé (capture d'écran à l'appui) : une carte Kanban fusionnée (« 🔗 9 pièces —
