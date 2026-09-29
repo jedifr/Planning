@@ -817,6 +817,12 @@
   .de-verdict.de-ok{color:var(--green);}
   .de-verdict.de-late{color:var(--red);}
   .import-delivery{margin-left:10px; font-weight:400; font-size:12px;}
+  .decl-badge{display:inline-block; font-size:10.5px; font-weight:600; padding:1px 6px; border-radius:10px; border:1px solid; margin-top:3px; white-space:nowrap;}
+  .decl-badge.pending{color:var(--amber); border-color:var(--amber); background:var(--amber-dim);}
+  .decl-badge.refused{color:var(--red); border-color:var(--red); background:rgba(178,58,48,0.1);}
+  .decl-badge.ok{color:var(--text-dim); border-color:var(--line); background:var(--panel-2); font-weight:500;}
+  .decl-validate-btn{color:var(--green); border-color:var(--green);}
+  .declare-done-recap{padding:8px 10px; border-left:4px solid var(--green); background:var(--panel-2); border-radius:var(--radius);}
   .badge.red.badge-overdue{color:#fff; background:var(--red); font-weight:700;}
   .badge.neutral{color:var(--blue); border-color:var(--blue); background:rgba(49,111,152,0.1);}
   .badge.done{color:var(--text-faint); border-color:var(--line);}
@@ -1262,7 +1268,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.71.0';
+const APP_VERSION = '1.72.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1847,6 +1853,7 @@ let correctOperatorDraft = null;
 // séparé de correctOperatorDraft ci-dessus (formes éditées différentes) plutôt qu'une extension du
 // même outil, déjà utilisé et testé tel quel depuis "Temps de production".
 let correctPointageDraft = null;
+let declareDoneDraft = null; // Déclarer terminée une tâche jamais démarrée (voir CLAUDE.md, « Déclarer terminée »)
 // Filtres de la page "Pointages" — purement transitoires (comme searchQuery), jamais persistés.
 // customFrom/customTo (AAAA-MM-JJ) ne servent qu'en range==='custom' (Plage personnalisée) —
 // voir pointagesRangeBounds().
@@ -2165,6 +2172,9 @@ function migrateState(st){
       // permet de compter le temps réellement travaillé hors horaires/pendant la pause, voir
       // countedHoursBetween et CLAUDE.md « Temps travaillé sous exception ».
       if(!Array.isArray(o.exceptionWindows)) o.exceptionWindows = [];
+      // Déclaration « terminée sans démarrage » (voir CLAUDE.md) : { parUserId, le, commentaire,
+      // statut:'a_valider'|'validee'|'refusee', valideePar, valideeLe } | null.
+      if(o.declaration === undefined) o.declaration = null;
       // Report du rappel de retour de pause déjeuner (voir renderPauseReminderModal), PAR opérateur
       // concerné ({ [operatorUserId]: horodatage jusqu'auquel ne pas re-proposer } | null) — la
       // reprise n'est plus automatique (voir CLAUDE.md), donc jamais purgé par un job serveur : purgé
@@ -6306,6 +6316,7 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
     o.sessions = [];
     o.dureeReelleH = null; // le temps réellement passé sera reconstitué à la prochaine clôture
     o.dureeReelleParOperateur = null;
+    o.declaration = null; // une déclaration « terminée sans démarrage » ne survit pas à la réouverture
     // previsionAuDemarrage n'est PLUS effacé ici (contrairement à avant capturePrevisionAuDemarrage) :
     // c'est la prévision figée à la CRÉATION de la pièce, jamais recréée à un autre moment — un
     // "↺ Rouvrir" n'est pas une nouvelle création, il n'y a donc rien de nouveau à figer à la place.
@@ -6319,6 +6330,9 @@ function setOpStatut(cid, oid, newStatut){
   const o = c.pieces.find(o=>o.id===oid); if(!o) return;
   const prev = o.statut;
   if(newStatut === prev) return;
+  // À faire → Terminée (clic droit, sélecteur du tableau) : tâche jamais démarrée — déclaration du
+  // temps avec dates, personne et validation plutôt que l'ancien prompt() « minutes ».
+  if(newStatut === 'termine' && prev === 'a_faire'){ openDeclareDone(cid, oid); return; }
 
   // Une pièce fusionnée (découpée en même temps que d'autres, parfois d'autres commandes) change de
   // statut EN MÊME TEMPS que tout son groupe — physiquement, c'est une seule et même opération.
@@ -8354,7 +8368,9 @@ function computeAllPointages(st){
     const isDone = o.statut === 'termine';
     // Une pièce terminée sans dureeReelleH n'a jamais été réellement pointée (temps saisi jamais
     // renseigné à la clôture, voir applySingleStatusChange) — rien d'utile à montrer/corriger ici.
-    const hasData = isDone ? (o.dureeReelleH != null && o.dureeReelleH > 0) : ((o.sessions||[]).length > 0);
+    // Exception : une tâche déclarée terminée (oubli de démarrage) reste listée même avec un temps
+    // refusé remis à 0 — elle doit pouvoir être retrouvée et ressaisie (voir « Déclarer terminée »).
+    const hasData = isDone ? ((o.dureeReelleH != null && o.dureeReelleH > 0) || !!o.declaration) : ((o.sessions||[]).length > 0);
     if(!hasData) return;
     const m = st.machines.find(mm=>mm.id===o.machineId);
     const operatorIds = (o.dureeReelleParOperateur && Object.keys(o.dureeReelleParOperateur).length)
@@ -8379,6 +8395,7 @@ function computeAllPointages(st){
       // Coût de revient approximatif (voir CLAUDE.md) — null si le poste n'a pas de taux horaire
       // configuré, jamais 0€ (voir pieceCoutEstime/pieceCoutReel).
       coutEstime: pieceCoutEstime(o, st), coutReel: pieceCoutReel(o, st),
+      declaration: o.declaration || null,
     });
   });
   return rows;
@@ -8554,8 +8571,10 @@ function renderPointagesPage(){
   let list = all.filter(r => {
     if(pointagesFilters.personne && !r.operatorIds.map(String).includes(pointagesFilters.personne)) return false;
     if(pointagesFilters.poste && String(r.machineId) !== pointagesFilters.poste) return false;
-    if(pointagesFilters.statut !== 'toutes' && r.statut !== pointagesFilters.statut) return false;
-    if((rangeStart || rangeEnd) && r.statut === 'termine'){
+    if(pointagesFilters.statut === 'a_valider'){
+      if(!(r.declaration && r.declaration.statut === 'a_valider')) return false;
+    } else if(pointagesFilters.statut !== 'toutes' && r.statut !== pointagesFilters.statut) return false;
+    if((rangeStart || rangeEnd) && r.statut === 'termine' && pointagesFilters.statut !== 'a_valider'){
       const refStr = r.finReel || r.debutReel;
       if(refStr){
         const refDate = new Date(refStr);
@@ -8583,6 +8602,11 @@ function renderPointagesPage(){
     const sessionsBtn = isSessionsCorrectable(r.cid, r.oid)
       ? `<button class="ghost small" data-action="open-correct-sessions" data-cid="${r.cid}" data-oid="${r.oid}">🕘 Sessions</button>` : '';
     const rebutBtn = `<button class="ghost small" data-action="open-rebut-draft" data-cid="${r.cid}" data-oid="${r.oid}">🗑 Rebut</button>`;
+    const declPending = r.declaration && r.declaration.statut === 'a_valider';
+    const declBtns = declPending && canSupervise()
+      ? `<button class="small decl-validate-btn" data-action="validate-declaration" data-cid="${r.cid}" data-oid="${r.oid}">✓ Valider</button><button class="ghost small" data-action="refuse-declaration" data-cid="${r.cid}" data-oid="${r.oid}">✗ Refuser</button>` : '';
+    const declFound = r.declaration ? findPieceAnywhere(r.cid, r.oid) : null;
+    const declBadge = declFound ? `<div style="margin-top:3px;">${declarationBadgeHtml(declFound.o)}</div>` : '';
     const rebutCell = r.rebutQty > 0
       ? `<span style="color:var(--red); font-weight:600;" title="${escapeHtml(r.rebutDetails.map(d=>`${d.quantite}${d.motif?` — ${d.motif}`:''}`).join('\n'))}">${r.rebutQty}</span>`
       : '—';
@@ -8591,7 +8615,7 @@ function renderPointagesPage(){
       <td>${escapeHtml(pieceLabel)}${lotSuffix}</td>
       <td>${escapeHtml(r.machineNom)}</td>
       <td>${operatorNames.length ? escapeHtml(operatorNames.join(', ')) : '—'}</td>
-      <td>${pointageStatutBadge(r.statut)}</td>
+      <td>${pointageStatutBadge(r.statut)}${declBadge}</td>
       <td>${r.debutReel ? formatDT(new Date(r.debutReel)) : '—'}</td>
       <td>${r.finReel ? formatDT(new Date(r.finReel)) : '—'}</td>
       <td>${durationLabel(r.dureePrevueH)}</td>
@@ -8599,7 +8623,7 @@ function renderPointagesPage(){
       <td>${pauseTimeCellHtml(r.pauseH)}</td>
       <td>${rebutCell}</td>
       <td>${formatEuros(r.coutReel)}</td>
-      <td style="white-space:nowrap;">${correctBtn}${sessionsBtn}${rebutBtn}</td>
+      <td style="white-space:nowrap;">${declBtns}${correctBtn}${sessionsBtn}${rebutBtn}</td>
     </tr>`;
   }).join('');
 
@@ -8653,6 +8677,7 @@ function renderPointagesPage(){
         <option value="termine" ${pointagesFilters.statut==='termine'?'selected':''}>Terminée</option>
         <option value="en_cours" ${pointagesFilters.statut==='en_cours'?'selected':''}>En cours</option>
         <option value="en_pause" ${pointagesFilters.statut==='en_pause'?'selected':''}>En pause</option>
+        <option value="a_valider" ${pointagesFilters.statut==='a_valider'?'selected':''}>⏳ Temps déclarés à valider (${countPendingDeclarations(state)})</option>
       </select></span>
       <span class="search-bar-group"><label class="field" style="margin:0;">Période</label>
       <select data-action="pointages-filter" data-field="range" style="width:auto;">
@@ -8680,7 +8705,7 @@ function renderPointagesPage(){
       <thead><tr><th>Commande</th><th>Pièce / Étape</th><th>Poste</th><th>Opérateur(s)</th><th>Statut</th><th>Début réel</th><th>Fin réelle</th><th>Prévu</th><th>Réel</th><th>Temps en pause</th><th>Rebuts</th><th>Coût réel</th><th></th></tr></thead>
       <tbody>${rows || `<tr><td colspan="13" style="text-align:center; color:var(--text-faint);">Aucun pointage ne correspond à ce filtre.</td></tr>`}</tbody>
     </table>
-    <div class="footer-note" style="text-align:left; padding-top:10px;">La période ne masque jamais une tâche encore en cours ou en pause, seulement les tâches déjà terminées plus anciennes que la fenêtre choisie. "Prévu"/"Réel" d'un lot fusionné représentent le lot entier (une seule ligne, jamais comptée plusieurs fois). Corriger un pointage remplace intégralement son début réel, sa fin réelle et sa durée réellement passée. "Temps en pause" cumule tous les trous entre les sessions de la tâche (mis en évidence en ambre/rouge au-delà de 2h/8h) — "—" quand le détail par session n'est plus disponible (tâche déjà archivée). "🗑 Rebut" déclare une non-conformité (quantité + motif optionnel), disponible quel que soit le statut. "Coût réel" = temps réel × taux horaire du poste (Paramètres → Postes) — "—" si ce poste n'a pas de taux configuré.</div>`}
+    <div class="footer-note" style="text-align:left; padding-top:10px;">La période ne masque jamais une tâche encore en cours ou en pause, seulement les tâches déjà terminées plus anciennes que la fenêtre choisie. "Prévu"/"Réel" d'un lot fusionné représentent le lot entier (une seule ligne, jamais comptée plusieurs fois). Corriger un pointage remplace intégralement son début réel, sa fin réelle et sa durée réellement passée. "Temps en pause" cumule tous les trous entre les sessions de la tâche (mis en évidence en ambre/rouge au-delà de 2h/8h) — "—" quand le détail par session n'est plus disponible (tâche déjà archivée). "⏳ Temps déclaré" : tâche déclarée terminée sans avoir été démarrée (oubli) — temps compté tout de suite, à valider (✓ Valider), refuser (temps remis à zéro, à ressaisir) ou corriger (✎ Corriger vaut validation). "🗑 Rebut" déclare une non-conformité (quantité + motif optionnel), disponible quel que soit le statut. "Coût réel" = temps réel × taux horaire du poste (Paramètres → Postes) — "—" si ce poste n'a pas de taux configuré.</div>`}
     </div>
   </section>`;
 }
@@ -8701,7 +8726,7 @@ function findPieceAnywhere(cid, oid){
 // aucun effet visible), étendu aux commandes archivées.
 function isPointageCorrectable(cid, oid){
   const found = findPieceAnywhere(cid, oid);
-  return !!(found && found.o.statut==='termine' && found.o.dureeReelleH!=null && found.o.dureeReelleH>0);
+  return !!(found && found.o.statut==='termine' && ((found.o.dureeReelleH!=null && found.o.dureeReelleH>0) || found.o.declaration));
 }
 function openCorrectPointage(cid, oid){
   const found = findPieceAnywhere(cid, oid); if(!found) return;
@@ -8740,9 +8765,222 @@ function submitCorrectPointage(){
   if(d.operatorUserId) fields.dureeReelleParOperateur = { [d.operatorUserId]: dureeH };
   Object.assign(o, fields);
   propagateFusionGroupFields(o, fields);
+  // Corriger un temps déclaré (à valider ou refusé) vaut validation par le superviseur qui corrige —
+  // une copie de l'objet par membre du lot, jamais une référence partagée.
+  if(o.declaration && o.declaration.statut !== 'validee' && canSupervise()){
+    const decl = { ...o.declaration, statut:'validee', valideePar: currentUser ? currentUser.id : null, valideeLe: toInputValue(new Date()), corrige: true };
+    o.declaration = decl;
+    if(o.fusionGroupId) [state.commandes||[], state.commandesArchivees||[]].forEach(list => list.forEach(cc => cc.pieces.forEach(oo => {
+      if(oo !== o && oo.fusionGroupId === o.fusionGroupId) oo.declaration = { ...decl };
+    })));
+  }
   correctPointageDraft = null;
   commit();
   showToast('Pointage corrigé.');
+}
+// ─── Déclarer terminée une tâche jamais démarrée (oubli de démarrage) ─────────────────────────
+// Voir CLAUDE.md, « Déclarer terminée (oubli de démarrage) ». Remplace l'ancien prompt() « minutes »
+// qui s'ouvrait en passant une tâche À faire → Terminée : ici, dates, personne créditée et
+// validation par un superviseur. Temps compté dès la déclaration (marqué « à valider ») ; une
+// déclaration faite par un superviseur/admin est validée d'office.
+function isDeclarationPending(o){ return !!(o && o.declaration && o.declaration.statut === 'a_valider'); }
+function isDeclarationRefused(o){ return !!(o && o.declaration && o.declaration.statut === 'refusee'); }
+function declarationBadgeHtml(o){
+  if(!o || !o.declaration) return '';
+  const d = o.declaration;
+  const par = (usersList.find(u => String(u.id) === String(d.parUserId)) || {}).username || '';
+  const tip = `Temps déclaré${par ? ` par ${par}` : ''} le ${d.le ? formatDT(new Date(d.le)) : '—'} (tâche jamais démarrée via Démarrer)${d.commentaire ? ` — « ${d.commentaire} »` : ''}`;
+  if(d.statut === 'a_valider') return `<span class="decl-badge pending" title="${escapeHtml(tip)}">⏳ Temps déclaré à valider</span>`;
+  if(d.statut === 'refusee') return `<span class="decl-badge refused" title="${escapeHtml(tip + ' — refusé : à ressaisir via ✎ Corriger (Pointages)')}">✗ Temps déclaré refusé — à ressaisir</span>`;
+  return `<span class="decl-badge ok" title="${escapeHtml(tip)}">📝 déclaratif</span>`;
+}
+// Début tel que [début, fin] contienne `hours` heures OUVRÉES (horaires du poste/de l'opérateur) —
+// recherche dichotomique sur workingHoursBetween (croissante quand le début recule). Bornée à 60 jours.
+function subtractWorkingDuration(end, hours, cfg){
+  if(!(hours > 0)) return new Date(end);
+  let lo = new Date(end.getTime() - 60*86400000), hi = new Date(end);
+  if(workingHoursBetween(lo, end, cfg) < hours) return new Date(end.getTime() - hours*3600000);
+  for(let i = 0; i < 40; i++){
+    const mid = new Date((lo.getTime() + hi.getTime()) / 2);
+    if(workingHoursBetween(mid, end, cfg) >= hours) lo = mid; else hi = mid;
+  }
+  const r = new Date(lo); r.setSeconds(0, 0);
+  return r;
+}
+// Durée « naturelle » d'un intervalle déclaré : heures ouvrées, ou durée d'horloge si l'intervalle
+// tombe entièrement hors horaires (quelqu'un a réellement travaillé un soir/un samedi).
+function declaredIntervalHours(debutStr, finStr, cfg){
+  if(!debutStr || !finStr) return 0;
+  const a = new Date(debutStr), b = new Date(finStr);
+  if(!(b > a)) return 0;
+  const w = workingHoursBetween(a, b, cfg);
+  return w > 1e-6 ? w : (b - a) / 3600000;
+}
+function declareDoneGroup(o){
+  const group = [];
+  if(o.fusionGroupId) state.commandes.forEach(cc => cc.pieces.forEach(oo => { if(oo.fusionGroupId === o.fusionGroupId) group.push({ cc, oo }); }));
+  return group.length ? group : null;
+}
+function openDeclareDone(cid, oid){
+  const c = state.commandes.find(cc => cc.id === cid); if(!c) return;
+  const o = c.pieces.find(oo => oo.id === oid); if(!o || o.statut !== 'a_faire') return;
+  const cfg = configForPiece(o, state);
+  const plannedH = dureePrevueH(o) || 0;
+  const now = new Date(); now.setSeconds(0, 0);
+  const debut = subtractWorkingDuration(now, plannedH, cfg);
+  declareDoneDraft = {
+    cid, oid,
+    operatorUserId: String(activeIdentityId() || o.operatorUserId || ''),
+    debut: toInputValue(debut), fin: toInputValue(now),
+    dureeMin: String(Math.round(plannedH * 60)),
+    commentaire: ''
+  };
+  render();
+}
+function closeDeclareDone(){ declareDoneDraft = null; render(); }
+function updateDeclareDoneField(field, value){
+  const d = declareDoneDraft; if(!d) return;
+  d[field] = value;
+  if(field === 'debut' || field === 'fin'){
+    const found = findPieceAnywhere(d.cid, d.oid);
+    if(found){
+      const h = declaredIntervalHours(d.debut, d.fin, configForPiece(found.o, state));
+      if(h > 0) d.dureeMin = String(Math.round(h * 60));
+    }
+  }
+  render();
+}
+function submitDeclareDone(){
+  const d = declareDoneDraft; if(!d) return;
+  const c = state.commandes.find(cc => cc.id === d.cid);
+  const o = c && c.pieces.find(oo => oo.id === d.oid);
+  if(!o){ declareDoneDraft = null; render(); return; }
+  if(o.statut !== 'a_faire'){ alert("Cette tâche n'est plus « À faire » — quelqu'un vient de la démarrer ou de la clôturer."); declareDoneDraft = null; render(); return; }
+  if(!d.operatorUserId){ alert('Merci de choisir la personne qui a réalisé la tâche.'); return; }
+  if(!d.debut || !d.fin){ alert('Merci de renseigner le début et la fin.'); return; }
+  if(d.fin <= d.debut){ alert('La fin doit être postérieure au début.'); return; }
+  const nowStr = toInputValue(new Date());
+  if(d.fin > nowStr){ alert('La fin ne peut pas être dans le futur : on ne déclare que du travail déjà fait.'); return; }
+  const dureeMin = Number(String(d.dureeMin).replace(',', '.'));
+  if(isNaN(dureeMin) || dureeMin <= 0){ alert('Merci de renseigner un temps réellement passé valide (en minutes).'); return; }
+  const plannedMin = (dureePrevueH(o) || 0) * 60;
+  const intervalMin = (new Date(d.fin) - new Date(d.debut)) / 60000;
+  const warnings = [];
+  if(plannedMin > 0 && Math.abs(dureeMin - plannedMin) > plannedMin * 0.5) warnings.push(`le temps déclaré (${durationLabel(dureeMin/60)}) s'écarte de plus de 50 % du temps prévu (${durationLabel(plannedMin/60)})`);
+  if(dureeMin > intervalMin + 1) warnings.push(`le temps déclaré (${durationLabel(dureeMin/60)}) dépasse la durée entre le début et la fin (${durationLabel(intervalMin/60)})`);
+  if(warnings.length && !confirm(`Attention : ${warnings.join(' ; ')}.\n\nDéclarer quand même ?`)) return;
+
+  const dureeH = dureeMin / 60;
+  const autoValide = canSupervise();
+  const declaration = {
+    parUserId: currentUser ? currentUser.id : null, le: nowStr, commentaire: (d.commentaire || '').trim(),
+    statut: autoValide ? 'validee' : 'a_valider',
+    valideePar: autoValide && currentUser ? currentUser.id : null, valideeLe: autoValide ? nowStr : null
+  };
+  const scheduleBefore = getSchedule();
+  const group = declareDoneGroup(o) || [{ cc: c, oo: o }];
+  group.forEach(({ cc, oo }) => {
+    const cB = scheduleBefore.find(x => x.id === cc.id);
+    const opB = cB && cB.pieces.find(p => p && p.id === oo.id);
+    if(opB && opB.start && opB.end) oo.previsionAvantCloture = { debut: toInputValue(opB.start), fin: toInputValue(opB.end) };
+    oo.statut = 'termine';
+    oo.debutReel = d.debut;
+    oo.finReel = d.fin;
+    oo.manualStart = null;
+    oo.sessions = [];
+    oo.dureeReelleH = dureeH; // lot fusionné : même valeur sur chaque membre, dédupliquée par fusionGroupId partout
+    oo.dureeReelleParOperateur = { [d.operatorUserId]: dureeH };
+    if(!oo.operatorUserId) oo.operatorUserId = d.operatorUserId;
+    oo.autoPaused = false; oo.autoPausedOutOfHours = false;
+    oo.declaration = { ...declaration };
+  });
+  declareDoneDraft = null;
+  commit();
+  showToast(autoValide ? 'Tâche déclarée terminée (validée).' : 'Tâche déclarée terminée — en attente de validation par un superviseur.');
+}
+function renderDeclareDoneModal(){
+  const d = declareDoneDraft; if(!d) return '';
+  const c = state.commandes.find(cc => cc.id === d.cid);
+  const o = c && c.pieces.find(oo => oo.id === d.oid);
+  if(!o) return '';
+  const m = state.machines.find(mm => mm.id === o.machineId);
+  const label = [o.piece, o.etape].filter(Boolean).join(' / ') || '(sans nom)';
+  const group = declareDoneGroup(o);
+  const plannedH = dureePrevueH(o) || 0;
+  const dMin = Number(String(d.dureeMin).replace(',', '.'));
+  const dureeTxt = !isNaN(dMin) && dMin > 0 ? durationLabel(dMin / 60) : '—';
+  const autoValide = canSupervise();
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box declare-done-box" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>✔ Déclarer terminée (oubli de démarrage)</h2>
+        <button class="ghost icon-btn" data-action="close-declare-done" title="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="declare-done-recap">
+          <div><strong>${escapeHtml(c.nom)}</strong> — ${escapeHtml(label)}</div>
+          <div class="footer-note" style="margin:2px 0 0; text-align:left;">${m ? escapeHtml(m.nom) : 'Sans poste'} · Qté ${escapeHtml(String(o.quantite))} · prévu ${durationLabel(plannedH)}${group && group.length > 1 ? ` · lot fusionné de ${group.length} pièces : tout le lot sera déclaré` : ''}</div>
+        </div>
+        <div style="margin-top:12px;"><label class="field">Réalisée par</label>
+          <select data-action="declare-done-field" data-field="operatorUserId">
+            <option value="">— choisir —</option>
+            ${usersList.map(u => `<option value="${u.id}" ${String(d.operatorUserId) === String(u.id) ? 'selected' : ''}>${escapeHtml(u.username)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="commande-top-fields" style="grid-template-columns:1fr 1fr 1fr; margin-top:10px;">
+          <div><label class="field">Début</label><input type="datetime-local" value="${d.debut}" data-action="declare-done-field" data-field="debut"></div>
+          <div><label class="field">Fin</label><input type="datetime-local" value="${d.fin}" data-action="declare-done-field" data-field="fin"></div>
+          <div><label class="field">Temps passé (min)</label><input type="number" min="1" step="1" value="${escapeHtml(String(d.dureeMin))}" data-action="declare-done-field" data-field="dureeMin"><div class="footer-note" style="margin:2px 0 0; text-align:left;">= ${dureeTxt}</div></div>
+        </div>
+        <div style="margin-top:10px;"><label class="field">Commentaire (facultatif)</label>
+          <input type="text" placeholder="ex : oublié de lancer, fait mardi après-midi" value="${escapeHtml(d.commentaire || '')}" data-action="declare-done-field" data-field="commentaire">
+        </div>
+        <div class="footer-note" style="text-align:left; padding-top:10px;">Début et fin sont préremplis avec le temps prévu, compté sur les horaires de l'atelier ; changer l'un des deux recalcule le temps passé (toujours modifiable à la main). ${autoValide ? 'Déclaration validée directement (vous êtes superviseur).' : 'Le temps est compté tout de suite, marqué « à valider » jusqu’à ce qu’un superviseur le valide.'}</div>
+        <div class="form-actions" style="margin-top:14px;">
+          <button class="ghost" data-action="close-declare-done">Annuler</button>
+          <button class="primary" data-action="submit-declare-done">✔ Déclarer terminée</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+function countPendingDeclarations(st){
+  const seen = new Set(); let n = 0;
+  [st.commandes || [], st.commandesArchivees || []].forEach(list => list.forEach(c => c.pieces.forEach(o => {
+    if(!isDeclarationPending(o)) return;
+    if(o.fusionGroupId){ if(seen.has(o.fusionGroupId)) return; seen.add(o.fusionGroupId); }
+    n++;
+  })));
+  return n;
+}
+function setDeclarationStatus(cid, oid, statut){
+  if(!canSupervise()) return;
+  const found = findPieceAnywhere(cid, oid); if(!found || !found.o.declaration) return;
+  const { o } = found;
+  const nowStr = toInputValue(new Date());
+  const decl = { ...o.declaration, statut, valideePar: currentUser ? currentUser.id : null, valideeLe: nowStr };
+  const fields = { declaration: decl };
+  if(statut === 'refusee'){
+    // Choix utilisateur : la tâche reste Terminée, seul le temps déclaré est annulé (à ressaisir via
+    // ✎ Corriger) — jamais un retour « À faire ».
+    fields.dureeReelleH = 0;
+    fields.dureeReelleParOperateur = null;
+  }
+  Object.assign(o, fields);
+  // Chaque membre garde son propre objet (jamais une référence partagée) — voir propagateFusionGroupFields.
+  if(o.fusionGroupId){
+    [state.commandes || [], state.commandesArchivees || []].forEach(list => list.forEach(cc => cc.pieces.forEach(oo => {
+      if(oo !== o && oo.fusionGroupId === o.fusionGroupId){ Object.assign(oo, fields, { declaration: { ...decl } }); }
+    })));
+  }
+  commit();
+  showToast(statut === 'validee' ? 'Temps déclaré validé.' : 'Temps déclaré refusé — à ressaisir via ✎ Corriger.');
+}
+function validateDeclaration(cid, oid){ setDeclarationStatus(cid, oid, 'validee'); }
+function refuseDeclaration(cid, oid){
+  if(!confirm('Refuser ce temps déclaré ?\n\nLa tâche reste Terminée, mais son temps est remis à zéro : il faudra le ressaisir (✎ Corriger).')) return;
+  setDeclarationStatus(cid, oid, 'refusee');
 }
 function renderCorrectPointageModal(){
   const d = correctPointageDraft;
@@ -9824,12 +10062,15 @@ function pointageHm(d){ return `${String(d.getHours()).padStart(2,'0')}h${String
 function renderPointageHeaderBadges(){
   if(!canSupervise()) return '';
   const settings = pointageSettings();
-  if(!settings.actif) return '';
   const now = new Date();
+  const nDecl = countPendingDeclarations(state);
+  const declBadge = nDecl ? `<button class="small pointage-alert-badge amber" data-action="goto-pointages-a-valider" title="Tâches déclarées terminées sans avoir été démarrées — temps à valider dans Pointages">⏳ ${nDecl} temps à valider</button>` : '';
+  if(!settings.actif) return declBadge;
   const nSans = computeTeamPointage(state, now).filter(r => r.status==='sansPointage').length;
   const nPause = computeLongPausedToday(state, now, settings.seuilPauseMin).length;
   let html = '';
   if(nSans) html += `<button class="small pointage-alert-badge red" data-action="goto-dashboard" title="Salariés dans leur horaire sans tâche en cours depuis plus de ${settings.seuilSansPointageMin} min — détail dans la Vue d'ensemble">● ${nSans} sans pointage</button>`;
+  html += declBadge;
   if(nPause) html += `<button class="small pointage-alert-badge amber" data-action="goto-dashboard" title="Affaires mises en pause aujourd'hui et pas reprises depuis plus de ${settings.seuilPauseMin} min — détail dans la Vue d'ensemble">⏸ ${nPause} affaire${nPause>1?'s':''} en pause</button>`;
   return html;
 }
@@ -10067,7 +10308,8 @@ const DASHBOARD_TILES = [
   { key:'commandesRisque', label:'Commandes à risque' },
   { key:'retardsDemarrage', label:'Tâches démarrées en retard' },
   { key:'pausesSuspectes', label:'Pauses suspectes en cours' },
-  { key:'pausesVeille', label:'En pause depuis la veille' }
+  { key:'pausesVeille', label:'En pause depuis la veille' },
+  { key:'tempsDeclares', label:'Temps déclarés à valider' }
 ];
 let dashboardCustomizeOpen = false;
 function dashboardListDefs(list){ return list === 'tiles' ? DASHBOARD_TILES : DASHBOARD_BLOCKS; }
@@ -10219,7 +10461,12 @@ function renderDashboardPage(){
 
   // Tuiles et blocs : un rendu par clé, dans l'ordre et selon les choix de la personne (voir
   // CLAUDE.md « Vue d'ensemble personnalisable ») — un bloc masqué n'est jamais calculé.
+  const nbDecl = countPendingDeclarations(state);
   const tileRenderers = {
+    tempsDeclares: () => `<div class="dash-stat-tile ${nbDecl>0?'tone-amber dst-clickable':'tone-green'}" ${nbDecl>0?'data-action="goto-pointages-a-valider"':''}>
+        <div class="dst-top"><div class="dst-num">${nbDecl}</div><span class="dst-icon">⏳</span></div>
+        <div class="dst-lbl">Temps déclarés à valider</div>
+      </div>`,
     postesActifs: () => `<div class="dash-stat-tile tone-green">
         <div class="dst-top"><div class="dst-num">${nbActifs}/${machineStatus.length}</div><span class="dst-icon">🏃</span></div>
         <div class="dst-lbl">Postes actifs</div>
@@ -11706,6 +11953,7 @@ function renderContextMenu(){
   const items = [];
   if(o.statut==='a_faire'){
     items.push({action:'ctx-start', label:'▶ Démarrer'});
+    items.push({action:'ctx-declare-done', label:'✔ Déclarer terminée (oubli de démarrage)'});
     const overridden = isPositionPinned(o);
     items.push(overridden
       ? {action:'ctx-unpin', label:'↺ Libérer (rendre volante)'}
@@ -12995,7 +13243,7 @@ function renderKanbanView(schedule){
       })() : '';
       // Même badge que le tableau des tâches (workHoursExceptionBadgeHtml) — uniquement sur À
       // faire/En cours (statuts où l'exception a un effet réel), jamais sur En pause/Terminée.
-      const workExceptionLineK = (col.key==='a_faire'||col.key==='en_cours'||col.key==='en_pause') ? (workHoursExceptionBadgeHtml(o) + lunchExceptionBadgeHtml(o)) : '';
+      const workExceptionLineK = (col.key==='a_faire'||col.key==='en_cours'||col.key==='en_pause') ? (workHoursExceptionBadgeHtml(o) + lunchExceptionBadgeHtml(o)) : (col.key==='termine' ? declarationBadgeHtml(o) : '');
       return `<div class="kanban-card ${hlClsK}" data-action="card-isolate" data-cid="${o.cid}" data-oid="${o.id}" data-fusion-group="${o._fusionMembers ? o.fusionGroupId : ''}" style="border-left:3px solid ${urgBorder};" title="Clic : isoler la commande — clic droit : menu de statut">
         <div class="kanban-card-main">
           <div class="kanban-card-title">${escapeHtml(label)}</div>
@@ -13239,8 +13487,8 @@ function renderOpsRow(o, c){
   const elapsedNote = running
     ? `<div class="elapsed-note">${durationLabel(opElapsedHours(o, state))} écoulé${o.statut==='en_pause'?(o.autoPaused?' (pause déjeuner)':' (en pause)'):''}</div>${workHoursExceptionBadgeHtml(o)}${lunchExceptionBadgeHtml(o)}`
     : (done && dureePasseeH(o, state)
-        ? `<div class="elapsed-note">${durationLabel(dureePasseeH(o, state))} réellement passé</div>`
-        : '');
+        ? `<div class="elapsed-note">${durationLabel(dureePasseeH(o, state))} réellement passé</div>${declarationBadgeHtml(o)}`
+        : (done ? declarationBadgeHtml(o) : ''));
   const datesCell = o.sousTraitance
     ? (done
         ? (o.finReel ? `<span class="dates-val">🏭 <span class="lbl">Revenue le</span> ${formatDT(new Date(o.finReel))}</span>` : `<span class="dates-val" style="color:var(--text-faint)">🏭 Sous-traitée — revenue</span>`)
@@ -13794,6 +14042,7 @@ function render(){
     renderRetardDemarragePopupModal(),
     renderCorrectOperatorModal(),
     renderQuickPointageModal(),
+    renderDeclareDoneModal(),
     renderContextMenu(),
     renderPauseReminderModal(otherModalOpen),
     renderToast()
@@ -13894,7 +14143,7 @@ function updateHighlightClasses(){
 /* ---------------- délégation d'événements : clics & changements ---------------- */
 document.addEventListener('click', (e) => {
   if(e.target.classList && e.target.classList.contains('modal-overlay')){
-    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; rebutDraft = null; historiqueDetailInfo = null; closeSettingsModal(); return;
+    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; closeSettingsModal(); return;
   }
   if(contextMenu && !e.target.closest('.context-menu')){
     contextMenu = null; render();
@@ -13977,6 +14226,12 @@ function dispatchClickAction(action, el){
     case 'pointages-view-reference': pointagesFilters.search = el.dataset.piece; pointagesViewMode = 'liste'; render(); break;
     case 'open-correct-pointage': openCorrectPointage(el.dataset.cid, el.dataset.oid); break;
     case 'close-correct-pointage': closeCorrectPointage(); break;
+    case 'ctx-declare-done': contextMenu = null; openDeclareDone(el.dataset.cid, el.dataset.oid); break;
+    case 'close-declare-done': closeDeclareDone(); break;
+    case 'submit-declare-done': submitDeclareDone(); break;
+    case 'validate-declaration': validateDeclaration(el.dataset.cid, el.dataset.oid); break;
+    case 'refuse-declaration': refuseDeclaration(el.dataset.cid, el.dataset.oid); break;
+    case 'goto-pointages-a-valider': pointagesFilters.statut = 'a_valider'; pointagesFilters.range = 'all'; pointagesViewMode = 'liste'; currentPage = 'pointages'; render(); break;
     case 'submit-correct-pointage': submitCorrectPointage(); break;
     case 'open-rebut-draft': openRebutDraft(el.dataset.cid, el.dataset.oid); break;
     case 'close-rebut-draft': closeRebutDraft(); break;
@@ -14257,6 +14512,7 @@ function dispatchChangeAction(el, action){
     case 'pointages-filter': updatePointagesFilter(el.dataset.field, el.value); break;
     case 'historique-nb-semaines': historiqueNbSemaines = Number(el.value) || 12; historiqueDetailInfo = null; render(); break;
     case 'correct-pointage-field': updateCorrectPointageField(el.dataset.field, el.value); break;
+    case 'declare-done-field': updateDeclareDoneField(el.dataset.field, el.value); break;
     case 'rebut-field': updateRebutField(el.dataset.field, el.value); break;
     case 'correct-session-field': updateCorrectSessionField(Number(el.dataset.idx), el.dataset.field, el.value); break;
     case 'user-machines': {
@@ -14677,6 +14933,12 @@ document.addEventListener('input', (e) => {
     }
     return;
   }
+  // Déclaration « terminée sans démarrage » : commentaire/minutes mémorisés à la frappe, sans render().
+  const ddEl = e.target.closest ? e.target.closest('[data-action="declare-done-field"]') : null;
+  if(ddEl && declareDoneDraft && (ddEl.dataset.field === 'commentaire' || ddEl.dataset.field === 'dureeMin')){
+    declareDoneDraft[ddEl.dataset.field] = ddEl.value;
+    return;
+  }
   // Même principe pour le formulaire "Pointage rapide" : pas de render() par frappe.
   const qpEl = e.target.closest ? e.target.closest('[data-action="quick-pointage-field"]') : null;
   if(qpEl && quickPointageDraft){
@@ -14729,6 +14991,7 @@ document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && rebutDraft){ closeRebutDraft(); }
   if(e.key === 'Escape' && historiqueDetailInfo){ closeHistoriqueDetail(); }
   if(e.key === 'Escape' && quickPointageDraft){ closeQuickPointage(); }
+  if(e.key === 'Escape' && declareDoneDraft){ closeDeclareDone(); }
   if(e.key === 'Escape' && correctOperatorDraft){ closeCorrectOperator(); }
   if(e.key === 'Escape' && continuedDrag){ cancelContinuedDrag(); }
 });

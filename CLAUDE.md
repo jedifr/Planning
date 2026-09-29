@@ -1164,6 +1164,55 @@ habituels et ne retrouvait plus son propre pointage rapide).
   "toggle-kanban-machine"` que les postes (aucun nouveau cas de dispatch nécessaire, `machineId` y
   est traité comme une clé opaque) : « 📋 Sans poste (moi) » et « 📋 Sans poste (tout) ».
 
+### Déclarer terminée une tâche jamais démarrée (oubli de démarrage)
+
+Demande utilisateur réelle : classer « Terminée » une tâche du Kanban « À faire » qu'on a oublié de
+lancer, avec un temps déclaratif et une demande de validation. Proposition validée avant codage, avec
+ces choix : temps **compté tout de suite** (marqué « à valider »), déclaration d'un superviseur/admin
+**validée d'office**, **« Refuser » garde la tâche Terminée et remet son temps à zéro** (à ressaisir),
+et l'ancien `prompt()` « minutes » remplacé partout par la même pop-up.
+
+- **Points d'entrée** : clic droit sur une tâche `a_faire` (Kanban, Jour/Semaine, Liste — même
+  `renderContextMenu`) → « ✔ Déclarer terminée (oubli de démarrage) » (`ctx-declare-done`) ; et
+  `setOpStatut(..., 'termine')` sur une tâche `a_faire` (sélecteur du tableau des tâches) ouvre la
+  pop-up et **ne change rien** (retour immédiat). L'ancien `prompt()` d'`applySingleStatusChange`
+  ne sert plus qu'au cas marginal d'une tâche `en_cours`/`en_pause` sans aucun temps écoulé.
+- `declareDoneDraft` (`{ cid, oid, operatorUserId, debut, fin, dureeMin, commentaire }`, transitoire)
+  / `openDeclareDone` / `renderDeclareDoneModal` (page Planning) : réalisée par (défaut identité
+  active), début/fin préremplis — fin = maintenant, début = `subtractWorkingDuration(fin, prévu, cfg)`
+  (dichotomie sur `workingHoursBetween`, horaires du poste/de l'opérateur, bornée à 60 j) —, temps
+  passé en minutes (prérempli = prévu ; recalculé par `declaredIntervalHours` quand début ou fin
+  change : heures ouvrées, ou durée d'horloge si l'intervalle est entièrement hors horaires),
+  commentaire. Commentaire/minutes mémorisés à la frappe sans `render()` (gestionnaire `input`).
+- `submitDeclareDone()` — refuse : personne absente, fin ≤ début, fin dans le futur, temps ≤ 0 ;
+  avertit (`confirm`) si le temps s'écarte de plus de 50 % du prévu ou dépasse l'intervalle
+  début→fin. Puis, en **un seul `commit()`**, sur la pièce ou tout son lot fusionné : `termine`,
+  `debutReel`/`finReel`, `sessions:[]` (aucune séance inventée : la frise « Pointage de l'équipe » ne
+  montre donc pas ce temps comme pointé — voulu), `dureeReelleH` (même valeur par membre, dédupliquée
+  par `fusionGroupId` partout), `dureeReelleParOperateur = { [personne]: h }`, `previsionAvantCloture`
+  (planning d'avant), et `pieces[].declaration` = `{ parUserId, le, commentaire, statut, valideePar,
+  valideeLe }` — `statut:'validee'` si `canSupervise()`, sinon `'a_valider'`. Une copie de l'objet par
+  membre du lot, jamais une référence partagée.
+- `pieces[].declaration` (`migrateState` → `null`), remis à `null` par « ↺ Rouvrir ».
+  `declarationBadgeHtml(o)` : « ⏳ Temps déclaré à valider » (ambre), « ✗ Temps déclaré refusé — à
+  ressaisir » (rouge), « 📝 déclaratif » (discret, une fois validé) — infobulle : qui, quand,
+  commentaire. Affiché sur la carte Kanban « Terminée », le tableau des tâches et Pointages.
+- **Validation (Pointages)** : option de statut « ⏳ Temps déclarés à valider (N) » (ignore la
+  période), boutons **✓ Valider** / **✗ Refuser** sur la ligne ; « ✎ Corriger » sur une déclaration
+  non validée vaut validation (`declaration.corrige:true`). `computeAllPointages` garde une pièce
+  déclarée même à temps 0 (refusée) et `isPointageCorrectable` l'accepte, sinon un temps refusé ne
+  pourrait plus jamais être ressaisi. `setDeclarationStatus` propage au lot fusionné.
+- **Signalement** : badge d'en-tête « ⏳ N temps à valider » (`renderPointageHeaderBadges`,
+  superviseurs, affiché même si l'alerte de pointage est désactivée) et tuile « Temps déclarés à
+  valider » de la Vue d'ensemble (nouvelle clé `tempsDeclares` de `DASHBOARD_TILES`, ajoutée en fin
+  des dispositions personnalisées existantes) → action `goto-pointages-a-valider`.
+  `countPendingDeclarations(st)` compte un lot fusionné une fois.
+- Couvert par un test sur l'export réel (scratchpad `declare_test.js`, 27 assertions) : menu, pas de
+  changement de statut à l'ouverture, préremplissage en heures ouvrées, recalcul, refus des cas
+  invalides, enregistrement, crédit, à valider/validée d'office, badge, filtre, refus → 0 et toujours
+  corrigeable, correction = validation, réouverture, lot fusionné (objets distincts, compté une fois,
+  validation propagée), tuile. Rendu vérifié (Playwright).
+
 ## Onglet « Pointages »
 
 Retour utilisateur réel : jusqu'ici, voir/corriger un pointage demandait de retrouver la bonne
