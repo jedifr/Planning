@@ -1207,6 +1207,26 @@ et l'ancien `prompt()` « minutes » remplacé partout par la même pop-up.
   valider » de la Vue d'ensemble (nouvelle clé `tempsDeclares` de `DASHBOARD_TILES`, ajoutée en fin
   des dispositions personnalisées existantes) → action `goto-pointages-a-valider`.
   `countPendingDeclarations(st)` compte un lot fusionné une fois.
+- **Retours utilisateur (v1.74.0)** :
+  - **Début toujours antérieur à la fin** — bug réel (capture) : une sous-traitance à 0 min prévue
+    ouvrait la pop-up avec début = fin, et « La fin doit être postérieure au début » bloquait tout.
+    `declareStartBefore(end, h, cfg)` garantit un début strictement antérieur (heures ouvrées via
+    `subtractWorkingDuration` du moteur, repli sur une durée d'horloge, 1 h sans temps prévu) ; changer
+    la fin avant le début, ou saisir un début après la fin, ramène le début avant la fin (note
+    « ↺ Début ramené avant la fin », `debutAjuste`). Attribut `max` posé sur les deux champs.
+  - **Doublon supprimé** : la v1.72.0 avait redéfini `subtractWorkingDuration` (dichotomie, 40 appels
+    à `workingHoursBetween`) par-dessus celle du moteur, utilisée par `resolveOverlap` — la dernière
+    déclaration gagnant en JS, le moteur tournait sur la version lente. Supprimée.
+  - **Sous-traitance : temps non compté par défaut** — la ligne sert au planning (dépendances), le
+    travail est fait dehors. Pop-up « ✔ Sous-traitance terminée » (Envoi / Retour / Temps salarié),
+    0 min et personne vide par défaut : à 0, pièce `termine` avec `dureeReelleH:0`,
+    `dureeReelleParOperateur:null`, `declaration:null` (absente des pointages et du temps de
+    production, rien à valider). Un temps salarié saisi exige la personne et suit le circuit normal.
+  - **Champs date-heure qui « sautaient »** : `isDeferredTimeField` couvre aussi `datetime-local`
+    (redessin différé au `focusout`, comme `date`/`time`) — pop-up de déclaration et toute autre saisie
+    date-heure de l'appli.
+  - **Alignement** : `.declare-done-grid` (3 colonnes, libellés sur une ligne, champs à 34 px, repère
+    « = 1,8 h » sous la grille) — vérifié au rendu : les trois champs au même `top`.
 - Couvert par un test sur l'export réel (scratchpad `declare_test.js`, 27 assertions) : menu, pas de
   changement de statut à l'ouverture, préremplissage en heures ouvrées, recalcul, refus des cas
   invalides, enregistrement, crédit, à valider/validée d'office, badge, filtre, refus → 0 et toujours
@@ -1262,7 +1282,16 @@ salarié pour **sa propre** fiche, export **Excel et impression A4**.
   infobulle par segment. Excel (`exportFicheSalarieExcel`) : feuilles Synthèse, Jours, Séances,
   Tâches. Impression : `window.print()` ; la règle d'impression générale masque tout `#app` sauf le
   planning — `#app > #fiche-salarie-page` y est ajouté, `.fiche-noprint` masqué (vérifié : 2 pages A4).
-- Couvert par un test sur l'export réel (scratchpad `fiche_test.js`, 52 assertions) et rendu vérifié
+- **Dans le menu « Plus ▾ »** (v1.74.0) : clé `fiche` de `PAGE_MENU_KEYS` (« 📋 Fiche salarié »,
+  « 📋 Ma fiche » pour un employé), épinglable comme les autres, page `ficheSalarie`
+  (`isCurrentKey` fait le lien pour l'état actif). `goto-fiche` → `openFicheSalarie(defaultFicheUid(),
+  currentPage)` : employé = sa fiche ; superviseur = dernière consultée (`lastFicheUid`), sinon
+  l'identité active si suivie, sinon le premier salarié. Sélecteur de salarié sur la fiche
+  (`fiche-user`, superviseurs, salariés de `ficheSelectableUsers` = non masqués de Temps de production).
+  `getUserPageMenuOrder` complète désormais un ordre enregistré avec les pages ajoutées depuis, EN FIN,
+  au lieu de tout réinitialiser (clés inconnues/en double ignorées).
+- Couvert par un test sur l'export réel (scratchpad `fiche_test.js`, 52 assertions ; `st_menu_test.js`,
+  21 assertions pour le menu et la sous-traitance) et rendu vérifié
   (Playwright : 1500/1280/390 px, sans débordement, et aperçu d'impression).
 
 ## Onglet « Pointages »

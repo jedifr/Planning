@@ -953,6 +953,12 @@
   .decl-badge.refused{color:var(--red); border-color:var(--red); background:rgba(178,58,48,0.1);}
   .decl-badge.ok{color:var(--text-dim); border-color:var(--line); background:var(--panel-2); font-weight:500;}
   .decl-validate-btn{color:var(--green); border-color:var(--green);}
+  .declare-done-grid{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 130px; gap:10px; margin-top:10px; align-items:end;}
+  .declare-done-grid label.field{white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .declare-done-grid input{height:34px; box-sizing:border-box;}
+  .declare-done-hint{display:flex; justify-content:space-between; gap:10px; font-size:11px; color:var(--text-faint); margin-top:3px; min-height:14px;}
+  .declare-done-adjusted{color:var(--amber); font-weight:600;}
+  @media (max-width:520px){ .declare-done-grid{grid-template-columns:1fr;} }
   .declare-done-recap{padding:8px 10px; border-left:4px solid var(--green); background:var(--panel-2); border-radius:var(--radius);}
   .badge.red.badge-overdue{color:#fff; background:var(--red); font-weight:700;}
   .badge.neutral{color:var(--blue); border-color:var(--blue); background:rgba(49,111,152,0.1);}
@@ -1399,7 +1405,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.73.0';
+const APP_VERSION = '1.74.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1526,9 +1532,9 @@ function saveSettingsUIPrefs(){
 // réinitialisait silencieusement au moindre vidage de cache (retour utilisateur réel) — ici, comme
 // pour la page d'accueil par défaut, la personne retrouve son ordre quel que soit le poste depuis
 // lequel elle se connecte.
-const PAGE_MENU_KEYS = ['conges', 'tempsProd', 'zones', 'risques', 'pointages', 'historique', 'dashboard'];
+const PAGE_MENU_KEYS = ['conges', 'tempsProd', 'fiche', 'zones', 'risques', 'pointages', 'historique', 'dashboard'];
 const PAGE_MENU_LABELS = {
-  conges: '🏖 Congés', tempsProd: '⏱ Temps de production', zones: '📍 Zones de stockage', risques: '⚠️ Risques de retard',
+  conges: '🏖 Congés', tempsProd: '⏱ Temps de production', fiche: '📋 Fiche salarié', zones: '📍 Zones de stockage', risques: '⚠️ Risques de retard',
   pointages: '🕘 Pointages', historique: '📈 Historique', dashboard: "📊 Vue d'ensemble"
 };
 // Congés était à l'origine épinglée en dur, indissociable de Planning — retour utilisateur réel,
@@ -1546,15 +1552,17 @@ function isPageMenuKeyVisible(key){
   if(key === 'pointages' || key === 'historique' || key === 'dashboard') return canSupervise();
   return true;
 }
-// Préférence invalide (ancienne clé localStorage jamais migrée, longueur différente, clé
-// inconnue/manquante) silencieusement ignorée au profit de l'ordre par défaut — même garde-fou
-// qu'avant, appliqué maintenant à la lecture de `state` plutôt qu'à celle du `localStorage`.
+// Ordre enregistré : clés inconnues/en double ignorées, et toute page ajoutée depuis par une nouvelle
+// version (ex. « Fiche salarié ») complétée EN FIN — jamais une réinitialisation complète de l'ordre
+// personnalisé à chaque nouvelle page (même principe que dashboardLayoutFor). Rien d'exploitable
+// enregistré : ordre par défaut.
 function getUserPageMenuOrder(userId){
   const stored = (state.userPageMenuOrder || {})[String(userId)];
-  if(Array.isArray(stored) && stored.length === PAGE_MENU_KEYS.length && PAGE_MENU_KEYS.every(k => stored.includes(k))){
-    return stored;
-  }
-  return PAGE_MENU_KEYS;
+  if(!Array.isArray(stored)) return PAGE_MENU_KEYS;
+  const kept = [];
+  stored.forEach(k => { if(PAGE_MENU_KEYS.includes(k) && !kept.includes(k)) kept.push(k); });
+  if(!kept.length) return PAGE_MENU_KEYS;
+  return [...kept, ...PAGE_MENU_KEYS.filter(k => !kept.includes(k))];
 }
 // Déplace `key` parmi les seules clés VISIBLES pour ce rôle/cette config (voir `isPageMenuKeyVisible`)
 // — la pop-up "Mon compte" n'affiche que ce sous-ensemble, et les flèches ▲/▼ doivent donc échanger
@@ -2038,6 +2046,7 @@ let tempsProdExpanded = {}; // { [userId]: true } — lignes salarié dépliées
 // Fiche salarié (voir CLAUDE.md « Fiche salarié ») — page à part, purement transitoire : qui, quelle
 // période (mêmes modes que Temps de production, réglés indépendamment) et d'où on vient (← Retour).
 let ficheSalarie = null; // { uid, mode, anchor, rangeDebut, rangeFin, from } | null
+let lastFicheUid = null; // dernière fiche consultée (superviseur) — reproposée à la prochaine ouverture depuis le menu
 // Séances archivées (session_history) de la personne sur la période affichée, chargées à la demande.
 let ficheHistoryCache = { key: null, status: null, entries: [], pieceIds: null };
 function showToast(msg){
@@ -7695,24 +7704,27 @@ function renderHeader(){
       const pageMenuDefs = {
         conges: congesActif ? `🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}` : null,
         tempsProd: `⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}`,
+        fiche: `📋 ${canSupervise()?'Fiche salarié':'Ma fiche'}`,
         zones: '📍 Zones de stockage',
         risques: `⚠️ Risques de retard${nbRisque>0?` <span class="pending-count-badge">${nbRisque}</span>`:''}`,
         pointages: canSupervise() ? '🕘 Pointages' : null,
         historique: canSupervise() ? '📈 Historique' : null,
         dashboard: canSupervise() ? "📊 Vue d'ensemble" : null
       };
-      const gotoAction = { conges:'goto-conges', tempsProd:'goto-temps-prod', zones:'goto-zones', risques:'goto-risques', pointages:'goto-pointages', historique:'goto-historique', dashboard:'goto-dashboard' };
+      const gotoAction = { conges:'goto-conges', tempsProd:'goto-temps-prod', fiche:'goto-fiche', zones:'goto-zones', risques:'goto-risques', pointages:'goto-pointages', historique:'goto-historique', dashboard:'goto-dashboard' };
       const uidForMenu = currentUser ? currentUser.id : '';
       const pageMenuOrder = getUserPageMenuOrder(uidForMenu);
       const pinned = getUserPinnedMenuPages(uidForMenu);
       // Boutons épinglés : rendus EXACTEMENT comme Planning (même classe `.page-switch-btn`, pas
       // `.small`/`.dd-page-item`) — ils rejoignent l'accès direct, pas la liste compacte du panneau
       // déroulant. Ordre respecté via `pageMenuOrder`, pas l'ordre d'épinglage.
+      // La clé de menu « fiche » correspond à la page « ficheSalarie » (les autres portent le nom de leur page).
+      const isCurrentKey = k => currentPage === (k === 'fiche' ? 'ficheSalarie' : k);
       const pinnedButtons = pageMenuOrder.filter(k => pinned.includes(k) && pageMenuDefs[k] != null).map(k => `
-      <button class="page-switch-btn ${currentPage===k?'active':''}" data-action="${gotoAction[k]}">${pageMenuDefs[k]}</button>`).join('');
+      <button class="page-switch-btn ${isCurrentKey(k)?'active':''}" data-action="${gotoAction[k]}">${pageMenuDefs[k]}</button>`).join('');
       const remaining = pageMenuOrder.filter(k => !pinned.includes(k) && pageMenuDefs[k] != null);
       const items = remaining.map(k => `
-        <button class="page-switch-btn small dd-page-item ${currentPage===k?'active':''}" data-action="${gotoAction[k]}">${pageMenuDefs[k]}</button>`).join('');
+        <button class="page-switch-btn small dd-page-item ${isCurrentKey(k)?'active':''}" data-action="${gotoAction[k]}">${pageMenuDefs[k]}</button>`).join('');
       // "Plus" disparaît entièrement s'il ne reste plus rien dedans (tout épinglé) — jamais un menu
       // déroulant vide affiché pour la forme. Les deux badges (risques, congés en attente) restent
       // visibles sur le déclencheur "Plus" lui-même tant que la page correspondante y est encore —
@@ -7720,7 +7732,7 @@ function renderHeader(){
       const plusBadges = `${(nbRisque>0 && remaining.includes('risques'))?` <span class="pending-count-badge">${nbRisque}</span>`:''}${(canSupervise()&&pendingCount>0 && remaining.includes('conges'))?` <span class="pending-count-badge">${pendingCount}</span>`:''}`;
       const plusMenu = remaining.length === 0 ? '' : `
       <details class="dd-menu" data-dd-key="page-plus" ontoggle="openMiniDropdowns['page-plus']=this.open" ${openMiniDropdowns['page-plus']?'open':''}>
-        <summary class="page-switch-btn ${remaining.includes(currentPage)?'active':''}">Plus${plusBadges} ▾</summary>
+        <summary class="page-switch-btn ${remaining.some(isCurrentKey)?'active':''}">Plus${plusBadges} ▾</summary>
         <div class="dd-panel dd-page-panel">${items}</div>
       </details>`;
       return `
@@ -8933,18 +8945,16 @@ function declarationBadgeHtml(o){
   if(d.statut === 'refusee') return `<span class="decl-badge refused" title="${escapeHtml(tip + ' — refusé : à ressaisir via ✎ Corriger (Pointages)')}">✗ Temps déclaré refusé — à ressaisir</span>`;
   return `<span class="decl-badge ok" title="${escapeHtml(tip)}">📝 déclaratif</span>`;
 }
-// Début tel que [début, fin] contienne `hours` heures OUVRÉES (horaires du poste/de l'opérateur) —
-// recherche dichotomique sur workingHoursBetween (croissante quand le début recule). Bornée à 60 jours.
-function subtractWorkingDuration(end, hours, cfg){
-  if(!(hours > 0)) return new Date(end);
-  let lo = new Date(end.getTime() - 60*86400000), hi = new Date(end);
-  if(workingHoursBetween(lo, end, cfg) < hours) return new Date(end.getTime() - hours*3600000);
-  for(let i = 0; i < 40; i++){
-    const mid = new Date((lo.getTime() + hi.getTime()) / 2);
-    if(workingHoursBetween(mid, end, cfg) >= hours) lo = mid; else hi = mid;
-  }
-  const r = new Date(lo); r.setSeconds(0, 0);
-  return r;
+// Début d'un intervalle déclaré qui finit à `end` et contient `hours` heures OUVRÉES (horaires du
+// poste/de l'opérateur, subtractWorkingDuration — moteur). Garantit TOUJOURS un début strictement
+// antérieur à la fin : sans temps prévu (sous-traitance à 0 min) ou si rien d'ouvré ne précède, repli
+// sur une durée d'horloge (1 h par défaut) — bug réel : début = fin, déclaration impossible.
+function declareStartBefore(end, hours, cfg){
+  const h = hours > 0 ? hours : 1;
+  let s = subtractWorkingDuration(end, h, cfg);
+  if(!(s instanceof Date) || isNaN(s.getTime()) || !(s < end) || (end - s) > 60*86400000) s = new Date(end.getTime() - h*3600000);
+  s = new Date(s); s.setSeconds(0, 0);
+  return s;
 }
 // Durée « naturelle » d'un intervalle déclaré : heures ouvrées, ou durée d'horloge si l'intervalle
 // tombe entièrement hors horaires (quelqu'un a réellement travaillé un soir/un samedi).
@@ -8966,13 +8976,16 @@ function openDeclareDone(cid, oid){
   const cfg = configForPiece(o, state);
   const plannedH = dureePrevueH(o) || 0;
   const now = new Date(); now.setSeconds(0, 0);
-  const debut = subtractWorkingDuration(now, plannedH, cfg);
+  const debut = declareStartBefore(now, plannedH, cfg);
+  // Sous-traitance : le travail est fait ailleurs — la ligne sert au planning (dépendances), pas au
+  // temps de production. Aucune personne ni aucun temps imposés : 0 min par défaut, rien de compté.
+  const sousTraitance = !!o.sousTraitance;
   declareDoneDraft = {
-    cid, oid,
-    operatorUserId: String(activeIdentityId() || o.operatorUserId || ''),
+    cid, oid, sousTraitance,
+    operatorUserId: sousTraitance ? '' : String(activeIdentityId() || o.operatorUserId || ''),
     debut: toInputValue(debut), fin: toInputValue(now),
-    dureeMin: String(Math.round(plannedH * 60)),
-    commentaire: ''
+    dureeMin: sousTraitance ? '0' : String(Math.round(plannedH * 60)),
+    commentaire: '', debutAjuste: false
   };
   render();
 }
@@ -8982,8 +8995,17 @@ function updateDeclareDoneField(field, value){
   d[field] = value;
   if(field === 'debut' || field === 'fin'){
     const found = findPieceAnywhere(d.cid, d.oid);
-    if(found){
-      const h = declaredIntervalHours(d.debut, d.fin, configForPiece(found.o, state));
+    const cfg = found ? configForPiece(found.o, state) : state.config;
+    d.debutAjuste = false;
+    // Le début est toujours ramené AVANT la fin (demande utilisateur) : fin avancée avant le début,
+    // ou début saisi après la fin → début recalculé à partir de la fin et du temps en cours.
+    if(d.debut && d.fin && !(d.fin > d.debut)){
+      const min = Number(String(d.dureeMin).replace(',', '.'));
+      d.debut = toInputValue(declareStartBefore(new Date(d.fin), min > 0 ? min / 60 : (found ? dureePrevueH(found.o) : 0), cfg));
+      d.debutAjuste = true;
+    }
+    if(found && !d.sousTraitance){
+      const h = declaredIntervalHours(d.debut, d.fin, cfg);
       if(h > 0) d.dureeMin = String(Math.round(h * 60));
     }
   }
@@ -8995,18 +9017,19 @@ function submitDeclareDone(){
   const o = c && c.pieces.find(oo => oo.id === d.oid);
   if(!o){ declareDoneDraft = null; render(); return; }
   if(o.statut !== 'a_faire'){ alert("Cette tâche n'est plus « À faire » — quelqu'un vient de la démarrer ou de la clôturer."); declareDoneDraft = null; render(); return; }
-  if(!d.operatorUserId){ alert('Merci de choisir la personne qui a réalisé la tâche.'); return; }
+  const dureeMin = Number(String(d.dureeMin || '0').replace(',', '.'));
+  const sansTemps = !!d.sousTraitance && (!isNaN(dureeMin) && dureeMin === 0);
+  if(!d.operatorUserId && !sansTemps){ alert(d.sousTraitance ? 'Un temps salarié est saisi : merci de choisir la personne qui l’a passé (ou remettez 0 min).' : 'Merci de choisir la personne qui a réalisé la tâche.'); return; }
   if(!d.debut || !d.fin){ alert('Merci de renseigner le début et la fin.'); return; }
   if(d.fin <= d.debut){ alert('La fin doit être postérieure au début.'); return; }
   const nowStr = toInputValue(new Date());
   if(d.fin > nowStr){ alert('La fin ne peut pas être dans le futur : on ne déclare que du travail déjà fait.'); return; }
-  const dureeMin = Number(String(d.dureeMin).replace(',', '.'));
-  if(isNaN(dureeMin) || dureeMin <= 0){ alert('Merci de renseigner un temps réellement passé valide (en minutes).'); return; }
-  const plannedMin = (dureePrevueH(o) || 0) * 60;
+  if(!sansTemps && (isNaN(dureeMin) || dureeMin <= 0)){ alert('Merci de renseigner un temps réellement passé valide (en minutes).'); return; }
+  const plannedMin = d.sousTraitance ? 0 : (dureePrevueH(o) || 0) * 60;
   const intervalMin = (new Date(d.fin) - new Date(d.debut)) / 60000;
   const warnings = [];
   if(plannedMin > 0 && Math.abs(dureeMin - plannedMin) > plannedMin * 0.5) warnings.push(`le temps déclaré (${durationLabel(dureeMin/60)}) s'écarte de plus de 50 % du temps prévu (${durationLabel(plannedMin/60)})`);
-  if(dureeMin > intervalMin + 1) warnings.push(`le temps déclaré (${durationLabel(dureeMin/60)}) dépasse la durée entre le début et la fin (${durationLabel(intervalMin/60)})`);
+  if(!sansTemps && dureeMin > intervalMin + 1) warnings.push(`le temps déclaré (${durationLabel(dureeMin/60)}) dépasse la durée entre le début et la fin (${durationLabel(intervalMin/60)})`);
   if(warnings.length && !confirm(`Attention : ${warnings.join(' ; ')}.\n\nDéclarer quand même ?`)) return;
 
   const dureeH = dureeMin / 60;
@@ -9027,14 +9050,20 @@ function submitDeclareDone(){
     oo.finReel = d.fin;
     oo.manualStart = null;
     oo.sessions = [];
+    oo.autoPaused = false; oo.autoPausedOutOfHours = false;
+    if(sansTemps){
+      // Sous-traitance revenue, aucun temps salarié : rien à compter ni à valider.
+      oo.dureeReelleH = 0; oo.dureeReelleParOperateur = null; oo.declaration = null;
+      return;
+    }
     oo.dureeReelleH = dureeH; // lot fusionné : même valeur sur chaque membre, dédupliquée par fusionGroupId partout
     oo.dureeReelleParOperateur = { [d.operatorUserId]: dureeH };
     if(!oo.operatorUserId) oo.operatorUserId = d.operatorUserId;
-    oo.autoPaused = false; oo.autoPausedOutOfHours = false;
     oo.declaration = { ...declaration };
   });
   declareDoneDraft = null;
   commit();
+  if(sansTemps){ showToast('Sous-traitance marquée terminée — aucun temps compté.'); return; }
   showToast(autoValide ? 'Tâche déclarée terminée (validée).' : 'Tâche déclarée terminée — en attente de validation par un superviseur.');
 }
 function renderDeclareDoneModal(){
@@ -9049,11 +9078,12 @@ function renderDeclareDoneModal(){
   const dMin = Number(String(d.dureeMin).replace(',', '.'));
   const dureeTxt = !isNaN(dMin) && dMin > 0 ? durationLabel(dMin / 60) : '—';
   const autoValide = canSupervise();
+  const st = !!d.sousTraitance;
   return `
   <div class="modal-overlay">
     <div class="modal-box declare-done-box" role="dialog" aria-modal="true">
       <div class="modal-head">
-        <h2>✔ Déclarer terminée (oubli de démarrage)</h2>
+        <h2>${st ? '✔ Sous-traitance terminée' : '✔ Déclarer terminée (oubli de démarrage)'}</h2>
         <button class="ghost icon-btn" data-action="close-declare-done" title="Fermer">✕</button>
       </div>
       <div class="modal-body">
@@ -9061,24 +9091,28 @@ function renderDeclareDoneModal(){
           <div><strong>${escapeHtml(c.nom)}</strong> — ${escapeHtml(label)}</div>
           <div class="footer-note" style="margin:2px 0 0; text-align:left;">${m ? escapeHtml(m.nom) : 'Sans poste'} · Qté ${escapeHtml(String(o.quantite))} · prévu ${durationLabel(plannedH)}${group && group.length > 1 ? ` · lot fusionné de ${group.length} pièces : tout le lot sera déclaré` : ''}</div>
         </div>
-        <div style="margin-top:12px;"><label class="field">Réalisée par</label>
+        <div style="margin-top:12px;"><label class="field">${st ? 'Temps salarié passé par' : 'Réalisée par'}</label>
           <select data-action="declare-done-field" data-field="operatorUserId">
-            <option value="">— choisir —</option>
+            <option value="">${st ? '— Personne (travail du sous-traitant) —' : '— choisir —'}</option>
             ${usersList.map(u => `<option value="${u.id}" ${String(d.operatorUserId) === String(u.id) ? 'selected' : ''}>${escapeHtml(u.username)}</option>`).join('')}
           </select>
         </div>
-        <div class="commande-top-fields" style="grid-template-columns:1fr 1fr 1fr; margin-top:10px;">
-          <div><label class="field">Début</label><input type="datetime-local" value="${d.debut}" data-action="declare-done-field" data-field="debut"></div>
-          <div><label class="field">Fin</label><input type="datetime-local" value="${d.fin}" data-action="declare-done-field" data-field="fin"></div>
-          <div><label class="field">Temps passé (min)</label><input type="number" min="1" step="1" value="${escapeHtml(String(d.dureeMin))}" data-action="declare-done-field" data-field="dureeMin"><div class="footer-note" style="margin:2px 0 0; text-align:left;">= ${dureeTxt}</div></div>
+        <div class="declare-done-grid">
+          <div><label class="field">${st ? 'Envoi' : 'Début'}</label><input type="datetime-local" value="${d.debut}" max="${d.fin || ''}" data-action="declare-done-field" data-field="debut"></div>
+          <div><label class="field">${st ? 'Retour' : 'Fin'}</label><input type="datetime-local" value="${d.fin}" max="${toInputValue(new Date())}" data-action="declare-done-field" data-field="fin"></div>
+          <div><label class="field">${st ? 'Temps salarié (min)' : 'Temps passé (min)'}</label><input type="number" min="0" step="1" value="${escapeHtml(String(d.dureeMin))}" data-action="declare-done-field" data-field="dureeMin"></div>
+        </div>
+        <div class="declare-done-hint">
+          <span>${d.debutAjuste ? `<span class="declare-done-adjusted">↺ ${st ? 'Envoi' : 'Début'} ramené avant ${st ? 'le retour' : 'la fin'}</span>` : ''}</span>
+          <span>${st && !(dMin > 0) ? 'Aucun temps compté' : `= ${dureeTxt}`}</span>
         </div>
         <div style="margin-top:10px;"><label class="field">Commentaire (facultatif)</label>
           <input type="text" placeholder="ex : oublié de lancer, fait mardi après-midi" value="${escapeHtml(d.commentaire || '')}" data-action="declare-done-field" data-field="commentaire">
         </div>
-        <div class="footer-note" style="text-align:left; padding-top:10px;">Début et fin sont préremplis avec le temps prévu, compté sur les horaires de l'atelier ; changer l'un des deux recalcule le temps passé (toujours modifiable à la main). ${autoValide ? 'Déclaration validée directement (vous êtes superviseur).' : 'Le temps est compté tout de suite, marqué « à valider » jusqu’à ce qu’un superviseur le valide.'}</div>
+        <div class="footer-note" style="text-align:left; padding-top:10px;">${st ? "Tâche sous-traitée : elle figure dans le planning pour ses dépendances, le travail est fait à l'extérieur — aucun temps n'est compté par défaut. Saisissez un temps salarié (et la personne) seulement si quelqu'un de l'atelier y a réellement passé du temps (préparation, contrôle…)." : `Début et fin sont préremplis avec le temps prévu, compté sur les horaires de l'atelier ; changer l'un des deux recalcule le temps passé (toujours modifiable à la main). Le début est toujours ramené avant la fin.`} ${autoValide ? 'Déclaration validée directement (vous êtes superviseur).' : 'Le temps est compté tout de suite, marqué « à valider » jusqu’à ce qu’un superviseur le valide.'}</div>
         <div class="form-actions" style="margin-top:14px;">
           <button class="ghost" data-action="close-declare-done">Annuler</button>
-          <button class="primary" data-action="submit-declare-done">✔ Déclarer terminée</button>
+          <button class="primary" data-action="submit-declare-done">${st ? '✔ Marquer terminée' : '✔ Déclarer terminée'}</button>
         </div>
       </div>
     </div>
@@ -11864,9 +11898,25 @@ function openFicheSalarie(uid, from){
     rangeDebut: fromTempsProd ? tempsProdRangeDebut : null,
     rangeFin: fromTempsProd ? tempsProdRangeFin : null
   };
+  lastFicheUid = uid;
   currentPage = 'ficheSalarie';
   render();
   try{ window.scrollTo(0, 0); }catch(e){ /* environnement sans fenêtre */ }
+}
+// Salariés proposés dans le sélecteur de la fiche (superviseurs) : ceux affichés dans Temps de
+// production (même case « Afficher dans le temps de production »), plus la personne en cours.
+function ficheSelectableUsers(currentUid){
+  return (usersList||[]).filter(u => !isHiddenFromTempsProd(state, String(u.id)) || String(u.id) === String(currentUid));
+}
+// Ouverture depuis le menu « Plus ▾ » : un employé voit sa propre fiche ; un superviseur retrouve la
+// dernière consultée, sinon l'identité active du poste si elle est suivie, sinon le premier salarié.
+function defaultFicheUid(){
+  const aid = String(activeIdentityId() || '');
+  if(!canSupervise()) return aid;
+  const list = ficheSelectableUsers(null).map(u => String(u.id));
+  if(lastFicheUid && list.includes(String(lastFicheUid))) return String(lastFicheUid);
+  if(list.includes(aid)) return aid;
+  return list[0] || aid;
 }
 function closeFicheSalarie(){
   const back = ficheSalarie ? ficheSalarie.from : 'tempsProd';
@@ -11983,7 +12033,11 @@ function renderFicheSalariePage(){
   const who = ficheUserMeta(f.uid);
   const periodWord = { jour:'de la journée', semaine:'de la semaine', mois:'du mois', annee:"de l'année", plage:'de la période' }[f.mode] || 'de la période';
   const modes = [{key:'jour',label:'Jour'},{key:'semaine',label:'Semaine'},{key:'mois',label:'Mois'},{key:'annee',label:'Année'},{key:'plage',label:'Plage'}];
+  const userSel = canSupervise() ? `<select data-action="fiche-user" title="Changer de salarié" style="width:auto; max-width:200px;">
+        ${ficheSelectableUsers(f.uid).map(u => `<option value="${u.id}" ${String(u.id)===String(f.uid)?'selected':''}>${escapeHtml(u.username)}</option>`).join('')}
+      </select>` : '';
   const periodCtl = `<div class="fs-period fiche-noprint">
+      ${userSel}
       <div class="view-tabs" style="margin:0;">${modes.map(m => `<button class="${f.mode===m.key?'active':''}" data-action="fiche-mode" data-mode="${m.key}">${m.label}</button>`).join('')}</div>
       ${f.mode==='plage' ? `<label class="field" style="margin:0;">Du</label><input type="date" data-action="fiche-range-debut" value="${f.rangeDebut||toDateInputValue(start)}" style="width:auto;">
         <label class="field" style="margin:0;">Au</label><input type="date" data-action="fiche-range-fin" value="${f.rangeFin||toDateInputValue(new Date(end.getTime()-86400000))}" style="width:auto;">`
@@ -12066,7 +12120,8 @@ function renderFicheSalariePage(){
       <td>${etat}</td>
     </tr>`;
   }).join('');
-  const back = f.from==='dashboard' ? "Vue d'ensemble" : (f.from==='planning' ? 'Planning' : 'Temps de production');
+  const backLabels = { planning:'Planning', dashboard:"Vue d'ensemble", tempsProd:'Temps de production', conges:'Congés', zones:'Zones de stockage', risques:'Risques de retard', pointages:'Pointages', historique:'Historique' };
+  const back = backLabels[f.from] || 'Retour';
   return `<div id="fiche-salarie-page" class="fs-page">
   <div class="fs-crumb fiche-noprint"><button class="ghost small" data-action="fiche-back">← ${escapeHtml(back)}</button><span>›</span><b>Fiche salarié</b></div>
   <section class="panel"><div class="fs-who">
@@ -14912,6 +14967,7 @@ function dispatchClickAction(action, el){
     case 'reset-dashboard-layout': resetDashboardLayout(); break;
     case 'snooze-pointage-reminder': snoozePointageReminder(Number(el.dataset.min)||15); break;
     case 'goto-temps-prod': currentPage = 'tempsProd'; render(); break;
+    case 'goto-fiche': if(currentPage !== 'ficheSalarie') openFicheSalarie(defaultFicheUid(), currentPage); break;
     case 'goto-zones': currentPage = 'zones'; render(); break;
     case 'goto-risques': currentPage = 'risques'; render(); break;
     case 'goto-pointages': currentPage = 'pointages'; render(); break;
@@ -15174,6 +15230,7 @@ function dispatchChangeAction(el, action){
     case 'temps-prod-range-debut': tempsProdRangeDebut = el.value; render(); break;
     case 'fiche-range-debut': if(ficheSalarie){ ficheSalarie.rangeDebut = el.value || null; render(); } break;
     case 'fiche-range-fin': if(ficheSalarie){ ficheSalarie.rangeFin = el.value || null; render(); } break;
+    case 'fiche-user': if(ficheSalarie && el.value && canSupervise()){ ficheSalarie.uid = String(el.value); lastFicheUid = ficheSalarie.uid; render(); } break;
     case 'temps-prod-range-fin': tempsProdRangeFin = el.value; render(); break;
     case 'user-pause-field': updateUserPauseField(el.dataset.userId, el.dataset.pauseId, el.dataset.field, el.value); break;
     case 'user-horaire-field': updateUserHoraireField(el.dataset.userId, el.dataset.field, el.value); break;
@@ -15261,7 +15318,7 @@ function dispatchChangeAction(el, action){
 // formulaire "Générer un rythme d'alternance"). Voir le "focusout" ci-dessous : le traitement réel
 // n'a lieu qu'à la sortie du champ.
 function isDeferredTimeField(el){
-  return !!(el && el.tagName === 'INPUT' && (el.type === 'time' || el.type === 'date'));
+  return !!(el && el.tagName === 'INPUT' && (el.type === 'time' || el.type === 'date' || el.type === 'datetime-local'));
 }
 document.addEventListener('change', (e) => {
   const el = e.target.closest('[data-action]');
