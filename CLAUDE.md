@@ -537,6 +537,29 @@ neutraliser aussi la pause de midi du lendemain).
   cours"), les deux badges pouvant coexister sur une même ligne/carte si les deux exceptions sont
   actives en même temps.
 
+#### Temps travaillé sous exception (compté, plus seulement toléré)
+
+Retour utilisateur réel : les deux exceptions ci-dessus empêchaient bien la mise en pause
+automatique, mais le temps travaillé n'était PAS compté — `opElapsedHours`/`computeSessionsHoursByOperator`/
+`computeProductionTimeByUser`/`computeProductionTimeByMachine` passaient chaque séance par
+`workingHoursBetween`, qui ne retient que les heures de l'horaire (constaté sur l'export réel :
+séance de Sébastien le 21/09 de 05h57 à 07h56 comptée 0,93 h ; une soirée 18h-20h ou une pause
+11h50-13h30 sous exception : 0 h).
+
+- `pieces[].exceptionWindows` (`{ debut, fin, type:'horsHoraires'|'pause' }[]`, `[]` par défaut,
+  `migrateState`) — une entrée par clic, de l'instant du clic à la borne de l'exception, jamais
+  écrasée (contrairement à `workHoursExceptionUntil`/`lunchExceptionUntil`) : le temps passé reste
+  compté après expiration et après clôture. `recordExceptionWindow` l'ajoute à la pièce et à chaque
+  membre de son lot fusionné (un tableau propre par membre, jamais une référence partagée).
+- `countedHoursBetween(start, end, cfg, windows)` remplace `workingHoursBetween` aux quatre points
+  qui convertissent des séances en heures : heures ouvrées + part NON ouvrée de chaque fenêtre
+  d'exception (jamais de double comptage) ; `exceptionWindowsFor(o)` fusionne les fenêtres qui se
+  chevauchent. Sans fenêtre, strictement identique à avant : une séance oubliée ouverte le soir ne
+  gonfle toujours rien.
+- Pas de rattrapage rétroactif : les séances hors horaires antérieures au correctif (sans fenêtre)
+  restent filtrées — les corriger passe par la page Pointages.
+- Côté serveur (`autoPauseResume.js`) rien ne change : il ne compte pas d'heures.
+
 ## Historique des prévisions avant clôture (`prevision_history`)
 
 Une fois une pièce marquée `termine`, `computeSchedule` ancre définitivement `start`/`end` sur ses

@@ -1172,7 +1172,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.67.0';
+const APP_VERSION = '1.68.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -2060,6 +2060,11 @@ function migrateState(st){
       // différentes) : borne haute exclusive (la fin de la pause en cours/à venir aujourd'hui)
       // au-delà de laquelle la mise en pause automatique de la pause déjeuner redevient effective.
       if(o.lunchExceptionUntil === undefined) o.lunchExceptionUntil = null;
+      // Fenêtres [début, fin] couvertes par l'une des deux exceptions ci-dessus, conservées après
+      // expiration (contrairement aux deux champs ci-dessus, écrasés à chaque clic) : c'est ce qui
+      // permet de compter le temps réellement travaillé hors horaires/pendant la pause, voir
+      // countedHoursBetween et CLAUDE.md « Temps travaillé sous exception ».
+      if(!Array.isArray(o.exceptionWindows)) o.exceptionWindows = [];
       // Report du rappel de retour de pause déjeuner (voir renderPauseReminderModal), PAR opérateur
       // concerné ({ [operatorUserId]: horodatage jusqu'auquel ne pas re-proposer } | null) — la
       // reprise n'est plus automatique (voir CLAUDE.md), donc jamais purgé par un job serveur : purgé
@@ -5430,12 +5435,14 @@ function workHoursExceptionEndFor(op, now, st){
 function setWorkHoursException(cid, oid){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
   const o = c.pieces.find(o=>o.id===oid); if(!o) return;
-  const endDate = workHoursExceptionEndFor(o, new Date(), state);
+  const nowD = new Date();
+  const endDate = workHoursExceptionEndFor(o, nowD, state);
   const until = toInputValue(endDate);
   o.workHoursExceptionUntil = until;
   propagateFusionGroupFields(o, { workHoursExceptionUntil: until });
+  recordExceptionWindow(o, toInputValue(nowD), until, 'horsHoraires');
   commit();
-  showToast(`🕐 Exception activée : cette tâche ne sera pas remise en pause automatiquement jusqu'à ${formatDT(endDate)}.`);
+  showToast(`🕐 Exception activée : cette tâche ne sera pas remise en pause automatiquement jusqu'à ${formatDT(endDate)} — le temps travaillé d'ici là sera compté.`);
 }
 // Traçabilité : sans ce badge, un superviseur retrouvant lundi matin une tâche restée `en_cours`
 // tout le week-end n'aurait aucun moyen de distinguer "quelqu'un est réellement venu travailler
@@ -5463,12 +5470,14 @@ function lunchExceptionEndFor(op, now, st){
 function setLunchException(cid, oid){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
   const o = c.pieces.find(o=>o.id===oid); if(!o) return;
-  const endDate = lunchExceptionEndFor(o, new Date(), state);
+  const nowD = new Date();
+  const endDate = lunchExceptionEndFor(o, nowD, state);
   const until = toInputValue(endDate);
   o.lunchExceptionUntil = until;
   propagateFusionGroupFields(o, { lunchExceptionUntil: until });
+  recordExceptionWindow(o, toInputValue(nowD), until, 'pause');
   commit();
-  showToast(`🍽 Exception activée : cette tâche ne sera pas mise en pause pour la pause déjeuner jusqu'à ${formatDT(endDate)}.`);
+  showToast(`🍽 Exception activée : cette tâche ne sera pas mise en pause pour la pause déjeuner jusqu'à ${formatDT(endDate)} — le temps travaillé pendant la pause sera compté.`);
 }
 function lunchExceptionBadgeHtml(o){
   if(!o.lunchExceptionUntil) return '';
@@ -5556,15 +5565,58 @@ function retardDemarrageBadgeHtml(o){
   if(j == null || j < 0.5) return '';
   return `<div class="footer-note" style="margin:2px 0 0; color:var(--red);" title="Le planning prévoyait un démarrage le ${formatDT(new Date(o.previsionAuDemarrage.debut))}">🕓 Démarrée avec ${Math.round(j*10)/10} j de retard</div>`;
 }
+// Fenêtres d'exception d'une pièce (« 🕐 Je travaille maintenant » / « 🍽 Je travaille pendant la
+// pause »), fusionnées si elles se chevauchent (deux clics successifs) — voir CLAUDE.md « Temps
+// travaillé sous exception ».
+function exceptionWindowsFor(o){
+  const raw = (o.exceptionWindows||[])
+    .map(w => [new Date(w.debut), new Date(w.fin)])
+    .filter(([a,b]) => !isNaN(a.getTime()) && !isNaN(b.getTime()) && b > a)
+    .sort((x,y) => x[0]-y[0]);
+  const merged = [];
+  raw.forEach(w => {
+    const last = merged[merged.length-1];
+    if(last && w[0] <= last[1]){ if(w[1] > last[1]) last[1] = w[1]; }
+    else merged.push([w[0], w[1]]);
+  });
+  return merged;
+}
+// Heures comptées sur [start, end[ : les heures ouvrées (workingHoursBetween, hors nuits/week-ends/
+// pauses) PLUS, à l'intérieur d'une fenêtre d'exception déclarée, le temps non ouvré réellement
+// travaillé — jamais compté deux fois (on n'ajoute que la part non ouvrée de la fenêtre). Sans
+// exception, strictement identique à workingHoursBetween : une séance oubliée ouverte le soir ne
+// gonfle toujours rien, seul le temps déclaré via le bouton compte en plus.
+function countedHoursBetween(start, end, cfg, windows){
+  if(end <= start) return 0;
+  let h = workingHoursBetween(start, end, cfg);
+  (windows||[]).forEach(([ws, we]) => {
+    const a = ws > start ? ws : start;
+    const b = we < end ? we : end;
+    if(b > a) h += (b - a)/3600000 - workingHoursBetween(a, b, cfg);
+  });
+  return h;
+}
+// Enregistre la fenêtre couverte par une exception sur la pièce ET chaque membre de son groupe
+// fusionné (un tableau propre à chaque membre — jamais une référence partagée, voir le piège de
+// isSessionsCorrectable sur propagateFusionGroupFields et les tableaux).
+function recordExceptionWindow(o, debut, fin, type){
+  const targets = [o];
+  if(o.fusionGroupId) state.commandes.forEach(cc => cc.pieces.forEach(oo => { if(oo.id !== o.id && oo.fusionGroupId === o.fusionGroupId) targets.push(oo); }));
+  targets.forEach(t => {
+    if(!Array.isArray(t.exceptionWindows)) t.exceptionWindows = [];
+    t.exceptionWindows.push({ debut, fin, type });
+  });
+}
 function opElapsedHours(o, st){
   if(!o.sessions || o.sessions.length===0) return 0;
   const cfg = configForPiece(o, st);
+  const wins = exceptionWindowsFor(o);
   const now = new Date();
   let total = 0;
   o.sessions.forEach(s => {
     const start = new Date(s.debut);
     const end = s.fin ? new Date(s.fin) : now;
-    if(end > start) total += workingHoursBetween(start, end, cfg); // n'accumule que le temps de travail réel (hors nuits/week-ends/pause)
+    if(end > start) total += countedHoursBetween(start, end, cfg, wins); // temps de travail réel (hors nuits/week-ends/pause), sauf exception déclarée
   });
   return total;
 }
@@ -5626,6 +5678,7 @@ function isUnexplainedPause(o){
 function computeSessionsHoursByOperator(o, st){
   if(!o.sessions || o.sessions.length===0) return null;
   const cfg = configForPiece(o, st);
+  const wins = exceptionWindowsFor(o);
   const now = new Date();
   const byOp = {};
   o.sessions.forEach(s => {
@@ -5633,7 +5686,7 @@ function computeSessionsHoursByOperator(o, st){
     if(!opUid) return;
     const start = new Date(s.debut);
     const end = s.fin ? new Date(s.fin) : now;
-    if(end > start) byOp[opUid] = (byOp[opUid]||0) + workingHoursBetween(start, end, cfg);
+    if(end > start) byOp[opUid] = (byOp[opUid]||0) + countedHoursBetween(start, end, cfg, wins);
   });
   return Object.keys(byOp).length ? byOp : null;
 }
@@ -9731,7 +9784,7 @@ function computeProductionTimeByUser(st, periodStart, periodEnd){
         const clampStart = sStart < periodStart ? periodStart : sStart;
         const clampEnd = sEnd > periodEnd ? periodEnd : sEnd;
         if(clampEnd > clampStart){
-          const h = workingHoursBetween(clampStart, clampEnd, cfg);
+          const h = countedHoursBetween(clampStart, clampEnd, cfg, exceptionWindowsFor(o));
           hByOperator[opUid] = (hByOperator[opUid]||0) + h;
           if(!dateByOperator[opUid] || sStart > dateByOperator[opUid]) dateByOperator[opUid] = sStart;
         }
@@ -9796,7 +9849,7 @@ function computeProductionTimeByMachine(st, periodStart, periodEnd){
         const sEnd = s.fin ? new Date(s.fin) : new Date();
         const clampStart = sStart < periodStart ? periodStart : sStart;
         const clampEnd = sEnd > periodEnd ? periodEnd : sEnd;
-        if(clampEnd > clampStart) h += workingHoursBetween(clampStart, clampEnd, cfg);
+        if(clampEnd > clampStart) h += countedHoursBetween(clampStart, clampEnd, cfg, exceptionWindowsFor(o));
       });
     } else if(o.statut === 'termine' && o.dureeReelleH != null && o.dureeReelleH > 0){
       const refStr = o.finReel || o.debutReel;
