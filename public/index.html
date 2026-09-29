@@ -623,6 +623,12 @@
   .dash-machine-card .dmc-client, .dash-machine-card .dmc-piece{font-size:11px; color:var(--text-faint); margin-bottom:2px;}
   .dash-machine-card .dmc-empty{font-size:13px; color:var(--text-faint);}
 
+  /* Personnalisation de la Vue d'ensemble — voir renderDashboardCustomizePanel */
+  .dash-custom-panel{border:1px solid var(--accent); border-radius:var(--radius); background:var(--panel-2); padding:12px 14px; margin-bottom:14px;}
+  .dash-custom-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;}
+  .dash-custom-cols{display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:16px;}
+  .dash-custom-col{background:var(--panel); border:1px solid var(--line-soft); border-radius:var(--radius); padding:8px 12px; min-width:0;}
+  .dash-custom-hidden .page-menu-label{color:var(--text-faint); text-decoration:line-through;}
   /* Pointage de l'équipe (Vue d'ensemble) — voir renderTeamPointageSection. Classes préfixées pt-
      pour ne jamais entrer en collision avec un nom générique (.now, .gap...). */
   .pt-team{display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:0 14px;}
@@ -1246,7 +1252,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.69.0';
+const APP_VERSION = '1.70.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1985,6 +1991,7 @@ function migrateState(st){
   if(!Array.isArray(st.hiddenTempsProdUserIds)) st.hiddenTempsProdUserIds = []; // salariés exclus de l'onglet Temps de production (superviseur) — voir isHiddenFromTempsProd
   if(!st.userDefaultPage) st.userDefaultPage = {}; // { [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques'|'pointages'|'historique'|'dashboard' } — page affichée à la connexion, voir applyUserDefaultPageOnStart
   if(!st.userDefaultPlanningView) st.userDefaultPlanningView = {}; // { [userId]: 'jour'|'semaine'|'mois'|'annee'|'kanban'|'liste' } — vue du planning appliquée à la connexion quand la page d'accueil est Planning, voir applyUserDefaultPageOnStart
+  if(!st.userDashboardLayout) st.userDashboardLayout = {}; // { [userId]: { blocks:{order,hidden}, tiles:{order,hidden} } } — Vue d'ensemble personnalisable, propre à la personne
   if(!st.userPageMenuOrder) st.userPageMenuOrder = {}; // { [userId]: PAGE_MENU_KEYS réordonnée } — ordre du menu "Plus ▾" de l'en-tête, propre à la personne (voir CLAUDE.md « Navigation »)
   if(!st.userPinnedMenuPages) st.userPinnedMenuPages = {}; // { [userId]: string[] } — sous-ensemble de PAGE_MENU_KEYS épinglé en accès direct à côté de Planning, au lieu de rester dans "Plus ▾" (voir CLAUDE.md « Navigation ») — absence d'entrée pour une personne = épingles par défaut (getUserPinnedMenuPages, DEFAULT_PINNED_PAGE_KEYS = Congés), jamais "rien d'épinglé"
   if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
@@ -9903,6 +9910,104 @@ function renderMachineAvailabilitySection(schedule, now){
     <div class="dp-grid">${cards}</div>
     <div class="footer-note" style="text-align:left; margin-top:6px;">Prochain créneau libre : premier trou d'au moins ${DISPO_CRENEAU_MIN_H} h dans le planning du poste. Heures libres : capacité du poste moins le travail planifié sur les ${horizon} prochains jours ouvrés (réglable dans Paramètres). Barres : charge de chaque jour ouvré (pleine = poste saturé, estompée = au-delà de l'horizon). Triés du plus tôt disponible au plus chargé ; Sous-traitance exclue.</div>`;
 }
+
+/* ---------------- Vue d'ensemble personnalisable (voir CLAUDE.md) ---------------- */
+// Blocs et tuiles de la Vue d'ensemble — la personne choisit ceux qui s'affichent et leur ordre.
+// Réglage PROPRE À LA PERSONNE, rangé dans state.userDashboardLayout (même principe que
+// userPageMenuOrder : suit la personne d'un poste à l'autre, survit à un vidage de cache).
+const DASHBOARD_BLOCKS = [
+  { key:'absences', label:"🏖 Absents aujourd'hui" },
+  { key:'tuiles', label:'🔢 Indicateurs clés (tuiles)' },
+  { key:'pointage', label:"👥 Pointage de l'équipe" },
+  { key:'postes', label:'🏭 État des postes' },
+  { key:'dispo', label:'🗓 Disponibilité des postes' },
+  { key:'pausesSuspectes', label:'⏸ Pauses suspectes en cours (détail)' },
+  { key:'prodPies', label:'⏱ Temps de production par poste' },
+  { key:'rebuts', label:'🗑 Rebuts par motif' }
+];
+const DASHBOARD_TILES = [
+  { key:'postesActifs', label:'Postes actifs' },
+  { key:'postesPause', label:'Postes en pause' },
+  { key:'postesArret', label:"Postes à l'arrêt" },
+  { key:'commandesRisque', label:'Commandes à risque' },
+  { key:'retardsDemarrage', label:'Tâches démarrées en retard' },
+  { key:'pausesSuspectes', label:'Pauses suspectes en cours' },
+  { key:'pausesVeille', label:'En pause depuis la veille' }
+];
+let dashboardCustomizeOpen = false;
+function dashboardListDefs(list){ return list === 'tiles' ? DASHBOARD_TILES : DASHBOARD_BLOCKS; }
+function dashboardLayoutUid(){ return currentUser ? String(currentUser.id) : ''; }
+// Ordre enregistré (clés inconnues ignorées, nouvelles clés ajoutées à la fin à leur place par
+// défaut — un bloc ajouté dans une future version apparaît donc sans rien réinitialiser) et clés
+// masquées. Rien d'enregistré : tout visible, ordre par défaut.
+function dashboardLayoutFor(list, userId){
+  const keys = dashboardListDefs(list).map(d => d.key);
+  const uid_ = String(userId != null ? userId : dashboardLayoutUid());
+  const stored = (((state.userDashboardLayout || {})[uid_]) || {})[list] || {};
+  const kept = Array.isArray(stored.order) ? stored.order.filter((k, i) => keys.includes(k) && stored.order.indexOf(k) === i) : [];
+  const order = [...kept, ...keys.filter(k => !kept.includes(k))];
+  const hidden = new Set((Array.isArray(stored.hidden) ? stored.hidden : []).filter(k => keys.includes(k)));
+  return { order, hidden, visible: order.filter(k => !hidden.has(k)) };
+}
+function saveDashboardLayout(list, order, hidden){
+  const uid_ = dashboardLayoutUid(); if(!uid_) return;
+  if(!state.userDashboardLayout) state.userDashboardLayout = {};
+  if(!state.userDashboardLayout[uid_]) state.userDashboardLayout[uid_] = {};
+  state.userDashboardLayout[uid_][list] = { order: [...order], hidden: [...hidden] };
+  commit(true);
+}
+function moveDashboardItem(list, key, dir){
+  const { order, hidden } = dashboardLayoutFor(list);
+  const idx = order.indexOf(key), n = idx + dir;
+  if(idx < 0 || n < 0 || n >= order.length) return;
+  [order[idx], order[n]] = [order[n], order[idx]];
+  saveDashboardLayout(list, order, hidden);
+}
+function toggleDashboardItem(list, key){
+  const { order, hidden } = dashboardLayoutFor(list);
+  if(hidden.has(key)) hidden.delete(key); else hidden.add(key);
+  saveDashboardLayout(list, order, hidden);
+}
+function resetDashboardLayout(){
+  const uid_ = dashboardLayoutUid();
+  if(state.userDashboardLayout && state.userDashboardLayout[uid_]){ delete state.userDashboardLayout[uid_]; commit(true); }
+  else render();
+}
+function renderDashboardCustomizePanel(){
+  if(!dashboardCustomizeOpen) return '';
+  const listHtml = (list, title) => {
+    const defs = dashboardListDefs(list);
+    const { order, hidden } = dashboardLayoutFor(list);
+    return `<div class="dash-custom-col">
+      <div class="trend-section-title">${title}</div>
+      ${order.map((key, idx) => {
+        const d = defs.find(dd => dd.key === key);
+        const shown = !hidden.has(key);
+        return `<div class="page-menu-item ${shown ? '' : 'dash-custom-hidden'}">
+          <span class="page-menu-label">${escapeHtml(d.label)}</span>
+          <div class="page-menu-actions">
+            <button class="${shown ? 'pinned' : ''}" data-action="toggle-dashboard-item" data-list="${list}" data-key="${key}" title="${shown ? 'Masquer' : 'Afficher'}">${shown ? '👁 Affiché' : '🚫 Masqué'}</button>
+            <button data-action="move-dashboard-item" data-list="${list}" data-key="${key}" data-dir="-1" ${idx===0?'disabled':''} title="Monter">▲</button>
+            <button data-action="move-dashboard-item" data-list="${list}" data-key="${key}" data-dir="1" ${idx===order.length-1?'disabled':''} title="Descendre">▼</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  };
+  return `<div class="dash-custom-panel">
+    <div class="dash-custom-head">
+      <b>Personnaliser la Vue d'ensemble</b>
+      <span class="footer-note" style="margin:0;">Réglage propre à votre compte, retrouvé sur tous les postes.</span>
+      <span style="flex:1"></span>
+      <button class="small ghost" data-action="reset-dashboard-layout">Rétablir l'affichage par défaut</button>
+      <button class="small" data-action="toggle-dashboard-customize">Terminé</button>
+    </div>
+    <div class="dash-custom-cols">
+      ${listHtml('blocks', 'Blocs (de haut en bas)')}
+      ${listHtml('tiles', 'Indicateurs clés (de gauche à droite)')}
+    </div>
+  </div>`;
+}
 function renderDashboardPage(){
   const schedule = getSchedule();
   const active = schedule.filter(c => c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine'));
@@ -9957,9 +10062,6 @@ function renderDashboardPage(){
   // Même calcul que les camemberts Jour/Semaine/Mois ci-dessous (temps réellement pointé, sessions
   // découpées aux bornes) — computeAnnualProductionByMachine (tâches terminées seulement) donnait un
   // total annuel inférieur à celui du mois en cours, incohérent une fois les quatre côte à côte.
-  const prodByMachine = computeProductionByMachineItems(state, oneYearAgo, now);
-  const prodColors = prodByMachine.map((r,i) => { const m = state.machines.find(mm=>mm.id===r.machineId); return (m && m.couleur) || MACHINE_COLORS[i % MACHINE_COLORS.length]; });
-  const rebutsByMotif = computeAnnualRebutsByMotif(state, oneYearAgo);
   // Camemberts Jour / Semaine / Mois (retour utilisateur réel) — computeProductionTimeByMachine,
   // déjà utilisée par le taux d'occupation par poste : sessions découpées aux bornes de la période
   // (y compris une session encore ouverte, comptée jusqu'à maintenant), lot fusionné compté une fois.
@@ -9980,67 +10082,79 @@ function renderDashboardPage(){
   const nextMonth = new Date(now.getFullYear(), now.getMonth()+1, 1);
   const monthLabel = now.toLocaleDateString('fr-FR', { month:'long', year:'numeric' });
 
-  return `<section class="panel"><div class="panel-head">
-      <h2>📊 Vue d'ensemble atelier</h2>
-      <span class="footer-note" style="margin:0;">Instantané temps réel</span>
-    </div>
-    <div class="panel-body">
-    ${absenceBannerHtml([now])}
-    <div class="dash-stat-grid">
-      <div class="dash-stat-tile tone-green">
+  // Tuiles et blocs : un rendu par clé, dans l'ordre et selon les choix de la personne (voir
+  // CLAUDE.md « Vue d'ensemble personnalisable ») — un bloc masqué n'est jamais calculé.
+  const tileRenderers = {
+    postesActifs: () => `<div class="dash-stat-tile tone-green">
         <div class="dst-top"><div class="dst-num">${nbActifs}/${machineStatus.length}</div><span class="dst-icon">🏃</span></div>
         <div class="dst-lbl">Postes actifs</div>
         <div class="dst-bar"><div class="dst-bar-fill" style="width:${machineStatus.length ? Math.round(nbActifs/machineStatus.length*100) : 0}%;"></div></div>
-      </div>
-      <div class="dash-stat-tile tone-amber">
+      </div>`,
+    postesPause: () => `<div class="dash-stat-tile tone-amber">
         <div class="dst-top"><div class="dst-num">${nbPause}</div><span class="dst-icon">⏸</span></div>
         <div class="dst-lbl">Postes en pause</div>
         ${pauseNames.length ? `<div class="dst-sub">${pauseNames.map(n=>'• '+escapeHtml(n)).join('\n')}</div>` : ''}
-      </div>
-      <div class="dash-stat-tile tone-red">
+      </div>`,
+    postesArret: () => `<div class="dash-stat-tile tone-red">
         <div class="dst-top"><div class="dst-num">${nbArret}</div><span class="dst-icon">⏹</span></div>
         <div class="dst-lbl">Postes à l'arrêt</div>
         ${arretNames.length ? `<div class="dst-sub">${arretNames.map(n=>'• '+escapeHtml(n)).join('\n')}</div>` : ''}
-      </div>
-      <div class="dash-stat-tile tone-red ${atRisk.length>0?'dst-clickable':''}" ${atRisk.length>0?'data-action="goto-risques"':''}>
+      </div>`,
+    commandesRisque: () => `<div class="dash-stat-tile tone-red ${atRisk.length>0?'dst-clickable':''}" ${atRisk.length>0?'data-action="goto-risques"':''}>
         <div class="dst-top"><div class="dst-num">${atRisk.length}</div><span class="dst-icon">⚠️</span></div>
         <div class="dst-lbl">Commandes à risque</div>
-      </div>
-      <div class="dash-stat-tile tone-red">
+      </div>`,
+    retardsDemarrage: () => `<div class="dash-stat-tile tone-red">
         <div class="dst-top"><div class="dst-num">${retardsDetail.length}</div><span class="dst-icon">🕓</span></div>
         <div class="dst-lbl">Tâches démarrées en retard</div>
-      </div>
-      <div class="dash-stat-tile tone-red">
+      </div>`,
+    pausesSuspectes: () => `<div class="dash-stat-tile tone-red">
         <div class="dst-top"><div class="dst-num">${pausesSuspectes.length}</div><span class="dst-icon">🔔</span></div>
         <div class="dst-lbl">Pauses suspectes en cours</div>
-      </div>
-      <div class="dash-stat-tile tone-red">
+      </div>`,
+    pausesVeille: () => `<div class="dash-stat-tile tone-red">
         <div class="dst-top"><div class="dst-num">${pausesVeille.length}</div><span class="dst-icon">🌙</span></div>
         <div class="dst-lbl">En pause depuis la veille</div>
-      </div>
-    </div>
-
-    ${renderTeamPointageSection(now)}
-
-    <div class="trend-section-title" style="margin-top:20px;">Postes</div>
-    <div class="dash-machine-grid">${machineCards}</div>
-    ${renderMachineAvailabilitySection(schedule, now)}
-    ${pausesSuspectesHtml}
-
-    <div class="trend-section-title" style="margin-top:24px;">⏱ Temps de production par poste</div>
+      </div>`
+  };
+  const blockRenderers = {
+    absences: () => absenceBannerHtml([now]),
+    tuiles: () => {
+      const tiles = dashboardLayoutFor('tiles').visible.map(k => tileRenderers[k] ? tileRenderers[k]() : '').join('');
+      return tiles ? `<div class="dash-stat-grid">${tiles}</div>` : '';
+    },
+    pointage: () => renderTeamPointageSection(now),
+    postes: () => `<div class="trend-section-title" style="margin-top:20px;">Postes</div>
+    <div class="dash-machine-grid">${machineCards}</div>`,
+    dispo: () => renderMachineAvailabilitySection(schedule, now),
+    pausesSuspectes: () => pausesSuspectesHtml,
+    prodPies: () => `<div class="trend-section-title" style="margin-top:24px;">⏱ Temps de production par poste</div>
     <div class="dash-pie-grid">
       ${prodPieCard("Aujourd'hui", computeProductionByMachineItems(state, dayStart, nextDay))}
       ${prodPieCard('Cette semaine', computeProductionByMachineItems(state, weekStart, nextWeek))}
       ${prodPieCard(`Ce mois (${escapeHtml(monthLabel)})`, computeProductionByMachineItems(state, monthStart, nextMonth))}
-      <div class="dash-pie-card">
+      ${(() => { const prodByMachine = computeProductionByMachineItems(state, oneYearAgo, now);
+        const prodColors = prodByMachine.map((r,i) => colorForMachine(r.machineId, i));
+        return `<div class="dash-pie-card">
         <div class="dpc-title">12 derniers mois</div>
         <div class="dpc-total">Total : ${formatHeures(prodByMachine.reduce((s,r)=>s+r.totalH,0))}</div>
         ${renderPieChartHtml(prodByMachine, { valueKey:'totalH', labelKey:'machineNom', unit:'h', decimals:1, colors:prodColors })}
+      </div>`; })()}
+    </div>`,
+    rebuts: () => `<div class="trend-section-title" style="margin-top:20px;">🗑 Rebuts par motif (12 derniers mois)</div>
+    ${renderPieChartHtml(computeAnnualRebutsByMotif(state, oneYearAgo), { valueKey:'qty', labelKey:'motif', unit:'' })}`
+  };
+
+  return `<section class="panel"><div class="panel-head">
+      <h2>📊 Vue d'ensemble atelier</h2>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <span class="footer-note" style="margin:0;">Instantané temps réel</span>
+        <button class="small ${dashboardCustomizeOpen?'primary':''}" data-action="toggle-dashboard-customize" title="Choisir les informations affichées et leur ordre (réglage propre à votre compte)">⚙ Personnaliser</button>
       </div>
     </div>
-
-    <div class="trend-section-title" style="margin-top:20px;">🗑 Rebuts par motif (12 derniers mois)</div>
-    ${renderPieChartHtml(rebutsByMotif, { valueKey:'qty', labelKey:'motif', unit:'' })}
+    <div class="panel-body">
+    ${renderDashboardCustomizePanel()}
+    ${dashboardLayoutFor('blocks').visible.map(k => (blockRenderers[k] ? blockRenderers[k]() : '')).join('')}
 
     <div class="footer-note" style="text-align:left; margin-top:16px;">Instantané recalculé à chaque
     rendu — les mêmes fonctions que la page « ⚠️ Risques de retard »/la bannière de pauses sont
@@ -13702,6 +13816,10 @@ function dispatchClickAction(action, el){
     case 'open-settings': showSettingsModal = true; render(); loadUsersList(); break;
     case 'goto-conges': currentPage = 'conges'; render(); break;
     case 'goto-planning': currentPage = 'planning'; render(); break;
+    case 'toggle-dashboard-customize': dashboardCustomizeOpen = !dashboardCustomizeOpen; render(); break;
+    case 'toggle-dashboard-item': toggleDashboardItem(el.dataset.list, el.dataset.key); break;
+    case 'move-dashboard-item': moveDashboardItem(el.dataset.list, el.dataset.key, Number(el.dataset.dir)); break;
+    case 'reset-dashboard-layout': resetDashboardLayout(); break;
     case 'snooze-pointage-reminder': snoozePointageReminder(Number(el.dataset.min)||15); break;
     case 'goto-temps-prod': currentPage = 'tempsProd'; render(); break;
     case 'goto-zones': currentPage = 'zones'; render(); break;

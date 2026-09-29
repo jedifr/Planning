@@ -2554,6 +2554,29 @@ disponibilité des postes »), seuils et horizon demandés réglables.
   capacité reste libre, heures libres, barres de charge par jour (estompées au-delà de l'horizon,
   hachurées si poste indisponible).
 
+### Vue d'ensemble personnalisable (choix et ordre des blocs et des tuiles)
+
+Retour utilisateur réel : laisser chacun choisir les informations visibles dans la Vue d'ensemble
+et leur ordre.
+
+- `DASHBOARD_BLOCKS` (absents du jour, indicateurs clés, pointage de l'équipe, état des postes,
+  disponibilité, pauses suspectes, temps de production, rebuts) et `DASHBOARD_TILES` (les 7 tuiles
+  d'indicateurs) — deux listes réglables indépendamment.
+- **`state.userDashboardLayout[userId]`** (`{ blocks:{order,hidden}, tiles:{order,hidden} }`,
+  `migrateState` → `{}`) — même principe que `userPageMenuOrder` : propre à la personne connectée
+  (`currentUser`, pas l'identité active), synchronisé par `commit()`, retrouvé sur tous les postes.
+  `dashboardLayoutFor(list)` ignore les clés inconnues et ajoute EN FIN les clés absentes (un bloc
+  ajouté par une future version apparaît sans réinitialiser l'ordre personnalisé) ; rien
+  d'enregistré = ordre par défaut, tout visible. `moveDashboardItem`/`toggleDashboardItem`/
+  `resetDashboardLayout` — un seul `commit()` chacun.
+- `renderDashboardPage` rend blocs et tuiles via deux tables de fonctions (`blockRenderers`/
+  `tileRenderers`) dans l'ordre choisi : **un bloc masqué n'est jamais calculé** (camemberts,
+  disponibilité, pointage coûtent un calcul complet).
+- Bouton « ⚙ Personnaliser » dans l'en-tête de la page → `renderDashboardCustomizePanel`
+  (`dashboardCustomizeOpen`, transitoire) : deux listes « 👁 Affiché / 🚫 Masqué » + ▲/▼, réutilisant
+  `.page-menu-item`/`.page-menu-actions` (boutons de taille normale, voir « Boutons 📌/▲/▼ peu
+  visibles »), et « Rétablir l'affichage par défaut ».
+
 ## Historique / Tendances
 
 Retour utilisateur réel : toutes les pages de suivi (Temps de production, Pointages, Risques de
