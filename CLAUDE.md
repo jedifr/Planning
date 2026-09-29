@@ -2961,6 +2961,49 @@ de début « au mieux » à l'aperçu » plus haut).
   transitoire de l'aperçu (`customImportState.preview.groups`), la valeur choisie survivant donc à
   toute correction de poste/opérateur qui redéclencherait un rendu.
 
+## Date de livraison théorique (commande existante, commande en saisie, import)
+
+Question utilisateur réelle : comment obtenir vite une date de livraison théorique d'une commande ou
+d'une pièce ? Trois ajouts.
+
+- **Bug corrigé : `finEstimee` (computeSchedule) prenait la fin de la DERNIÈRE LIGNE affichée**
+  (`[...opsOut].reverse().find(o => o.end)`), pas la plus tardive. L'ordre d'affichage (import,
+  saisie) ne suit pas l'ordre de fin : sur l'export réel du 29/09, 15 commandes sur 72 étaient
+  sous-estimées (C026-0668 annoncée le 03/09 au lieu du 30/09). C'est désormais le maximum des `end`
+  de toutes les pièces. Conséquence : `isCommandeAtRisk`, badge « Retard estimé », page Risques,
+  export Excel et rapports utilisent enfin la vraie fin — certaines commandes passent « à risque ».
+- **Carte commande** (`renderCommandeCard`) — la fin estimée reste lisible quel que soit le verdict :
+  « ✓ Dans les temps · fin est. … », « Retard estimé ~X j · fin est. … », « ⏰ Échéance dépassée
+  depuis X j · fin est. … » (avant, seule une commande sans échéance l'affichait). Infobulle rappelant
+  l'échéance et le caractère recalculé de la projection.
+- **Formulaire « Nouvelle commande »** — encart `#draft-delivery-estimate` « 📦 Livraison au plus
+  tôt » : `simulateDraftDelivery()` clone `state`, y ajoute la commande saisie comme elle le serait à
+  la validation (lignes valides seulement : poste + T.U. + quantité ; fusion dans une commande ACTIVE
+  du même nom avec décalage de phase — la date affichée est alors la fin de la commande entière ;
+  regroupements prévus `draft._fusionGroups` via `performFusionOnState`), puis lit `computeSchedule`.
+  Sans échéance saisie, simulée au `2999-12-31` (derrière les autres à urgence égale) avec une note
+  qui invite à la renseigner. Détail début → fin par ligne si plusieurs lignes. Jamais d'enregistrement.
+  - Mémorisée (`draftDeliveryMemo`) par clé de saisie + objet renvoyé par `getSchedule()` : le
+    formulaire se redessine à chaque `render()`, inutile de recalculer un planning à chaque fois.
+  - La plupart des champs du formulaire ne déclenchent pas de `render()` (saisie mémorisée sans
+    redessin, voir Pièges) : `refreshDraftDeliveryEstimate()` remplace uniquement l'`innerHTML` de
+    l'encart, appelée sur l'événement `change` de `draft-field`/`draft-op` — jamais un `render()`
+    complet, qui ferait perdre le focus.
+  - Une commande ARCHIVÉE du même nom n'est pas prise en compte (le désarchivage est un choix fait à
+    la validation) : simulée comme une nouvelle commande, résultat équivalent.
+- **Aperçu de l'import personnalisé** — `simulateImportStarts` expose aussi, en propriétés NON
+  énumérables (le contrat « id de pièce → début » reste inchangé pour les appelants), `__ends` (fin
+  par pièce) et `__finByRef` (livraison au plus tôt par référence ; fin de la commande entière pour
+  une fusion dans une commande existante). Colonne « Fin au mieux » et mention « 📦 livraison au plus
+  tôt : … » + verdict sur l'en-tête de chaque référence. Le regroupement par étiquette (case
+  « Regrouper ») n'est toujours pas simulé, comme pour « Début au mieux ».
+- `deliveryVerdictHtml(fin, dateBesoin)` — verdict partagé par les deux : comparé à
+  `effectiveDueDate` (marge d'échéance comprise, précisée dans le texte si non nulle).
+- Couvert par un test sur l'export réel (scratchpad `delivery_test.js`, 16 assertions) : max des fins
+  pour toutes les commandes, simulation sans mutation de `state`, phase 2 après phase 1, mémorisation,
+  urgence qui avance la date, note sans échéance, ajout à une commande existante, regroupement prévu,
+  fins de l'aperçu d'import. Rendu vérifié (Playwright).
+
 ## Dates flexibles à l'import
 
 `parseFlexibleDate(raw)` accepte, en plus d'un objet `Date` déjä résolu (cellule Excel réellement
