@@ -452,8 +452,32 @@
      exactement la même taille. Le texte trop long est tronqué (nom complet en infobulle), jamais
      d'agrandissement de la case. Défilement horizontal de .zones-grid-scroll sur écran étroit
      plutôt que de rétrécir les cases. */
-  .zones-grid-scroll{overflow-x:auto; padding-bottom:4px;}
-  .zone-row-cells{display:grid; grid-template-columns:repeat(16, minmax(104px,1fr)); grid-auto-rows:120px; gap:8px; flex:1 1 auto;}
+  /* Largeur ÉLASTIQUE (retour utilisateur réel : grille tronquée sur un écran Full HD — 16 cases à
+     104px min. dépassaient déjà de 42px en 1920px, et de plus de 400px avec la mise à l'échelle
+     Windows à 125 %, soit ~1536px utiles). Le nombre de colonnes suit la plus longue allée
+     (inline, renderZonesPage), minimum 60px par case : tient sans défilement jusqu'à ~1280px de
+     large ; en dessous seulement, défilement horizontal. Hauteur toujours figée (120px). Les
+     requêtes de conteneur ci-dessous resserrent le texte quand les cases rétrécissent. */
+  .zones-grid-scroll{overflow-x:auto; padding-bottom:4px; container-type:inline-size; container-name:zgrid;}
+  .zone-row-cells{display:grid; grid-template-columns:repeat(16, minmax(60px,1fr)); grid-auto-rows:120px; gap:6px; flex:1 1 auto; min-width:0;}
+  /* Préfixées par .zones-grid-scroll : les règles de base des cases sont déclarées PLUS BAS dans
+     cette feuille et l'emporteraient sinon à spécificité égale (piège rencontré ici). */
+  @container zgrid (max-width:1500px){
+    .zones-grid-scroll .zone-cell{padding:6px 4px; gap:3px;}
+    .zones-grid-scroll .zone-cell-code{font-size:12.5px;}
+    .zones-grid-scroll .zone-cell-occupant{font-size:10.5px; line-height:1.2;}
+    .zones-grid-scroll .zone-cell-label{font-size:10px;}
+    .zones-grid-scroll .zone-cell-meta{font-size:9px; gap:3px;}
+    .zones-grid-scroll .zone-cell-release{font-size:9px; padding:1px 2px;}
+    .zones-grid-scroll .zone-cell-progress{flex-basis:12px; min-width:8px;}
+    .zones-grid-scroll .zone-row-label{width:72px; flex-basis:72px; font-size:12px;}
+    .zones-grid-scroll .zone-row{gap:8px;}
+  }
+  @container zgrid (max-width:1200px){
+    .zones-grid-scroll .zone-cell-occupant{font-size:10px;}
+    .zones-grid-scroll .zone-cell-meta{font-size:8.5px; gap:2px;}
+    .zones-grid-scroll .zone-cell-progress{display:none;} /* la fraction « 3/4 » reste affichée */
+  }
   .zone-cell{
     border:1px solid var(--line); border-radius:4px; padding:8px 7px; text-align:center; font-family:'IBM Plex Sans',sans-serif;
     background:var(--panel); cursor:default; min-width:0; height:100%; box-sizing:border-box; overflow:hidden;
@@ -1268,7 +1292,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.72.0';
+const APP_VERSION = '1.72.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -8172,6 +8196,9 @@ function renderZonesPage(){
   const zonesInfo = computeStorageZones(state);
   const nbOccupied = Object.keys(byZone).filter(z => byZone[z].length && zonesInfo.list.includes(z)).length;
   const allees = state.config.storageZones||[];
+  // Même nombre de colonnes pour toutes les allées (celui de la plus longue) : les cases restent
+  // alignées d'une allée à l'autre et de taille identique, quelle que soit la largeur d'écran.
+  const zonesMaxCols = Math.max(1, ...allees.map(a => Number(a.nbEmplacements)||0));
   // finEstimee n'existe que sur les commandes du planning calculé (getSchedule) — nécessaire à
   // commandeDelayStatus pour repérer une échéance dépassée/à risque (filtre « Anomalies »).
   const schedById = {};
@@ -8206,7 +8233,7 @@ function renderZonesPage(){
       const d = new Date(o.dateCreation);
       if(!isNaN(d.getTime())){
         const days = Math.max(0, Math.floor((nowZ - d) / 86400000));
-        sinceShort = days === 0 ? "auj." : `${days} j`;
+        sinceShort = days === 0 ? "auj" : `${days}\u202Fj`; // espaces fines : tient dans une case étroite
         sinceTxt = days === 0 ? "depuis aujourd'hui" : `depuis ${days} jour${days>1?'s':''} (${d.toLocaleDateString('fr-FR')})`;
       }
     }
@@ -8267,7 +8294,7 @@ function renderZonesPage(){
         const info = occupantInfo(occupants[0]);
         const pct = info.total ? Math.round(info.done/info.total*100) : 0;
         const metaTitle = `${info.done}/${info.total} étape(s) terminée(s)${info.sinceTxt?` · occupe ce casier ${info.sinceTxt}`:' · date d\'attribution inconnue (commande créée avant ce suivi)'}`;
-        metaHtml = `<div class="zone-cell-meta" title="${escapeHtml(metaTitle)}"><span class="zone-cell-progress"><span style="width:${pct}%;"></span></span>${info.done}/${info.total}${info.sinceShort?` · ${info.sinceShort}`:''}</div>`;
+        metaHtml = `<div class="zone-cell-meta" title="${escapeHtml(metaTitle)}"><span class="zone-cell-progress"><span style="width:${pct}%;"></span></span>${info.done}/${info.total}${info.sinceShort?`\u202F·\u202F${info.sinceShort}`:''}</div>`;
       }
       return `<div class="zone-cell zone-cell-occupied${multiCls}${metaHtml?' zone-cell-has-meta':''}${matchCls}" style="border-color:${allee.couleur}; background:${hexToRgba(allee.couleur,0.14)};">
         <div class="zone-cell-code" style="color:${readableZoneTextColor(allee.couleur)};">${z}${flag}</div><div class="zone-cell-label">${namesHtml}</div>${metaHtml}
@@ -8276,7 +8303,7 @@ function renderZonesPage(){
     const label = allee.nom ? `${escapeHtml(allee.code)} — ${escapeHtml(allee.nom)}` : `Allée ${escapeHtml(allee.code)}`;
     return `<div class="zone-row">
       <div class="zone-row-label"><span class="zone-row-swatch" style="background:${allee.couleur};"></span>${label}</div>
-      <div class="zone-row-cells">${cellsHtml || `<div class="footer-note" style="margin:0;">Aucun emplacement (0 configuré)</div>`}</div>
+      <div class="zone-row-cells" style="grid-template-columns:repeat(${zonesMaxCols}, minmax(60px,1fr));">${cellsHtml || `<div class="footer-note" style="margin:0;">Aucun emplacement (0 configuré)</div>`}</div>
     </div>`;
   }).join('');
   // Une commande peut pointer vers une zone qui n'existe plus (allée réduite/supprimée depuis —

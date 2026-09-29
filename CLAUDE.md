@@ -1628,13 +1628,26 @@ Retour utilisateur réel, capture à l'appui : cases de tailles irrégulières (
 longueur du nom de commande et la présence d'un bouton « Prêt à expédier »), et besoin de retrouver
 vite une commande ou les casiers qui demandent une action.
 
-- **Cases de taille figée** — `.zone-row-cells{grid-template-columns:repeat(16, minmax(104px,1fr));
-  grid-auto-rows:120px;}` (hauteur FIXE, plus `minmax(78px, auto)`), `.zone-cell{height:100%;
+- **Cases de taille figée** — `.zone-row-cells{grid-auto-rows:120px;}` (hauteur FIXE — largeur, voir
+  « Largeur élastique » ci-dessous, plus `minmax(78px, auto)`), `.zone-cell{height:100%;
   overflow:hidden;}` : une case ne grandit plus jamais selon son contenu. Nom de commande tronqué à 3
   lignes (`-webkit-line-clamp`, nom complet + réf. client en infobulle), 1 ligne par nom pour un
   casier partagé (`.zone-cell-multi`). `.zones-grid-scroll` : défilement horizontal sur écran étroit
   plutôt que de rétrécir les cases. Vérifié au rendu (Playwright, export réel) : une seule taille de
   case (120×104 px) sur les 48.
+- **Largeur élastique, hauteur figée** (retour utilisateur réel, capture d'un écran Full HD tronqué) :
+  16 colonnes à 104px min. dépassaient déjà de 42px en 1920px, et de plus de 400px avec la mise à
+  l'échelle Windows à 125 % (~1536px utiles). Colonnes désormais `repeat(N, minmax(60px,1fr))` en
+  style inline (`zonesMaxCols` = plus longue allée — une allée de plus de 16 emplacements ne
+  retombe plus à la ligne), gap 6px : tient sans défilement jusqu'à ~1280px, défilement horizontal
+  seulement en dessous. Hauteur toujours 120px. `.zones-grid-scroll` est un conteneur de requête
+  (`container-name:zgrid`) : sous 1500px, textes resserrés (nom 10,5px, ligne d'infos 9px, mini-barre
+  réduite) ; sous 1200px, mini-barre masquée (la fraction « 3/4 » reste). **Piège rencontré** : ces
+  règles `@container` doivent être préfixées `.zones-grid-scroll` — les règles de base des cases sont
+  déclarées PLUS BAS dans la feuille et l'emportaient à spécificité égale (rien ne s'appliquait).
+  Ancienneté en espaces fines (« 1/1 · 12 j », « auj ») pour tenir dans une case de 64px. Vérifié
+  (Playwright, export réel) à 1920/1536/1366/1280 : aucun débordement, aucune ligne coupée, une seule
+  taille de case.
 - **Recherche** (`#zones-search-input`, `zonesSearchQuery`, même mécanisme de saisie « live » que
   `#pointages-search-input`) — code de casier, nom de commande ou réf. client.
 - **Filtres** (`zonesFilter` : `'tous'`|`'expedition'`|`'anomalie'`|`'libres'`, onglets `.view-tabs`
