@@ -2454,6 +2454,30 @@ par poste, rebuts annuels par motif — ce sont, elles, de véritables répartit
   regroupement "Sans motif", camembert avec données (dégradé + légende + pourcentages) et sans donnée
   (message explicite, y compris une série entièrement à 0).
 
+### Camemberts Jour / Semaine / Mois et cartes postes sur 2 lignes
+
+Retour utilisateur réel (capture de la Vue d'ensemble) : ajouter le temps de production par poste
+sur le jour, la semaine et le mois en cours, et « étirer les postes sur la hauteur » pour que les
+textes tronqués tiennent sur 2 lignes.
+
+- `computeProductionByMachineItems(st, start, end)` — même forme que
+  `computeAnnualProductionByMachine` (`{ machineId, machineNom, totalH }[]`, trié décroissant), mais
+  bâtie sur `computeProductionTimeByMachine` (déjà utilisée par le taux d'occupation par poste) :
+  sessions découpées aux bornes `[start, end[` (session encore ouverte comptée jusqu'à maintenant),
+  `dureeReelleH` pour une pièce terminée sans sessions, lot fusionné compté une fois.
+- Quatre cartes `.dash-pie-card` dans `.dash-pie-grid` (grille `auto-fit`, min 300px) : Aujourd'hui
+  (minuit→minuit), Cette semaine (lundi→lundi, `startOfWeek`), Ce mois (1er→1er du mois suivant,
+  libellé du mois), 12 derniers mois — chacune avec son total (`formatHeures`) et la couleur réelle
+  de chaque poste. **Le camembert « 12 derniers mois » utilise désormais le même calcul** (fenêtre
+  glissante de 365 jours) : l'ancien `computeAnnualProductionByMachine` (tâches terminées seulement,
+  bucketées sur `finReel`) donnait un total annuel INFÉRIEUR à celui du mois en cours (411 h contre
+  482 h sur l'export réel), incohérent une fois les quatre côte à côte. `computeAnnualProductionByMachine`
+  reste défini (plus appelé par la page). Rebuts par motif : inchangé.
+- Cartes postes : `.dmc-nom`/`.dmc-commande`/`.dmc-client`/`.dmc-piece` passent de `white-space:
+  nowrap` + ellipse à `-webkit-line-clamp:2` (texte complet en infobulle `title`) ;
+  `.dash-machine-grid{grid-auto-rows:1fr}` aligne toutes les cartes sur la plus haute (vérifié au
+  rendu, Playwright sur l'export réel : une seule hauteur, 131 px).
+
 ## Historique / Tendances
 
 Retour utilisateur réel : toutes les pages de suivi (Temps de production, Pointages, Risques de
