@@ -623,6 +623,80 @@
   .dash-machine-card .dmc-client, .dash-machine-card .dmc-piece{font-size:11px; color:var(--text-faint); margin-bottom:2px;}
   .dash-machine-card .dmc-empty{font-size:13px; color:var(--text-faint);}
 
+  /* Pointage de l'équipe (Vue d'ensemble) — voir renderTeamPointageSection. Classes préfixées pt-
+     pour ne jamais entrer en collision avec un nom générique (.now, .gap...). */
+  .pt-team{display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:0 14px;}
+  .pt-row{display:grid; grid-template-columns:minmax(170px,210px) minmax(0,1fr) minmax(170px,230px); gap:16px; align-items:center; padding:10px 0; border-top:1px solid var(--line-soft);}
+  .pt-row:first-child{border-top:none;}
+  .pt-who{display:flex; gap:10px; align-items:center; min-width:0;}
+  .pt-name{font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .pt-sub{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--text-faint);}
+  .pt-chip{display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; padding:1px 8px; border-radius:10px; margin-top:3px; white-space:nowrap;}
+  .pt-chip .dot{width:7px; height:7px; border-radius:50%; background:currentColor;}
+  .pt-chip.ok{background:rgba(53,117,87,0.13); color:var(--green);}
+  .pt-chip.warn{background:var(--amber-dim); color:var(--amber);}
+  .pt-chip.ko{background:rgba(178,58,48,0.12); color:var(--red);}
+  .pt-chip.off{background:var(--panel-2); color:var(--text-dim); border:1px solid var(--line-soft);}
+  .pt-tl{display:flex; flex-direction:column; gap:3px; min-width:0;}
+  .pt-track{position:relative; height:18px; background:#f1f3f1; border-radius:3px; overflow:hidden; border:1px solid var(--line-soft);}
+  .pt-seg{position:absolute; top:0; bottom:0;}
+  .pt-seg.work{background:var(--green);}
+  .pt-seg.gap{background:var(--red); opacity:0.82;}
+  .pt-seg.pause{background:repeating-linear-gradient(135deg, #c9cec9 0 3px, transparent 3px 6px);}
+  .pt-seg.outside{background:#e4e7e4;}
+  .pt-seg.leave{background:repeating-linear-gradient(135deg, #cfd4cf 0 2px, transparent 2px 8px);}
+  .pt-now{position:absolute; top:-2px; bottom:-2px; width:2px; background:var(--text); border-radius:1px;}
+  .pt-scale{position:relative; height:12px; font-size:9.5px; color:var(--text-faint); font-family:'IBM Plex Mono',monospace;}
+  .pt-scale span{position:absolute; transform:translateX(-50%);}
+  .pt-figs{display:flex; flex-direction:column; gap:2px; min-width:0;}
+  .pt-big{font-family:'IBM Plex Mono',monospace; font-size:14px; font-weight:600;}
+  .pt-big.red{color:var(--red);}
+  .pt-msg{font-size:11.5px; color:var(--text-dim); overflow-wrap:anywhere;}
+  .pt-msg.red{color:var(--red); font-weight:500;}
+  .pt-msg.amber{color:var(--amber); font-weight:500;}
+  .pt-legend{display:flex; gap:14px; flex-wrap:wrap; align-items:center; font-size:11.5px; color:var(--text-dim); margin-top:6px;}
+  .pt-legend i{display:inline-block; width:14px; height:9px; border-radius:2px; vertical-align:-1px; margin-right:4px;}
+  .pt-legend i.work{background:var(--green);} .pt-legend i.gap{background:var(--red); opacity:0.82;}
+  .pt-legend i.pause{background:repeating-linear-gradient(135deg, #c9cec9 0 3px, transparent 3px 6px);} .pt-legend i.outside{background:#e4e7e4;}
+  .pt-paused-list{display:flex; flex-direction:column; gap:6px;}
+  .pt-paused{display:flex; gap:12px; align-items:center; padding:8px 12px; border-radius:var(--radius); background:var(--amber-dim); border:1px solid rgba(160,109,26,0.3);}
+  .pt-paused-time{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:14px; color:var(--amber); flex:none; min-width:62px;}
+  /* Badges d'alerte de l'en-tête et bandeau de rappel opérateur */
+  button.small.pointage-alert-badge{border:none; color:#fff; font-weight:600;}
+  button.small.pointage-alert-badge.red{background:var(--red);}
+  button.small.pointage-alert-badge.amber{background:var(--amber);}
+  .pointage-reminder{display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:0 0 12px; padding:10px 14px; border-radius:var(--radius);
+    background:rgba(178,58,48,0.08); border:1px solid rgba(178,58,48,0.35); border-left:4px solid var(--red);}
+  .pointage-reminder .pr-ico{font-size:20px;}
+  .pointage-reminder .pr-body{flex:1; min-width:220px; display:flex; flex-direction:column; gap:4px;}
+  .pointage-reminder .pr-line{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  .pointage-reminder .pr-actions{display:flex; gap:6px; flex-wrap:wrap;}
+  /* Disponibilité des postes (Vue d'ensemble) — voir renderMachineAvailabilitySection */
+  .dp-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:10px;}
+  .dp-card{border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-2); padding:12px 13px 10px; display:flex; flex-direction:column; gap:8px; min-width:0;}
+  .dp-top{display:flex; align-items:center; gap:7px; min-width:0;}
+  .dp-swatch{width:10px; height:10px; border-radius:50%; flex:none;}
+  .dp-name{font-family:'Oswald',sans-serif; font-weight:600; font-size:12.5px; letter-spacing:0.5px; text-transform:uppercase; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .dp-when{display:flex; flex-direction:column;}
+  .dp-lblw{font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.8px;}
+  .dp-val{font-family:'Oswald',sans-serif; font-size:19px; font-weight:500;}
+  .dp-when.k-now .dp-val{color:var(--green);}
+  .dp-when.k-late .dp-val{color:var(--red);}
+  .dp-free{display:flex; align-items:baseline; gap:6px;}
+  .dp-num{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:15px;}
+  .dp-of{font-size:11.5px; color:var(--text-faint);}
+  .dp-days{display:flex; gap:3px; align-items:flex-end;}
+  .dp-day{flex:1; display:flex; flex-direction:column; gap:2px; min-width:0;}
+  .dp-day.beyond{opacity:0.45;}
+  .dp-bar{height:28px; background:#e7e9e7; border-radius:2px; position:relative; overflow:hidden;}
+  .dp-day.blocked .dp-bar{background:repeating-linear-gradient(135deg, #cfd4cf 0 2px, transparent 2px 6px);}
+  .dp-fill{position:absolute; left:0; right:0; bottom:0;}
+  .dp-lbl{font-size:9px; color:var(--text-faint); text-align:center; font-family:'IBM Plex Mono',monospace; white-space:nowrap;}
+  .dp-day.today .dp-lbl{color:var(--text); font-weight:600;}
+  .dp-sep{width:4px; flex:none;}
+  .dp-meta{font-size:11px; color:var(--text-faint);}
+  @media screen and (max-width:900px){ .pt-row{grid-template-columns:1fr; gap:6px;} }
+
   /* Cartes salariés/postes de "⏱ Temps de production" (voir CLAUDE.md « Refonte visuelle... ») —
      même esprit que la Vue d'ensemble ci-dessus (cartes + barres de progression, fond clair). */
   .tp-sort-bar{display:flex; align-items:center; gap:8px; margin:2px 0 12px; flex-wrap:wrap;}
@@ -1172,7 +1246,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.68.0';
+const APP_VERSION = '1.69.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1263,7 +1337,7 @@ let stateVersion = 0;
 let draft = null;
 let showNewForm = false;
 let showSettingsModal = false;
-const SETTINGS_SECTION_KEYS = ['moncompte', 'horaires', 'pause', 'affichage', 'utilisateurs', 'conges', 'backup', 'emailReport', 'machines', 'storageZones', 'importProfiles', 'risquesRetard', 'maintenance'];
+const SETTINGS_SECTION_KEYS = ['moncompte', 'horaires', 'pause', 'affichage', 'utilisateurs', 'conges', 'backup', 'emailReport', 'machines', 'storageZones', 'importProfiles', 'risquesRetard', 'suiviPointage', 'maintenance'];
 const SETTINGS_UI_STORAGE_KEY = 'planning-atelier-settings-ui';
 let settingsSectionOrder = [...SETTINGS_SECTION_KEYS];
 // Pop-up Paramètres en deux volets (catégories à gauche, contenu à droite) — une seule section
@@ -1278,9 +1352,11 @@ function loadSettingsUIPrefs(){
     const raw = localStorage.getItem(SETTINGS_UI_STORAGE_KEY);
     if(!raw) return;
     const parsed = JSON.parse(raw);
-    if(Array.isArray(parsed.order) && parsed.order.length === SETTINGS_SECTION_KEYS.length
-       && SETTINGS_SECTION_KEYS.every(k => parsed.order.includes(k))){
-      settingsSectionOrder = parsed.order;
+    if(Array.isArray(parsed.order)){
+      // Garde l'ordre personnalisé même quand une nouvelle catégorie apparaît : clés connues dans
+      // l'ordre enregistré, puis les nouvelles à leur place par défaut en fin de liste.
+      const kept = parsed.order.filter((k, i) => SETTINGS_SECTION_KEYS.includes(k) && parsed.order.indexOf(k) === i);
+      if(kept.length) settingsSectionOrder = [...kept, ...SETTINGS_SECTION_KEYS.filter(k => !kept.includes(k))];
     }
     if(typeof parsed.active === 'string' && SETTINGS_SECTION_KEYS.includes(parsed.active)){
       settingsActiveSection = parsed.active;
@@ -1895,6 +1971,13 @@ function migrateState(st){
   if(!st.config.margeEcheanceJours && st.config.margeEcheanceJours !== 0) st.config.margeEcheanceJours = 0;
   if(st.config.archiveApresJours === undefined) st.config.archiveApresJours = 365; // 0 = archivage automatique désactivé
   if(st.config.archiveAutoActive === undefined) st.config.archiveAutoActive = Number(st.config.archiveApresJours) > 0; // préserve le comportement des états déjà enregistrés
+  // Pointage de l'équipe / disponibilité des postes (voir CLAUDE.md) — actifs par défaut, seuils
+  // réglables dans Paramètres → Pointage & disponibilité.
+  if(st.config.pointageAlerteActive === undefined) st.config.pointageAlerteActive = true;
+  if(st.config.pointageSeuilSansPointageMin === undefined) st.config.pointageSeuilSansPointageMin = 15;
+  if(st.config.pointagePauseSeuilMin === undefined) st.config.pointagePauseSeuilMin = 30;
+  if(st.config.pointageRappelOperateur === undefined) st.config.pointageRappelOperateur = true;
+  if(st.config.dispoHorizonJours === undefined) st.config.dispoHorizonJours = 5;
   if(st.config.retardDemarragePopupActive === undefined) st.config.retardDemarragePopupActive = false; // désactivée par défaut, comportement inchangé pour qui ne l'active pas
   if(!st.config.emailReport) st.config.emailReport = { actif:false, destinataires:'', frequence:'quotidien', jourSemaine:1, heure:'18:00', dernierEnvoi:null }; // rapports par e-mail (voir CLAUDE.md « Alertes e-mail ») — désactivé par défaut
   if(!Array.isArray(st.commandesArchivees)) st.commandesArchivees = []; // commandes entièrement terminées depuis longtemps, écartées du moteur de planification pour garder l'appli réactive — toujours incluses dans l'export complet
@@ -3741,6 +3824,11 @@ function updateConfig(field, value){
     state.config.archiveAutoActive = !!value;
   } else if(field==='retardDemarragePopupActive'){
     state.config.retardDemarragePopupActive = !!value;
+  } else if(field==='pointageAlerteActive' || field==='pointageRappelOperateur'){
+    state.config[field] = !!value;
+  } else if(field==='dispoHorizonJours'){
+    const v = Math.round(Number(value));
+    if(isFinite(v) && v >= 1) state.config.dispoHorizonJours = Math.min(20, v);
   } else if(field==='pauseDebut' || field==='pauseFin'){
     if(value) state.config[field] = value;
   } else if(field==='appTitle'){
@@ -5729,9 +5817,13 @@ function backfillDureeReelle(st){
 // côté serveur (INSERT OR IGNORE), un même lot renvoyé deux fois ne crée jamais de doublon.
 async function archiveOldSessions(st){
   const candidates = []; // { o, entries }
+  // Une pièce clôturée AUJOURD'HUI garde ses sessions jusqu'au lendemain : la frise « Pointage de
+  // l'équipe » (Vue d'ensemble) et le rappel opérateur en ont besoin pour la journée en cours.
+  // Archivée au prochain démarrage de l'appli ou à la prochaine clôture d'un jour suivant.
+  const todayKey = toDateInputValue(new Date());
   const sweep = (commandes) => {
     (commandes||[]).forEach(c => c.pieces.forEach(o => {
-      if(o.statut === 'termine' && o.sessions && o.sessions.length > 0){
+      if(o.statut === 'termine' && o.sessions && o.sessions.length > 0 && !(o.finReel && o.finReel.slice(0,10) === todayKey)){
         const m = st.machines.find(mm=>mm.id===o.machineId);
         const entries = o.sessions.map(s => ({
           commandeId: c.id, pieceId: o.id, commandeNom: c.nom, refClient: c.refClient||'',
@@ -7357,6 +7449,7 @@ function renderHeader(){
     </div>
     <div class="toolbar-mini">
       ${!mobileHeader ? `<div class="status-leds">${renderShiftLed()}${renderSyncBadge()}</div>` : ''}
+      ${renderPointageHeaderBadges()}
       ${(() => { const n = pausedSinceEarlierTasks().length; return n>0 ? `<button class="small" data-action="show-paused-banner" title="Revoir les tâches en pause depuis la veille ou avant">⏸ ${n} en pause</button>` : ''; })()}
       <button class="small" data-action="open-settings" title="${isAdmin()?'Paramétrer les horaires de travail':'Mon compte — mot de passe, page d’accueil par défaut...'}">⚙ ${isAdmin()?'Paramétrer':'Mon compte'}</button>
       ${usersList.length > 1 ? `
@@ -7367,7 +7460,8 @@ function renderHeader(){
       <span class="footer-note" style="margin:0 4px;">${currentUsername?escapeHtml(currentUsername):''}</span>
       <button class="small" data-action="logout" title="Se déconnecter">Déconnexion</button>
     </div>
-  </header>`;
+  </header>
+  ${renderPointageReminderBanner()}`;
 }
 
 /* ==================== Page Congés ==================== */
@@ -9408,6 +9502,407 @@ function renderRisquesPage(){
 // écrite pour une autre page (Risques de retard, bannière de pauses, congés du jour) — aucune
 // nouvelle logique métier, seulement une lecture groupée en un seul coup d'œil "que se passe-t-il
 // maintenant dans l'atelier" plutôt que de naviguer entre plusieurs pages.
+/* ---------------- Pointage de l'équipe et disponibilité des postes (voir CLAUDE.md « Pointage de
+   l'équipe » / « Disponibilité des postes ») ---------------- */
+// Réglages (Paramètres → Pointage & disponibilité), avec repli sur les valeurs par défaut si un
+// état ancien ne les a pas encore (migrateState les pose, mais un rendu ne doit jamais en dépendre).
+function pointageSettings(st){
+  const c = (st||state).config || {};
+  const n = (v, d) => (typeof v === 'number' && isFinite(v) && v >= 0) ? v : d;
+  return {
+    actif: c.pointageAlerteActive !== false,
+    seuilSansPointageMin: n(c.pointageSeuilSansPointageMin, 15),
+    seuilPauseMin: n(c.pointagePauseSeuilMin, 30),
+    rappel: c.pointageRappelOperateur !== false
+  };
+}
+function dispoHorizonJours(st){
+  const v = Number(((st||state).config||{}).dispoHorizonJours);
+  return (isFinite(v) && v >= 1) ? Math.min(20, Math.round(v)) : 5;
+}
+// Petites opérations sur des listes d'intervalles [Date, Date] — triées/fusionnées en entrée.
+function mergeTimeIntervals(list){
+  const sorted = list.filter(([a,b]) => b > a).map(([a,b]) => [a,b]).sort((x,y) => x[0]-y[0]);
+  const out = [];
+  sorted.forEach(([a,b]) => {
+    const last = out[out.length-1];
+    if(last && a <= last[1]){ if(b > last[1]) last[1] = b; }
+    else out.push([a,b]);
+  });
+  return out;
+}
+function intersectTimeIntervals(A, B){
+  const out = [];
+  A.forEach(([a1,b1]) => B.forEach(([a2,b2]) => {
+    const a = a1 > a2 ? a1 : a2, b = b1 < b2 ? b1 : b2;
+    if(b > a) out.push([a,b]);
+  }));
+  return mergeTimeIntervals(out);
+}
+function subtractTimeIntervals(A, B){
+  let res = mergeTimeIntervals(A);
+  mergeTimeIntervals(B).forEach(([c,d]) => {
+    const next = [];
+    res.forEach(([a,b]) => {
+      if(d <= a || c >= b){ next.push([a,b]); return; }
+      if(c > a) next.push([a,c]);
+      if(d < b) next.push([d,b]);
+    });
+    res = next;
+  });
+  return res;
+}
+function timeIntervalsMinutes(list){
+  return list.reduce((s,[a,b]) => s + (b-a)/60000, 0);
+}
+// Congé approuvé couvrant ce jour (demi-journée seulement sur une demande d'un seul jour, même règle
+// que leaveRequestDurationDays).
+function userLeaveOnDay(uid, st, dayKey){
+  const r = (st.leaveRequests||[]).find(r => String(r.userId)===uid && r.statut==='approuve' && r.debut<=dayKey && r.fin>=dayKey);
+  if(!r) return null;
+  const t = (st.leaveTypes||[]).find(tt => tt.id===r.typeId);
+  return { label: t ? t.nom : 'Congé', demiJournee: r.debut===r.fin ? (r.demiJournee||null) : null };
+}
+// État de pointage de chaque salarié AUJOURD'HUI, à partir des seules séances (sessions[]) — la même
+// donnée que le temps de production, jamais un second système. Un salarié masqué de « Temps de
+// production » (Paramètres → Utilisateurs, ex. un compte administrateur sans activité d'atelier)
+// n'est jamais attendu ici non plus. Statuts :
+//  'pointe'       — au moins une séance ouverte en ce moment ;
+//  'sansPointage' — dans son horaire, hors pause prévue, rien en cours depuis le seuil réglé ;
+//  'attente'      — idem mais sous le seuil (délai de grâce entre deux tâches) ;
+//  'pause'        — pendant une de ses pauses prévues ; 'avant' / 'fini' — hors de sa journée ;
+//  'absent'       — congé approuvé toute la journée ; 'hors' — jour non travaillé.
+function computeTeamPointage(st, now){
+  const settings = pointageSettings(st);
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dayEnd = new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate()+1);
+  const dayKey = toDateInputValue(dayStart);
+  const dow = now.getDay();
+  const workDay = dow!==0 && dow!==6 && !isFrenchPublicHoliday(now);
+  const segsByUser = {};
+  (st.commandes||[]).forEach(c => c.pieces.forEach(o => (o.sessions||[]).forEach(se => {
+    const uid = String(se.operatorUserId || o.operatorUserId || '');
+    if(!uid) return;
+    const a = new Date(se.debut);
+    const b = se.fin ? new Date(se.fin) : now;
+    if(isNaN(a.getTime()) || isNaN(b.getTime()) || b <= a || b <= dayStart || a >= dayEnd) return;
+    (segsByUser[uid] = segsByUser[uid] || []).push({ a: a < dayStart ? dayStart : a, b: b > dayEnd ? dayEnd : b, open: !se.fin, realStart: a, c, o });
+  })));
+  const rows = [];
+  (usersList||[]).forEach(u => {
+    const uid = String(u.id);
+    if(isHiddenFromTempsProd(st, uid)) return;
+    const cfg = baseConfigForUser(uid, st);
+    const leave = userLeaveOnDay(uid, st, dayKey);
+    const segs = (segsByUser[uid]||[]).slice().sort((x,y) => x.a-y.a);
+    let expected = (workDay && !isDateBlocked(now, cfg)) ? dayIntervals(now, cfg).map(([a,b]) => [a,b]) : [];
+    const pauses = pauseWindowsFor(now, cfg).map(p => [p.start, p.end]);
+    if(leave && !leave.demiJournee) expected = [];
+    else if(leave && leave.demiJournee && expected.length){
+      const cut = pauses.length ? pauses[0][0] : new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate(), 12);
+      expected = leave.demiJournee === 'matin'
+        ? subtractTimeIntervals(expected, [[dayStart, cut]])
+        : subtractTimeIntervals(expected, [[cut, dayEnd]]);
+    }
+    const base = { userId: uid, username: u.username, leave, cfg };
+    if(!expected.length && !segs.length){
+      if(leave) rows.push({ ...base, status: 'absent', expected: [], pauses: [], work: [], gaps: [], gapMin: 0, currentGapMin: 0 });
+      return;
+    }
+    const work = mergeTimeIntervals(segs.map(s => [s.a, s.b]));
+    const nowCut = [[dayStart, now]];
+    const gaps = subtractTimeIntervals(intersectTimeIntervals(expected, nowCut), work);
+    const gapMin = Math.round(timeIntervalsMinutes(gaps));
+    const openSeg = segs.filter(s => s.open).sort((x,y) => y.realStart-x.realStart)[0] || null;
+    const lastEnd = work.length ? work[work.length-1][1] : null;
+    const from = lastEnd && lastEnd > dayStart ? lastEnd : dayStart;
+    const currentGapMin = openSeg ? 0 : Math.round(timeIntervalsMinutes(intersectTimeIntervals(expected, [[from, now]])));
+    const inPause = pauses.some(([a,b]) => now >= a && now < b);
+    const firstStart = expected.length ? expected[0][0] : null;
+    const lastEndExp = expected.length ? expected[expected.length-1][1] : null;
+    let status;
+    if(openSeg) status = 'pointe';
+    else if(!expected.length) status = 'hors';
+    else if(now < firstStart) status = 'avant';
+    else if(now >= lastEndExp) status = 'fini';
+    else if(inPause) status = 'pause';
+    else if(currentGapMin >= settings.seuilSansPointageMin) status = 'sansPointage';
+    else status = 'attente';
+    const openTask = openSeg ? {
+      cid: openSeg.c.id, oid: openSeg.o.id, commandeNom: openSeg.c.nom, piece: openSeg.o.piece,
+      machineNom: (st.machines.find(m => m.id===openSeg.o.machineId)||{}).nom || 'Sans poste',
+      since: openSeg.realStart
+    } : null;
+    rows.push({ ...base, status, expected, pauses, work, gaps, gapMin, currentGapMin, openTask, lastEnd });
+  });
+  const order = { sansPointage:0, attente:1, pointe:2, pause:3, avant:4, fini:5, hors:6, absent:7 };
+  return rows.sort((a,b) => (order[a.status]-order[b.status]) || a.username.localeCompare(b.username));
+}
+// Affaires mises en pause À LA MAIN aujourd'hui (isUnexplainedPause : jamais une pause déjeuner ni
+// hors horaires automatique) et pas reprises depuis le seuil réglé — compté en minutes de l'horaire
+// de la personne qui travaillait dessus (une pause posée à 16h30 ne « vieillit » pas la nuit).
+// Un lot fusionné ne compte qu'une fois.
+function computeLongPausedToday(st, now, seuilMin){
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const rows = [];
+  const seen = new Set();
+  const counts = {};
+  (st.commandes||[]).forEach(c => c.pieces.forEach(o => { if(o.fusionGroupId) counts[o.fusionGroupId] = (counts[o.fusionGroupId]||0) + 1; }));
+  (st.commandes||[]).forEach(c => c.pieces.forEach(o => {
+    if(!isUnexplainedPause(o)) return;
+    if(o.fusionGroupId){ if(seen.has(o.fusionGroupId)) return; seen.add(o.fusionGroupId); }
+    const closed = (o.sessions||[]).filter(s => s.fin);
+    if(!closed.length) return;
+    const last = closed.reduce((m,s) => s.fin > m.fin ? s : m);
+    const fin = new Date(last.fin);
+    if(isNaN(fin.getTime()) || fin < dayStart || fin > now) return;
+    const uid = String(last.operatorUserId || o.operatorUserId || '');
+    const minutes = Math.round(workingHoursBetween(fin, now, uid ? baseConfigForUser(uid, st) : st.config) * 60);
+    if(minutes < seuilMin) return;
+    const nb = o.fusionGroupId ? counts[o.fusionGroupId] : 1;
+    rows.push({
+      cid: c.id, oid: o.id, commandeNom: c.nom,
+      piece: nb > 1 ? `${o.piece} (+${nb-1} pièce${nb-1>1?'s':''} du même lot)` : o.piece,
+      etape: o.etape, machineId: o.machineId, since: fin, minutes, operatorUserId: uid
+    });
+  }));
+  return rows.sort((a,b) => b.minutes - a.minutes);
+}
+function pointageUserName(uid){
+  const u = (usersList||[]).find(uu => String(uu.id)===String(uid));
+  return u ? u.username : '—';
+}
+function pointageDurLabel(min){
+  min = Math.max(0, Math.round(min));
+  return min < 60 ? `${min} min` : `${Math.floor(min/60)} h ${String(min%60).padStart(2,'0')}`;
+}
+function pointageHm(d){ return `${String(d.getHours()).padStart(2,'0')}h${String(d.getMinutes()).padStart(2,'0')}`; }
+// Badges d'alerte de l'en-tête (superviseurs uniquement, toutes les pages) : cliquer mène à la Vue
+// d'ensemble, où le détail est affiché.
+function renderPointageHeaderBadges(){
+  if(!canSupervise()) return '';
+  const settings = pointageSettings();
+  if(!settings.actif) return '';
+  const now = new Date();
+  const nSans = computeTeamPointage(state, now).filter(r => r.status==='sansPointage').length;
+  const nPause = computeLongPausedToday(state, now, settings.seuilPauseMin).length;
+  let html = '';
+  if(nSans) html += `<button class="small pointage-alert-badge red" data-action="goto-dashboard" title="Salariés dans leur horaire sans tâche en cours depuis plus de ${settings.seuilSansPointageMin} min — détail dans la Vue d'ensemble">● ${nSans} sans pointage</button>`;
+  if(nPause) html += `<button class="small pointage-alert-badge amber" data-action="goto-dashboard" title="Affaires mises en pause aujourd'hui et pas reprises depuis plus de ${settings.seuilPauseMin} min — détail dans la Vue d'ensemble">⏸ ${nPause} affaire${nPause>1?'s':''} en pause</button>`;
+  return html;
+}
+// Rappel adressé à l'opérateur lui-même (identité active du poste), sur toutes les pages : rien en
+// cours depuis le seuil, ou une de SES affaires en pause depuis trop longtemps alors qu'il ne pointe
+// rien d'autre. Report de 15 min propre à ce navigateur (préférence de poste, pas une donnée
+// d'atelier — même principe que l'identité active elle-même).
+const POINTAGE_REMINDER_SNOOZE_KEY = 'planning-atelier-pointage-snooze';
+function pointageReminderSnoozedUntil(aid){
+  try{ const raw = JSON.parse(localStorage.getItem(POINTAGE_REMINDER_SNOOZE_KEY) || '{}'); return raw[aid] || 0; }
+  catch(e){ return 0; }
+}
+function snoozePointageReminder(minutes){
+  const aid = activeIdentityId(); if(!aid) return;
+  try{
+    const raw = JSON.parse(localStorage.getItem(POINTAGE_REMINDER_SNOOZE_KEY) || '{}');
+    raw[aid] = Date.now() + minutes*60000;
+    localStorage.setItem(POINTAGE_REMINDER_SNOOZE_KEY, JSON.stringify(raw));
+  }catch(e){ /* stockage indisponible : le rappel réapparaîtra au prochain rendu */ }
+  render();
+}
+function renderPointageReminderBanner(){
+  const settings = pointageSettings();
+  if(!settings.actif || !settings.rappel) return '';
+  const aid = activeIdentityId();
+  if(!aid || Date.now() < pointageReminderSnoozedUntil(aid)) return '';
+  const now = new Date();
+  const me = computeTeamPointage(state, now).find(r => r.userId===String(aid));
+  if(!me || me.status==='pointe') return '';
+  const myPaused = computeLongPausedToday(state, now, settings.seuilPauseMin).filter(r => r.operatorUserId===String(aid));
+  const sans = me.status==='sansPointage';
+  if(!sans && !myPaused.length) return '';
+  const lines = [];
+  if(sans) lines.push(`<div class="pr-line"><b>Aucune tâche en cours depuis ${pointageDurLabel(me.currentGapMin)}.</b> Pensez à démarrer la tâche sur laquelle vous travaillez.</div>`);
+  myPaused.slice(0, 3).forEach(p => lines.push(`<div class="pr-line">⏸ <b>${escapeHtml(p.commandeNom)}</b> · ${escapeHtml(p.piece||'')} est en pause depuis ${pointageDurLabel(p.minutes)}
+    <button class="small" data-action="resume-paused-task" data-cid="${p.cid}" data-oid="${p.oid}">▶ Reprendre</button></div>`));
+  return `<div class="pointage-reminder" role="status">
+    <span class="pr-ico">🔔</span>
+    <div class="pr-body">${lines.join('')}</div>
+    <div class="pr-actions">
+      ${sans && currentPage!=='planning' ? `<button class="small" data-action="goto-planning">Voir mes tâches</button>` : ''}
+      <button class="small ghost" data-action="snooze-pointage-reminder" data-min="15">Me le rappeler dans 15 min</button>
+    </div>
+  </div>`;
+}
+// Bloc « Pointage de l'équipe aujourd'hui » de la Vue d'ensemble : une ligne par salarié attendu,
+// frise de sa journée (vert pointé, rouge dans l'horaire sans pointage, hachuré pause prévue).
+function renderTeamPointageSection(now){
+  const settings = pointageSettings();
+  const rows = computeTeamPointage(state, now);
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dayEnd = new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate()+1);
+  const prod = computeProductionTimeByUser(state, dayStart, dayEnd);
+  const paused = computeLongPausedToday(state, now, settings.seuilPauseMin);
+  const chip = {
+    pointe: ['ok','Pointe'], sansPointage: ['ko','Sans pointage'], attente: ['warn','Entre deux tâches'],
+    pause: ['off','En pause prévue'], avant: ['off','Pas encore commencé'], fini: ['off','Journée terminée'],
+    hors: ['off','Hors horaires'], absent: ['off','Absent']
+  };
+  const rowsHtml = rows.map(r => {
+    const allPts = [...r.expected.flat(), ...r.work.flat()];
+    // Sans aucun horaire à afficher (absent toute la journée) : une journée d'atelier type, 7h-18h,
+    // plutôt qu'un axe de 24 h illisible.
+    let axA = allPts.length ? new Date(Math.min(...allPts)) : new Date(dayStart.getTime() + 7*3600000);
+    let axB = allPts.length ? new Date(Math.max(...allPts, r.status==='pointe' ? now.getTime() : 0)) : new Date(dayStart.getTime() + 18*3600000);
+    axA = new Date(axA.getFullYear(), axA.getMonth(), axA.getDate(), axA.getHours());
+    axB = new Date(axB.getFullYear(), axB.getMonth(), axB.getDate(), axB.getHours() + (axB.getMinutes()||axB.getSeconds() ? 1 : 0));
+    if(axB <= axA) axB = new Date(axA.getTime() + 3600000);
+    const span = axB - axA;
+    const pct = d => Math.max(0, Math.min(100, ((d - axA) / span) * 100));
+    const seg = (cls, a, b) => `<div class="pt-seg ${cls}" style="left:${pct(a)}%;width:${Math.max(0.3, pct(b)-pct(a))}%"></div>`;
+    let track = '';
+    if(r.status==='absent') track = `<div class="pt-seg leave" style="left:0;width:100%"></div>`;
+    else {
+      const outside = subtractTimeIntervals([[axA, axB]], r.expected);
+      outside.forEach(([a,b]) => track += seg('outside', a, b));
+      r.pauses.forEach(([a,b]) => { if(b > axA && a < axB) track += seg('pause', a, b); });
+      r.gaps.forEach(([a,b]) => track += seg('gap', a, b));
+      r.work.forEach(([a,b]) => track += seg('work', a, b));
+      if(now > axA && now < axB) track += `<div class="pt-now" style="left:${pct(now)}%"></div>`;
+    }
+    const ticks = [];
+    for(let t = new Date(axA.getTime() + 3600000); t < axB; t = new Date(t.getTime() + 3600000)){
+      if(span / 3600000 > 12 && t.getHours() % 2) continue;
+      ticks.push(`<span style="left:${pct(t)}%">${t.getHours()}h</span>`);
+    }
+    const [chipCls, chipLbl] = chip[r.status];
+    const workH = (prod[r.userId] && prod[r.userId].totalH) || 0;
+    let figs;
+    if(r.status==='absent') figs = `<div class="pt-msg">${escapeHtml(r.leave ? r.leave.label : 'Congé')}</div>`;
+    else {
+      const big = `<div class="pt-big ${r.status==='sansPointage'?'red':''}">${formatHeures(workH)} pointée${workH>=2?'s':''}</div>`;
+      let msg = '';
+      if(r.openTask) msg = `<div class="pt-msg">${escapeHtml(r.openTask.machineNom)} · ${escapeHtml(r.openTask.commandeNom)}${r.openTask.piece?' · '+escapeHtml(r.openTask.piece):''} depuis ${pointageHm(r.openTask.since)}</div>`;
+      else if(r.status==='sansPointage') msg = `<div class="pt-msg red">Rien en cours depuis ${pointageHm(r.lastEnd && r.lastEnd > r.expected[0][0] ? r.lastEnd : r.expected[0][0])} · ${pointageDurLabel(r.currentGapMin)} dans l'horaire</div>`;
+      else if(r.status==='attente') msg = `<div class="pt-msg">Sans tâche depuis ${pointageDurLabel(r.currentGapMin)}</div>`;
+      const gapNote = (r.gapMin >= settings.seuilSansPointageMin && r.status!=='sansPointage') ? `<div class="pt-msg amber">${pointageDurLabel(r.gapMin)} sans pointage aujourd'hui</div>` : '';
+      figs = big + msg + gapNote;
+    }
+    const exp = r.expected.length ? `${pointageHm(r.expected[0][0])} – ${pointageHm(r.expected[r.expected.length-1][1])}` : (r.leave ? '' : 'hors horaires');
+    return `<div class="pt-row st-${r.status}">
+      <div class="pt-who">${renderAvatar(r.username)}<div style="min-width:0">
+        <div class="pt-name">${escapeHtml(r.username)}</div>
+        <div class="pt-sub">${exp}</div>
+        <span class="pt-chip ${chipCls}"><span class="dot"></span>${chipLbl}</span></div></div>
+      <div class="pt-tl"><div class="pt-track">${track}</div><div class="pt-scale">${ticks.join('')}</div></div>
+      <div class="pt-figs">${figs}</div>
+    </div>`;
+  }).join('');
+  const pausedHtml = paused.length ? `
+    <div class="trend-section-title" style="margin-top:14px; color:var(--amber);">⏸ Affaires en pause depuis plus de ${settings.seuilPauseMin} min aujourd'hui</div>
+    <div class="pt-paused-list">${paused.map(p => {
+      const m = state.machines.find(mm => mm.id===p.machineId);
+      return `<div class="pt-paused">
+        <span class="pt-paused-time">${pointageDurLabel(p.minutes)}</span>
+        <div style="min-width:0; flex:1;">
+          <div><button class="temps-prod-commande-link" data-action="isolate-commande-goto-planning" data-cid="${p.cid}" style="background:none; border:none; padding:0; color:var(--text); font-weight:600;">${escapeHtml(p.commandeNom)}</button> · ${escapeHtml([p.piece,p.etape].filter(Boolean).join(' · '))}</div>
+          <div class="pt-msg">${m ? (m.icone ? m.icone+' ' : '')+escapeHtml(m.nom) : 'Sans poste'} · ${escapeHtml(pointageUserName(p.operatorUserId))} · en pause depuis ${pointageHm(p.since)}</div>
+        </div>
+      </div>`; }).join('')}</div>` : '';
+  const empty = !rows.length ? `<div class="footer-note" style="text-align:left;">Aucun salarié attendu aujourd'hui.</div>` : '';
+  return `<div class="trend-section-title" style="margin-top:20px;">👥 Pointage de l'équipe aujourd'hui</div>
+    ${!settings.actif ? `<div class="footer-note" style="text-align:left;">Alertes désactivées (Paramètres → Pointage & disponibilité) — la frise reste affichée.</div>` : ''}
+    <div class="pt-team">${rowsHtml}${empty}</div>
+    <div class="pt-legend">
+      <span><i class="work"></i>Pointé</span><span><i class="gap"></i>Dans l'horaire, sans pointage</span>
+      <span><i class="pause"></i>Pause prévue</span><span><i class="outside"></i>Hors horaire / à venir</span><span>▎ Maintenant</span>
+      <span class="footer-note" style="margin:0;">Alerte au-delà de ${settings.seuilSansPointageMin} min sans tâche en cours.</span>
+    </div>
+    ${pausedHtml}`;
+}
+// Disponibilité des postes : prochain créneau libre d'au moins DISPO_CRENEAU_MIN_H dans le planning
+// calculé, et heures libres (capacité − charge planifiée) sur l'horizon réglé. Lot fusionné compté
+// une fois (ses membres partagent le même créneau). Sous-traitance exclue : pas de capacité propre.
+const DISPO_CRENEAU_MIN_H = 1;
+function computeMachineAvailability(st, schedule, now, horizon){
+  const nbDays = Math.max(10, horizon);
+  const ops = schedule.flatMap(c => c.pieces);
+  return (st.machines||[]).filter(m => !machineNameLooksLikeSousTraitance(m.nom)).map(m => {
+    const cfg = configForMachineId(m.id, st);
+    const seen = new Set();
+    const mine = ops.filter(o => {
+      if(o.machineId!==m.id || o.statut==='termine' || o.sousTraitance || o.horsPlanning || !o.start || !o.end || o.end <= now) return false;
+      if(o.fusionGroupId){ if(seen.has(o.fusionGroupId)) return false; seen.add(o.fusionGroupId); }
+      return true;
+    }).sort((a,b) => a.start - b.start);
+    const days = [];
+    let d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    let guard = 0;
+    while(days.length < nbDays && guard++ < 60){
+      const dow = d.getDay();
+      if(dow!==0 && dow!==6 && !isFrenchPublicHoliday(d)){
+        const de = new Date(d.getFullYear(), d.getMonth(), d.getDate()+1);
+        const from = d < now ? now : d;
+        const cap = isDateBlocked(d, cfg) ? 0 : workingHoursBetween(from, de, cfg);
+        let load = 0;
+        if(cap > 0) mine.forEach(o => {
+          const a = o.start > from ? o.start : from, b = o.end < de ? o.end : de;
+          if(b > a) load += workingHoursBetween(a, b, cfg);
+        });
+        days.push({ date: new Date(d), cap, load: Math.min(load, cap) });
+      }
+      d = new Date(d.getFullYear(), d.getMonth(), d.getDate()+1);
+    }
+    let cursor = nextWorkingInstant(now, cfg);
+    for(const o of mine){
+      if(o.end <= cursor) continue;
+      if(o.start > cursor && workingHoursBetween(cursor, o.start, cfg) >= DISPO_CRENEAU_MIN_H) break;
+      if(o.end > cursor) cursor = nextWorkingInstant(o.end, cfg);
+    }
+    const hz = days.slice(0, horizon);
+    const capH = hz.reduce((s,x) => s + x.cap, 0);
+    const freeH = hz.reduce((s,x) => s + (x.cap - x.load), 0);
+    return { machineId: m.id, nom: m.nom, icone: m.icone || null, couleur: m.couleur || null, nbTaches: mine.length, nextFree: cursor, days, capH, freeH };
+  }).sort((a,b) => (a.nextFree - b.nextFree) || (b.freeH - a.freeH));
+}
+function dispoWhenLabel(d, now){
+  if(d - now <= 5*60000) return 'Maintenant';
+  const hm = `${d.getHours()}h${String(d.getMinutes()).padStart(2,'0')}`;
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dd = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diff = Math.round((dd - today) / 86400000);
+  if(diff === 0) return `Aujourd'hui ${hm}`;
+  if(diff === 1) return `Demain ${hm}`;
+  const jours = ['Dim.','Lun.','Mar.','Mer.','Jeu.','Ven.','Sam.'];
+  return `${jours[d.getDay()]} ${d.getDate()}/${d.getMonth()+1} · ${hm}`;
+}
+function renderMachineAvailabilitySection(schedule, now){
+  const horizon = dispoHorizonJours();
+  const list = computeMachineAvailability(state, schedule, now, horizon);
+  if(!list.length) return '';
+  const jours = ['D','L','M','M','J','V','S'];
+  const cards = list.map(p => {
+    const kind = (p.nextFree - now <= 5*60000) ? 'now' : ((p.capH <= 0 || p.freeH < p.capH * 0.15) ? 'late' : 'soon');
+    const col = p.couleur || 'var(--accent)';
+    const bars = p.days.map((x, i) => {
+      const pct = x.cap > 0 ? Math.round(x.load / x.cap * 100) : 0;
+      const sep = (i > 0 && x.date.getDay() === 1) ? `<div class="dp-sep"></div>` : '';
+      const tip = x.cap > 0 ? `${formatDateFr(toDateInputValue(x.date))} : ${pct} % chargé · ${formatHeures(x.cap - x.load)} libres` : `${formatDateFr(toDateInputValue(x.date))} : poste indisponible`;
+      return `${sep}<div class="dp-day ${i===0?'today':''} ${i>=horizon?'beyond':''} ${x.cap<=0?'blocked':''}" title="${tip}">
+        <div class="dp-bar"><div class="dp-fill" style="height:${pct}%;background:${escapeHtml(col)}"></div></div>
+        <div class="dp-lbl">${jours[x.date.getDay()]}${x.date.getDate()}</div></div>`;
+    }).join('');
+    return `<div class="dp-card">
+      <div class="dp-top"><span class="dp-swatch" style="background:${escapeHtml(col)}"></span>${p.icone ? `<span>${p.icone}</span>` : ''}<span class="dp-name" title="${escapeHtml(p.nom)}">${escapeHtml(p.nom)}</span></div>
+      <div class="dp-when k-${kind}"><span class="dp-lblw">${kind==='now' ? 'Libre' : 'Prochain créneau libre'}</span><span class="dp-val">${dispoWhenLabel(p.nextFree, now)}</span></div>
+      <div class="dp-free"><span class="dp-num">${formatHeures(p.freeH)}</span><span class="dp-of">libres sur ${horizon} jour${horizon>1?'s':''} ouvré${horizon>1?'s':''}</span></div>
+      <div class="dp-days">${bars}</div>
+      <div class="dp-meta">${p.nbTaches ? `${p.nbTaches} tâche${p.nbTaches>1?'s':''} planifiée${p.nbTaches>1?'s':''}` : 'Aucune tâche planifiée'}</div>
+    </div>`;
+  }).join('');
+  return `<div class="trend-section-title" style="margin-top:24px;">🗓 Disponibilité des postes</div>
+    <div class="dp-grid">${cards}</div>
+    <div class="footer-note" style="text-align:left; margin-top:6px;">Prochain créneau libre : premier trou d'au moins ${DISPO_CRENEAU_MIN_H} h dans le planning du poste. Heures libres : capacité du poste moins le travail planifié sur les ${horizon} prochains jours ouvrés (réglable dans Paramètres). Barres : charge de chaque jour ouvré (pleine = poste saturé, estompée = au-delà de l'horizon). Triés du plus tôt disponible au plus chargé ; Sous-traitance exclue.</div>`;
+}
 function renderDashboardPage(){
   const schedule = getSchedule();
   const active = schedule.filter(c => c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine'));
@@ -9525,8 +10020,11 @@ function renderDashboardPage(){
       </div>
     </div>
 
+    ${renderTeamPointageSection(now)}
+
     <div class="trend-section-title" style="margin-top:20px;">Postes</div>
     <div class="dash-machine-grid">${machineCards}</div>
+    ${renderMachineAvailabilitySection(schedule, now)}
     ${pausesSuspectesHtml}
 
     <div class="trend-section-title" style="margin-top:24px;">⏱ Temps de production par poste</div>
@@ -11380,7 +11878,28 @@ function renderSettingsModal(){
         <input type="checkbox" ${cfg.retardDemarragePopupActive?'checked':''} data-action="update-config" data-field="retardDemarragePopupActive">
         Avertir l'opérateur par une pop-up quand il démarre une tâche en retard sur son démarrage théorique
       </label>
-      <div class="footer-note" style="text-align:left; padding-bottom:10px;">S'affiche juste après un clic sur "▶ Démarrer" (jamais à la reprise après pause), seulement si le retard dépasse un demi-jour — le même seuil et la même donnée que le badge "🕓" déjà affiché sur les tâches concernées (voir "Retard de démarrage" dans la page ⚠️ Risques de retard). Désactivée par défaut.</div>` }
+      <div class="footer-note" style="text-align:left; padding-bottom:10px;">S'affiche juste après un clic sur "▶ Démarrer" (jamais à la reprise après pause), seulement si le retard dépasse un demi-jour — le même seuil et la même donnée que le badge "🕓" déjà affiché sur les tâches concernées (voir "Retard de démarrage" dans la page ⚠️ Risques de retard). Désactivée par défaut.</div>` },
+    suiviPointage: { title: '👥 Pointage & disponibilité', body: `
+      <label class="statut-chip" style="margin-bottom:10px;">
+        <input type="checkbox" ${cfg.pointageAlerteActive!==false?'checked':''} data-action="update-config" data-field="pointageAlerteActive">
+        Alerter quand un salarié ne pointe pas ou laisse une affaire trop longtemps en pause
+      </label>
+      <div class="commande-top-fields" style="grid-template-columns:1fr 1fr 1fr;">
+        <label class="field">Sans pointage au-delà de (min)
+          <input type="number" min="1" step="1" value="${pointageSettings().seuilSansPointageMin}" data-action="update-config" data-field="pointageSeuilSansPointageMin">
+        </label>
+        <label class="field">Affaire en pause au-delà de (min)
+          <input type="number" min="1" step="1" value="${pointageSettings().seuilPauseMin}" data-action="update-config" data-field="pointagePauseSeuilMin">
+        </label>
+        <label class="field">Heures libres des postes sur (jours ouvrés)
+          <input type="number" min="1" max="20" step="1" value="${dispoHorizonJours()}" data-action="update-config" data-field="dispoHorizonJours">
+        </label>
+      </div>
+      <label class="statut-chip" style="margin:10px 0;">
+        <input type="checkbox" ${cfg.pointageRappelOperateur!==false?'checked':''} data-action="update-config" data-field="pointageRappelOperateur">
+        Afficher aussi un rappel à l'opérateur lui-même, sur son poste
+      </label>
+      <div class="footer-note" style="text-align:left; padding-bottom:10px;">« Sans pointage » : dans son horaire, hors pause prévue et hors congé, aucune tâche en cours depuis le seuil. « Affaire en pause » : mise en pause à la main aujourd'hui (jamais une pause déjeuner ou hors horaires automatique) et pas reprise depuis le seuil. Les superviseurs voient un badge dans l'en-tête et le détail dans la Vue d'ensemble ; l'opérateur voit un bandeau de rappel (reportable de 15 min). Un salarié décoché de « Afficher dans le temps de production » (Paramètres → Utilisateurs) n'est jamais attendu.</div>` }
   };
 
   // "Mon compte" est la SEULE section accessible à tout rôle (mot de passe, page d'accueil par
@@ -13183,6 +13702,7 @@ function dispatchClickAction(action, el){
     case 'open-settings': showSettingsModal = true; render(); loadUsersList(); break;
     case 'goto-conges': currentPage = 'conges'; render(); break;
     case 'goto-planning': currentPage = 'planning'; render(); break;
+    case 'snooze-pointage-reminder': snoozePointageReminder(Number(el.dataset.min)||15); break;
     case 'goto-temps-prod': currentPage = 'tempsProd'; render(); break;
     case 'goto-zones': currentPage = 'zones'; render(); break;
     case 'goto-risques': currentPage = 'risques'; render(); break;

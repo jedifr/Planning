@@ -2501,6 +2501,59 @@ textes tronqués tiennent sur 2 lignes.
   `.dash-machine-grid{grid-auto-rows:1fr}` aligne toutes les cartes sur la plus haute (vérifié au
   rendu, Playwright sur l'export réel : une seule hauteur, 131 px).
 
+### Pointage de l'équipe, alertes et rappel opérateur
+
+Demande manager réelle : repérer vite un salarié qui ne pointe pas, ou qui laisse une affaire trop
+longtemps en pause dans la journée. Maquette validée avant codage (artefact « Pointage et
+disponibilité des postes »), seuils et horizon demandés réglables.
+
+- Réglages (`migrateState`, Paramètres → nouvelle section admin « 👥 Pointage & disponibilité »,
+  `sectionDefs.suiviPointage`) : `config.pointageAlerteActive` (true), `pointageSeuilSansPointageMin`
+  (15), `pointagePauseSeuilMin` (30), `pointageRappelOperateur` (true), `dispoHorizonJours` (5, borné
+  1-20). `pointageSettings()`/`dispoHorizonJours()` relisent avec repli sur ces défauts.
+  `loadSettingsUIPrefs` garde désormais l'ordre personnalisé des catégories quand une nouvelle
+  apparaît (nouvelles clés ajoutées en fin), au lieu de tout réinitialiser.
+- `computeTeamPointage(st, now)` — une ligne par salarié de `usersList` **non masqué** de « Temps de
+  production » (`isHiddenFromTempsProd` : même case, un compte admin sans activité d'atelier n'est
+  jamais attendu). Horaire attendu = `dayIntervals` de `baseConfigForUser` (pauses exclues, jour
+  ouvré, congé approuvé retiré — demi-journée coupée à la première pause). Travail = séances du jour
+  (`sessions[]`, par `operatorUserId` réel de la séance). Statuts : `pointe`, `sansPointage` (dans
+  l'horaire, hors pause, rien en cours depuis le seuil), `attente` (sous le seuil), `pause`,
+  `avant`, `fini`, `hors`, `absent`. `gapMin` = minutes de l'horaire sans pointage depuis le début
+  de journée ; `currentGapMin` = depuis la fin de la dernière séance.
+- `computeLongPausedToday(st, now, seuil)` — pièces `isUnexplainedPause` (pause manuelle, jamais
+  déjeuner/hors horaires automatique) mises en pause aujourd'hui, depuis plus du seuil compté en
+  minutes de l'horaire de la personne (une pause de 16h30 ne vieillit pas la nuit) ; lot fusionné
+  compté une fois.
+- Affichage : badges rouges/ambre dans l'en-tête pour `canSupervise()` (`renderPointageHeaderBadges`,
+  clic → Vue d'ensemble) ; bloc « 👥 Pointage de l'équipe aujourd'hui » de la Vue d'ensemble
+  (`renderTeamPointageSection` : frise par salarié vert pointé / rouge sans pointage / hachuré pause
+  prévue, heures pointées via `computeProductionTimeByUser`, liste des affaires en pause) ; bandeau
+  de rappel à l'identité active du poste (`renderPointageReminderBanner`, rendu juste après
+  `</header>` donc sur toutes les pages : « Aucune tâche en cours depuis… », et ses propres affaires
+  en pause avec « ▶ Reprendre » quand il ne pointe rien d'autre ; report de 15 min par navigateur,
+  `POINTAGE_REMINDER_SNOOZE_KEY`). Classes CSS préfixées `pt-`/`dp-` : un premier essai (maquette)
+  avait vu une classe `.now` entrer en collision avec un autre élément.
+- **`archiveOldSessions` n'archive plus une pièce clôturée AUJOURD'HUI** (`finReel` du jour) : sans
+  ça, la frise perdait les séances d'une tâche terminée dans la journée (vidées dès l'archivage
+  confirmé). Elles sont archivées au prochain démarrage ou à la prochaine clôture d'un jour suivant.
+- Vérifié sur l'export réel du 29/09 à 11h45 : Sébastien, Opérateur 3 et 8 « sans pointage »
+  (4 h 45 / 3 h 45), Romain pointe (1 h 02 sans pointage le matin), STELLANTIS R046006818 en pause
+  depuis 43 min ; rappel absent pendant la pause prévue de Sébastien (11h50-13h30).
+
+### Disponibilité des postes (Vue d'ensemble)
+
+- `computeMachineAvailability(st, schedule, now, horizon)` — par poste (hors Sous-traitance,
+  `machineNameLooksLikeSousTraitance`, sans capacité propre) : tâches non terminées du planning
+  calculé (lot fusionné une fois), charge et capacité (`workingHoursBetween`, `configForMachineId`,
+  jour bloqué = capacité 0) par jour ouvré sur `max(10, horizon)` jours, **prochain créneau libre**
+  = premier trou d'au moins `DISPO_CRENEAU_MIN_H` (1 h) ramené à un instant ouvré, **heures libres**
+  = capacité − charge sur `horizon` jours. Trié du plus tôt disponible au plus chargé.
+- `renderMachineAvailabilitySection` — une carte par poste : « Libre · Maintenant » en vert,
+  prochain créneau (« Aujourd'hui 15h28 », « Jeu. 1/10 · 9h58 ») en rouge si moins de 15 % de la
+  capacité reste libre, heures libres, barres de charge par jour (estompées au-delà de l'horizon,
+  hachurées si poste indisponible).
+
 ## Historique / Tendances
 
 Retour utilisateur réel : toutes les pages de suivi (Temps de production, Pointages, Risques de
