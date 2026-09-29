@@ -911,6 +911,14 @@
   .alt-cal-periode-remove{border:none; background:transparent; cursor:pointer; color:var(--text-faint); font-size:12px; line-height:1; padding:0;}
   .alt-cal-periode-remove:hover{color:var(--red);}
   .toolbar-mini{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  /* Barre d'outils de l'en-tête : une seule hauteur pour tous ses éléments (voyants, boutons, sélecteur
+     d'identité, nom) — chacun avait sa propre hauteur selon ses paddings (button.small, select,
+     .status-leds), d'où une rangée en dents de scie. Limité à l'en-tête : .toolbar-mini sert ailleurs. */
+  header.top .toolbar-mini > *{height:28px; box-sizing:border-box;}
+  header.top .toolbar-mini > button{padding:0 10px; display:inline-flex; align-items:center; line-height:1;}
+  header.top .toolbar-mini > select{padding:0 6px;}
+  header.top .toolbar-mini > .status-leds{padding:0 9px;}
+  header.top .toolbar-mini > span{display:inline-flex; align-items:center;}
 
   .modal-overlay{
     position:fixed; inset:0; background:rgba(20,22,20,0.5); z-index:1000;
@@ -1118,7 +1126,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.64.0';
+const APP_VERSION = '1.64.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du

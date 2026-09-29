@@ -3758,6 +3758,12 @@ horizontal exactement comme `.title-block` en aurait souffert sans son propre `f
   ambre (conflit). Toujours masqués sur téléphone (`mobileHeader`) : une infobulle n'existe pas au
   doigt, un voyant sans explication accessible n'y aurait pas de sens. Les classes `.shift-badge`/
   `.shift-dot` ont été supprimées (plus aucun usage).
+- **Hauteur uniforme de la barre d'outils de l'en-tête** (retour utilisateur réel, capture à l'appui) :
+  voyants, boutons (`button.small`), sélecteur d'identité et nom d'utilisateur avaient chacun leur
+  propre hauteur (paddings différents), d'où une rangée en dents de scie. `header.top .toolbar-mini >
+  *{height:28px; box-sizing:border-box;}` + paddings horizontaux seuls pour boutons/select/voyants —
+  limité à `header.top` : `.toolbar-mini` sert aussi ailleurs (Kanban, cartes commande...), où cette
+  hauteur fixe n'a pas été demandée. Vérifié au rendu (Playwright) : les 6 éléments à 28 px, même `top`.
 
 ## Tests
 
