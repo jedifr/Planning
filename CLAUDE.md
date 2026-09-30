@@ -1413,8 +1413,13 @@ l'utilisateur récupère lui-même dans sa propre session TimeMoto (reCAPTCHA fr
 
 - **Récupération du jeton par marque-page** (`TIMEMOTO_BOOKMARKLET`, `public/index.html`) — un
   bookmarklet `javascript:` que l'utilisateur glisse dans sa barre de favoris, puis clique depuis un
-  onglet TimeMoto où il est connecté : il lit le jeton de la session OIDC du site (clé contenant
-  `oidc.user` dans `sessionStorage`/`localStorage`, `access_token`) et le copie dans le presse-papier.
+  onglet TimeMoto où il est connecté : il parcourt TOUT le
+  `sessionStorage`/`localStorage` et retient la première valeur qui est un JWT non expiré dont
+  l'audience ou le scope contient `public-api` (valeur directe, ou champ `access_token`/`accessToken`/
+  `token` d'un JSON) puis la copie dans le presse-papier. Première version (v1.78.0) : ne cherchait
+  que les clés contenant `oidc.user` — le vrai site TimeMoto range son jeton ailleurs (« Jeton
+  introuvable » constaté en réel, v1.78.1). Si rien n'est trouvé, le marque-page affiche uniquement
+  les NOMS des clés du stockage (jamais leurs valeurs) pour diagnostiquer sans exposer de secret.
   Ne lit que le jeton que le navigateur de la personne détient déjà — aucun contournement. Bouton
   « Copier le marque-page » en repli si le glisser-déposer ne marche pas. Écrit sans `<` (illisible en
   attribut `href`), `&` encodé `&amp;` à l'affichage puis re-décodé par le navigateur.

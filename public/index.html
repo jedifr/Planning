@@ -1623,7 +1623,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.78.0';
+const APP_VERSION = '1.78.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -16224,7 +16224,7 @@ function timemotoResultHtml(r){
 // (déjà connecté, reCAPTCHA franchi par lui) dans le stockage de la bibliothèque OIDC du site, et le
 // copie dans le presse-papier. Ne contourne aucune protection : c'est le jeton que le navigateur de
 // la personne détient déjà. Aucun `<` (illisible dans un attribut href) ; le `&` est encodé à l'affichage.
-const TIMEMOTO_BOOKMARKLET = "javascript:(function(){try{var f=null;[sessionStorage,localStorage].forEach(function(S){for(var i=S.length;i--;){var k=S.key(i);if(k&&k.indexOf('oidc.user')!==-1){try{var o=JSON.parse(S.getItem(k));if(o&&o.access_token){f=o.access_token;}}catch(e){}}}});if(!f){alert('Jeton introuvable. Ouvrez d’abord cloud-eu.timemoto.com et connectez-vous, puis recliquez ce marque-page depuis l’onglet TimeMoto.');return;}navigator.clipboard.writeText(f).then(function(){alert('Jeton TimeMoto copié. Collez-le dans Planning (Paramètres, Pointage présentiel).');},function(){window.prompt('Copiez ce jeton :',f);});}catch(e){alert('Erreur : '+e.message);}})();";
+const TIMEMOTO_BOOKMARKLET = "javascript:(function(){try{var out=null,names=[];function pay(t){try{var p=t.split('.');if(p.length!==3){return null;}var b=p[1].split('-').join('+').split('_').join('/');b+='===='.slice(0,(4-(b.length&3))&3);return JSON.parse(atob(b));}catch(e){return null;}}function ok(t){if(typeof t!=='string'||t.length>4000||t.length===0){return false;}var o=pay(t);if(!o){return false;}return JSON.stringify([o.aud,o.scope]).indexOf('public-api')>-1&&(!o.exp||o.exp*1000>Date.now());}[sessionStorage,localStorage].forEach(function(S){for(var i=S.length;i--;){var k=S.key(i);names.push(k);var v=S.getItem(k);if(ok(v)){out=v;continue;}try{var j=JSON.parse(v);if(j&&typeof j==='object'){['access_token','accessToken','token'].forEach(function(f){if(ok(j[f])){out=j[f];}});}}catch(e){}}});if(!out){window.prompt('Jeton introuvable dans le stockage du navigateur. Envoyez a Claude cette liste de NOMS de cles (sans valeurs) :',names.join(' | '));return;}navigator.clipboard.writeText(out).then(function(){alert('Jeton TimeMoto copie. Collez-le dans Planning (Parametres, Pointage presentiel).');},function(){window.prompt('Copiez ce jeton :',out);});}catch(e){alert('Erreur : '+e.message);}})();";
 function renderTimemotoSettings(){
   const tm = presenceTmCfg();
   if(!timemotoStatusCache) loadTimemotoStatus();
