@@ -1353,8 +1353,8 @@ Distinct des séances sur les tâches (`sessions[]`) : ici on mesure la PRÉSENC
   `GET /api/presence/range?from&to[&userId]` (salarié forcé sur lui-même, 400 jours max),
   `POST /api/presence/punch` (avec `pin` = borne, pour n'importe qui ; sans `pin` = soi-même
   seulement, si `telephone` actif et adresse dans `reseaux`), `POST /api/presence/correction`
-  (superviseur : `valide` ; salarié : lui seul, `a_valider`), `POST /api/presence/correction/retype`
-  (superviseur : changer le type d'un pointage — voir ci-dessous), `POST /api/presence/decide`,
+  (superviseur : `valide` ; salarié : lui seul, `a_valider`), `POST /api/presence/correction/batch`
+  (superviseur : corrections en lot — voir ci-dessous), `POST /api/presence/decide`,
   `POST /api/presence/pin` / `pin/clear`, `POST /api/presence/verify-password` (sortie de borne).
 - **Codes de borne** : colonne `users.presence_pin_hash` (bcrypt, jamais renvoyé), 4 chiffres dans
   l'interface (4 à 6 acceptés côté serveur), choisi par chacun dans « Mon pointage » ; un superviseur
@@ -1401,36 +1401,55 @@ Distinct des séances sur les tâches (`sessions[]`) : ici on mesure la PRÉSENC
 - **Présence pointée dans la Fiche salarié** (v1.76.0) : voir « Fiche salarié ».
 - Non fait (pistes) : badges RFID.
 
-### Changer le type d'un pointage (correction superviseur)
+### Corriger plusieurs pointages d'un coup (changement de type, annulation, ajout — en lot)
 
 Retour utilisateur réel (capture de la pop-up « Corriger un pointage ») : un pointage étrange annulé à
 la main laisse une séquence absurde derrière lui (TimeMoto : 07:50 arrivée, ~~09:21 début de pause~~
-annulé, 10:02 *fin* de pause, 10:12 *début* de pause, 12:00 *fin* de pause) — et rien ne permettait de
-reclasser 10:02 en début de pause, 10:12 en fin de pause, 12:00 en départ sans annuler puis ressaisir
-chaque heure à la main (perte des secondes, trois allers-retours).
+annulé, 10:02 *fin* de pause, 10:12 *début* de pause, 12:00 *fin* de pause) — à reclasser en début de
+pause / fin de pause / départ. Première version (v1.79.0) : « Changer le type » enregistrait tout de
+suite, une correction à la fois, la pop-up se refermait → question directe : « pouvoir changer plusieurs
+données sans avoir à enregistrer la correction ? ». Oui : **liste de modifications en attente**.
 
-- Bouton **« Changer le type »** sur chaque carte de pointage retenu de la pop-up (superviseur
-  uniquement — `d.mode==='sup'` ; un salarié garde « Signaler une erreur ») : le formulaire propose les
-  quatre types (l'actuel marqué « (actuel) », suggestion = le type opposé : fin↔début de pause,
-  arrivée↔départ), l'heure d'origine préremplie et modifiable, le motif (« Erreur de pointage » par
-  défaut) et un commentaire. `presenceCorrection.retypeId` (en plus de `cancelsId`, exclusifs) ;
-  « Revenir à un ajout » les remet à `null`.
-- **Toujours jamais une modification** (immuabilité, voir plus haut) : `presence.retypePunch` (route
-  `POST /api/presence/correction/retype`, superviseur) écrit **dans une seule transaction** une ligne
-  `cancel` sur l'original ET un nouveau pointage `source:'manuel'`, validé d'office — jamais un état
-  où l'original est annulé sans remplaçant (testé : un échec du second `INSERT` annule aussi le
-  premier). Même heure **secondes comprises** si elle n'est pas modifiée (le client n'envoie `ts` que si
-  l'heure a changé) ; même jour obligatoire ; pas dans le futur ; refus si aucun changement, si le
-  pointage est déjà annulé (ou annulation en attente), non validé, ou d'un autre salarié. Les deux
-  lignes portent le même motif et un commentaire automatique « Changement : Fin de pause 10:02 →
-  Début de pause 10:02 » : le journal de la journée se lit sans code supplémentaire.
-- Pas de contrôle d'enchaînement (`checkTransition`) sur une correction, comme pour toute correction :
-  le superviseur sait ce qu'il fait — l'ordre des trois changements importe donc peu.
+- `presenceCorrection.staged` (`{ kind:'retype'|'cancel'|'add', id?, type?, time? }[]`, superviseur
+  uniquement — `d.mode==='sup'`) : rien n'est envoyé avant « Enregistrer N modification(s) ». Sur
+  chaque carte de pointage retenu : **« Annuler »** (empile une annulation) et **« Changer le type »**
+  (ouvre un petit éditeur — nouveau type, suggestion = le type opposé, heure d'origine modifiable — puis
+  « Valider ce changement » empile) ; une carte modifiée s'affiche en surbrillance avec l'ancien type
+  barré (« ~~Fin de pause~~ → **Début de pause** ») et « Modifier »/« Rétablir » ; une annulation
+  empilée s'affiche barrée « sera annulé » ; un ajout empilé est une carte en pointillé. Résumé sous
+  les cartes (« Modifications en attente (N) », « Retirer » par ligne). Re-modifier un pointage déjà
+  empilé REMPLACE son entrée (`presenceStage`, jamais de doublon). Le formulaire « Pointage à ajouter »
+  a son bouton **« ＋ Ajouter à la liste »** ; **motif et commentaire sont communs au lot**.
+- **Liste vide** : « Enregistrer la correction » ajoute simplement le pointage du formulaire
+  (comportement d'origine). **Liste non vide** : « Enregistrer N modifications » envoie UNIQUEMENT la
+  liste — le formulaire d'ajout n'est jamais envoyé par défaut (il faut « Ajouter à la liste »), pour
+  ne jamais enregistrer un ajout oublié par défaut (« Départ 13:30 »).
+- **Salarié : inchangé** (une demande à la fois, `POST /api/presence/correction`, « Signaler une
+  erreur », validée ensuite par un superviseur) — pas de liste, pas d'éditeur.
+- Champs relus dans le DOM avant chaque redessin (`presenceSyncCorrectionForm`) : les zones de saisie ne
+  déclenchent pas de `render()` à la frappe (voir Pièges) — sans ça, empiler une modification ferait
+  perdre le motif et le commentaire en cours de saisie.
+- **Toujours jamais une modification** (immuabilité, voir plus haut) : `POST /api/presence/correction/batch`
+  (superviseur) → `presence.applyCorrections`. Un `retype` = une ligne `cancel` sur l'original + un
+  remplaçant `source:'manuel'` validé d'office, **même heure, secondes comprises** (le client n'envoie
+  `ts` que si l'heure a changé) ; un `cancel` = une ligne d'annulation ; un `add` = un pointage ajouté.
+  **Tout est validé AVANT d'écrire, puis écrit dans UNE transaction : un lot est appliqué en entier ou
+  pas du tout** (un original n'est jamais annulé sans remplaçant ; une opération invalide rejette tout
+  le lot avec un message qui cite le pointage fautif). Refus : pointage introuvable / d'un autre
+  salarié / non validé / déjà annulé (ou annulation en attente), même pointage visé par deux opérations,
+  retype sans changement, autre jour, dans le futur, plus de 30 opérations, lot vide. Les lignes d'un
+  retype portent un commentaire automatique « Changement : Fin de pause 10:02 → Début de pause
+  10:02 » (+ le commentaire du lot) : le journal de la journée se lit sans code supplémentaire.
+- Pas de contrôle d'enchaînement (`checkTransition`) sur une correction (le superviseur sait ce qu'il
+  fait) : l'ordre des changements d'un lot importe donc peu.
 - **Compatible avec l'import TimeMoto** : l'original importé est annulé par un humain → la
   réconciliation le respecte (`humanCancelled`) et ne le réimporte jamais ; le remplaçant, non référencé
   dans `timemoto_punch_refs`, n'est jamais annulé par un import ultérieur.
-- Test (scratchpad `retype_test.js`, 15 assertions sur un vrai SQLite) : le scénario ci-dessus donne
-  `in 07:50, pause_start 10:02, pause_end 10:12, out 12:00` ; et `forfait_test.js` côté client.
+- Tests (scratchpad) : `retype_test.js` (19 assertions sur un vrai SQLite : lot de 3 changements = 6
+  lignes, séquence finale `in 07:50, pause_start 10:02, pause_end 10:12, out 12:00`, tout-ou-rien,
+  atomicité sur échec d'écriture) ; `forfait_test.js` (interface : rien d'envoyé avant « Enregistrer »,
+  un seul envoi, heures d'origine conservées) ; `batch_ui.js` (Playwright sur serveur réel, scénario
+  complet + capture).
 
 ### Salariés au forfait — non tenus de pointer
 
