@@ -690,7 +690,12 @@
   .sw.hors{background:#c3d9cc; border:1px solid var(--green);}
   .sw.lunch{background:repeating-linear-gradient(135deg,rgba(34,38,42,.14) 0 3px,transparent 3px 6px); border:1px solid var(--line);}
   .sw.conge{background:repeating-linear-gradient(135deg,var(--amber-dim) 0 3px,transparent 3px 6px); border:1px dashed var(--amber);}
-  .fs-kpis{display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:10px; margin-top:14px;}
+  .sw.presence{background:#6b4fa0;} .sw.presence-pause{background:repeating-linear-gradient(135deg,#6b4fa0 0 3px,transparent 3px 6px); border:1px solid #6b4fa0;}
+  .fs-seg.presence{top:auto; bottom:0; height:4px; background:#6b4fa0; border-radius:0; z-index:1;}
+  .fs-seg.presence-pause{top:auto; bottom:0; height:4px; background:repeating-linear-gradient(135deg,#6b4fa0 0 3px,transparent 3px 6px); border-radius:0; z-index:1;}
+  .fs-tot small.pres{color:#5a3f8c;} .fs-tot small.pres.warn{color:var(--red);}
+  .fs-kpi.pres .v{color:#5a3f8c;}
+  .fs-kpis{display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:10px; margin-top:14px;}
   .fs-kpi{border:1px solid var(--line-soft); background:var(--panel-2); border-radius:3px; padding:10px 12px; min-width:0;}
   .fs-kpi .l{font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim); font-weight:600;}
   .fs-kpi .v{font-family:'IBM Plex Mono',monospace; font-size:21px; font-weight:600; margin-top:3px; font-variant-numeric:tabular-nums;}
@@ -758,7 +763,7 @@
     #fiche-salarie-page .fs-break{ break-inside:auto; }
     #fiche-salarie-page .fs-row{ break-inside:avoid; }
     #fiche-salarie-page .fs-frise{ min-width:0; }
-    #fiche-salarie-page .fs-kpis{ grid-template-columns:repeat(5, minmax(0,1fr)); }
+    #fiche-salarie-page .fs-kpis{ grid-template-columns:none; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); }
     #fiche-salarie-page .fs-cols{ grid-template-columns:repeat(3, minmax(0,1fr)); }
     #fiche-salarie-page .fiche-noprint-btn{ color:#000 !important; }
     #fiche-salarie-page .fs-print-foot{ display:block; font-size:10px; color:#666; margin-top:8px; }
@@ -1598,7 +1603,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.75.0';
+const APP_VERSION = '1.76.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -2247,6 +2252,9 @@ let ficheSalarie = null; // { uid, mode, anchor, rangeDebut, rangeFin, from } | 
 let lastFicheUid = null; // dernière fiche consultée (superviseur) — reproposée à la prochaine ouverture depuis le menu
 // Séances archivées (session_history) de la personne sur la période affichée, chargées à la demande.
 let ficheHistoryCache = { key: null, status: null, entries: [], pieceIds: null };
+// Pointages de présence (module Pointage présentiel, table presence_punches) de la personne sur la
+// période affichée — chargés à la demande, comme les séances archivées ci-dessus.
+let fichePresenceCache = { key: null, status: null, punches: [] };
 function showToast(msg){
   toastMessage = msg;
   if(toastTimer) clearTimeout(toastTimer);
@@ -12171,7 +12179,71 @@ function ficheUserMeta(uid){
   if(pauses.length) parts.push(`pause ${pauses.map(p => `${pointageHm(p.start)}–${pointageHm(p.end)}`).join(', ')}`);
   return { username: u ? u.username : (String(uid)===String(activeIdentityId()) ? activeIdentityUsername() : '(compte supprimé)'), meta: parts.join(' · ') };
 }
-function renderFicheFriseHtml(fiche, now){
+// ---------- Présence pointée dans la fiche (module Pointage présentiel) ----------
+// Pointages de présence de la personne sur la période, chargés à la demande (une requête par
+// personne/période). Un employé ne peut lire que les siens (la route serveur force son propre
+// compte) : sur une autre identité active du poste, la présence pointée n'est pas disponible.
+function ensureFichePresence(uid, start, end){
+  if(!presenceModuleActive()) return { status: 'off', punches: [] };
+  if(!canSupervise() && (!currentUser || String(uid) !== String(currentUser.id))) return { status: 'unavailable', punches: [] };
+  const from = toDateInputValue(start);
+  const to = toDateInputValue(new Date(end.getTime() - 86400000));
+  const key = `${uid}|${from}|${to}`;
+  if(fichePresenceCache.key === key) return fichePresenceCache;
+  fichePresenceCache = { key, status: 'loading', punches: [] };
+  if(typeof fetch !== 'function'){ fichePresenceCache.status = 'error'; return fichePresenceCache; }
+  const q = `from=${from}&to=${to}${canSupervise() ? '&userId=' + encodeURIComponent(uid) : ''}`;
+  fetch('/api/presence/range?' + q, { credentials: 'same-origin' })
+    .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+    .then(data => {
+      if(fichePresenceCache.key !== key) return;
+      fichePresenceCache = { key, status: 'ok', punches: Array.isArray(data.punches) ? data.punches : [] };
+      if(currentPage === 'ficheSalarie') presenceRenderIfIdle();
+    })
+    .catch(() => {
+      if(fichePresenceCache.key !== key) return;
+      fichePresenceCache = { key, status: 'error', punches: [] };
+      if(currentPage === 'ficheSalarie') presenceRenderIfIdle();
+    });
+  return fichePresenceCache;
+}
+// Présence pointée jour par jour, rapprochée de la fiche déjà calculée (horaire attendu, séances) :
+// présence et pauses pointées, arrivée/départ, retard, départ non pointé, journée attendue sans
+// aucun pointage, et temps passé sur des tâches alors que la personne n'était pas pointée présente.
+// Ne modifie jamais `fiche` (computeFicheSalarie reste la seule source du temps compté).
+function computeFichePresence(fiche, punches, uid, now){
+  const eff = effectivePresencePunches((punches || []).filter(p => String(p.userId) === String(uid)));
+  const byDay = {};
+  eff.forEach(p => { (byDay[p.ts.slice(0, 10)] = byDay[p.ts.slice(0, 10)] || []).push(p); });
+  const seuil = presenceCfg().retardSeuilMin;
+  const todayKey = toDateInputValue(now);
+  const days = {};
+  const T = { presMin: 0, pauseMin: 0, nbJours: 0, ouverts: [], retards: [], sansPointage: [], horsPresenceMin: 0, horsPresenceJours: [], expectedElapsedMin: 0 };
+  fiche.days.forEach(x => {
+    const list = byDay[x.dayKey] || [];
+    const sum = presenceDaySummary(list, x.dayKey, now);
+    const firstStart = x.expected && x.expected.length ? x.expected[0][0] : null;
+    const retardMin = (sum.arrivee && firstStart) ? Math.round((sum.arrivee - firstStart) / 60000) : null;
+    // Temps sur des tâches hors présence pointée : jamais calculé sur une journée passée restée
+    // ouverte (présence inconnue après le dernier pointage) ni sur une journée sans aucun pointage
+    // (compté à part, « sans pointage »).
+    let horsMin = 0;
+    if(list.length && !sum.ouvert) horsMin = Math.round(timeIntervalsMinutes(subtractTimeIntervals(x.work || [], sum.work)));
+    const d = { sum, has: list.length > 0, retardMin, horsMin };
+    days[x.dayKey] = d;
+    if(!x.expectedElapsedMin && !list.length && !(x.work || []).length) return;
+    T.presMin += sum.workMin; T.pauseMin += sum.pauseMin;
+    T.expectedElapsedMin += x.expectedElapsedMin || 0;
+    if(list.length) T.nbJours++;
+    if(sum.ouvert) T.ouverts.push(x);
+    if(retardMin != null && retardMin > seuil) T.retards.push({ x, min: retardMin });
+    const startedToday = x.dayKey !== todayKey || (firstStart && now >= new Date(firstStart.getTime() + seuil * 60000));
+    if(!list.length && x.expectedElapsedMin > 0 && x.dayKey <= todayKey && startedToday) T.sansPointage.push(x);
+    if(horsMin >= 15){ T.horsPresenceMin += horsMin; T.horsPresenceJours.push({ x, min: horsMin }); }
+  });
+  return { days, totals: T, eff };
+}
+function renderFicheFriseHtml(fiche, now, pres){
   const days = fiche.days;
   if(days.length > 31) return `<div class="footer-note" style="text-align:left;">Frise affichée pour une période d'un mois au plus — choisissez Jour, Semaine ou Mois (le détail jour par jour reste dans l'export Excel).</div>`;
   const pts = [];
@@ -12215,16 +12287,24 @@ function renderFicheFriseHtml(fiche, now){
     x.excIv.forEach(([a,b]) => { track += seg('exc', a, b, x, `Hors de son horaire · ${range(a,b)} — compté (horaire du poste ou exception déclarée)`); });
     x.horsIv.forEach(([a,b]) => { track += seg('hors', a, b, x, `Hors horaires · ${range(a,b)} — non compté (ni horaire du poste, ni exception)`); });
     x.decls.forEach(y => { track += seg('decl', y.a, y.b, x, `Déclaré (oubli de démarrage) · ${range(y.a, y.b)} · ${y.commandeNom}${y.statut==='a_valider' ? ' · à valider' : ''}`); });
+    // Présence pointée (module Pointage présentiel) : fin liseré violet en pied de piste, hachuré
+    // pendant les pauses pointées — distinct des séances sur les tâches, dessinées au-dessus.
+    const pd = pres && pres.days[x.dayKey];
+    if(pd){
+      pd.sum.work.forEach(([a,b]) => { track += seg('presence', a, b, x, `Présent (pointé) · ${range(a,b)}`); });
+      pd.sum.pauses.forEach(([a,b]) => { track += seg('presence-pause', a, b, x, `Pause pointée · ${range(a,b)}`); });
+    }
     const isToday = toDateInputValue(now) === x.dayKey;
     if(isToday){ const p = pctOf(now, x); if(p > 0 && p < 100) track += `<div class="fs-now" style="left:${p.toFixed(3)}%"></div>`; }
     const sub = x.holiday ? 'Férié' : (!x.weekday ? 'Week-end' : (x.leave && !x.leave.demiJournee ? escapeHtml(x.leave.label) : x.date.toLocaleDateString('fr-FR', { day:'numeric', month:'short' })));
     const workTot = x.pointeMin + x.declMin + x.excMin;
     const horsNote = x.horsMin ? `<small class="ok">+ ${pointageDurLabel(x.horsMin)} non compté</small>` : '';
-    const tot = (x.expectedMin || workTot) ? `${pointageDurLabel(workTot)}<small class="${x.gapMin >= 15 ? '' : 'ok'}">${x.gapMin ? pointageDurLabel(x.gapMin) + ' non pointé' : (x.expectedMin ? '—' : '')}</small>${horsNote}` : (horsNote || `<small class="ok">—</small>`);
+    let tot = (x.expectedMin || workTot) ? `${pointageDurLabel(workTot)}<small class="${x.gapMin >= 15 ? '' : 'ok'}">${x.gapMin ? pointageDurLabel(x.gapMin) + ' non pointé' : (x.expectedMin ? '—' : '')}</small>${horsNote}` : (horsNote || `<small class="ok">—</small>`);
+    if(pd && (pd.has || x.expectedElapsedMin)) tot += pd.has ? `<small class="pres${pd.sum.ouvert ? ' warn' : ''}">présent ${pointageDurLabel(pd.sum.workMin)}${pd.sum.ouvert ? ' · départ ?' : ''}</small>` : `<small class="pres warn">aucune présence pointée</small>`;
     return `<div class="fs-row${x.weekday ? '' : ' we'}${isToday ? ' today' : ''}"><div class="fs-day">${ficheJourLong(x.date)}<small>${sub}</small></div><div class="fs-track">${track}</div><div class="fs-tot">${tot}</div></div>`;
   });
   // Week-end sans rien : on ne garde pas des lignes vides qui allongent la frise.
-  const kept = rows.filter((r, i) => days[i].weekday || days[i].work.length || days[i].decls.length);
+  const kept = rows.filter((r, i) => days[i].weekday || days[i].work.length || days[i].decls.length || (pres && pres.days[days[i].dayKey] && pres.days[days[i].dayKey].has));
   return `<div class="fs-frise"><div class="fs-axis"><div></div><div class="fs-ticks">${ticks}</div><div></div></div>${kept.join('')}</div>`;
 }
 function renderFicheSalariePage(){
@@ -12235,6 +12315,9 @@ function renderFicheSalariePage(){
   const hist = ensureFicheHistory(f.uid, start, end);
   const fiche = computeFicheSalarie(state, f.uid, start, end, hist, now);
   const T = fiche.totals, P = fiche.presence;
+  const presCache = ensureFichePresence(f.uid, start, end);
+  const pres = presCache.status === 'ok' ? computeFichePresence(fiche, presCache.punches, f.uid, now) : null;
+  const PT = pres ? pres.totals : null;
   const who = ficheUserMeta(f.uid);
   const periodWord = { jour:'de la journée', semaine:'de la semaine', mois:'du mois', annee:"de l'année", plage:'de la période' }[f.mode] || 'de la période';
   const modes = [{key:'jour',label:'Jour'},{key:'semaine',label:'Semaine'},{key:'mois',label:'Mois'},{key:'annee',label:'Année'},{key:'plage',label:'Plage'}];
@@ -12266,6 +12349,7 @@ function renderFicheSalariePage(){
       <span><i class="sw pointe"></i>Pointé</span><span><i class="sw decl"></i>Déclaré (oubli de démarrage)</span>
       <span><i class="sw trou"></i>Non pointé dans l'horaire</span><span><i class="sw exc"></i>Hors de son horaire, compté</span>
       <span><i class="sw hors"></i>Hors horaires, non compté</span><span><i class="sw lunch"></i>Pause prévue</span><span><i class="sw conge"></i>Congé</span>
+      ${pres ? `<span><i class="sw presence"></i>Présence pointée</span><span><i class="sw presence-pause"></i>Pause pointée</span>` : ''}
     </div>`;
   const congesTxt = Object.keys(P.conges).length ? Object.entries(P.conges).map(([k,h]) => `${formatHeures(h)} ${k.toLowerCase()}`).join(', ') : '';
   const pctGap = T.expectedElapsedMin > 0 ? Math.round(T.gapMin / T.expectedElapsedMin * 1000)/10 : 0;
@@ -12275,8 +12359,24 @@ function renderFicheSalariePage(){
       <div class="fs-kpi${T.gapMin >= pointageSettings().seuilSansPointageMin ? ' warn' : ''}"><div class="l">Non pointé</div><div class="v">${ficheMinLabel(T.gapMin)}</div><div class="s">${T.gapMin ? `${pctGap.toLocaleString('fr-FR')} % de l'horaire écoulé${T.worstDay && fiche.days.length > 1 ? ` · pire : ${ficheJourCourt(T.worstDay.date).toLowerCase()} ${T.worstDay.date.getDate()} (${pointageDurLabel(T.worstDay.gapMin)})` : ''}` : "tout l'horaire écoulé est couvert"}</div></div>
       <div class="fs-kpi"><div class="l">Pauses</div><div class="v">${ficheMinLabel(T.pausesMin)}</div><div class="s">déjeuner ${ficheMinLabel(T.lunchRealMin)} · manuelles ${ficheMinLabel(T.manualPauseMin)}</div></div>
       <div class="fs-kpi"><div class="l">Taux d'occupation</div><div class="v">${T.taux!=null ? Math.round(T.taux*100) + ' %' : '—'}</div>${renderOccupationBar(T.taux)}</div>
+      ${presCache.status === 'off' ? '' : (() => {
+        if(!pres) return `<div class="fs-kpi"><div class="l">Présence pointée</div><div class="v">—</div><div class="s">${presCache.status === 'loading' ? 'chargement…' : presCache.status === 'unavailable' ? 'visible seulement pour son propre compte' : 'pointages indisponibles'}</div></div>`;
+        const ecart = PT.presMin - PT.expectedElapsedMin;
+        const occ = PT.presMin > 0 ? T.tempsCompteH * 60 / PT.presMin : null;
+        const warn = PT.ouverts.length || PT.sansPointage.length;
+        return `<div class="fs-kpi pres${warn ? ' warn' : ''}"><div class="l">Présence pointée</div><div class="v">${ficheMinLabel(PT.presMin)}</div><div class="s">${PT.expectedElapsedMin ? `${ecart >= 0 ? '+' : '−'}${pointageDurLabel(Math.abs(ecart))} / horaire écoulé` : 'aucun horaire attendu'}${occ != null ? ` · occupation réelle ${Math.round(occ*100)} %` : ''}</div></div>`;
+      })()}
     </div>`;
-  const alerts = fiche.alerts.length ? `<div class="fs-alerts">${fiche.alerts.map(a => `<div class="fs-alert ${a.kind}"><span class="tag">${escapeHtml(a.tag)}</span><span>${a.text}</span></div>`).join('')}</div>` : '';
+  const dayList = arr => arr.slice(0, 6).map(it => { const x = it.x || it; return `${ficheJourCourt(x.date).toLowerCase()} ${x.date.getDate()}${it.min != null ? ` (${pointageDurLabel(it.min)})` : ''}`; }).join(', ') + (arr.length > 6 ? `… (+${arr.length - 6})` : '');
+  const presAlerts = [];
+  if(PT){
+    if(PT.ouverts.length) presAlerts.push({ kind: 'red', tag: 'DÉPART NON POINTÉ', text: `${PT.ouverts.length} jour${PT.ouverts.length>1?'s':''} : ${dayList(PT.ouverts)} — à corriger dans Présence (le temps après le dernier pointage n'est pas compté).` });
+    if(PT.sansPointage.length) presAlerts.push({ kind: 'red', tag: 'SANS POINTAGE', text: `${PT.sansPointage.length} jour${PT.sansPointage.length>1?'s':''} attendu${PT.sansPointage.length>1?'s':''} sans aucun pointage : ${dayList(PT.sansPointage)}.` });
+    if(PT.retards.length) presAlerts.push({ kind: 'amber', tag: 'RETARDS', text: `${PT.retards.length} jour${PT.retards.length>1?'s':''} au-delà de ${presenceCfg().retardSeuilMin} min : ${dayList(PT.retards)}.` });
+    if(PT.horsPresenceJours.length) presAlerts.push({ kind: 'amber', tag: 'HORS PRÉSENCE', text: `${pointageDurLabel(PT.horsPresenceMin)} sur des tâches alors qu'il n'était pas pointé présent : ${dayList(PT.horsPresenceJours)} (oubli de pointage d'arrivée, ou tâche restée ouverte).` });
+  }
+  const allAlerts = [...fiche.alerts, ...presAlerts];
+  const alerts = allAlerts.length ? `<div class="fs-alerts">${allAlerts.map(a => `<div class="fs-alert ${a.kind}"><span class="tag">${escapeHtml(a.tag)}</span><span>${a.text}</span></div>`).join('')}</div>` : '';
   const histNote = hist.status==='loading' ? `<span class="fs-note">Chargement des séances archivées…</span>`
     : hist.status==='error' ? `<span class="fs-note" style="color:var(--amber);">Séances archivées indisponibles (serveur injoignable) — seules les séances encore dans le planning sont affichées.</span>` : '';
   const kv = (dt, dd, cls) => `<dt class="${cls||''}">${dt}</dt><dd class="${cls||''}">${dd}</dd>`;
@@ -12287,7 +12387,17 @@ function renderFicheSalariePage(){
       ${kv('Jours fériés', P.nbFeries ? `− ${formatHeures(P.feriesH)}` : '—', 'sub' + (P.nbFeries ? ' neg' : ''))}
       ${Object.keys(P.conges).length ? Object.entries(P.conges).map(([k,h]) => kv(escapeHtml(k), `− ${formatHeures(h)}`, 'sub neg')).join('') : kv('Congés approuvés', '—', 'sub')}
       ${kv('Présence théorique', formatHeures(P.presenceH), 'tot')}
-    </dl><div class="fs-note">Théorique : l'appli n'a pas de badgeuse. C'est ce que l'horaire attendait, moins les congés approuvés et les jours fériés.</div>`;
+    </dl>${PT ? `<dl class="fs-kv" style="margin-top:10px;">
+      ${kv('Horaire attendu écoulé', ficheMinLabel(PT.expectedElapsedMin))}
+      ${kv('Présence pointée', ficheMinLabel(PT.presMin), 'tot')}
+      ${kv('Écart', PT.expectedElapsedMin ? `${PT.presMin - PT.expectedElapsedMin >= 0 ? '+' : '−'} ${pointageDurLabel(Math.abs(PT.presMin - PT.expectedElapsedMin))}` : '—', 'sub' + (PT.presMin < PT.expectedElapsedMin - 5 ? ' neg' : ''))}
+      ${kv('Pauses pointées', ficheMinLabel(PT.pauseMin))}
+      ${kv('Jours pointés', String(PT.nbJours))}
+      ${kv('Départs non pointés', PT.ouverts.length ? String(PT.ouverts.length) : '—', PT.ouverts.length ? 'neg' : '')}
+      ${kv('Arrivées en retard', PT.retards.length ? String(PT.retards.length) : '—', PT.retards.length ? 'neg' : '')}
+      ${kv('Sur tâches hors présence', PT.horsPresenceMin ? pointageDurLabel(PT.horsPresenceMin) : '—', PT.horsPresenceMin ? 'neg' : '')}
+    </dl><div class="fs-note">Théorique : ce que l'horaire attendait, moins les congés approuvés et les jours fériés. Pointée : arrivées, pauses et départs réellement enregistrés (borne, téléphone, corrections validées), pauses déduites.</div>`
+    : `<div class="fs-note">${presCache.status === 'off' ? "Théorique : l'appli n'a pas de badgeuse (module Pointage présentiel désactivé). C'est ce que l'horaire attendait, moins les congés approuvés et les jours fériés." : "Théorique : ce que l'horaire attendait, moins les congés approuvés et les jours fériés." + (presCache.status === 'loading' ? ' Chargement de la présence pointée…' : presCache.status === 'unavailable' ? ' Présence pointée visible seulement pour son propre compte.' : presCache.status === 'error' ? ' Présence pointée indisponible (serveur injoignable).' : '')}</div>`}`;
   const doneTasks = fiche.tasks.filter(t => t.statut==='termine');
   const travailBlock = `<dl class="fs-kv">
       ${kv("Pointé dans l'horaire", ficheMinLabel(T.pointeMin))}
@@ -12341,8 +12451,8 @@ function renderFicheSalariePage(){
   </section>
   <section class="panel fs-break">
     <div class="panel-head"><h2>Frise ${periodWord}</h2></div>
-    <div class="panel-body fs-frise-scroll">${renderFicheFriseHtml(fiche, now)}
-      <div class="fs-note">Le trait gris au-dessus et en dessous marque l'horaire attendu. Survoler un segment affiche les heures exactes et la tâche concernée.</div></div>
+    <div class="panel-body fs-frise-scroll">${renderFicheFriseHtml(fiche, now, pres)}
+      <div class="fs-note">Le trait gris au-dessus et en dessous marque l'horaire attendu.${pres ? ' Le liseré violet en pied de piste est la présence pointée (hachuré : pause pointée).' : ''} Survoler un segment affiche les heures exactes et la tâche concernée.</div></div>
   </section>
   <div class="fs-cols">
     <section class="panel"><div class="panel-head"><h2>Présence</h2></div><div class="panel-body">${presenceBlock}</div></section>
@@ -12364,6 +12474,9 @@ function exportFicheSalarieExcel(){
   const fiche = computeFicheSalarie(state, f.uid, start, end, ficheHistoryCache.key === ficheHistoryKey(f.uid, start, end) ? ficheHistoryCache : null, now);
   const who = ficheUserMeta(f.uid);
   const T = fiche.totals, P = fiche.presence;
+  const presCache = ensureFichePresence(f.uid, start, end);
+  const pres = presCache.status === 'ok' ? computeFichePresence(fiche, presCache.punches, f.uid, now) : null;
+  const PT = pres ? pres.totals : null;
   const h2 = min => Math.round(min/60*100)/100;
   const r2 = h => Math.round(h*100)/100;
   const synth = [
@@ -12375,13 +12488,20 @@ function exportFicheSalarieExcel(){
     ['Temps compté (h)', r2(T.tempsCompteH)], ["Taux d'occupation (%)", T.taux!=null ? r2(T.taux*100) : ''],
     [], ['Déjeuner prévu (h)', h2(T.lunchPlannedMin)], ['Déjeuner réel (h)', h2(T.lunchRealMin)], ['Dépassement déjeuner (h)', h2(T.lunchOverrunMin)],
     ['Pauses en journée (nb)', T.nbManualPauses], ['Pauses en journée (h)', h2(T.manualPauseMin)],
-    [], ['Tâches travaillées', T.nbTaches], ['Dépassements notables', T.nbOverrun], ['Rebuts déclarés (pièces)', T.rebuts]
+    [], ['Tâches travaillées', T.nbTaches], ['Dépassements notables', T.nbOverrun], ['Rebuts déclarés (pièces)', T.rebuts],
+    ...(PT ? [[], ['Présence pointée (h)', h2(PT.presMin)], ['Écart présence pointée / horaire écoulé (h)', h2(PT.presMin - PT.expectedElapsedMin)], ['Pauses pointées (h)', h2(PT.pauseMin)],
+      ['Jours pointés', PT.nbJours], ['Départs non pointés', PT.ouverts.length], ['Jours attendus sans pointage', PT.sansPointage.length], ['Arrivées en retard', PT.retards.length],
+      ['Sur tâches hors présence (h)', h2(PT.horsPresenceMin)], ['Occupation réelle (temps compté ÷ présence pointée, %)', PT.presMin > 0 ? r2(T.tempsCompteH * 60 / PT.presMin * 100) : '']] : [])
   ];
-  const joursH = ['Date','Jour','Congé / férié','Horaire attendu (h)','Pointé dans l\'horaire (h)','Déclaré (h)','Non pointé (h)','Hors de son horaire compté (h)','Hors horaires non compté (h)','Déjeuner réel (h)','Dépassement déjeuner (h)','Pauses en journée (h)','Plus long trou'];
-  const jours = fiche.days.filter(x => x.weekday || x.work.length || x.decls.length).map(x => [
+  const joursH = ['Date','Jour','Congé / férié','Horaire attendu (h)','Pointé dans l\'horaire (h)','Déclaré (h)','Non pointé (h)','Hors de son horaire compté (h)','Hors horaires non compté (h)','Déjeuner réel (h)','Dépassement déjeuner (h)','Pauses en journée (h)','Plus long trou',
+    ...(pres ? ['Arrivée pointée','Départ pointé','Présence pointée (h)','Pauses pointées (h)','Départ non pointé','Sur tâches hors présence (h)'] : [])];
+  const presCols = x => { if(!pres) return []; const d = pres.days[x.dayKey]; if(!d || !d.has) return ['', '', 0, 0, '', 0];
+    return [d.sum.arrivee ? pointageHm(d.sum.arrivee) : '', d.sum.depart ? pointageHm(d.sum.depart) : '', h2(d.sum.workMin), h2(d.sum.pauseMin), d.sum.ouvert ? 'Oui' : '', h2(d.horsMin)]; };
+  const jours = fiche.days.filter(x => x.weekday || x.work.length || x.decls.length || (pres && pres.days[x.dayKey] && pres.days[x.dayKey].has)).map(x => [
     x.date.toLocaleDateString('fr-FR'), ficheJourLong(x.date), x.holiday ? 'Férié' : (x.leave ? x.leave.label + (x.leave.demiJournee ? ` (${demiJourneeLabel(x.leave.demiJournee)})` : '') : ''),
     h2(x.expectedMin), h2(x.pointeMin), h2(x.declMin), h2(x.gapMin), h2(x.excMin), h2(x.horsMin), h2(x.lunchRealMin), h2(x.lunchOverrunMin), h2(x.manualPauseMin),
-    x.worst ? `${pointageHm(x.worst.a)}–${pointageHm(x.worst.b)} (${pointageDurLabel(x.worst.min)})` : ''
+    x.worst ? `${pointageHm(x.worst.a)}–${pointageHm(x.worst.b)} (${pointageDurLabel(x.worst.min)})` : '',
+    ...presCols(x)
   ]);
   const seancesH = ['Date','Début','Fin','Durée (h)','Commande','Pièce','Étape','Poste','En cours'];
   const seen = new Set();
@@ -12396,6 +12516,14 @@ function exportFicheSalarieExcel(){
   XLSX.utils.book_append_sheet(wb, sheet([[`Période : ${label}`], joursH, ...jours], joursH.map(() => 16)), 'Jours');
   XLSX.utils.book_append_sheet(wb, sheet([[`Période : ${label}`], seancesH, ...seances], seancesH.map(() => 16)), 'Séances');
   XLSX.utils.book_append_sheet(wb, sheet([[`Période : ${label}`], tachesH, ...taches], tachesH.map(() => 18)), 'Tâches');
+  if(pres){
+    const effIds = new Set(pres.eff.map(p => p.id));
+    const ptH = ['Date','Heure','Pointage','Source','Statut','Retenu','Motif','Commentaire','Saisi par'];
+    const pts = presCache.punches.slice().sort((a,b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.id - b.id).map(p => [p.ts.slice(0,10), p.ts.slice(11,19), PRESENCE_TYPE_LABELS[p.type] || p.type,
+      PRESENCE_SOURCE_LABELS[p.source] || p.source, p.status === 'valide' ? 'validé' : p.status === 'a_valider' ? 'à valider' : 'refusé', effIds.has(p.id) ? 'oui' : (p.type === 'cancel' ? '' : 'non'),
+      p.motif || '', p.commentaire || '', p.createdBy ? presenceUserName(p.createdBy) : '']);
+    XLSX.utils.book_append_sheet(wb, sheet([[`Période : ${label}`], ptH, ...pts], ptH.map(() => 16)), 'Présence pointée');
+  }
   const safe = who.username.replace(/[^\w\-]+/g, '_');
   XLSX.writeFile(wb, `fiche-${safe}_${toDateInputValue(start)}_${toDateInputValue(new Date(end.getTime()-86400000))}.xlsx`);
 }

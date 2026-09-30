@@ -1291,6 +1291,24 @@ salarié pour **sa propre** fiche, export **Excel et impression A4**.
   (`fiche-user`, superviseurs, salariés de `ficheSelectableUsers` = non masqués de Temps de production).
   `getUserPageMenuOrder` complète désormais un ordre enregistré avec les pages ajoutées depuis, EN FIN,
   au lieu de tout réinitialiser (clés inconnues/en double ignorées).
+- **Présence pointée** (v1.76.0, module Pointage présentiel actif) : `ensureFichePresence` charge les
+  pointages de la période (`GET /api/presence/range`, cache `fichePresenceCache`, une requête par
+  personne/période) ; un employé sur une AUTRE identité active que son compte : « visible seulement pour
+  son propre compte » (la route force son propre compte). `computeFichePresence(fiche, punches, uid, now)`
+  rapproche, sans jamais modifier `fiche` (le temps compté reste celui de `computeFicheSalarie`), chaque
+  jour de `presenceDaySummary` : présence et pauses pointées, arrivée/départ, retard (> seuil de
+  Paramètres → Pointage présentiel, par rapport au début de SON horaire), départ non pointé (journée
+  passée ouverte : rien compté après le dernier pointage), journée attendue sans aucun pointage (jamais
+  le futur, ni aujourd'hui avant le début d'horaire + seuil), et temps sur des tâches hors présence
+  pointée (`subtractTimeIntervals(x.work, présence)`, ≥ 15 min, jamais sur une journée ouverte).
+  Affichage : tuile « Présence pointée » (écart à l'horaire écoulé, occupation réelle = temps compté ÷
+  présence pointée), liseré violet en pied de piste de la frise (hachuré : pause pointée) et ligne
+  « présent X » dans le total du jour, bloc Présence complété (horaire écoulé, pointée, écart, pauses,
+  jours pointés, départs non pointés, retards, hors présence), alertes (départ non pointé, sans pointage,
+  retards, hors présence). Excel : lignes de synthèse, 6 colonnes dans « Jours », feuille « Présence
+  pointée » (pointages bruts, retenus ou non). Module désactivé : fiche strictement inchangée.
+  Tuiles en `repeat(auto-fit, minmax(150px,1fr))` (6 tuiles) ; à l'impression, une seule rangée.
+  Test `fiche_pres_test.js` (12 assertions) ; rendu vérifié (Playwright 1500/390 px).
 - Couvert par un test sur l'export réel (scratchpad `fiche_test.js`, 52 assertions ; `st_menu_test.js`,
   21 assertions pour le menu et la sous-traitance) et rendu vérifié
   (Playwright : 1500/1280/390 px, sans débordement, et aperçu d'impression).
@@ -1378,7 +1396,8 @@ Distinct des séances sur les tâches (`sessions[]`) : ici on mesure la PRÉSENC
   anomalies, jour futur, liaison tâches dont travail à plusieurs et pause déjeuner, rendus) et un
   parcours réel serveur + navigateur (API : code, transitions, refus sans code, réseau refusé,
   demande → validation, annulation, verrou SQLite ; Playwright 1500 et 390 px, sans débordement).
-- Non fait (pistes) : TM-616 (en attente), présence pointée dans la Fiche salarié, badges RFID.
+- **Présence pointée dans la Fiche salarié** (v1.76.0) : voir « Fiche salarié ».
+- Non fait (pistes) : TM-616 (en attente), badges RFID.
 
 ## Onglet « Pointages »
 
