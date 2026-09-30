@@ -86,7 +86,7 @@ rendent ce geste manuel inutile dans le cas courant :
 | `autoPauseResume.js` | Reprise automatique de pause déjeuner par personne, tournée côté serveur (voir plus bas). |
 | `reportEmail.js` | Rapport quotidien/hebdomadaire par e-mail (échéances dépassées, retards, rebuts...), voir plus bas. |
 | `presence.js` | Pointage présentiel : table des pointages (arrivée/pause/départ), codes de borne, corrections tracées, purge de conservation (voir plus bas). |
-| `timemotoSync.js` | Synchronisation de la pointeuse TimeMoto TM-616 via TimeMoto Cloud — **à valider en réel** (voir « Pointeuse TimeMoto TM-616 »). |
+| `timemotoSync.js` | Import manuel (par jeton) des pointages de la pointeuse TimeMoto TM-616 via TimeMoto Cloud (voir « Pointeuse TimeMoto TM-616 »). |
 
 Base SQLite : `app_state` (l'état entier en JSON + numéro de version), `users`, `session_history`,
 `prevision_history` et `presence_punches` (voir ci-dessous). Volume Docker nommé `planning-data`.
@@ -1400,25 +1400,32 @@ Distinct des séances sur les tâches (`sessions[]`) : ici on mesure la PRÉSENC
 - **Présence pointée dans la Fiche salarié** (v1.76.0) : voir « Fiche salarié ».
 - Non fait (pistes) : badges RFID.
 
-### Pointeuse TimeMoto TM-616 (`timemotoSync.js`, v1.77.0 — À VALIDER EN RÉEL)
+### Pointeuse TimeMoto TM-616 (`timemotoSync.js`) — import manuel par jeton
 
-Choix utilisateur explicite (« Connecteur automatique »), sans formule Plus (ni webhook ni clé d'API) :
-le serveur se connecte seul à l'API **interne** de TimeMoto Cloud (non documentée, peut changer).
-**Jamais testé contre le vrai TimeMoto ni contre un faux serveur** (génération du faux serveur de test
-bloquée) : seules la syntaxe et le `Dockerfile` ont été vérifiés. Premier essai à faire avec
-« 🔍 Aperçu » (n'enregistre rien).
+Sans formule Plus (ni webhook ni clé d'API officielle), la seule voie est l'API **interne** de
+TimeMoto Cloud (non documentée, peut changer). **Aucune connexion automatique** : la page de
+connexion de TimeMoto est protégée par un **reCAPTCHA** (constaté en réel — champs
+`Recaptcha.Validation…` sur le formulaire), qu'un serveur ne peut pas franchir et qu'on ne cherche
+pas à contourner. La tentative initiale de connexion serveur par e-mail/mot de passe (OAuth code +
+PKCE, cookie de session, `parseLoginForm`) a donc été **retirée** — elle butait de toute façon sur
+le reCAPTCHA. L'import est **déclenché à la main** par un administrateur, avec un jeton que
+l'utilisateur récupère lui-même dans sa propre session TimeMoto (reCAPTCHA franchi par lui).
 
-- Authentification OAuth2 code + PKCE (client `Cloud`, `auth-eu`/`cloud-eu`, jeton 1 h, **pas de
-  refresh_token**) : `/connect/authorize?prompt=none` tant que le cookie de session TimeMoto (en
-  mémoire) est valide, sinon connexion complète — formulaire repéré de façon générique
-  (`parseLoginForm` : champ mot de passe, champ e-mail/texte, champs cachés, bouton nommé). Compte
-  **dédié** « Manager (lecture seule) », identifiants `TIMEMOTO_EMAIL`/`TIMEMOTO_PASSWORD` dans un
-  `.env` sur le NAS (jamais versionné, `docker-compose.yml` les lit). Identifiants, cookies, code,
-  code_verifier et jetons : mémoire seulement, jamais dans `state`, la base, les sauvegardes, les logs.
-  Refus d'identifiants → aucune tentative pendant 1 h ; autre erreur → 15 min.
+- **Récupération du jeton par marque-page** (`TIMEMOTO_BOOKMARKLET`, `public/index.html`) — un
+  bookmarklet `javascript:` que l'utilisateur glisse dans sa barre de favoris, puis clique depuis un
+  onglet TimeMoto où il est connecté : il lit le jeton de la session OIDC du site (clé contenant
+  `oidc.user` dans `sessionStorage`/`localStorage`, `access_token`) et le copie dans le presse-papier.
+  Ne lit que le jeton que le navigateur de la personne détient déjà — aucun contournement. Bouton
+  « Copier le marque-page » en repli si le glisser-déposer ne marche pas. Écrit sans `<` (illisible en
+  attribut `href`), `&` encodé `&amp;` à l'affichage puis re-décodé par le navigateur.
+- **Le jeton n'est JAMAIS stocké** (ni `state`, ni base, ni sauvegardes, ni logs) : posté pour la
+  seule requête d'import, le champ de saisie est vidé aussitôt. Route `POST /api/presence/timemoto/sync`
+  (admin) exige `token` ; `since` (reprise d'historique ≤ 400 j) et `dryRun` (aperçu) optionnels.
+  `GET /api/presence/timemoto/status` (superviseurs) ne renvoie que `lastOkAt`/`lastImportTo`/`users`.
 - Lecture : `POST /api/clocking/reporting/gettimereportdailyview` paginé (100), période = derniers
-  `joursSynchro` jours (7), toutes les `intervalleMin` minutes (10) — `config.presence.timemoto`
-  (`actif`, `intervalleMin`, `joursSynchro`, `userMap` { id TimeMoto → id Planning }, migrés).
+  `joursSynchro` jours (7 par défaut) ou `since` → aujourd'hui. `config.presence.timemoto`
+  (`actif` = suivi affiché + rappel sur la page Présence, `joursSynchro`, `userMap` { id TimeMoto →
+  id Planning }, migrés — plus d'`intervalleMin`).
 - Paires → pointages (`desiredPunches`) : 1re entrée = arrivée, sortie suivie d'une entrée = pause,
   dernière sortie = départ — ou pause si c'est aujourd'hui et que la fin d'horaire de la personne
   n'est pas passée (`expectedEndFor`), reclassée en départ ensuite. `isAutoClockOut` ignoré (journée
@@ -1427,13 +1434,17 @@ bloquée) : seules la syntaxe et le `Dockerfile` ont été vérifiés. Premier e
 - Réconciliation par (salarié TimeMoto, jour) (`reconcileDay`, table `timemoto_punch_refs`) : ajoute ce
   qui manque, **annule** (ligne `cancel`, auteur `timemoto`) ce qui a changé ou disparu, ne réimporte
   jamais un pointage annulé à la main par un superviseur. Journée disparue de TimeMoto annulée
-  seulement après une lecture complète et non vide. Salarié non associé : non importé.
-- État dans `timemoto_meta` (dernier succès/erreur, salariés TimeMoto vus). Routes
-  `GET /api/presence/timemoto/status` (superviseurs) et `POST /api/presence/timemoto/sync` (admin :
-  `since` reprise d'historique ≤ 400 j, `dryRun`, `token` collé pour un test — une seule requête,
-  jamais conservé). `/api/presence/day` porte un résumé `timemoto` → bandeau sur la page Présence.
+  seulement après une lecture complète et non vide. Salarié non associé : non importé. Relancer un
+  import ne crée jamais de doublon.
 - Interface : Paramètres → Pointage présentiel → « ⏱ Pointeuse TimeMoto TM-616 »
-  (`renderTimemotoSettings`) ; auteur `timemoto` affiché « Synchro TimeMoto » (`presenceUserName`).
+  (`renderTimemotoSettings`) : marque-page, champ jeton + Aperçu/Importer, reprise d'historique,
+  association des salariés (suggestions par le nom). Rappel « import à faire » sur la page Présence si
+  le dernier import date de plus de 24 h. Auteur `timemoto` affiché « Synchro TimeMoto ».
+- **Reste possible plus tard** (non fait) : import du fichier exporté par TimeMoto Cloud (Excel/CSV),
+  ou passage à la formule Plus pour des webhooks officiels et un vrai 24h/24.
+- **Non testé automatiquement** : pas de faux serveur TimeMoto (génération bloquée). La lecture par
+  jeton collé a été validée en réel par l'utilisateur (liste des salariés + pointages remontés) ; la
+  connexion serveur, elle, était impossible (reCAPTCHA) et a été retirée.
 
 ## Onglet « Pointages »
 

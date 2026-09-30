@@ -28,13 +28,10 @@ services:
       # enregistrée en base — un redémarrage du conteneur n'écrase jamais une licence
       # déjà installée (essai prolongé, licence définitive achetée entre-temps).
       INITIAL_LICENSE_KEY: ""
-      # Optionnel : pointeuse TimeMoto TM-616 (Paramètres → Pointage présentiel). Compte TimeMoto
-      # DÉDIÉ, droits « Manager (lecture seule) ». NE PAS écrire l'e-mail ni le mot de passe ici : les
-      # mettre dans un fichier .env à côté de ce fichier (jamais versionné, chmod 600) :
-      #   TIMEMOTO_EMAIL=pointage@exemple.fr
-      #   TIMEMOTO_PASSWORD=...
-      TIMEMOTO_EMAIL: "${TIMEMOTO_EMAIL:-}"
-      TIMEMOTO_PASSWORD: "${TIMEMOTO_PASSWORD:-}"
+      # Pointeuse TimeMoto TM-616 (Paramètres → Pointage présentiel) : aucun identifiant à configurer
+      # ici. L'import se fait à la main avec un jeton que l'utilisateur récupère lui-même dans sa
+      # session TimeMoto (la page de connexion TimeMoto est protégée par un reCAPTCHA, franchi par un
+      # humain). Le jeton n'est jamais stocké côté serveur.
     restart: unless-stopped
 
 volumes:

@@ -1526,6 +1526,8 @@
   .tm-help{margin-top:10px; font-size:12.5px;}
   .tm-help summary{cursor:pointer; font-weight:600;}
   .tm-help ol{margin:6px 0; padding-left:20px; line-height:1.5;}
+  .tm-bookmarklet{display:inline-flex; align-items:center; gap:6px; padding:7px 12px; border-radius:8px; background:var(--accent-dim); border:1px solid var(--accent); color:var(--accent); font-weight:600; font-size:13px; text-decoration:none; cursor:grab;}
+  .tm-bookmarklet:active{cursor:grabbing;}
   @media (max-width:720px){ .tm-map-row{grid-template-columns:1fr; gap:3px;} .tm-arrow{display:none;} }
   .pc-checklist{display:flex; flex-direction:column;}
   .pc-check{display:grid; grid-template-columns:24px minmax(0,1fr) auto auto; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line-soft);}
@@ -1621,7 +1623,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.77.0';
+const APP_VERSION = '1.78.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -2417,9 +2419,9 @@ function migrateState(st){
   if(!st.config.modules) st.config.modules = { conges: true }; // interrupteur du module Congés
   if(st.config.modules.presence === undefined) st.config.modules.presence = false; // pointage présentiel (voir presence.js) — désactivé par défaut
   if(!st.config.presence || typeof st.config.presence !== 'object') st.config.presence = {}; // réglages du pointage présentiel, valeurs par défaut dans presenceCfg()
-  // Pointeuse TimeMoto TM-616 (synchro serveur, timemotoSync.js) : désactivée par défaut. userMap =
-  // { id salarié TimeMoto: id utilisateur Planning } — un salarié TimeMoto non associé n'est pas importé.
-  if(!st.config.presence.timemoto || typeof st.config.presence.timemoto !== 'object') st.config.presence.timemoto = { actif: false, intervalleMin: 10, joursSynchro: 7, userMap: {} };
+  // Pointeuse TimeMoto TM-616 (import manuel par jeton, timemotoSync.js) : désactivée par défaut.
+  // userMap = { id salarié TimeMoto: id utilisateur Planning } — un salarié non associé n'est pas importé.
+  if(!st.config.presence.timemoto || typeof st.config.presence.timemoto !== 'object') st.config.presence.timemoto = { actif: false, joursSynchro: 7, userMap: {} };
   if(!st.config.presence.timemoto.userMap || typeof st.config.presence.timemoto.userMap !== 'object') st.config.presence.timemoto.userMap = {};
   if(st.config.modules.expedition === undefined) st.config.modules.expedition = false; // libération manuelle du casier — désactivé par défaut, comportement inchangé pour une installation existante
   if(st.config.matiereFusionActive === undefined) st.config.matiereFusionActive = false; // détection par matière/épaisseur désactivée par défaut
@@ -15407,11 +15409,13 @@ function renderPresencePage(){
   const alerts = [];
   openDays.forEach(od => alerts.push(`<li><b>${escapeHtml(presenceUserName(od.userId))}</b> — départ du ${new Date(od.day+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'long', day:'numeric', month:'numeric'})} non pointé (dernier pointage : ${escapeHtml(PRESENCE_TYPE_LABELS[od.lastType]||od.lastType)} à ${presenceHhmm(od.lastTs)}) <button class="pr-link" data-action="presence-open-correction" data-user-id="${escapeHtml(od.userId)}" data-day="${od.day}" data-preset="out">Corriger</button></li>`));
   rows.forEach(r => r.anomalies.filter(a => a.kind !== 'demande').forEach(a => alerts.push(`<li><b>${escapeHtml(r.username)}</b> — ${escapeHtml(a.text)} <button class="pr-link" data-action="presence-open-correction" data-user-id="${escapeHtml(r.userId)}" data-day="${dayKey}">Voir / corriger</button></li>`)));
-  // Synchro TimeMoto en panne ou non configurée : jamais silencieux (voir timemotoSync.js).
+  // Rappel TimeMoto : l'import est manuel (par jeton). Si le suivi TM-616 est activé et que le dernier
+  // import date de plus de 24 h (ou n'a jamais eu lieu), on le rappelle — jamais silencieux.
   const tmS = data.timemoto;
-  const tmHtml = tmS && tmS.actif && (tmS.lastError || !tmS.credentials) ? `
-    <div class="pr-alerts"><div class="pr-alerts-title">⚠ Pointeuse TimeMoto : synchronisation ${tmS.credentials ? 'interrompue' : 'non configurée'}</div>
-      <div>${escapeHtml(tmS.lastError || 'Identifiants TimeMoto absents sur le serveur.')} ${tmS.lastOkAt ? `Dernière synchronisation réussie : ${escapeHtml(new Date(tmS.lastOkAt).toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }))}.` : 'Aucune synchronisation réussie pour l’instant.'} Les pointages de la TM-616 ne sont plus importés — voir Paramètres → Pointage présentiel.</div>
+  const tmStale = tmS && tmS.actif && (!tmS.lastOkAt || (Date.now() - new Date(tmS.lastOkAt).getTime()) > 24 * 3600 * 1000);
+  const tmHtml = tmStale ? `
+    <div class="pr-alerts"><div class="pr-alerts-title">⏱ Pointeuse TimeMoto : import à faire</div>
+      <div>${tmS.lastOkAt ? `Dernier import : ${escapeHtml(new Date(tmS.lastOkAt).toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }))}.` : 'Aucun import effectué pour l’instant.'} Les pointages de la TM-616 s'importent à la main depuis Paramètres → Pointage présentiel (jeton copié depuis votre session TimeMoto).</div>
     </div>` : '';
   const alertsHtml = alerts.length ? `<div class="pr-alerts"><div class="pr-alerts-title">⚠ ${alerts.length} point${alerts.length>1?'s':''} à vérifier</div><ul>${alerts.join('')}</ul></div>` : '';
   const pendingHtml = pending.length ? `
@@ -16114,7 +16118,7 @@ let timemotoLastResult = null;    // résultat du dernier bouton (aperçu ou syn
 let timemotoBusy = false;
 function presenceTmCfg(st){
   const t = (((st || state).config || {}).presence || {}).timemoto || {};
-  return { actif: !!t.actif, intervalleMin: Number(t.intervalleMin) || 10, joursSynchro: Number(t.joursSynchro) || 7, userMap: t.userMap || {} };
+  return { actif: !!t.actif, joursSynchro: Number(t.joursSynchro) || 7, userMap: t.userMap || {} };
 }
 async function loadTimemotoStatus(){
   if(timemotoStatusCache && timemotoStatusCache.status === 'loading') return;
@@ -16132,7 +16136,6 @@ function updateTimemotoConfig(field, value){
   if(!state.config.presence) state.config.presence = {};
   const t = state.config.presence.timemoto || (state.config.presence.timemoto = { userMap: {} });
   if(field === 'actif') t.actif = !!value;
-  else if(field === 'intervalleMin'){ const n = Math.round(Number(value)); t.intervalleMin = isNaN(n) ? 10 : Math.max(5, Math.min(120, n)); }
   else if(field === 'joursSynchro'){ const n = Math.round(Number(value)); t.joursSynchro = isNaN(n) ? 7 : Math.max(1, Math.min(31, n)); }
   commit();
 }
@@ -16172,21 +16175,19 @@ function applyTimemotoSuggestions(){
 }
 async function runTimemotoSync(mode){
   if(timemotoBusy) return;
-  const body = {};
+  // Chaque import exige le jeton collé par l'utilisateur (aucune connexion automatique — la page de
+  // connexion TimeMoto est protégée par un reCAPTCHA). Le jeton part pour cette seule requête, puis
+  // le champ est vidé : il n'est jamais enregistré.
+  const tokEl = document.getElementById('tm-token-input');
+  const token = tokEl ? tokEl.value.trim() : '';
+  if(!token){ showToast('Collez d’abord un jeton TimeMoto (bouton « 📎 Copier mon jeton » ci-dessus).'); return; }
+  const body = { token, dryRun: mode === 'preview' };
   if(mode === 'since'){
     const el = document.getElementById('tm-since-input');
     if(!el || !el.value){ showToast('Choisissez la date de reprise de l’historique.'); return; }
     body.since = el.value;
   }
-  if(mode === 'token-preview' || mode === 'token-import'){
-    const el = document.getElementById('tm-token-input');
-    const v = el ? el.value.trim() : '';
-    if(!v){ showToast('Collez d’abord un jeton d’accès TimeMoto.'); return; }
-    body.token = v;
-    body.dryRun = mode === 'token-preview';
-    el.value = '';
-  }
-  if(mode === 'preview') body.dryRun = true;
+  if(tokEl) tokEl.value = '';
   timemotoBusy = true;
   render();
   try{
@@ -16219,6 +16220,11 @@ function timemotoResultHtml(r){
   if(!r.complete) parts.push('<b>lecture incomplète</b> — rien n’a été annulé par prudence');
   return `<div class="tm-result ${r.dryRun ? '' : 'tm-ok'}">${r.dryRun ? '🔍 Aperçu (rien n’a été enregistré) : ' : '✓ '}${parts.join(' · ')}</div>`;
 }
+// Marque-page (bookmarklet) : lit le jeton d'accès de la PROPRE session TimeMoto de l'utilisateur
+// (déjà connecté, reCAPTCHA franchi par lui) dans le stockage de la bibliothèque OIDC du site, et le
+// copie dans le presse-papier. Ne contourne aucune protection : c'est le jeton que le navigateur de
+// la personne détient déjà. Aucun `<` (illisible dans un attribut href) ; le `&` est encodé à l'affichage.
+const TIMEMOTO_BOOKMARKLET = "javascript:(function(){try{var f=null;[sessionStorage,localStorage].forEach(function(S){for(var i=S.length;i--;){var k=S.key(i);if(k&&k.indexOf('oidc.user')!==-1){try{var o=JSON.parse(S.getItem(k));if(o&&o.access_token){f=o.access_token;}}catch(e){}}}});if(!f){alert('Jeton introuvable. Ouvrez d’abord cloud-eu.timemoto.com et connectez-vous, puis recliquez ce marque-page depuis l’onglet TimeMoto.');return;}navigator.clipboard.writeText(f).then(function(){alert('Jeton TimeMoto copié. Collez-le dans Planning (Paramètres, Pointage présentiel).');},function(){window.prompt('Copiez ce jeton :',f);});}catch(e){alert('Erreur : '+e.message);}})();";
 function renderTimemotoSettings(){
   const tm = presenceTmCfg();
   if(!timemotoStatusCache) loadTimemotoStatus();
@@ -16228,41 +16234,41 @@ function renderTimemotoSettings(){
   const allTm = [...tmUsers, ...mappedIds.filter(id => !tmUsers.some(t => t.id === id)).map(id => ({ id, name: `(salarié TimeMoto ${id.slice(0, 8)}…)` }))];
   const users = (usersList || []).slice().sort((a, b) => String(a.username).localeCompare(String(b.username), 'fr'));
   const suggestions = allTm.filter(t => !tm.userMap[t.id] && timemotoSuggestUid(t, allTm, tm.userMap)).length;
-  const credHtml = !st ? `<span class="footer-note">${timemotoStatusCache && timemotoStatusCache.status === 'error' ? escapeHtml(timemotoStatusCache.error) : 'Chargement de l’état…'}</span>`
-    : st.credentials ? `<span class="tm-ok-txt">✓ Compte TimeMoto défini sur le serveur : <b class="pr-mono">${escapeHtml(st.email)}</b></span>`
-    : `<span class="tm-err-txt">✗ Aucun compte TimeMoto défini sur le serveur — voir « Mise en place » ci-dessous.</span>`;
-  const stateHtml = !st ? '' : `
-    <div class="tm-status">
-      <div>${credHtml}</div>
-      <div>Dernière synchronisation réussie : <b>${escapeHtml(timemotoDateTime(st.lastOkAt))}</b>${st.authMode ? ` <span class="footer-note">(${st.authMode === 'silent' ? 'session TimeMoto renouvelée' : 'connexion au compte'})</span>` : ''}${st.running ? ' · <b>synchronisation en cours…</b>' : ''}</div>
-      ${st.lastError ? `<div class="tm-err-txt">✗ ${escapeHtml(st.lastError)} <span class="footer-note">(${escapeHtml(timemotoDateTime(st.lastErrorAt))}${st.nextAllowedAt ? ` — prochaine tentative automatique vers ${escapeHtml(new Date(st.nextAllowedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }))}` : ''})</span></div>` : ''}
-      ${st.lastResult && !st.lastError ? `<div class="footer-note" style="text-align:left;">Dernier passage : ${st.lastResult.added} importé(s), ${st.lastResult.cancelled} annulé(s), ${st.lastResult.rows} journée(s) lue(s)${st.lastResult.unmapped ? `, ${st.lastResult.unmapped} journée(s) de salariés non associés` : ''}.</div>` : ''}
-    </div>`;
+  const lastImport = st && st.lastOkAt ? `Dernier import : <b>${escapeHtml(timemotoDateTime(st.lastOkAt))}</b>${st.lastImportTo ? ` (jusqu’au ${escapeHtml(st.lastImportTo.slice(8,10) + '/' + st.lastImportTo.slice(5,7))})` : ''}.` : 'Aucun import effectué pour l’instant.';
+  const bmHref = TIMEMOTO_BOOKMARKLET.replace(/&/g, '&amp;');
   return `
     <div class="tm-box">
       <div class="tm-title">⏱ Pointeuse TimeMoto TM-616 <span class="footer-note">(via TimeMoto Cloud)</span></div>
       <label class="statut-chip" style="margin:6px 0;">
         <input type="checkbox" ${tm.actif ? 'checked' : ''} data-action="tm-config" data-field="actif">
-        Importer automatiquement les pointages de la TM-616
+        Suivre les pointages de la TM-616 (import manuel par jeton)
       </label>
-      <div class="footer-note" style="text-align:left; padding-bottom:6px;">Le serveur se connecte seul à TimeMoto Cloud et importe chaque entrée/sortie : première entrée = arrivée, sortie suivie d'une entrée = pause, dernière sortie = départ. L'heure retenue est celle de la pointeuse. Une modification faite dans TimeMoto annule et remplace le pointage importé (tout reste tracé) ; une correction faite ici par un superviseur n'est jamais écrasée. Interface interne de TimeMoto, non officielle : une panne est signalée ici et sur la page Présence.</div>
-      ${stateHtml}
-      <div class="commande-top-fields" style="grid-template-columns:1fr 1fr; margin-top:8px;">
-        <label class="field">Synchroniser toutes les (minutes)
-          <input type="number" min="5" max="120" step="1" value="${tm.intervalleMin}" data-action="tm-config" data-field="intervalleMin">
-        </label>
-        <label class="field">Jours relus à chaque passage
-          <input type="number" min="1" max="31" step="1" value="${tm.joursSynchro}" data-action="tm-config" data-field="joursSynchro">
-        </label>
-      </div>
+      <div class="footer-note" style="text-align:left; padding-bottom:8px;">Import déclenché à la main : la page de connexion de TimeMoto est protégée par un reCAPTCHA, donc le serveur ne peut pas s'y connecter seul. Vous vous connectez vous-même à TimeMoto, récupérez votre jeton d'un clic et le collez ici. Chaque entrée/sortie devient un pointage (1re entrée = arrivée, sortie suivie d'une entrée = pause, dernière sortie = départ, heure de la pointeuse). Une modification faite dans TimeMoto annule et remplace le pointage importé (tout reste tracé) ; une correction faite ici par un superviseur n'est jamais écrasée. Le jeton n'est jamais enregistré.</div>
+
+      <div class="modal-section-title">1. Récupérer votre jeton</div>
+      <div class="footer-note" style="text-align:left; padding-bottom:6px;">Glissez ce bouton dans votre barre de favoris (une seule fois). Ensuite, sur un onglet <b>cloud-eu.timemoto.com</b> où vous êtes connecté, cliquez-le : votre jeton est copié dans le presse-papier.</div>
       <div class="tm-actions">
-        <button class="small primary" data-action="tm-sync" data-mode="now" ${timemotoBusy ? 'disabled' : ''}>${timemotoBusy ? 'Synchronisation…' : '⟳ Synchroniser maintenant'}</button>
+        <a class="tm-bookmarklet" href="${bmHref}" onclick="return false;" draggable="true" title="Glissez-moi dans votre barre de favoris">📎 Jeton TimeMoto → Planning</a>
+        <button class="small" data-action="tm-copy-bookmarklet">Copier le marque-page</button>
+      </div>
+      <div class="footer-note" style="text-align:left; padding:4px 0 10px;">Le bouton « Copier le marque-page » sert si le glisser-déposer ne marche pas : créez un favori, puis collez le texte copié dans son adresse (URL).</div>
+
+      <div class="modal-section-title">2. Coller le jeton et importer</div>
+      <div class="tm-actions">
+        <input type="password" id="tm-token-input" autocomplete="off" spellcheck="false" placeholder="Collez ici votre jeton TimeMoto" style="flex:1; min-width:220px;">
         <button class="small" data-action="tm-sync" data-mode="preview" ${timemotoBusy ? 'disabled' : ''} title="Lit TimeMoto sans rien enregistrer">🔍 Aperçu</button>
+        <button class="small primary" data-action="tm-sync" data-mode="import" ${timemotoBusy ? 'disabled' : ''}>${timemotoBusy ? 'Import…' : '⬇ Importer'}</button>
+      </div>
+      <div class="tm-actions" style="margin-top:6px;">
+        <span class="footer-note">Jours relus par défaut :</span>
+        <input type="number" min="1" max="31" step="1" value="${tm.joursSynchro}" data-action="tm-config" data-field="joursSynchro" style="width:70px;">
         <span class="tm-sep"></span>
         <label class="tm-inline">Reprendre l'historique depuis le <input type="date" id="tm-since-input" max="${toDateInputValue(new Date())}"></label>
-        <button class="small" data-action="tm-sync" data-mode="since" ${timemotoBusy ? 'disabled' : ''}>Importer</button>
+        <button class="small" data-action="tm-sync" data-mode="since" ${timemotoBusy ? 'disabled' : ''}>Importer cette période</button>
       </div>
+      <div class="footer-note" style="text-align:left; padding-top:4px;">${lastImport}</div>
       ${timemotoResultHtml(timemotoLastResult)}
+
       <div class="modal-section-title" style="margin-top:12px;">Association des salariés</div>
       ${allTm.length ? `
       <div class="tm-map">
@@ -16278,24 +16284,15 @@ function renderTimemotoSettings(){
         }).join('')}
       </div>
       ${suggestions ? `<button class="small" data-action="tm-apply-suggestions" style="margin-top:6px;">Appliquer les ${suggestions} suggestion${suggestions > 1 ? 's' : ''} par le nom</button>` : ''}`
-      : `<div class="footer-note" style="text-align:left;">La liste des salariés TimeMoto apparaît après une première lecture (« 🔍 Aperçu » ou « Synchroniser maintenant »).</div>`}
+      : `<div class="footer-note" style="text-align:left;">La liste des salariés TimeMoto apparaît après un premier « 🔍 Aperçu ».</div>`}
       <details class="tm-help">
-        <summary>Mise en place (une seule fois)</summary>
+        <summary>Comment récupérer le jeton en détail</summary>
         <ol>
-          <li>Dans TimeMoto Cloud, créez un utilisateur dédié (ex. « Planning Atelier ») avec les droits <b>Manager (lecture seule)</b> et un mot de passe propre à ce compte.</li>
-          <li>Sur le NAS, dans le dossier du projet (à côté de <span class="pr-mono">docker-compose.yml</span>), créez un fichier <span class="pr-mono">.env</span> contenant deux lignes :<br><span class="pr-mono">TIMEMOTO_EMAIL=adresse-du-compte-dédié</span><br><span class="pr-mono">TIMEMOTO_PASSWORD=son-mot-de-passe</span><br>puis protégez-le (<span class="pr-mono">chmod 600 .env</span>) et relancez <span class="pr-mono">bash deploy.sh</span>. Ce fichier n'est jamais versionné ni sauvegardé par l'application.</li>
-          <li>Ici : cochez l'import automatique, cliquez « 🔍 Aperçu », associez les salariés, puis « Synchroniser maintenant ». Pour reprendre les semaines passées, utilisez « Reprendre l'historique ».</li>
+          <li>Ouvrez <span class="pr-mono">cloud-eu.timemoto.com</span> et connectez-vous (c'est vous qui passez le reCAPTCHA).</li>
+          <li>Cliquez le marque-page « 📎 Jeton TimeMoto → Planning » : un message confirme que le jeton est copié.</li>
+          <li>Revenez ici, collez-le dans le champ ci-dessus, puis « 🔍 Aperçu » puis « ⬇ Importer ».</li>
         </ol>
-        <div class="footer-note" style="text-align:left;">Identifiants, cookies et jetons TimeMoto ne sont jamais enregistrés dans le planning, les sauvegardes ni les journaux. Après un refus du mot de passe, le serveur attend une heure avant de réessayer (pour ne pas faire bloquer le compte).</div>
-      </details>
-      <details class="tm-help">
-        <summary>Test avec un jeton collé (sans compte configuré)</summary>
-        <div class="footer-note" style="text-align:left; padding:4px 0 6px;">Jeton d'accès récupéré dans votre navigateur connecté à TimeMoto (valable 1 h). Il sert pour cette seule lecture : il est effacé du champ dès le clic et n'est jamais enregistré.</div>
-        <div class="tm-actions">
-          <input type="password" id="tm-token-input" autocomplete="off" spellcheck="false" placeholder="Jeton d'accès (Bearer)" style="flex:1; min-width:200px;">
-          <button class="small" data-action="tm-sync" data-mode="token-preview" ${timemotoBusy ? 'disabled' : ''}>🔍 Aperçu</button>
-          <button class="small" data-action="tm-sync" data-mode="token-import" ${timemotoBusy ? 'disabled' : ''}>Importer</button>
-        </div>
+        <div class="footer-note" style="text-align:left;">Le jeton ne vaut qu'une heure : au-delà, recliquez le marque-page pour en obtenir un nouveau. Rien n'est stocké côté serveur ; relancer un import ne crée jamais de doublon.</div>
       </details>
     </div>`;
 }
@@ -16736,6 +16733,7 @@ function dispatchClickAction(action, el){
     case 'presence-clear-pin': clearPresencePin(el.dataset.userId); break;
     case 'tm-sync': runTimemotoSync(el.dataset.mode); break;
     case 'tm-apply-suggestions': applyTimemotoSuggestions(); break;
+    case 'tm-copy-bookmarklet': { const t = TIMEMOTO_BOOKMARKLET; const done = () => showToast('Marque-page copié — créez un favori et collez-le dans son adresse.'); try{ navigator.clipboard.writeText(t).then(done, () => { window.prompt('Copiez ce texte dans l’adresse d’un favori :', t); }); }catch(e){ window.prompt('Copiez ce texte dans l’adresse d’un favori :', t); } break; }
     case 'presence-my-export': exportMyPresenceMonth(); break;
     case 'presence-doc': presenceDocModal = el.dataset.kind === 'registre' ? 'registre' : 'info'; render(); break;
     case 'presence-doc-close': presenceDocModal = null; render(); break;
