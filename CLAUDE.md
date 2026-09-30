@@ -1425,9 +1425,16 @@ l'utilisateur récupère lui-même dans sa propre session TimeMoto (reCAPTCHA fr
   chaque partie est du base64url, si bien qu'un JSON contenant un jeton (`{"a":"h.PAYLOAD.s"}`) était
   pris pour le jeton lui-même (et aurait été copié en entier) — `b64ok` vérifie les trois parties ;
   le code du favori ne doit contenir ni `<`, ni `%`, ni `"`, ni `\` (vérifié par le test).
-  Si rien n'est trouvé, le marque-page affiche uniquement des NOMS et des TAILLES (clés volumineuses :
-  nom, longueur, noms des champs JSON ; noms des cookies) — jamais de valeur — pour diagnostiquer
-  sans exposer de secret.
+  Si rien n'est trouvé, le marque-page journalise dans la console uniquement des NOMS et des TAILLES
+  (clés volumineuses : nom, longueur, noms des champs JSON ou du JSON décodé en base64 ; noms des
+  cookies) — jamais de valeur — pour diagnostiquer sans exposer de secret.
+  v1.78.3 (constat réel : stockage TimeMoto = `0-Cloud`, 7158 caractères de texte non-JSON) : en plus,
+  recherche d'un JWT (`eyJ…`) noyé dans n'importe quel texte, décodage base64/base64url des valeurs
+  volumineuses, puis — si rien n'est trouvé — **capture au vol** : le favori enveloppe `fetch` et
+  `XMLHttpRequest.setRequestHeader` de la page et copie l'en-tête `Authorization: Bearer …` de la
+  PROCHAINE requête de TimeMoto (l'utilisateur clique un menu). Équivalent automatique de la lecture de
+  l'onglet Réseau des DevTools : c'est le jeton que le navigateur envoie déjà, rien n'est contourné ni
+  transmis (presse-papier local, ou `prompt()` de repli). Le hook vit jusqu'au rechargement de la page.
   Ne lit que le jeton que le navigateur de la personne détient déjà — aucun contournement. Bouton
   « Copier le marque-page » en repli si le glisser-déposer ne marche pas. Écrit sans `<` (illisible en
   attribut `href`), `&` encodé `&amp;` à l'affichage puis re-décodé par le navigateur.
