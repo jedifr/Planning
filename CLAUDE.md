@@ -1353,7 +1353,8 @@ Distinct des séances sur les tâches (`sessions[]`) : ici on mesure la PRÉSENC
   `GET /api/presence/range?from&to[&userId]` (salarié forcé sur lui-même, 400 jours max),
   `POST /api/presence/punch` (avec `pin` = borne, pour n'importe qui ; sans `pin` = soi-même
   seulement, si `telephone` actif et adresse dans `reseaux`), `POST /api/presence/correction`
-  (superviseur : `valide` ; salarié : lui seul, `a_valider`), `POST /api/presence/decide`,
+  (superviseur : `valide` ; salarié : lui seul, `a_valider`), `POST /api/presence/correction/retype`
+  (superviseur : changer le type d'un pointage — voir ci-dessous), `POST /api/presence/decide`,
   `POST /api/presence/pin` / `pin/clear`, `POST /api/presence/verify-password` (sortie de borne).
 - **Codes de borne** : colonne `users.presence_pin_hash` (bcrypt, jamais renvoyé), 4 chiffres dans
   l'interface (4 à 6 acceptés côté serveur), choisi par chacun dans « Mon pointage » ; un superviseur
@@ -1399,6 +1400,62 @@ Distinct des séances sur les tâches (`sessions[]`) : ici on mesure la PRÉSENC
   demande → validation, annulation, verrou SQLite ; Playwright 1500 et 390 px, sans débordement).
 - **Présence pointée dans la Fiche salarié** (v1.76.0) : voir « Fiche salarié ».
 - Non fait (pistes) : badges RFID.
+
+### Changer le type d'un pointage (correction superviseur)
+
+Retour utilisateur réel (capture de la pop-up « Corriger un pointage ») : un pointage étrange annulé à
+la main laisse une séquence absurde derrière lui (TimeMoto : 07:50 arrivée, ~~09:21 début de pause~~
+annulé, 10:02 *fin* de pause, 10:12 *début* de pause, 12:00 *fin* de pause) — et rien ne permettait de
+reclasser 10:02 en début de pause, 10:12 en fin de pause, 12:00 en départ sans annuler puis ressaisir
+chaque heure à la main (perte des secondes, trois allers-retours).
+
+- Bouton **« Changer le type »** sur chaque carte de pointage retenu de la pop-up (superviseur
+  uniquement — `d.mode==='sup'` ; un salarié garde « Signaler une erreur ») : le formulaire propose les
+  quatre types (l'actuel marqué « (actuel) », suggestion = le type opposé : fin↔début de pause,
+  arrivée↔départ), l'heure d'origine préremplie et modifiable, le motif (« Erreur de pointage » par
+  défaut) et un commentaire. `presenceCorrection.retypeId` (en plus de `cancelsId`, exclusifs) ;
+  « Revenir à un ajout » les remet à `null`.
+- **Toujours jamais une modification** (immuabilité, voir plus haut) : `presence.retypePunch` (route
+  `POST /api/presence/correction/retype`, superviseur) écrit **dans une seule transaction** une ligne
+  `cancel` sur l'original ET un nouveau pointage `source:'manuel'`, validé d'office — jamais un état
+  où l'original est annulé sans remplaçant (testé : un échec du second `INSERT` annule aussi le
+  premier). Même heure **secondes comprises** si elle n'est pas modifiée (le client n'envoie `ts` que si
+  l'heure a changé) ; même jour obligatoire ; pas dans le futur ; refus si aucun changement, si le
+  pointage est déjà annulé (ou annulation en attente), non validé, ou d'un autre salarié. Les deux
+  lignes portent le même motif et un commentaire automatique « Changement : Fin de pause 10:02 →
+  Début de pause 10:02 » : le journal de la journée se lit sans code supplémentaire.
+- Pas de contrôle d'enchaînement (`checkTransition`) sur une correction, comme pour toute correction :
+  le superviseur sait ce qu'il fait — l'ordre des trois changements importe donc peu.
+- **Compatible avec l'import TimeMoto** : l'original importé est annulé par un humain → la
+  réconciliation le respecte (`humanCancelled`) et ne le réimporte jamais ; le remplaçant, non référencé
+  dans `timemoto_punch_refs`, n'est jamais annulé par un import ultérieur.
+- Test (scratchpad `retype_test.js`, 15 assertions sur un vrai SQLite) : le scénario ci-dessus donne
+  `in 07:50, pause_start 10:02, pause_end 10:12, out 12:00` ; et `forfait_test.js` côté client.
+
+### Salariés au forfait — non tenus de pointer
+
+Retour utilisateur réel : « j'ai aussi des salariés au forfait qui ne sont pas tenus de pointer » —
+sans réglage, ils remontaient en permanence en « Non arrivé »/« Aucun pointage »/« Départ non pointé ».
+
+- `state.presenceForfaitUserIds` (`string[]`, `migrateState` → `[]`), `isForfaitUser(st, userId)`,
+  `togglePresenceForfait(userId)` (un `commit()`). Case « Au forfait — non tenu de pointer »
+  (Paramètres → Utilisateurs, sous « Afficher dans le temps de production », visible seulement module
+  Pointage présentiel actif). Distinct de `hiddenTempsProdUserIds` (qui masque la personne du TEMPS DE
+  PRODUCTION sur tâches) : les deux réglages sont indépendants.
+- **Une attente, jamais une restriction ni un masquage** : le forfait peut pointer (borne, téléphone) —
+  sa présence s'affiche et se compte normalement. Pour lui, `computePresenceRows` ne produit plus de
+  statut `nonArrive`/`nonPointe`/`attendu` mais `forfait` (« Au forfait ») quand il n'a pas pointé, et
+  aucune anomalie `retard`/`nonArrive`/`nonPointe`/`ouvert` (départ non pointé)/`tache` (tâche en cours
+  sans présence) ; `demande` (correction à valider) reste signalée. Page Présence : exclu de
+  « Présents x / attendus », de « Non arrivés » et de « En pause », mention « N au forfait » dans la
+  tuile ; ses journées passées restées ouvertes (`openDays`, calculées côté serveur) sont filtrées côté
+  client. Vue Semaine : pas de ⚠ ni d'écart rouge (« forfait » à la place de l'écart). Fiche salarié
+  (`computeFichePresence`) : pas de départ non pointé, de retard, de journée sans pointage ni de
+  « sur tâches hors présence » ; ligne « Statut : Au forfait — pointage facultatif ».
+- **Volontairement non touché** : le bloc « 👥 Pointage de l'équipe » de la Vue d'ensemble et ses
+  alertes « sans pointage » (`computeTeamPointage`) mesurent les SÉANCES sur tâches, pas la présence :
+  pour qu'un forfait qui ne travaille pas sur tâches n'y figure pas, décocher « Afficher dans le temps de
+  production » (même exclusion que pour un compte admin).
 
 ### Pointeuse TimeMoto TM-616 (`timemotoSync.js`) — import manuel par jeton
 

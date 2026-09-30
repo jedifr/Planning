@@ -517,6 +517,21 @@ app.post('/api/presence/correction', requireAuth, requireLicense, requirePresenc
   });
   res.json({ ok: true, punch });
 });
+// Changement de type d'un pointage existant (superviseur) : annulation + remplaçant en une transaction.
+const PUNCH_TYPE_LABELS_FR = { in: 'Arrivée', pause_start: 'Début de pause', pause_end: 'Fin de pause', out: 'Départ' };
+app.post('/api/presence/correction/retype', requireAuth, requireLicense, requirePresence, (req, res) => {
+  if(!isSupervisorReq(req)) return res.status(403).json({ error: 'Réservé aux superviseurs.' });
+  const body = req.body || {};
+  const motif = String(body.motif || '').trim();
+  if(!motif) return res.status(400).json({ error: 'Le motif est obligatoire.' });
+  const r = presence.retypePunch(db, {
+    id: body.id, userId: String(body.userId || ''), type: String(body.type || ''), ts: body.ts ? String(body.ts) : '',
+    motif, commentaire: String(body.commentaire || '').slice(0, 300), createdBy: String(req.session.userId),
+    ip: presence.normIp(req.ip), typeLabels: PUNCH_TYPE_LABELS_FR
+  });
+  if(!r.ok) return res.status(400).json({ error: r.error });
+  res.json(r);
+});
 app.post('/api/presence/decide', requireAuth, requireLicense, requirePresence, (req, res) => {
   if(!isSupervisorReq(req)) return res.status(403).json({ error: 'Réservé aux superviseurs.' });
   const { id, decision } = req.body || {};

@@ -113,6 +113,35 @@ function insertPunch(db, p){
   return getPunch(db, info.lastInsertRowid);
 }
 
+// Changement de type (ex. « Fin de pause » saisie à la place d'un « Début de pause ») : comme toute
+// correction, JAMAIS une modification — le pointage d'origine est neutralisé par une annulation et
+// un nouveau pointage (source 'manuel', même heure sauf indication contraire) le remplace. Les deux
+// lignes sont écrites dans UNE transaction : pas d'état intermédiaire où l'original serait annulé
+// sans remplaçant. Réservé aux superviseurs côté route (status 'valide' d'office).
+function retypePunch(db, o){
+  const orig = getPunch(db, o.id);
+  if(!orig || orig.type === 'cancel' || orig.userId !== String(o.userId)) return { ok: false, error: 'Pointage à modifier introuvable.' };
+  if(orig.status !== 'valide') return { ok: false, error: 'Seul un pointage validé peut être modifié.' };
+  if(db.prepare("SELECT 1 FROM presence_punches WHERE type = 'cancel' AND cancels_id = ? AND status IN ('valide','a_valider')").get(orig.id))
+    return { ok: false, error: 'Ce pointage est déjà annulé (ou une annulation est en attente).' };
+  if(!PUNCH_TYPES.includes(o.type)) return { ok: false, error: 'Type de pointage inconnu.' };
+  let ts = orig.ts;
+  if(o.ts){
+    if(!TS_RE.test(String(o.ts))) return { ok: false, error: 'Heure invalide.' };
+    ts = normTs(String(o.ts));
+    if(ts.slice(0, 10) !== orig.ts.slice(0, 10)) return { ok: false, error: 'Le pointage doit rester sur le même jour.' };
+    if(ts !== orig.ts && ts > localTs(new Date())) return { ok: false, error: "Impossible de placer un pointage dans le futur." };
+  }
+  if(o.type === orig.type && ts === orig.ts) return { ok: false, error: 'Aucun changement : choisissez un autre type ou une autre heure.' };
+  const note = `Changement : ${o.typeLabels ? o.typeLabels[orig.type] : orig.type} ${orig.ts.slice(11, 16)} → ${o.typeLabels ? o.typeLabels[o.type] : o.type} ${ts.slice(11, 16)}${o.commentaire ? ' — ' + o.commentaire : ''}`.slice(0, 500);
+  let cancel, punch;
+  db.transaction(() => {
+    cancel = insertPunch(db, { userId: orig.userId, type: 'cancel', ts: orig.ts, source: 'manuel', createdBy: o.createdBy, status: 'valide', cancelsId: orig.id, motif: o.motif, commentaire: note, ip: o.ip });
+    punch = insertPunch(db, { userId: orig.userId, type: o.type, ts, source: 'manuel', createdBy: o.createdBy, status: 'valide', motif: o.motif, commentaire: note, ip: o.ip });
+  })();
+  return { ok: true, cancel, punch };
+}
+
 function decidePunch(db, id, decision, byUserId){
   if(decision !== 'valide' && decision !== 'refuse') return { ok: false, error: 'Décision invalide.' };
   const p = getPunch(db, id);
@@ -174,6 +203,6 @@ function ipAllowed(ip, reseaux){
 
 module.exports = {
   PUNCH_TYPES, TS_RE, DATE_RE, initPresenceTables, localTs, normTs, effectivePunches, getPunchesBetween,
-  getPunch, dayEffective, checkTransition, insertPunch, decidePunch, purgeOlderThan, getAllPunches,
+  getPunch, dayEffective, checkTransition, insertPunch, retypePunch, decidePunch, purgeOlderThan, getAllPunches,
   setPin, clearPin, usersWithPin, verifyPin, normIp, ipAllowed
 };

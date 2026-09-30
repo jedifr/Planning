@@ -1623,7 +1623,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.78.3';
+const APP_VERSION = '1.79.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -2376,6 +2376,7 @@ function migrateState(st){
   if(!st.config.emailReport) st.config.emailReport = { actif:false, destinataires:'', frequence:'quotidien', jourSemaine:1, heure:'18:00', dernierEnvoi:null }; // rapports par e-mail (voir CLAUDE.md « Alertes e-mail ») — désactivé par défaut
   if(!Array.isArray(st.commandesArchivees)) st.commandesArchivees = []; // commandes entièrement terminées depuis longtemps, écartées du moteur de planification pour garder l'appli réactive — toujours incluses dans l'export complet
   if(!st.userMachines) st.userMachines = {}; // { [userId]: [machineId, ...] } — lien plusieurs-à-plusieurs
+  if(!Array.isArray(st.presenceForfaitUserIds)) st.presenceForfaitUserIds = []; // salariés au forfait, non tenus de pointer — voir isForfaitUser
   if(!Array.isArray(st.hiddenTempsProdUserIds)) st.hiddenTempsProdUserIds = []; // salariés exclus de l'onglet Temps de production (superviseur) — voir isHiddenFromTempsProd
   if(!st.userDefaultPage) st.userDefaultPage = {}; // { [userId]: 'planning'|'conges'|'tempsProd'|'zones'|'risques'|'pointages'|'historique'|'dashboard' } — page affichée à la connexion, voir applyUserDefaultPageOnStart
   if(!st.userDefaultPlanningView) st.userDefaultPlanningView = {}; // { [userId]: 'jour'|'semaine'|'mois'|'annee'|'kanban'|'liste' } — vue du planning appliquée à la connexion quand la page d'accueil est Planning, voir applyUserDefaultPageOnStart
@@ -11314,6 +11315,20 @@ function computeMachineOccupationRows(st, periodStart, periodEnd){
 function isHiddenFromTempsProd(st, userId){
   return (st.hiddenTempsProdUserIds||[]).includes(String(userId));
 }
+// Salarié au forfait (jours ou heures) : pas tenu de pointer sa présence. Aucun signalement d'absence de
+// pointage pour lui (non arrivé, sans pointage, retard, départ non pointé, tâche sans présence), et pas
+// de compte dans « présents / attendus » — mais rien n'est caché : s'il pointe (borne, téléphone), sa
+// présence s'affiche et se compte normalement. Purement un réglage d'attente, jamais une restriction.
+function isForfaitUser(st, userId){
+  return ((st || state).presenceForfaitUserIds || []).includes(String(userId));
+}
+function togglePresenceForfait(userId){
+  const uid_ = String(userId);
+  if(!Array.isArray(state.presenceForfaitUserIds)) state.presenceForfaitUserIds = [];
+  const idx = state.presenceForfaitUserIds.indexOf(uid_);
+  if(idx >= 0) state.presenceForfaitUserIds.splice(idx, 1); else state.presenceForfaitUserIds.push(uid_);
+  commit();
+}
 function toggleTempsProdVisibility(userId){
   const uid_ = String(userId);
   if(!Array.isArray(state.hiddenTempsProdUserIds)) state.hiddenTempsProdUserIds = [];
@@ -12242,7 +12257,8 @@ function computeFichePresence(fiche, punches, uid, now){
   const seuil = presenceCfg().retardSeuilMin;
   const todayKey = toDateInputValue(now);
   const days = {};
-  const T = { presMin: 0, pauseMin: 0, nbJours: 0, ouverts: [], retards: [], sansPointage: [], horsPresenceMin: 0, horsPresenceJours: [], expectedElapsedMin: 0 };
+  const forfait = isForfaitUser(state, uid);
+  const T = { forfait, presMin: 0, pauseMin: 0, nbJours: 0, ouverts: [], retards: [], sansPointage: [], horsPresenceMin: 0, horsPresenceJours: [], expectedElapsedMin: 0 };
   fiche.days.forEach(x => {
     const list = byDay[x.dayKey] || [];
     const sum = presenceDaySummary(list, x.dayKey, now);
@@ -12252,13 +12268,14 @@ function computeFichePresence(fiche, punches, uid, now){
     // ouverte (présence inconnue après le dernier pointage) ni sur une journée sans aucun pointage
     // (compté à part, « sans pointage »).
     let horsMin = 0;
-    if(list.length && !sum.ouvert) horsMin = Math.round(timeIntervalsMinutes(subtractTimeIntervals(x.work || [], sum.work)));
+    if(!forfait && list.length && !sum.ouvert) horsMin = Math.round(timeIntervalsMinutes(subtractTimeIntervals(x.work || [], sum.work)));
     const d = { sum, has: list.length > 0, retardMin, horsMin };
     days[x.dayKey] = d;
     if(!x.expectedElapsedMin && !list.length && !(x.work || []).length) return;
     T.presMin += sum.workMin; T.pauseMin += sum.pauseMin;
     T.expectedElapsedMin += x.expectedElapsedMin || 0;
     if(list.length) T.nbJours++;
+    if(forfait) return; // au forfait : pas de départ non pointé, retard ni journée sans pointage à signaler
     if(sum.ouvert) T.ouverts.push(x);
     if(retardMin != null && retardMin > seuil) T.retards.push({ x, min: retardMin });
     const startedToday = x.dayKey !== todayKey || (firstStart && now >= new Date(firstStart.getTime() + seuil * 60000));
@@ -12414,7 +12431,8 @@ function renderFicheSalariePage(){
     </dl>${PT ? `<dl class="fs-kv" style="margin-top:10px;">
       ${kv('Horaire attendu écoulé', ficheMinLabel(PT.expectedElapsedMin))}
       ${kv('Présence pointée', ficheMinLabel(PT.presMin), 'tot')}
-      ${kv('Écart', PT.expectedElapsedMin ? `${PT.presMin - PT.expectedElapsedMin >= 0 ? '+' : '−'} ${pointageDurLabel(Math.abs(PT.presMin - PT.expectedElapsedMin))}` : '—', 'sub' + (PT.presMin < PT.expectedElapsedMin - 5 ? ' neg' : ''))}
+      ${PT.forfait ? kv('Statut', 'Au forfait — pointage facultatif') : ''}
+      ${kv('Écart', PT.forfait ? '—' : PT.expectedElapsedMin ? `${PT.presMin - PT.expectedElapsedMin >= 0 ? '+' : '−'} ${pointageDurLabel(Math.abs(PT.presMin - PT.expectedElapsedMin))}` : '—', 'sub' + (PT.presMin < PT.expectedElapsedMin - 5 ? ' neg' : ''))}
       ${kv('Pauses pointées', ficheMinLabel(PT.pauseMin))}
       ${kv('Jours pointés', String(PT.nbJours))}
       ${kv('Départs non pointés', PT.ouverts.length ? String(PT.ouverts.length) : '—', PT.ouverts.length ? 'neg' : '')}
@@ -13301,6 +13319,10 @@ function renderSettingsModal(){
               <input type="checkbox" ${isHiddenFromTempsProd(state, uid_)?'':'checked'} data-action="toggle-temps-prod-visibility" data-user-id="${uid_}">
               Afficher dans le temps de production
             </label>
+            ${presenceModuleActive() ? `<label class="statut-chip" style="margin-bottom:10px;" title="Pas de « non arrivé », de retard ni de départ non pointé signalés pour cette personne ; si elle pointe, sa présence compte normalement.">
+              <input type="checkbox" ${isForfaitUser(state, uid_)?'checked':''} data-action="toggle-presence-forfait" data-user-id="${uid_}">
+              Au forfait — non tenu de pointer
+            </label>` : ''}
 
             <div class="modal-section-title" style="font-size:10px;">Postes liés</div>
             <select multiple class="deps-select" data-action="user-machines" data-user-id="${uid_}" title="Ctrl/Cmd+clic pour ajouter ou retirer un poste">
@@ -15009,7 +15031,8 @@ const PRESENCE_STATUS_META = {
   present: { label: 'Présent', cls: 'pr-present' }, pause: { label: 'En pause', cls: 'pr-pause' },
   parti: { label: 'Parti', cls: 'pr-parti' }, attendu: { label: 'Attendu', cls: 'pr-attendu' },
   nonArrive: { label: 'Non arrivé', cls: 'pr-absent' }, nonPointe: { label: 'Aucun pointage', cls: 'pr-absent' },
-  conge: { label: 'Congé', cls: 'pr-conge' }, hors: { label: 'Non travaillé', cls: 'pr-parti' }
+  conge: { label: 'Congé', cls: 'pr-conge' }, hors: { label: 'Non travaillé', cls: 'pr-parti' },
+  forfait: { label: 'Au forfait', cls: 'pr-parti' }
 };
 const BORNE_MODE_STORAGE_KEY = 'planning-atelier-borne-mode';
 function presenceModuleActive(){ return !!(state && state.config && state.config.modules && state.config.modules.presence); }
@@ -15276,6 +15299,7 @@ function computePresenceRows(st, data, dayKey, now){
   Object.keys(rawByUser).forEach(id => { if(!ids.includes(id)) ids.push(id); });
   const rows = ids.map(uid => {
     const exp = expectedDayFor(uid, st, refDate);
+    const forfait = isForfaitUser(st, uid);
     const sum = presenceDaySummary(byUser[uid] || [], dayKey, now);
     const firstStart = exp.expected.length ? exp.expected[0][0] : null;
     const lastEnd = exp.expected.length ? exp.expected[exp.expected.length - 1][1] : null;
@@ -15287,6 +15311,7 @@ function computePresenceRows(st, data, dayKey, now){
     if(status === 'absent'){
       if(exp.leave && !exp.leave.demiJournee) status = 'conge';
       else if(!exp.expected.length) status = 'hors';
+      else if(forfait) status = 'forfait';
       else if(isFuture || (isToday && now < new Date(firstStart.getTime() + seuil * 60000))) status = 'attendu';
       else status = isToday ? 'nonArrive' : 'nonPointe';
     }
@@ -15296,20 +15321,20 @@ function computePresenceRows(st, data, dayKey, now){
     const pendingN = raw.filter(p => p.status === 'a_valider').length;
     const running = isToday ? presenceRunningTasksFor(uid) : [];
     const anomalies = [];
-    if(retardMin != null && retardMin > seuil) anomalies.push({ kind: 'retard', text: `Arrivée avec ${presenceMinLabel(retardMin)} de retard` });
+    if(!forfait && retardMin != null && retardMin > seuil) anomalies.push({ kind: 'retard', text: `Arrivée avec ${presenceMinLabel(retardMin)} de retard` });
     if(status === 'nonArrive') anomalies.push({ kind: 'nonArrive', text: `Pas d'arrivée pointée — attendu à ${pad(firstStart.getHours())}:${pad(firstStart.getMinutes())}` });
     if(status === 'nonPointe') anomalies.push({ kind: 'nonPointe', text: 'Aucun pointage ce jour-là (horaire prévu, pas de congé)' });
-    if(sum.ouvert) anomalies.push({ kind: 'ouvert', text: 'Départ non pointé' });
-    if(running.length && status !== 'present') anomalies.push({ kind: 'tache', text: `Tâche en cours sans présence pointée : ${presenceTaskLabel(running[0])}` });
+    if(!forfait && sum.ouvert) anomalies.push({ kind: 'ouvert', text: 'Départ non pointé' });
+    if(!forfait && running.length && status !== 'present') anomalies.push({ kind: 'tache', text: `Tâche en cours sans présence pointée : ${presenceTaskLabel(running[0])}` });
     if(pendingN) anomalies.push({ kind: 'demande', text: `${pendingN} demande(s) de correction à valider` });
     const u = (usersList || []).find(uu => String(uu.id) === uid);
     return {
-      userId: uid, username: u ? u.username : `#${uid}`, status, exp, sum, firstStart, lastEnd, expectedMin, expectedTotalMin,
+      userId: uid, username: u ? u.username : `#${uid}`, forfait, status, exp, sum, firstStart, lastEnd, expectedMin, expectedTotalMin,
       retardMin, sources, corrected, pendingN, anomalies, raw, eff: byUser[uid] || [],
       tachesH: prod[uid] ? prod[uid].totalH : 0
     };
   }).filter(r => r.exp.expected.length || r.eff.length || r.raw.length || r.exp.leave);
-  const order = { nonArrive: 0, nonPointe: 0, pause: 1, present: 2, attendu: 3, parti: 4, conge: 5, hors: 6 };
+  const order = { nonArrive: 0, nonPointe: 0, pause: 1, present: 2, attendu: 3, parti: 4, conge: 5, forfait: 5, hors: 6 };
   return rows.sort((a, b) => ((order[a.status] ?? 9) - (order[b.status] ?? 9)) || a.username.localeCompare(b.username));
 }
 
@@ -15385,10 +15410,11 @@ function renderPresencePage(){
     return `<section class="panel"><div class="panel-body">${head}<div class="pr-empty">${msg}</div></div></section>`;
   }
   const rows = computePresenceRows(state, data, dayKey, now);
-  const openDays = (data.openDays || []).filter(od => od.day < dayKey);
+  const openDays = (data.openDays || []).filter(od => od.day < dayKey && !isForfaitUser(state, od.userId));
   const pending = data.pending || [];
-  const count = s => rows.filter(r => r.status === s).length;
-  const attendus = rows.filter(r => r.exp.expected.length && r.status !== 'conge').length;
+  const count = s => rows.filter(r => r.status === s && !r.forfait).length;
+  const attendus = rows.filter(r => !r.forfait && r.exp.expected.length && r.status !== 'conge').length;
+  const forfaitN = rows.filter(r => r.forfait).length;
   const presentN = count('present'), pauseN = count('pause');
   const nonArr = rows.filter(r => r.status === 'nonArrive' || r.status === 'nonPointe');
   const conges = rows.filter(r => r.status === 'conge');
@@ -15399,8 +15425,8 @@ function renderPresencePage(){
   const tile = (tone, label, value, sub) => `<div class="dash-stat-tile tone-${tone}"><div class="dst-lbl">${label}</div><div class="dst-num">${value}</div><div class="dst-sub">${sub}</div></div>`;
   const tiles = `
     <div class="dash-stat-grid pr-tiles">
-      ${tile('green', 'Présents', `${presentN + pauseN} / ${attendus}`, isToday ? 'attendus aujourd’hui' : 'pointés ce jour-là')}
-      ${tile(pauseN ? 'amber' : 'neutral', 'En pause', pauseN, rows.filter(r => r.status === 'pause').map(r => escapeHtml(r.username)).join(', ') || '—')}
+      ${tile('green', 'Présents', `${presentN + pauseN} / ${attendus}`, (isToday ? 'attendus aujourd’hui' : 'pointés ce jour-là') + (forfaitN ? ` · ${forfaitN} au forfait (non tenu${forfaitN>1?'s':''} de pointer)` : ''))}
+      ${tile(pauseN ? 'amber' : 'neutral', 'En pause', pauseN, rows.filter(r => r.status === 'pause' && !r.forfait).map(r => escapeHtml(r.username)).join(', ') || '—')}
       ${tile(nonArr.length ? 'red' : 'green', isToday ? 'Non arrivés' : 'Sans pointage', nonArr.length, nonArr.map(r => escapeHtml(r.username)).join(', ') || 'personne')}
       ${tile('neutral', 'Absences prévues', conges.length, conges.map(r => `${escapeHtml(r.username)}${r.exp.leave ? ' — ' + escapeHtml(r.exp.leave.label) : ''}`).join(', ') || '—')}
       ${tile(anomaliesN ? 'red' : 'green', 'Anomalies', anomaliesN, anomaliesN ? 'à vérifier ci-dessous' : 'rien à signaler')}
@@ -15514,7 +15540,7 @@ function presenceWeekModel(st, punches, from, now){
     const cells = days.map(d => { const s = presenceDaySummary(map[uid + '|' + d] || [], d, now); return { day: d, sum: s, has: !!(map[uid + '|' + d] || []).length }; });
     const totalMin = cells.reduce((s, c) => s + c.sum.workMin, 0);
     const theoH = theoreticalPresenceHoursForUser(uid, st, start, end);
-    return { userId: uid, username: presenceUserName(uid), cells, totalMin, theoH };
+    return { userId: uid, username: presenceUserName(uid), forfait: isForfaitUser(st, uid), cells, totalMin, theoH };
   }).filter(r => r.totalMin > 0 || r.theoH > 0);
   const showWeekend = rows.some(r => r.cells.slice(5).some(c => c.has));
   return { days, rows, showWeekend };
@@ -15538,10 +15564,10 @@ function renderPresenceWeek(){
           const ecartH = r.totalMin / 60 - r.theoH;
           return `<tr>
             <td><div class="pr-user">${renderAvatar(r.username)}<b>${escapeHtml(r.username)}</b></div></td>
-            ${r.cells.filter(c => days.includes(c.day)).map(c => `<td><button class="pr-weekcell ${c.sum.ouvert?'pr-weekcell-alert':''}" data-action="presence-goto-day" data-day="${c.day}" title="Voir la journée">${c.has ? presenceMinLabel(c.sum.workMin) : '<span class="footer-note">—</span>'}${c.sum.ouvert ? ' ⚠' : ''}</button></td>`).join('')}
+            ${r.cells.filter(c => days.includes(c.day)).map(c => `<td><button class="pr-weekcell ${c.sum.ouvert && !r.forfait?'pr-weekcell-alert':''}" data-action="presence-goto-day" data-day="${c.day}" title="Voir la journée">${c.has ? presenceMinLabel(c.sum.workMin) : '<span class="footer-note">—</span>'}${c.sum.ouvert && !r.forfait ? ' ⚠' : ''}</button></td>`).join('')}
             <td><b>${presenceMinLabel(r.totalMin)}</b></td>
             <td class="pr-dim">${formatHeures(r.theoH)}</td>
-            <td style="color:${Math.abs(ecartH) < 0.1 ? 'var(--text-dim)' : ecartH < 0 ? 'var(--red)' : 'var(--green)'};">${ecartH > 0 ? '+' : ecartH < 0 ? '−' : ''}${formatHeures(Math.abs(ecartH))}</td>
+            ${r.forfait ? `<td class="pr-dim" title="Au forfait : non tenu de pointer">forfait</td>` : `<td style="color:${Math.abs(ecartH) < 0.1 ? 'var(--text-dim)' : ecartH < 0 ? 'var(--red)' : 'var(--green)'};">${ecartH > 0 ? '+' : ecartH < 0 ? '−' : ''}${formatHeures(Math.abs(ecartH))}</td>`}
           </tr>`;
         }).join('') || `<tr><td colspan="${days.length + 4}" class="pr-empty">Aucun pointage cette semaine.</td></tr>`}
         </tbody>
@@ -15599,7 +15625,7 @@ async function openPresenceCorrection(userId, day, preset){
   const mode = canSupervise() ? 'sup' : 'self';
   const uid = mode === 'self' ? String(currentUser.id) : String(userId);
   const defTime = day === toDateInputValue(new Date()) ? `${pad(new Date().getHours())}:${pad(new Date().getMinutes())}` : '17:00';
-  presenceCorrection = { userId: uid, day, mode, punches: [], status: 'loading', type: preset || 'in', time: defTime, motif: PRESENCE_MOTIFS[0], commentaire: '', cancelsId: null, saving: false, error: '' };
+  presenceCorrection = { userId: uid, day, mode, punches: [], status: 'loading', type: preset || 'in', time: defTime, motif: PRESENCE_MOTIFS[0], commentaire: '', cancelsId: null, retypeId: null, saving: false, error: '' };
   if(preset === 'out'){
     const exp = expectedDayFor(uid, state, new Date(day + 'T12:00:00'));
     if(exp.expected.length){ const e = exp.expected[exp.expected.length - 1][1]; presenceCorrection.time = `${pad(e.getHours())}:${pad(e.getMinutes())}`; }
@@ -15626,8 +15652,15 @@ async function submitPresenceCorrection(){
   if(type !== 'cancel' && !/^\d{2}:\d{2}$/.test(time)){ alert("Indiquez l'heure du pointage."); return; }
   d.saving = true; render();
   try{
-    const res = await fetch('/api/presence/correction', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: d.userId, type, ts: `${d.day}T${time}`, motif, commentaire, cancelsId: d.cancelsId }) });
+    // Changement de type d'un pointage existant : route dédiée (annulation + remplaçant en UNE transaction
+    // côté serveur) — l'heure n'est envoyée que si elle a changé, sinon celle d'origine (secondes
+    // comprises) est conservée.
+    const orig = d.retypeId ? d.punches.find(p => p.id === d.retypeId) : null;
+    const payload = orig
+      ? { userId: d.userId, id: orig.id, type, ts: presenceHhmm(orig.ts) === time ? undefined : `${d.day}T${time}`, motif, commentaire }
+      : { userId: d.userId, type, ts: `${d.day}T${time}`, motif, commentaire, cancelsId: d.cancelsId };
+    const res = await fetch(orig ? '/api/presence/correction/retype' : '/api/presence/correction', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload) });
     const json = await res.json().catch(() => ({}));
     if(!res.ok){ d.saving = false; alert(json.error || 'Correction refusée.'); render(); return; }
     presenceCorrection = null;
@@ -15665,9 +15698,11 @@ function renderPresenceCorrectionModal(){
       <div class="pc-card-time">${presenceHhmm(p.ts)}</div>
       <div class="pc-card-src">${escapeHtml(statusTxt)}${pendingCancel ? ' · annulation demandée' : ''}</div>
       ${retenu && !pendingCancel ? `<button class="pr-link" data-action="presence-cancel-punch" data-id="${p.id}">${d.mode === 'sup' ? 'Annuler' : 'Signaler une erreur'}</button>` : ''}
+      ${d.mode === 'sup' && retenu && !pendingCancel ? `<button class="pr-link" data-action="presence-retype-punch" data-id="${p.id}" title="Corriger le type (ex. fin de pause → début de pause) : le pointage d'origine est annulé et remplacé">Changer le type</button>` : ''}
     </div>`;
   }).join('');
   const target = d.cancelsId ? d.punches.find(p => p.id === d.cancelsId) : null;
+  const retarget = (!target && d.retypeId) ? d.punches.find(p => p.id === d.retypeId) : null;
   const history = d.punches.filter(p => p.source === 'manuel' || p.type === 'cancel').sort((a, b) => a.createdAt < b.createdAt ? 1 : -1);
   return `
   <div class="modal-overlay" data-action="presence-correction-close-bg">
@@ -15680,12 +15715,13 @@ function renderPresenceCorrectionModal(){
       <div class="modal-body">
       <div class="modal-section-title">Pointages enregistrés (jamais modifiés)</div>
       ${d.status === 'loading' ? '<div class="pr-empty">Chargement…</div>' : d.status === 'error' ? `<div class="pr-empty">${escapeHtml(d.error)}</div>` : (cards ? `<div class="pc-cards">${cards}</div>` : '<div class="pr-empty">Aucun pointage ce jour-là.</div>')}
-      <div class="modal-section-title" style="margin-top:14px;">${target ? `Annuler « ${escapeHtml(PRESENCE_TYPE_LABELS[target.type] || target.type)} ${presenceHtml(target)} »` : 'Pointage à ajouter'}</div>
+      <div class="modal-section-title" style="margin-top:14px;">${target ? `Annuler « ${escapeHtml(PRESENCE_TYPE_LABELS[target.type] || target.type)} ${presenceHtml(target)} »` : retarget ? `Changer le type de « ${escapeHtml(PRESENCE_TYPE_LABELS[retarget.type] || retarget.type)} ${presenceHtml(retarget)} »` : 'Pointage à ajouter'}</div>
+      ${retarget ? `<div class="pc-cancel-note" style="margin-bottom:8px;">Le pointage d'origine sera annulé (il reste dans le journal, barré) et remplacé par celui-ci, à la même heure sauf si vous la modifiez. <button class="pr-link" data-action="presence-cancel-punch" data-id="">Revenir à un ajout</button></div>` : ''}
       <div class="pc-form">
         ${target ? `<div class="pc-cancel-note">Ce pointage restera visible dans le journal, marqué comme annulé. <button class="pr-link" data-action="presence-cancel-punch" data-id="">Revenir à un ajout</button></div>` : `
         <label class="field">Pointage
           <select id="pc-type" data-action="presence-correction-field" data-field="type">
-            ${['in','pause_start','pause_end','out'].map(t => `<option value="${t}" ${d.type===t?'selected':''}>${PRESENCE_TYPE_LABELS[t]}</option>`).join('')}
+            ${['in','pause_start','pause_end','out'].map(t => `<option value="${t}" ${d.type===t?'selected':''}>${PRESENCE_TYPE_LABELS[t]}${retarget && retarget.type===t ? ' (actuel)' : ''}</option>`).join('')}
           </select>
         </label>
         <label class="field">Heure<input id="pc-time" type="time" value="${escapeHtml(d.time)}" data-action="presence-correction-field" data-field="time"></label>`}
@@ -15701,7 +15737,7 @@ function renderPresenceCorrectionModal(){
         : 'Votre demande est transmise à un superviseur. Elle ne compte qu’une fois validée ; vous voyez sa réponse dans « Mon pointage ».'}</div>
       <div class="form-actions">
         <button data-action="presence-correction-close">Annuler</button>
-        <button class="primary" data-action="presence-correction-submit" ${d.saving || d.status !== 'ok' ? 'disabled' : ''}>${d.saving ? 'Enregistrement…' : d.mode === 'sup' ? 'Enregistrer la correction' : 'Envoyer la demande'}</button>
+        <button class="primary" data-action="presence-correction-submit" ${d.saving || d.status !== 'ok' ? 'disabled' : ''}>${d.saving ? 'Enregistrement…' : retarget ? 'Enregistrer le changement' : d.mode === 'sup' ? 'Enregistrer la correction' : 'Envoyer la demande'}</button>
       </div>
       ${history.length ? `<div class="modal-section-title" style="margin-top:14px;">Journal de cette journée</div>${history.map(p => presenceJournalLineHtml(p, d.punches)).join('')}` : ''}
       </div>
@@ -16721,7 +16757,16 @@ function dispatchClickAction(action, el){
     case 'presence-goto-day': presenceDate = el.dataset.day === toDateInputValue(new Date()) ? null : el.dataset.day; presenceView = 'jour'; render(); break;
     case 'presence-export': exportPresencePage(); break;
     case 'presence-open-correction': openPresenceCorrection(el.dataset.userId, el.dataset.day, el.dataset.preset || null); break;
-    case 'presence-cancel-punch': if(presenceCorrection){ presenceCorrection.cancelsId = el.dataset.id ? Number(el.dataset.id) : null; if(presenceCorrection.cancelsId) presenceCorrection.motif = 'Erreur de pointage'; render(); } break;
+    case 'presence-retype-punch': if(presenceCorrection){
+      const pp = presenceCorrection.punches.find(x => x.id === Number(el.dataset.id));
+      if(pp){
+        const flip = { pause_end: 'pause_start', pause_start: 'pause_end', in: 'out', out: 'in' };
+        presenceCorrection.retypeId = pp.id; presenceCorrection.cancelsId = null;
+        presenceCorrection.type = flip[pp.type] || pp.type; presenceCorrection.time = presenceHhmm(pp.ts); presenceCorrection.motif = 'Erreur de pointage';
+        render();
+      }
+    } break;
+    case 'presence-cancel-punch': if(presenceCorrection){ presenceCorrection.retypeId = null; presenceCorrection.cancelsId = el.dataset.id ? Number(el.dataset.id) : null; if(presenceCorrection.cancelsId) presenceCorrection.motif = 'Erreur de pointage'; render(); } break;
     case 'presence-correction-close': presenceCorrection = null; render(); break;
     case 'presence-correction-submit': submitPresenceCorrection(); break;
     case 'presence-decide': decidePresenceRequest(el.dataset.id, el.dataset.decision); break;
@@ -16995,6 +17040,7 @@ function dispatchChangeAction(el, action){
     // sortie d'un champ heure ne doit pas tomber sur un bouton reconstruit entre-temps).
     case 'presence-correction-field': if(presenceCorrection) presenceCorrection[el.dataset.field] = el.value; break;
     case 'toggle-temps-prod-visibility': toggleTempsProdVisibility(el.dataset.userId); break;
+    case 'toggle-presence-forfait': togglePresenceForfait(el.dataset.userId); break;
     case 'toggle-user-lunch': toggleUserLunchActive(el.dataset.userId, el.checked); break;
     case 'toggle-user-horaire': toggleUserHoraireActive(el.dataset.userId, el.checked); break;
     case 'user-role': changeUserRole(el.dataset.userId, el.value); break;
