@@ -68,6 +68,28 @@ function getSessionHistoryForPiece(db, commandeId, pieceId){
   `).all(String(commandeId), String(pieceId));
 }
 
+// Fiche salarié : séances archivées d'une personne qui recoupent [from, to[ (horaires naïfs
+// "AAAA-MM-JJTHH:mm", triables tels quels). Une séance sans operator_user_id (archivée avant le
+// suivi par séance) est renvoyée aussi : le client la rattache à l'opérateur assigné de la pièce.
+function getSessionHistoryForUser(db, userId, from, to){
+  return db.prepare(`
+    SELECT commande_id AS cid, piece_id AS oid, commande_nom AS commandeNom, piece, etape,
+           machine_nom AS machineNom, operator_user_id AS operatorUserId, debut, fin
+    FROM session_history
+    WHERE (operator_user_id = ? OR operator_user_id IS NULL)
+      AND debut < ? AND (fin IS NULL OR fin > ?)
+    ORDER BY debut ASC
+  `).all(String(userId), String(to), String(from));
+}
+// Pièces ayant au moins une séance archivée pour cette personne (toutes dates) : permet au client de
+// distinguer une tâche close dont le détail existe (hors période affichée) d'une tâche close avant
+// l'archivage des séances, dont seul le total est connu.
+function getSessionHistoryPieceIdsForUser(db, userId){
+  return db.prepare(`
+    SELECT DISTINCT piece_id AS oid FROM session_history WHERE operator_user_id = ? OR operator_user_id IS NULL
+  `).all(String(userId)).map(r => r.oid);
+}
+
 // Utilisé uniquement pour inclure l'historique complet dans une sauvegarde (zip e-mail) — jamais
 // renvoyé au client via l'API normale de l'appli (voir GET /api/session-history/:cid/:oid).
 function getAllSessionHistory(db){
@@ -75,5 +97,5 @@ function getAllSessionHistory(db){
 }
 
 module.exports = {
-  initSessionHistoryTable, insertSessionHistoryBatch, getSessionHistoryForPiece, getAllSessionHistory
+  initSessionHistoryTable, insertSessionHistoryBatch, getSessionHistoryForPiece, getSessionHistoryForUser, getSessionHistoryPieceIdsForUser, getAllSessionHistory
 };

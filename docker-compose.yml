@@ -10,6 +10,10 @@ services:
       - ./Cfg_backup.yml:/app/Cfg_backup.yml
       - ./Cfg_admin.yml:/app/Cfg_admin.yml
     environment:
+      # Fuseau horaire du conteneur — server.js le fixe déjà en dur ('Europe/Paris', voir son tout
+      # début) pour ne jamais en dépendre, mais le préciser aussi ici documente l'intention et couvre
+      # tout ce qui, dans le conteneur, ne passerait pas par ce code (ex. horodatages de logs Docker).
+      TZ: "Europe/Paris"
       # Secret utilisé pour signer les cookies de session — OBLIGATOIRE pour un accès exposé
       # sur internet. Générez une valeur aléatoire une fois (ex: openssl rand -hex 32) et
       # gardez-la ensuite fixe : si elle change, tout le monde est déconnecté.

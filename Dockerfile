@@ -13,6 +13,9 @@ COPY auth.js ./
 COPY license.js ./
 COPY sessionHistory.js ./
 COPY previsionHistory.js ./
+COPY autoPauseResume.js ./
+COPY reportEmail.js ./
+COPY presence.js ./
 COPY Cfg_backup.yml ./
 COPY Cfg_admin.yml ./
 COPY public ./public
