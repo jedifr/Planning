@@ -1387,6 +1387,199 @@
     padding:6px 14px; font-size:13px; font-weight:600; cursor:pointer;
   }
   .update-banner button:hover{ opacity:0.9; }
+
+  /* ==================== Pointage présentiel (voir CLAUDE.md « Pointage présentiel ») ==================== */
+  .pr-head{display:flex; align-items:center; flex-wrap:wrap; gap:10px 16px; margin-bottom:14px;}
+  .pr-title{margin:0; font-family:'Oswald',sans-serif; font-size:18px; letter-spacing:0.03em;}
+  .pr-tabs{margin:0;}
+  .pr-datenav{display:flex; align-items:center; gap:6px; flex-wrap:wrap;}
+  .pr-datenav input[type="date"]{width:auto;}
+  .pr-date{font-weight:600; padding:0 4px;}
+  .pr-head-actions{margin-left:auto; display:flex; gap:6px;}
+  .pr-empty{padding:24px; text-align:center; color:var(--text-dim);}
+  .pr-tiles{margin-bottom:14px;}
+  .pr-alerts, .pr-pending{border:1px solid rgba(178,58,48,0.35); background:rgba(178,58,48,0.05); border-radius:var(--radius); padding:10px 14px; margin-bottom:12px;}
+  .pr-pending{border-color:rgba(160,109,26,0.4); background:var(--amber-dim);}
+  .pr-alerts-title{font-weight:600; margin-bottom:6px;}
+  .pr-alerts ul{margin:0; padding-left:18px;}
+  .pr-alerts li{margin:3px 0;}
+  .pr-link{background:none; border:none; padding:0 2px; color:var(--accent); font-weight:600; cursor:pointer; font-size:12.5px;}
+  .pr-link:hover{text-decoration:underline;}
+  .pr-table-wrap{overflow-x:auto;}
+  .pr-table{width:100%; border-collapse:collapse;}
+  .pr-table th, .pr-table td{padding:8px 8px; border-bottom:1px solid var(--line-soft); vertical-align:middle; font-size:13px; text-align:left;}
+  .pr-table th{font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-dim); white-space:nowrap;}
+  .pr-row-alert td:first-child{box-shadow:inset 3px 0 0 var(--red);}
+  .pr-user{display:flex; align-items:center; gap:8px;}
+  .pr-user .tp-avatar{width:30px; height:30px; font-size:11px; flex:none;}
+  .pr-mono{font-family:'IBM Plex Mono',monospace; white-space:nowrap;}
+  .pc-comment{width:100%; box-sizing:border-box; font:inherit; font-size:13px; padding:8px 10px; border:1px solid var(--line); border-radius:var(--radius); resize:vertical;}
+  .pr-dim{color:var(--text-dim);}
+  .pr-small{font-size:12px;}
+  .pr-late{color:var(--red); font-weight:600;}
+  .pr-late-sub{font-size:11px; color:var(--red);}
+  .pr-pill{display:inline-block; font-size:11.5px; font-weight:600; border-radius:999px; padding:2px 9px; white-space:nowrap;}
+  .pr-present{background:rgba(53,117,87,0.14); color:var(--green);}
+  .pr-pause{background:var(--amber-dim); color:var(--amber);}
+  .pr-parti{background:var(--panel-2); color:var(--text-dim); border:1px solid var(--line-soft);}
+  .pr-attendu{background:var(--panel-2); color:var(--text);}
+  .pr-absent{background:rgba(178,58,48,0.12); color:var(--red);}
+  .pr-conge{background:rgba(75,106,155,0.14); color:#3f5a86;}
+  .pr-src{display:inline-block; font-size:11px; color:var(--text-dim); background:var(--panel-2); border:1px solid var(--line-soft); border-radius:6px; padding:1px 6px; white-space:nowrap;}
+  .pr-src-manuel{background:var(--accent-dim); border-color:rgba(217,83,30,0.35); color:#8a3a16;}
+  .pr-frise-cell{min-width:260px; width:32%;}
+  .pr-frise{position:relative; height:24px; background:var(--panel-2); border-radius:6px;}
+  .pr-seg{position:absolute; top:5px; height:14px; border-radius:4px;}
+  .pr-seg-exp{top:2px; height:20px; border:1px dashed #9aa0a5; box-sizing:border-box; background:transparent;}
+  .pr-seg-work{background:var(--green);}
+  .pr-seg-corr{outline:2px dashed var(--accent); outline-offset:1px;}
+  .pr-seg-pause{background:repeating-linear-gradient(135deg,#d9b680 0 4px,var(--amber-dim) 4px 8px);}
+  .pr-now{position:absolute; top:0; bottom:0; width:2px; background:var(--accent);}
+  .pr-ticks{position:relative; height:14px;}
+  .pr-ticks span{position:absolute; transform:translateX(-50%); font-size:10px; color:var(--text-faint); font-weight:500;}
+  .pr-occ{height:5px; border-radius:3px; background:var(--line-soft); overflow:hidden; width:90px; margin-top:3px;}
+  .pr-occ span{display:block; height:100%;}
+  .pr-occ .o-green{background:var(--green);} .pr-occ .o-amber{background:var(--amber);} .pr-occ .o-red{background:var(--red);}
+  .pr-legend{display:flex; flex-wrap:wrap; gap:8px 18px; align-items:center; font-size:12px; color:var(--text-dim); padding:10px 4px 0;}
+  .pr-legend span{display:inline-flex; align-items:center; gap:6px;}
+  .pr-lg{display:inline-block; position:relative; width:18px; height:10px; border-radius:3px;}
+  .pr-lg.pr-seg-exp{height:10px;}
+  .pr-legend-note{flex-basis:100%; line-height:1.45;}
+  .pr-journal{margin-top:14px;}
+  .pr-journal-line{display:flex; gap:12px; font-size:12.5px; padding:4px 0; border-bottom:1px solid var(--line-soft);}
+  .pr-journal-line > span:first-child{flex:none; width:96px;}
+  .pr-week td{white-space:nowrap;}
+  .pr-today{color:var(--accent) !important;}
+  .pr-weekcell{background:none; border:1px solid transparent; border-radius:6px; padding:3px 6px; cursor:pointer; font-size:13px;}
+  .pr-weekcell:hover{border-color:var(--line); background:var(--panel-2);}
+  .pr-weekcell-alert{color:var(--red); font-weight:600;}
+  .pc-box .modal-head .pr-user .tp-avatar{width:38px; height:38px;}
+  .pc-title{font-family:'Oswald',sans-serif; font-size:18px; font-weight:600;}
+  .pc-cards{display:grid; grid-template-columns:repeat(auto-fill, minmax(130px, 1fr)); gap:8px;}
+  .pc-card{background:var(--panel-2); border:1px solid var(--line-soft); border-radius:10px; padding:8px 10px;}
+  .pc-card-off{opacity:0.55; text-decoration:line-through;}
+  .pc-card-type{font-size:12px; color:var(--text-dim);}
+  .pc-card-time{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:17px;}
+  .pc-card-src{font-size:11.5px; color:var(--text-dim); margin-bottom:2px;}
+  .pc-form{display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px;}
+  .pc-cancel-note{grid-column:span 2; font-size:13px; background:var(--panel-2); border-radius:8px; padding:8px 10px;}
+  .pc-note{background:var(--accent-dim); color:#6e2f12; border-radius:8px; padding:8px 12px; font-size:12.5px; margin-top:10px; line-height:1.45;}
+  .pr-task-choices{display:flex; flex-direction:column; gap:6px; margin:8px 0;}
+  .pr-task-choice{display:flex; align-items:center; gap:10px; text-align:left; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:9px 12px; cursor:pointer; font-size:13px;}
+  .pr-task-choice.on{border-color:var(--green); background:rgba(53,117,87,0.07);}
+  .pr-check{width:20px; height:20px; border-radius:6px; border:2px solid var(--line); display:inline-flex; align-items:center; justify-content:center; font-weight:700; color:#fff; flex:none;}
+  .pr-task-choice.on .pr-check{background:var(--green); border-color:var(--green);}
+  .pr-act{display:block; width:100%; border:none; border-radius:14px; padding:16px 18px; font-size:18px; font-weight:600; color:#fff; cursor:pointer; text-align:left;}
+  .pr-act:hover:not([disabled]){filter:brightness(1.08);}
+  .pr-act-in{background:var(--green);} .pr-act-pause{background:var(--amber);} .pr-act-out{background:#22262a;}
+  .pr-act-off{background:var(--line); color:var(--text-dim); cursor:not-allowed;}
+  .pr-act-secondary{background:var(--panel); color:var(--text); border:1px solid var(--line); font-size:15px; font-weight:500; padding:12px 16px;}
+  .pr-chip{font-weight:600;}
+  .pr-chip-present{border-color:rgba(53,117,87,0.45); color:var(--green);}
+  .pr-chip-pause{border-color:rgba(160,109,26,0.45); color:var(--amber);}
+  .pr-chip-absent{border-color:var(--accent); color:var(--accent);}
+  .mp-head{display:flex; align-items:center; gap:12px; margin-bottom:14px;}
+  .mp-head .tp-avatar{width:44px; height:44px; font-size:16px;}
+  .mp-grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:14px; align-items:start;}
+  .mp-card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px 16px;}
+  .mp-main{display:flex; flex-direction:column; gap:12px;}
+  .mp-card-title{font-size:12px; font-weight:600; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:8px;}
+  .mp-status{display:flex; align-items:center; gap:10px; font-weight:600; font-size:16px;}
+  .mp-dot{width:12px; height:12px; border-radius:50%; flex:none;}
+  .pr-present-bg{background:var(--green);} .pr-pause-bg{background:var(--amber);} .pr-parti-bg{background:#9aa0a5;}
+  .mp-kpis{display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px;}
+  .mp-kpis > div{background:var(--panel-2); border-radius:10px; padding:8px 10px; display:flex; flex-direction:column; gap:2px;}
+  .mp-kpis span{font-size:11.5px; color:var(--text-dim);}
+  .mp-kpis b{font-family:'Oswald',sans-serif; font-size:20px; font-weight:600;}
+  .mp-actions{display:flex; flex-direction:column; gap:8px;}
+  .mp-err{background:rgba(178,58,48,0.08); color:var(--red); border-radius:10px; padding:10px 12px; font-size:13px;}
+  .mp-line{display:flex; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid var(--line-soft); font-size:13.5px;}
+  .mp-line > span:nth-child(2){flex:1;}
+  .mp-week-head{display:flex; justify-content:space-between; gap:8px; font-size:13px; margin-bottom:10px;}
+  .mp-week{display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:10px; align-items:end;}
+  .mp-day{display:flex; flex-direction:column; align-items:center; gap:4px;}
+  .mp-day-h{font-size:11px; color:var(--text-dim); white-space:nowrap;}
+  .mp-bar{position:relative; width:100%; height:64px; background:var(--line-soft); border-radius:6px; overflow:hidden;}
+  .mp-bar span{position:absolute; left:0; right:0; bottom:0; background:var(--green); border-radius:6px;}
+  .mp-bar span.mp-bar-today{background:var(--accent);}
+  .mp-day-l{font-size:12px; font-weight:600; text-transform:capitalize;}
+  .pc-tm{background:var(--panel-2); border:1px dashed var(--line); border-radius:8px; padding:8px 12px; font-size:12.5px; color:var(--text-dim);}
+  .pc-checklist{display:flex; flex-direction:column;}
+  .pc-check{display:grid; grid-template-columns:24px minmax(0,1fr) auto auto; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line-soft);}
+  .pc-check input[type="date"]{width:auto;}
+  .pc-ok{width:22px; height:22px; border-radius:50%; background:var(--green); color:#fff; display:inline-flex; align-items:center; justify-content:center; font-size:12px; font-weight:700;}
+  .pc-todo{width:22px; height:22px; border-radius:50%; border:2px solid var(--amber); box-sizing:border-box; display:inline-block;}
+  .pc-pins{display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:6px 16px;}
+  .pc-pin{display:flex; align-items:center; gap:10px; font-size:13px; padding:4px 0; border-bottom:1px solid var(--line-soft);}
+  .pc-pin > span:first-child{flex:1; font-weight:600;}
+  .presence-doc-text{width:100%; min-height:420px; font-family:'IBM Plex Sans',sans-serif; font-size:13px; line-height:1.5; box-sizing:border-box; white-space:pre-wrap;}
+  /* Borne : plein écran, cibles tactiles larges (tablette de l'atelier). */
+  .borne{display:flex; min-height:100vh; background:var(--bg);}
+  .borne-side{width:340px; flex:none; background:#22262a; color:#fff; padding:34px 30px; box-sizing:border-box; display:flex; flex-direction:column; gap:24px;}
+  .borne-brand{display:flex; align-items:center; gap:12px;}
+  .borne-logo{width:40px; height:40px; border-radius:10px; background:var(--accent); display:flex; align-items:center; justify-content:center; font-size:20px;}
+  .borne-brand-t{font-family:'Oswald',sans-serif; font-size:20px; letter-spacing:0.04em; text-transform:uppercase;}
+  .borne-brand-s{font-size:13px; color:#b9bfc4;}
+  .borne-clock{font-family:'Oswald',sans-serif; font-size:96px; font-weight:600; line-height:1;}
+  .borne-date{font-size:17px; color:#d4d8db; margin-top:8px;}
+  .borne-hint{background:rgba(255,255,255,0.07); border-radius:12px; padding:12px 14px; font-size:15px; line-height:1.4;}
+  .borne-counts{display:flex; gap:8px;}
+  .borne-counts > div{flex:1; background:rgba(255,255,255,0.08); border-radius:12px; padding:10px 12px; display:flex; flex-direction:column;}
+  .borne-counts .bc-present{background:rgba(53,117,87,0.4);} .borne-counts .bc-pause{background:rgba(160,109,26,0.45);}
+  .borne-counts b{font-family:'Oswald',sans-serif; font-size:28px; font-weight:600;}
+  .borne-counts span{font-size:12.5px; color:#d4d8db;}
+  .borne-foot{margin-top:auto; font-size:12px; color:#9aa3aa; line-height:1.5; display:flex; flex-direction:column; gap:10px;}
+  .borne-exit{align-self:flex-start; background:transparent; border:1px solid rgba(255,255,255,0.25); color:#d4d8db; border-radius:8px; padding:6px 12px; font-size:12px; cursor:pointer;}
+  .borne-main{flex:1; padding:32px 36px; box-sizing:border-box; display:flex; flex-direction:column; gap:18px; min-width:0;}
+  .borne-list-head{display:flex; align-items:baseline; justify-content:space-between;}
+  .borne-list-head h1{margin:0; font-family:'Oswald',sans-serif; font-weight:600; font-size:30px;}
+  .borne-list-head span{color:var(--text-dim);}
+  .borne-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:14px;}
+  .borne-tile{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px 12px; display:flex; flex-direction:column; align-items:center; gap:8px; min-height:150px; justify-content:center; cursor:pointer; font:inherit; color:inherit; transition:transform .12s, border-color .12s;}
+  .borne-tile:hover, .borne-tile:focus-visible{border-color:var(--accent); transform:translateY(-2px); outline:none;}
+  .borne-av{position:relative;}
+  .borne-av .tp-avatar{width:62px; height:62px; font-size:21px;}
+  .borne-dot{position:absolute; right:-2px; bottom:-2px; width:18px; height:18px; border-radius:50%; border:3px solid #fff; box-sizing:border-box; background:#9aa0a5;}
+  .borne-dot-present{background:var(--green);} .borne-dot-pause{background:var(--amber);} .borne-dot-conge{background:#4b6a9b;}
+  .borne-tile-n{font-size:17px; font-weight:600;}
+  .borne-st{font-size:13px; font-weight:500; color:var(--text-dim); text-align:center;}
+  .borne-st-present{color:var(--green);} .borne-st-pause{color:var(--amber);} .borne-st-conge{color:#3f5a86;}
+  .borne-pin{display:flex; gap:32px; align-items:flex-start;}
+  .borne-pin-card{width:320px; flex:none; background:var(--panel); border:1px solid var(--line); border-radius:18px; padding:24px; box-sizing:border-box; display:flex; flex-direction:column; align-items:center; gap:14px;}
+  .borne-pin-card .tp-avatar{width:80px; height:80px; font-size:27px;}
+  .borne-pin-name{font-size:22px; font-weight:600;}
+  .borne-dots{display:flex; gap:14px;}
+  .borne-dots span{width:18px; height:18px; border-radius:50%; border:2px solid var(--text); box-sizing:border-box;}
+  .borne-dots span.on{background:var(--text);}
+  .borne-keys{display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; width:100%;}
+  .borne-key{height:62px; border-radius:12px; background:var(--panel-2); border:1px solid var(--line); font-family:'IBM Plex Mono',monospace; font-size:26px; font-weight:600; cursor:pointer;}
+  .borne-key:hover{background:var(--panel); border-color:var(--accent);}
+  .borne-key-s{font-family:'IBM Plex Sans',sans-serif; font-size:15px; font-weight:500; color:var(--text-dim);}
+  .borne-nopin{font-size:14px; color:var(--red); text-align:center; line-height:1.45;}
+  .borne-acts{flex:1; display:flex; flex-direction:column; gap:12px; min-width:0;}
+  .borne-q{font-family:'Oswald',sans-serif; font-size:26px; font-weight:600;}
+  .borne-q-s{font-size:15px; color:var(--text-dim);}
+  .borne-act-block{display:flex; flex-direction:column; gap:4px;}
+  .borne-back{align-self:flex-start; margin-top:10px; font-size:15px;}
+  .borne-done{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; min-height:70vh;}
+  .borne-check{width:116px; height:116px; border-radius:50%; background:var(--green); color:#fff; font-size:62px; display:flex; align-items:center; justify-content:center;}
+  .borne-done-t{font-family:'Oswald',sans-serif; font-size:42px; font-weight:600;}
+  .borne-done-s{font-size:21px;}
+  .borne-done-x{font-size:15px; color:var(--text-dim);}
+  .borne-done-btn{width:auto; padding:12px 34px; text-align:center;}
+  @media screen and (max-width:900px){
+    .borne{flex-direction:column;}
+    .borne-side{width:auto; padding:18px 20px; gap:12px;}
+    .borne-clock{font-size:54px;}
+    .borne-foot{margin-top:0;}
+    .borne-main{padding:18px 16px;}
+    .borne-pin{flex-direction:column;}
+    .borne-pin-card{width:100%;}
+    .pc-form{grid-template-columns:1fr;}
+    .pc-check{grid-template-columns:24px minmax(0,1fr); }
+    .pr-head-actions{margin-left:0;}
+  }
+  @media screen and (max-width:720px){ .page-switcher{flex-wrap:wrap; border-radius:14px; margin-left:0;} }
 </style>
 </head>
 <body>
@@ -1405,7 +1598,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.74.0';
+const APP_VERSION = '1.75.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1496,7 +1689,7 @@ let stateVersion = 0;
 let draft = null;
 let showNewForm = false;
 let showSettingsModal = false;
-const SETTINGS_SECTION_KEYS = ['moncompte', 'horaires', 'pause', 'affichage', 'utilisateurs', 'conges', 'backup', 'emailReport', 'machines', 'storageZones', 'importProfiles', 'risquesRetard', 'suiviPointage', 'maintenance'];
+const SETTINGS_SECTION_KEYS = ['moncompte', 'horaires', 'pause', 'affichage', 'utilisateurs', 'conges', 'backup', 'emailReport', 'machines', 'storageZones', 'importProfiles', 'risquesRetard', 'suiviPointage', 'presence', 'maintenance'];
 const SETTINGS_UI_STORAGE_KEY = 'planning-atelier-settings-ui';
 let settingsSectionOrder = [...SETTINGS_SECTION_KEYS];
 // Pop-up Paramètres en deux volets (catégories à gauche, contenu à droite) — une seule section
@@ -1532,10 +1725,11 @@ function saveSettingsUIPrefs(){
 // réinitialisait silencieusement au moindre vidage de cache (retour utilisateur réel) — ici, comme
 // pour la page d'accueil par défaut, la personne retrouve son ordre quel que soit le poste depuis
 // lequel elle se connecte.
-const PAGE_MENU_KEYS = ['conges', 'tempsProd', 'fiche', 'zones', 'risques', 'pointages', 'historique', 'dashboard'];
+const PAGE_MENU_KEYS = ['conges', 'tempsProd', 'fiche', 'zones', 'risques', 'pointages', 'historique', 'dashboard', 'monPointage', 'presence', 'borne'];
 const PAGE_MENU_LABELS = {
   conges: '🏖 Congés', tempsProd: '⏱ Temps de production', fiche: '📋 Fiche salarié', zones: '📍 Zones de stockage', risques: '⚠️ Risques de retard',
-  pointages: '🕘 Pointages', historique: '📈 Historique', dashboard: "📊 Vue d'ensemble"
+  pointages: '🕘 Pointages', historique: '📈 Historique', dashboard: "📊 Vue d'ensemble",
+  monPointage: '🙋 Mon pointage', presence: '👥 Présence', borne: '📟 Borne de pointage'
 };
 // Congés était à l'origine épinglée en dur, indissociable de Planning — retour utilisateur réel,
 // question directe : « comment faire pour mettre Congés dans Plus ? ». Rejoint désormais ce même
@@ -1550,6 +1744,10 @@ const DEFAULT_PINNED_PAGE_KEYS = ['conges'];
 function isPageMenuKeyVisible(key){
   if(key === 'conges') return !!(state.config.modules && state.config.modules.conges);
   if(key === 'pointages' || key === 'historique' || key === 'dashboard') return canSupervise();
+  // Pointage présentiel : les trois pages n'existent que module actif ; Présence et Borne sont
+  // réservées aux superviseurs (la borne se sort avec le mot de passe du compte connecté).
+  if(key === 'monPointage') return presenceModuleActive();
+  if(key === 'presence' || key === 'borne') return presenceModuleActive() && canSupervise();
   return true;
 }
 // Ordre enregistré : clés inconnues/en double ignorées, et toute page ajoutée depuis par une nouvelle
@@ -2191,6 +2389,8 @@ function migrateState(st){
   // Seuil d'alerte « presque plein » de la page Zones de stockage (0 = jamais) — voir renderZonesPage.
   if(st.config.storageZonesAlerteSeuil === undefined) st.config.storageZonesAlerteSeuil = 3;
   if(!st.config.modules) st.config.modules = { conges: true }; // interrupteur du module Congés
+  if(st.config.modules.presence === undefined) st.config.modules.presence = false; // pointage présentiel (voir presence.js) — désactivé par défaut
+  if(!st.config.presence || typeof st.config.presence !== 'object') st.config.presence = {}; // réglages du pointage présentiel, valeurs par défaut dans presenceCfg()
   if(st.config.modules.expedition === undefined) st.config.modules.expedition = false; // libération manuelle du casier — désactivé par défaut, comportement inchangé pour une installation existante
   if(st.config.matiereFusionActive === undefined) st.config.matiereFusionActive = false; // détection par matière/épaisseur désactivée par défaut
   if(st.config.importDateGroupingToleranceDays === undefined) st.config.importDateGroupingToleranceDays = 0; // 0 = aucun regroupement de campagnes à l'import (voir clusterImportDates)
@@ -7689,6 +7889,7 @@ function renderHeader(){
       <button class="page-switch-btn ${currentPage==='planning'?'active':''}" data-action="goto-planning">Planning</button>
       ${congesActif ? `<button class="page-switch-btn ${currentPage==='conges'?'active':''}" data-action="goto-conges">🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}</button>` : ''}
       <button class="page-switch-btn ${currentPage==='zones'?'active':''}" data-action="goto-zones">📍 Zones de stockage</button>
+      ${presenceModuleActive() ? `<button class="page-switch-btn ${currentPage==='monPointage'?'active':''}" data-action="goto-mon-pointage">🙋 Mon pointage</button>` : ''}
     </div>` : (() => {
       // Menu "Plus ▾" (voir CLAUDE.md « Navigation ») : regroupe, par défaut, tout sauf Planning
       // (seule page qui reste hors de ce système — l'ancrage permanent de l'appli) — désencombre la
@@ -7709,9 +7910,12 @@ function renderHeader(){
         risques: `⚠️ Risques de retard${nbRisque>0?` <span class="pending-count-badge">${nbRisque}</span>`:''}`,
         pointages: canSupervise() ? '🕘 Pointages' : null,
         historique: canSupervise() ? '📈 Historique' : null,
-        dashboard: canSupervise() ? "📊 Vue d'ensemble" : null
+        dashboard: canSupervise() ? "📊 Vue d'ensemble" : null,
+        monPointage: presenceModuleActive() ? '🙋 Mon pointage' : null,
+        presence: (presenceModuleActive() && canSupervise()) ? `👥 Présence${(() => { const d = presenceDayData(toDateInputValue(new Date())); const n = d && d.pending ? d.pending.length : 0; return n>0 ? ` <span class="pending-count-badge">${n}</span>` : ''; })()}` : null,
+        borne: (presenceModuleActive() && canSupervise()) ? '📟 Borne de pointage' : null
       };
-      const gotoAction = { conges:'goto-conges', tempsProd:'goto-temps-prod', fiche:'goto-fiche', zones:'goto-zones', risques:'goto-risques', pointages:'goto-pointages', historique:'goto-historique', dashboard:'goto-dashboard' };
+      const gotoAction = { conges:'goto-conges', tempsProd:'goto-temps-prod', fiche:'goto-fiche', zones:'goto-zones', risques:'goto-risques', pointages:'goto-pointages', historique:'goto-historique', dashboard:'goto-dashboard', monPointage:'goto-mon-pointage', presence:'goto-presence', borne:'goto-borne' };
       const uidForMenu = currentUser ? currentUser.id : '';
       const pageMenuOrder = getUserPageMenuOrder(uidForMenu);
       const pinned = getUserPinnedMenuPages(uidForMenu);
@@ -7753,6 +7957,7 @@ function renderHeader(){
     </div>
     <div class="toolbar-mini">
       ${!mobileHeader ? `<div class="status-leds">${renderShiftLed()}${renderSyncBadge()}</div>` : ''}
+      ${renderPresenceHeaderChip()}
       ${renderPointageHeaderBadges()}
       ${(() => { const n = pausedSinceEarlierTasks().length; return n>0 ? `<button class="small" data-action="show-paused-banner" title="Revoir les tâches en pause depuis la veille ou avant">⏸ ${n} en pause</button>` : ''; })()}
       <button class="small" data-action="open-settings" title="${isAdmin()?'Paramétrer les horaires de travail':'Mon compte — mot de passe, page d’accueil par défaut...'}">⚙ ${isAdmin()?'Paramétrer':'Mon compte'}</button>
@@ -12889,6 +13094,8 @@ function renderSettingsModal(){
         ${canSupervise() ? `<option value="pointages" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='pointages'?'selected':''}>🕘 Pointages</option>` : ''}
         ${canSupervise() ? `<option value="historique" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='historique'?'selected':''}>📈 Historique / Tendances</option>` : ''}
         ${canSupervise() ? `<option value="dashboard" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='dashboard'?'selected':''}>📊 Vue d'ensemble atelier</option>` : ''}
+        ${presenceModuleActive() ? `<option value="monPointage" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='monPointage'?'selected':''}>🙋 Mon pointage</option>` : ''}
+        ${(presenceModuleActive() && canSupervise()) ? `<option value="presence" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='presence'?'selected':''}>👥 Présence</option>` : ''}
       </select>
       <div class="footer-note" style="text-align:left; padding-top:6px;">Page affichée automatiquement à la connexion, à la place du Planning. Propre à ce compte : chacun peut choisir la sienne.</div>
       ${!(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')] ? `
@@ -13119,6 +13326,7 @@ function renderSettingsModal(){
         Avertir l'opérateur par une pop-up quand il démarre une tâche en retard sur son démarrage théorique
       </label>
       <div class="footer-note" style="text-align:left; padding-bottom:10px;">S'affiche juste après un clic sur "▶ Démarrer" (jamais à la reprise après pause), seulement si le retard dépasse un demi-jour — le même seuil et la même donnée que le badge "🕓" déjà affiché sur les tâches concernées (voir "Retard de démarrage" dans la page ⚠️ Risques de retard). Désactivée par défaut.</div>` },
+    presence: { title: '🙋 Pointage présentiel', body: renderPresenceSettingsBody() },
     suiviPointage: { title: '👥 Pointage & disponibilité', body: `
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${cfg.pointageAlerteActive!==false?'checked':''} data-action="update-config" data-field="pointageAlerteActive">
@@ -13179,7 +13387,7 @@ function renderSettingsModal(){
         <div class="settings-content-pane">${activeDef ? (showNav ? `<h3 class="settings-content-title">${activeDef.title}</h3>` : '') + activeDef.body : ''}</div>
       </div>
     </div>
-  </div>`;
+  </div>${renderPresenceDocModal()}`;
 }
 
 function rangeLabel(){
@@ -14638,6 +14846,1169 @@ function renderToast(){
   </div>`;
 }
 
+/* ==================== Pointage présentiel (voir CLAUDE.md « Pointage présentiel ») ==================== */
+// Arrivées, pauses et départs des salariés — distincts des séances sur les tâches (sessions[]).
+// Les pointages vivent dans une table SQLite dédiée (presence.js), jamais dans `state` : ils sont
+// chargés à la demande (journée, période) et l'heure de chaque pointage est celle du SERVEUR.
+const PRESENCE_TYPE_LABELS = { in: 'Arrivée', pause_start: 'Début de pause', pause_end: 'Fin de pause', out: 'Départ', cancel: 'Annulation' };
+const PRESENCE_SOURCE_LABELS = { borne: 'Borne', mobile: 'Téléphone', poste: 'Poste', manuel: 'Manuel', timemoto: 'TM-616' };
+const PRESENCE_MOTIFS = ['Oubli de badge', 'Code ou badge oublié / perdu', 'Borne ou pointeuse hors service', 'Déplacement / intervention extérieure', 'Erreur de pointage', 'Autre (préciser)'];
+const PRESENCE_STATUS_META = {
+  present: { label: 'Présent', cls: 'pr-present' }, pause: { label: 'En pause', cls: 'pr-pause' },
+  parti: { label: 'Parti', cls: 'pr-parti' }, attendu: { label: 'Attendu', cls: 'pr-attendu' },
+  nonArrive: { label: 'Non arrivé', cls: 'pr-absent' }, nonPointe: { label: 'Aucun pointage', cls: 'pr-absent' },
+  conge: { label: 'Congé', cls: 'pr-conge' }, hors: { label: 'Non travaillé', cls: 'pr-parti' }
+};
+const BORNE_MODE_STORAGE_KEY = 'planning-atelier-borne-mode';
+function presenceModuleActive(){ return !!(state && state.config && state.config.modules && state.config.modules.presence); }
+function presenceCfg(st){
+  const c = ((st || state).config || {}).presence || {};
+  return {
+    telephone: c.telephone !== false, reseaux: c.reseaux || '', retardSeuilMin: Number(c.retardSeuilMin) >= 0 ? Number(c.retardSeuilMin) : 10,
+    lierTaches: c.lierTaches !== false, conservationAns: Number(c.conservationAns) || 3,
+    infoDate: c.infoDate || '', registreDate: c.registreDate || '', cseDate: c.cseDate || '', cseNonConcerne: !!c.cseNonConcerne
+  };
+}
+function presenceHhmm(ts){ return ts ? String(ts).slice(11, 16) : '—'; }
+function presenceDateLabel(dayKey){
+  const d = new Date(dayKey + 'T12:00:00');
+  const t = d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+function presenceMinLabel(min){
+  const m = Math.max(0, Math.round(min || 0));
+  const h = Math.floor(m / 60), r = m % 60;
+  return h ? `${h} h ${pad(r)}` : `${r} min`;
+}
+function addDaysToKey(key, n){ const d = new Date(key + 'T12:00:00'); d.setDate(d.getDate() + n); return toDateInputValue(d); }
+
+// Pointages retenus : lignes validées moins celles qu'une annulation validée neutralise (même règle
+// que presence.js côté serveur — un seul sens pour « ce qui compte »), triées dans le temps.
+function effectivePresencePunches(punches){
+  const cancelled = new Set((punches || []).filter(p => p.type === 'cancel' && p.status === 'valide').map(p => p.cancelsId));
+  return (punches || [])
+    .filter(p => p.type !== 'cancel' && p.status === 'valide' && !cancelled.has(p.id))
+    .sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.id - b.id);
+}
+function presenceStatusFromType(type){
+  if(!type) return 'absent';
+  return ({ in: 'present', pause_end: 'present', pause_start: 'pause', out: 'parti' })[type] || 'absent';
+}
+// Découpage d'une journée pointée en périodes de présence et de pause. Journée du jour encore
+// ouverte : comptée jusqu'à maintenant. Journée passée sans départ : `ouvert` (anomalie), rien
+// d'inventé au-delà du dernier pointage.
+function presenceDaySummary(eff, dayKey, now){
+  const dayStart = new Date(dayKey + 'T00:00:00');
+  const dayEnd = new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate() + 1);
+  const isToday = dayKey === toDateInputValue(now);
+  const work = [], pauses = [];
+  let wStart = null, pStart = null, arrivee = null, depart = null, nbPauses = 0;
+  (eff || []).forEach(p => {
+    const t = new Date(p.ts);
+    if(p.type === 'in'){ if(!arrivee) arrivee = t; if(pStart){ pauses.push([pStart, t]); pStart = null; } if(!wStart) wStart = t; depart = null; }
+    else if(p.type === 'pause_start'){ nbPauses++; if(wStart){ work.push([wStart, t]); wStart = null; } if(!pStart) pStart = t; }
+    else if(p.type === 'pause_end'){ if(pStart){ pauses.push([pStart, t]); pStart = null; } if(!wStart) wStart = t; }
+    else if(p.type === 'out'){ if(wStart){ work.push([wStart, t]); wStart = null; } if(pStart){ pauses.push([pStart, t]); pStart = null; } depart = t; }
+  });
+  const openEnd = isToday ? (now < dayEnd ? now : dayEnd) : null;
+  if(wStart && openEnd && openEnd > wStart) work.push([wStart, openEnd]);
+  if(pStart && openEnd && openEnd > pStart) pauses.push([pStart, openEnd]);
+  const last = (eff && eff.length) ? eff[eff.length - 1] : null;
+  const mins = list => list.reduce((s, [a, b]) => s + Math.max(0, (b - a) / 60000), 0);
+  return {
+    work, pauses, arrivee, depart, last, nbPauses, status: presenceStatusFromType(last && last.type),
+    workMin: mins(work), pauseMin: mins(pauses), ouvert: !isToday && !!last && last.type !== 'out'
+  };
+}
+// Horaire attendu d'une personne un jour donné (pauses prévues exclues, congé approuvé retiré — une
+// demi-journée coupée à la première pause) : même règle que computeTeamPointage, factorisée ici.
+function expectedDayFor(uid, st, refDate){
+  const dayStart = new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate());
+  const dayEnd = new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate() + 1);
+  const dayKey = toDateInputValue(dayStart);
+  const dow = refDate.getDay();
+  const workDay = dow !== 0 && dow !== 6 && !isFrenchPublicHoliday(refDate);
+  const cfg = baseConfigForUser(uid, st);
+  const leave = userLeaveOnDay(uid, st, dayKey);
+  let expected = (workDay && !isDateBlocked(refDate, cfg)) ? dayIntervals(refDate, cfg).map(([a, b]) => [a, b]) : [];
+  const pauses = pauseWindowsFor(refDate, cfg).map(p => [p.start, p.end]);
+  if(leave && !leave.demiJournee) expected = [];
+  else if(leave && leave.demiJournee && expected.length){
+    const cut = pauses.length ? pauses[0][0] : new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate(), 12);
+    expected = leave.demiJournee === 'matin'
+      ? subtractTimeIntervals(expected, [[dayStart, cut]])
+      : subtractTimeIntervals(expected, [[cut, dayEnd]]);
+  }
+  return { expected, pauses, leave, cfg, workDay, dayStart, dayEnd, dayKey };
+}
+
+// ---------- Chargement (journée, période) ----------
+const presenceDayCache = {};   // dayKey -> { status, data, error, at }
+const presenceRangeCache = {}; // "from|to|userId" -> { status, punches, pending, error, at }
+function presenceRenderIfIdle(){
+  if(typeof document === 'undefined') return;
+  if(isTypingInField() || dragCtx || changeProcessingInFlight) return;
+  render();
+}
+async function loadPresenceDay(dayKey, opts){
+  const o = opts || {};
+  const cur = presenceDayCache[dayKey];
+  if(cur && cur.status === 'loading') return;
+  if(cur && cur.status === 'ok' && !o.force) return;
+  presenceDayCache[dayKey] = { ...(cur || {}), status: cur && cur.data ? 'ok' : 'loading', loading: true };
+  try{
+    const res = await fetch('/api/presence/day?date=' + encodeURIComponent(dayKey), { credentials: 'include' });
+    const json = await res.json().catch(() => ({}));
+    if(!res.ok) presenceDayCache[dayKey] = { status: 'error', error: json.error || 'Chargement impossible.', at: Date.now() };
+    else presenceDayCache[dayKey] = { status: 'ok', data: json, at: Date.now() };
+  }catch(e){
+    presenceDayCache[dayKey] = cur && cur.data ? { ...cur, loading: false } : { status: 'error', error: 'Serveur injoignable.', at: Date.now() };
+  }
+  if(!o.noRender) presenceRenderIfIdle();
+}
+function presenceRangeKey(from, to, userId){ return `${from}|${to}|${userId || ''}`; }
+async function loadPresenceRange(from, to, userId, opts){
+  const o = opts || {};
+  const key = presenceRangeKey(from, to, userId);
+  const cur = presenceRangeCache[key];
+  if(cur && cur.status === 'loading') return;
+  if(cur && cur.status === 'ok' && !o.force) return;
+  presenceRangeCache[key] = { ...(cur || {}), status: cur && cur.punches ? 'ok' : 'loading' };
+  try{
+    const q = `from=${from}&to=${to}${userId ? '&userId=' + encodeURIComponent(userId) : ''}`;
+    const res = await fetch('/api/presence/range?' + q, { credentials: 'include' });
+    const json = await res.json().catch(() => ({}));
+    presenceRangeCache[key] = res.ok ? { status: 'ok', punches: json.punches || [], pending: json.pending || [], at: Date.now() }
+                                     : { status: 'error', error: json.error || 'Chargement impossible.', at: Date.now() };
+  }catch(e){
+    presenceRangeCache[key] = cur && cur.punches ? cur : { status: 'error', error: 'Serveur injoignable.', at: Date.now() };
+  }
+  if(!o.noRender) presenceRenderIfIdle();
+}
+function invalidatePresenceCaches(){
+  Object.keys(presenceDayCache).forEach(k => { if(presenceDayCache[k].status === 'ok') presenceDayCache[k].stale = true; });
+  Object.keys(presenceRangeCache).forEach(k => delete presenceRangeCache[k]);
+}
+// Rafraîchit ce qui est affiché (borne, Présence, Mon pointage) et le statut du jour de chacun.
+function refreshPresenceVisible(force){
+  if(!presenceModuleActive()) return;
+  const today = toDateInputValue(new Date());
+  loadPresenceDay(today, { force: true, noRender: currentPage !== 'borne' && currentPage !== 'monPointage' && currentPage !== 'presence' });
+  if(currentPage === 'presence'){
+    const d = presencePageDay();
+    if(d !== today) loadPresenceDay(d, { force: true });
+    if(presenceView === 'semaine'){ const w = presenceWeekBounds(); loadPresenceRange(w.from, w.to, null, { force: !!force }); }
+  }
+}
+function presenceDayData(dayKey){
+  const c = presenceDayCache[dayKey];
+  return c && c.data ? c.data : null;
+}
+
+// ---------- Liens avec les tâches (pause / départ / reprise) ----------
+function presenceSessionOwner(s, o){ return String(s.operatorUserId || o.operatorUserId || ''); }
+// Tâches sur lesquelles cette personne a une séance ouverte (un lot fusionné une seule fois).
+function presenceRunningTasksFor(uid){
+  const out = [], seen = new Set();
+  (state.commandes || []).forEach(c => c.pieces.forEach(o => {
+    if(o.statut !== 'en_cours') return;
+    if(!(o.sessions || []).some(s => !s.fin && presenceSessionOwner(s, o) === String(uid))) return;
+    const k = o.fusionGroupId || o.id;
+    if(seen.has(k)) return;
+    seen.add(k); out.push({ c, o, key: k });
+  }));
+  return out;
+}
+// Tâches à proposer à la reprise : mises en pause par le dernier pointage de pause de cette personne
+// (séance fermée à la même minute), ou en pause déjeuner automatique qui l'attend.
+function presenceResumableTasksFor(uid, pauseTs){
+  const minute = pauseTs ? String(pauseTs).slice(0, 16) : null;
+  const out = [], seen = new Set();
+  (state.commandes || []).forEach(c => c.pieces.forEach(o => {
+    if(o.statut !== 'en_pause' && o.statut !== 'en_cours') return;
+    const mine = (o.sessions || []).filter(s => presenceSessionOwner(s, o) === String(uid));
+    if(mine.some(s => !s.fin)) return;
+    const lastMine = mine.slice().sort((a, b) => (a.fin || '') < (b.fin || '') ? -1 : 1).pop();
+    const autoWaiting = (o.autoPausedOperators || []).some(id => String(id) === String(uid));
+    if(!autoWaiting && !(minute && lastMine && lastMine.fin === minute)) return;
+    const k = o.fusionGroupId || o.id;
+    if(seen.has(k)) return;
+    seen.add(k); out.push({ c, o, key: k });
+  }));
+  return out;
+}
+function presenceTaskChoicesFor(uid, type, lastPunch){
+  if(!presenceCfg().lierTaches) return [];
+  if(type === 'pause_start' || type === 'out') return presenceRunningTasksFor(uid);
+  if(type === 'pause_end') return presenceResumableTasksFor(uid, lastPunch && lastPunch.type === 'pause_start' ? lastPunch.ts : null);
+  return [];
+}
+// Applique aux tâches choisies l'effet du pointage : pause/départ ferme la séance de CETTE personne
+// (la tâche passe en pause s'il ne reste personne dessus) ; fin de pause rouvre sa séance. Horodaté à
+// l'heure du pointage (serveur). Appliqué à chaque membre d'un lot fusionné (même clé). Retourne vrai
+// si l'état a changé — l'appelant fait un seul commit().
+function applyPresenceTaskLinkage(uid, type, ts, chosenKeys){
+  const minute = String(ts).slice(0, 16);
+  const u = String(uid);
+  let changed = false;
+  (state.commandes || []).forEach(c => c.pieces.forEach(o => {
+    if(!chosenKeys.has(o.fusionGroupId || o.id)) return;
+    if(!o.sessions) o.sessions = [];
+    if(type === 'pause_start' || type === 'out'){
+      let closed = false;
+      o.sessions.forEach(s => { if(!s.fin && presenceSessionOwner(s, o) === u){ s.fin = minute; closed = true; } });
+      if(closed){
+        changed = true;
+        if(o.statut === 'en_cours' && !o.sessions.some(s => !s.fin)){ o.statut = 'en_pause'; o.autoPaused = false; }
+      }
+    } else if(type === 'pause_end'){
+      if(o.statut !== 'en_pause' && o.statut !== 'en_cours') return;
+      if(o.sessions.some(s => !s.fin && presenceSessionOwner(s, o) === u)) return;
+      o.sessions.push({ debut: minute, fin: null, operatorUserId: u });
+      o.statut = 'en_cours'; o.autoPaused = false; o.autoPausedOutOfHours = false;
+      if(Array.isArray(o.autoPausedOperators)){
+        o.autoPausedOperators = o.autoPausedOperators.filter(id => String(id) !== u);
+        if(!o.autoPausedOperators.length){ o.autoPausedOperators = null; o.autoPausedUntil = null; }
+      }
+      if(o.pauseReminderSnoozeUntil) delete o.pauseReminderSnoozeUntil[u];
+      changed = true;
+    }
+  }));
+  return changed;
+}
+function presenceTaskLabel(t){
+  const m = (state.machines || []).find(mm => mm.id === t.o.machineId);
+  return `${t.c.nom} — ${[t.o.piece, t.o.etape].filter(Boolean).join(' / ') || '(sans nom)'}${m ? ' · ' + m.nom : ''}`;
+}
+
+// ---------- Pointer (borne avec code, ou son propre appareil) ----------
+async function doPresencePunch(opts){
+  const body = { type: opts.type };
+  if(opts.userId) body.userId = opts.userId;
+  if(opts.pin) body.pin = opts.pin;
+  if(opts.source) body.source = opts.source;
+  let res, json;
+  try{
+    res = await fetch('/api/presence/punch', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    json = await res.json().catch(() => ({}));
+  }catch(e){ return { ok: false, error: 'Serveur injoignable — le pointage n’a pas été enregistré.' }; }
+  if(!res.ok) return { ok: false, error: json.error || 'Pointage refusé.', status: res.status };
+  const punch = json.punch;
+  if(opts.chosenKeys && opts.chosenKeys.size && applyPresenceTaskLinkage(punch.userId, punch.type, punch.ts, opts.chosenKeys)) commit();
+  invalidatePresenceCaches();
+  loadPresenceDay(toDateInputValue(new Date()), { force: true });
+  return { ok: true, punch };
+}
+function presenceUserName(uid){
+  const u = (usersList || []).find(uu => String(uu.id) === String(uid));
+  return u ? u.username : `#${uid}`;
+}
+
+// ---------- Lignes de la page Présence ----------
+function computePresenceRows(st, data, dayKey, now){
+  const punches = (data && data.punches) || [];
+  const eff = effectivePresencePunches(punches);
+  const byUser = {}, rawByUser = {};
+  eff.forEach(p => { (byUser[p.userId] = byUser[p.userId] || []).push(p); });
+  punches.forEach(p => { (rawByUser[p.userId] = rawByUser[p.userId] || []).push(p); });
+  const refDate = new Date(dayKey + 'T12:00:00');
+  const dayStart = new Date(dayKey + 'T00:00:00');
+  const dayEnd = new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate() + 1);
+  const isToday = dayKey === toDateInputValue(now);
+  const isFuture = dayStart > now;
+  const prod = computeProductionTimeByUser(st, dayStart, isToday ? now : dayEnd);
+  const seuil = presenceCfg(st).retardSeuilMin;
+  const ids = [];
+  (usersList || []).forEach(u => { if(!isHiddenFromTempsProd(st, String(u.id))) ids.push(String(u.id)); });
+  Object.keys(rawByUser).forEach(id => { if(!ids.includes(id)) ids.push(id); });
+  const rows = ids.map(uid => {
+    const exp = expectedDayFor(uid, st, refDate);
+    const sum = presenceDaySummary(byUser[uid] || [], dayKey, now);
+    const firstStart = exp.expected.length ? exp.expected[0][0] : null;
+    const lastEnd = exp.expected.length ? exp.expected[exp.expected.length - 1][1] : null;
+    const expCut = isToday ? intersectTimeIntervals(exp.expected, [[dayStart, now]]) : (isFuture ? [] : exp.expected);
+    const expectedMin = timeIntervalsMinutes(expCut);
+    const expectedTotalMin = timeIntervalsMinutes(exp.expected);
+    const retardMin = (sum.arrivee && firstStart) ? Math.round((sum.arrivee - firstStart) / 60000) : null;
+    let status = sum.status;
+    if(status === 'absent'){
+      if(exp.leave && !exp.leave.demiJournee) status = 'conge';
+      else if(!exp.expected.length) status = 'hors';
+      else if(isFuture || (isToday && now < new Date(firstStart.getTime() + seuil * 60000))) status = 'attendu';
+      else status = isToday ? 'nonArrive' : 'nonPointe';
+    }
+    const raw = rawByUser[uid] || [];
+    const sources = [...new Set((byUser[uid] || []).map(p => p.source))];
+    const corrected = raw.some(p => p.source === 'manuel' && p.status === 'valide');
+    const pendingN = raw.filter(p => p.status === 'a_valider').length;
+    const running = isToday ? presenceRunningTasksFor(uid) : [];
+    const anomalies = [];
+    if(retardMin != null && retardMin > seuil) anomalies.push({ kind: 'retard', text: `Arrivée avec ${presenceMinLabel(retardMin)} de retard` });
+    if(status === 'nonArrive') anomalies.push({ kind: 'nonArrive', text: `Pas d'arrivée pointée — attendu à ${pad(firstStart.getHours())}:${pad(firstStart.getMinutes())}` });
+    if(status === 'nonPointe') anomalies.push({ kind: 'nonPointe', text: 'Aucun pointage ce jour-là (horaire prévu, pas de congé)' });
+    if(sum.ouvert) anomalies.push({ kind: 'ouvert', text: 'Départ non pointé' });
+    if(running.length && status !== 'present') anomalies.push({ kind: 'tache', text: `Tâche en cours sans présence pointée : ${presenceTaskLabel(running[0])}` });
+    if(pendingN) anomalies.push({ kind: 'demande', text: `${pendingN} demande(s) de correction à valider` });
+    const u = (usersList || []).find(uu => String(uu.id) === uid);
+    return {
+      userId: uid, username: u ? u.username : `#${uid}`, status, exp, sum, firstStart, lastEnd, expectedMin, expectedTotalMin,
+      retardMin, sources, corrected, pendingN, anomalies, raw, eff: byUser[uid] || [],
+      tachesH: prod[uid] ? prod[uid].totalH : 0
+    };
+  }).filter(r => r.exp.expected.length || r.eff.length || r.raw.length || r.exp.leave);
+  const order = { nonArrive: 0, nonPointe: 0, pause: 1, present: 2, attendu: 3, parti: 4, conge: 5, hors: 6 };
+  return rows.sort((a, b) => ((order[a.status] ?? 9) - (order[b.status] ?? 9)) || a.username.localeCompare(b.username));
+}
+
+// ---------- Page Présence (superviseur) ----------
+let presenceDate = null;          // null = aujourd'hui
+let presenceView = 'jour';        // 'jour' | 'semaine'
+function presencePageDay(){ return presenceDate || toDateInputValue(new Date()); }
+function presenceWeekBounds(){
+  const monday = startOfWeek(new Date(presencePageDay() + 'T12:00:00'));
+  const from = toDateInputValue(monday);
+  return { from, to: addDaysToKey(from, 6), monday };
+}
+function presenceStatusPill(status){
+  const m = PRESENCE_STATUS_META[status] || { label: status, cls: '' };
+  return `<span class="pr-pill ${m.cls}">${m.label}</span>`;
+}
+function presenceSourceTags(sources, corrected){
+  const tags = sources.filter(s => s !== 'manuel').map(s => `<span class="pr-src">${escapeHtml(PRESENCE_SOURCE_LABELS[s] || s)}</span>`);
+  if(corrected || sources.includes('manuel')) tags.push(`<span class="pr-src pr-src-manuel" title="Au moins un pointage ajouté ou annulé par une correction tracée">Corrigé</span>`);
+  return tags.join(' ') || '<span class="footer-note">—</span>';
+}
+function presenceFriseHtml(r, winStart, winEnd, now, isToday){
+  const span = winEnd - winStart;
+  const pct = d => Math.max(0, Math.min(100, (d - winStart) / span * 100));
+  const seg = (a, b, cls, title) => `<span class="pr-seg ${cls}" style="left:${pct(a).toFixed(2)}%; width:${Math.max(0.4, pct(b) - pct(a)).toFixed(2)}%;" title="${escapeHtml(title)}"></span>`;
+  const hm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  let html = r.exp.expected.map(([a, b]) => seg(a, b, 'pr-seg-exp', `Horaire prévu ${hm(a)}–${hm(b)}`)).join('');
+  html += r.sum.work.map(([a, b]) => seg(a, b, r.corrected ? 'pr-seg-work pr-seg-corr' : 'pr-seg-work', `Présent ${hm(a)}–${hm(b)}`)).join('');
+  html += r.sum.pauses.map(([a, b]) => seg(a, b, 'pr-seg-pause', `Pause ${hm(a)}–${hm(b)}`)).join('');
+  if(isToday && now > winStart && now < winEnd) html += `<span class="pr-now" style="left:${pct(now).toFixed(2)}%;"></span>`;
+  return `<div class="pr-frise">${html}</div>`;
+}
+function presenceFriseWindow(rows, dayKey){
+  let minH = 6, maxH = 19;
+  rows.forEach(r => {
+    r.exp.expected.forEach(([a, b]) => { minH = Math.min(minH, a.getHours()); maxH = Math.max(maxH, b.getHours() + (b.getMinutes() ? 1 : 0)); });
+    r.eff.forEach(p => { const h = Number(p.ts.slice(11, 13)); minH = Math.min(minH, h); maxH = Math.max(maxH, h + 1); });
+  });
+  const d0 = new Date(dayKey + 'T00:00:00');
+  return { winStart: new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), minH), winEnd: new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), Math.min(24, maxH)), minH, maxH: Math.min(24, maxH) };
+}
+function renderPresencePage(){
+  if(!presenceModuleActive()) return `<section class="panel"><div class="panel-body" style="text-align:center; padding:40px;">Le module Pointage présentiel est désactivé. Un administrateur peut l'activer dans Paramètres → Pointage présentiel.</div></section>`;
+  if(!canSupervise()) return `<section class="panel"><div class="panel-body" style="text-align:center; padding:40px;">Page réservée aux superviseurs — votre propre pointage est dans « Mon pointage ».</div></section>`;
+  const now = new Date();
+  const dayKey = presencePageDay();
+  const isToday = dayKey === toDateInputValue(now);
+  const cache = presenceDayCache[dayKey];
+  if(!cache || cache.stale) loadPresenceDay(dayKey, { force: true });
+  const data = cache && cache.data;
+  const head = `
+    <div class="pr-head">
+      <h2 class="pr-title">👥 Présence</h2>
+      <div class="view-tabs pr-tabs">
+        <button class="${presenceView==='jour'?'active':''}" data-action="presence-view" data-view="jour">Jour</button>
+        <button class="${presenceView==='semaine'?'active':''}" data-action="presence-view" data-view="semaine">Semaine</button>
+      </div>
+      <div class="pr-datenav">
+        <button class="small" data-action="presence-date-nav" data-dir="-1" aria-label="Précédent">‹</button>
+        <span class="pr-date">${presenceView==='jour' ? escapeHtml(presenceDateLabel(dayKey)) : (() => { const w = presenceWeekBounds(); return `Semaine du ${new Date(w.from+'T12:00:00').toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} au ${new Date(w.to+'T12:00:00').toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}`; })()}</span>
+        <button class="small" data-action="presence-date-nav" data-dir="1" aria-label="Suivant">›</button>
+        <input type="date" value="${dayKey}" data-action="presence-date-input" aria-label="Choisir une date">
+        ${isToday ? '' : `<button class="small" data-action="presence-today">Aujourd'hui</button>`}
+      </div>
+      <div class="pr-head-actions">
+        <button class="small" data-action="goto-borne" title="Ouvrir la borne de pointage sur ce poste (tablette de l'atelier)">📟 Borne</button>
+        <button class="small primary" data-action="presence-export">⬇ Exporter (.xlsx)</button>
+      </div>
+    </div>`;
+  if(presenceView === 'semaine') return `<section class="panel"><div class="panel-body">${head}${renderPresenceWeek()}</div></section>`;
+  if(!data){
+    const msg = cache && cache.status === 'error' ? escapeHtml(cache.error) : 'Chargement des pointages…';
+    return `<section class="panel"><div class="panel-body">${head}<div class="pr-empty">${msg}</div></div></section>`;
+  }
+  const rows = computePresenceRows(state, data, dayKey, now);
+  const openDays = (data.openDays || []).filter(od => od.day < dayKey);
+  const pending = data.pending || [];
+  const count = s => rows.filter(r => r.status === s).length;
+  const attendus = rows.filter(r => r.exp.expected.length && r.status !== 'conge').length;
+  const presentN = count('present'), pauseN = count('pause');
+  const nonArr = rows.filter(r => r.status === 'nonArrive' || r.status === 'nonPointe');
+  const conges = rows.filter(r => r.status === 'conge');
+  const anomaliesN = rows.reduce((s, r) => s + r.anomalies.length, 0) + openDays.length;
+  const workTot = rows.reduce((s, r) => s + r.sum.workMin, 0);
+  const tachesTot = rows.reduce((s, r) => s + r.tachesH * 60, 0);
+  const ratio = workTot > 0 ? Math.round(tachesTot / workTot * 100) : null;
+  const tile = (tone, label, value, sub) => `<div class="dash-stat-tile tone-${tone}"><div class="dst-lbl">${label}</div><div class="dst-num">${value}</div><div class="dst-sub">${sub}</div></div>`;
+  const tiles = `
+    <div class="dash-stat-grid pr-tiles">
+      ${tile('green', 'Présents', `${presentN + pauseN} / ${attendus}`, isToday ? 'attendus aujourd’hui' : 'pointés ce jour-là')}
+      ${tile(pauseN ? 'amber' : 'neutral', 'En pause', pauseN, rows.filter(r => r.status === 'pause').map(r => escapeHtml(r.username)).join(', ') || '—')}
+      ${tile(nonArr.length ? 'red' : 'green', isToday ? 'Non arrivés' : 'Sans pointage', nonArr.length, nonArr.map(r => escapeHtml(r.username)).join(', ') || 'personne')}
+      ${tile('neutral', 'Absences prévues', conges.length, conges.map(r => `${escapeHtml(r.username)}${r.exp.leave ? ' — ' + escapeHtml(r.exp.leave.label) : ''}`).join(', ') || '—')}
+      ${tile(anomaliesN ? 'red' : 'green', 'Anomalies', anomaliesN, anomaliesN ? 'à vérifier ci-dessous' : 'rien à signaler')}
+      ${tile('neutral', 'Présence sur tâches', ratio != null ? ratio + ' %' : '—', 'temps pointé sur des tâches ÷ présence')}
+    </div>`;
+  const alerts = [];
+  openDays.forEach(od => alerts.push(`<li><b>${escapeHtml(presenceUserName(od.userId))}</b> — départ du ${new Date(od.day+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'long', day:'numeric', month:'numeric'})} non pointé (dernier pointage : ${escapeHtml(PRESENCE_TYPE_LABELS[od.lastType]||od.lastType)} à ${presenceHhmm(od.lastTs)}) <button class="pr-link" data-action="presence-open-correction" data-user-id="${escapeHtml(od.userId)}" data-day="${od.day}" data-preset="out">Corriger</button></li>`));
+  rows.forEach(r => r.anomalies.filter(a => a.kind !== 'demande').forEach(a => alerts.push(`<li><b>${escapeHtml(r.username)}</b> — ${escapeHtml(a.text)} <button class="pr-link" data-action="presence-open-correction" data-user-id="${escapeHtml(r.userId)}" data-day="${dayKey}">Voir / corriger</button></li>`)));
+  const alertsHtml = alerts.length ? `<div class="pr-alerts"><div class="pr-alerts-title">⚠ ${alerts.length} point${alerts.length>1?'s':''} à vérifier</div><ul>${alerts.join('')}</ul></div>` : '';
+  const pendingHtml = pending.length ? `
+    <div class="pr-pending">
+      <div class="pr-alerts-title">📝 Demandes de correction à valider (${pending.length})</div>
+      <table class="ops-table pr-table"><thead><tr><th>Salarié</th><th>Demande</th><th>Motif</th><th>Demandée le</th><th></th></tr></thead><tbody>
+      ${pending.map(p => `<tr>
+        <td><b>${escapeHtml(presenceUserName(p.userId))}</b></td>
+        <td>${p.type === 'cancel' ? `Annuler le pointage du ${escapeHtml(p.ts.slice(8,10)+'/'+p.ts.slice(5,7))} à ${presenceHhmm(p.ts)}` : `${escapeHtml(PRESENCE_TYPE_LABELS[p.type]||p.type)} le ${escapeHtml(p.ts.slice(8,10)+'/'+p.ts.slice(5,7))} à ${presenceHhmm(p.ts)}`}</td>
+        <td>${escapeHtml(p.motif)}${p.commentaire ? `<div class="footer-note" style="text-align:left;">${escapeHtml(p.commentaire)}</div>` : ''}</td>
+        <td>${escapeHtml(new Date(p.createdAt).toLocaleString('fr-FR',{day:'numeric',month:'numeric',hour:'2-digit',minute:'2-digit'}))}</td>
+        <td style="white-space:nowrap;"><button class="small primary" data-action="presence-decide" data-id="${p.id}" data-decision="valide">✓ Valider</button> <button class="small" data-action="presence-decide" data-id="${p.id}" data-decision="refuse">✗ Refuser</button></td>
+      </tr>`).join('')}
+      </tbody></table>
+    </div>` : '';
+  const win = presenceFriseWindow(rows, dayKey);
+  const ticks = [];
+  for(let h = win.minH; h <= win.maxH; h += 2) ticks.push(`<span style="left:${((h - win.minH) / (win.maxH - win.minH) * 100).toFixed(2)}%;">${h}h</span>`);
+  const tableRows = rows.map(r => {
+    const hm = d => d ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : '—';
+    const pausesTxt = r.sum.pauses.length ? r.sum.pauses.map(([a, b], i) => {
+      const enCours = isToday && i === r.sum.pauses.length - 1 && r.status === 'pause';
+      return enCours ? `${hm(a)} → en cours` : `${hm(a)}–${hm(b)}`;
+    }).join('<br>') : '—';
+    const ecart = r.expectedMin ? r.sum.workMin - r.expectedMin : 0;
+    const occ = r.sum.workMin > 0 ? Math.min(100, Math.round(r.tachesH * 60 / r.sum.workMin * 100)) : null;
+    const occTone = occ == null ? '' : occ >= 70 ? 'o-green' : occ >= 45 ? 'o-amber' : 'o-red';
+    return `
+      <tr class="${r.anomalies.length ? 'pr-row-alert' : ''}">
+        <td><div class="pr-user">${renderAvatar(r.username)}<b>${escapeHtml(r.username)}</b></div></td>
+        <td>${presenceStatusPill(r.status)}${r.exp.leave && r.exp.leave.demiJournee ? `<div class="footer-note" style="text-align:left;">${escapeHtml(r.exp.leave.label)} (${r.exp.leave.demiJournee==='matin'?'matin':'après-midi'})</div>` : ''}</td>
+        <td class="pr-mono pr-dim">${r.firstStart ? `${hm(r.firstStart)}–${hm(r.lastEnd)}` : '—'}</td>
+        <td class="pr-mono"><b class="${r.retardMin > presenceCfg().retardSeuilMin ? 'pr-late' : ''}">${hm(r.sum.arrivee)}</b>${r.retardMin > presenceCfg().retardSeuilMin ? `<div class="pr-late-sub">+${presenceMinLabel(r.retardMin)}</div>` : ''}</td>
+        <td class="pr-small">${pausesTxt}</td>
+        <td class="pr-mono">${r.sum.depart ? hm(r.sum.depart) : (r.sum.ouvert ? '<span class="pr-late">manquant</span>' : '—')}</td>
+        <td class="pr-frise-cell">${presenceFriseHtml(r, win.winStart, win.winEnd, now, isToday)}</td>
+        <td><b>${r.sum.workMin ? presenceMinLabel(r.sum.workMin) : '—'}</b>${r.expectedMin ? `<div class="pr-small pr-dim">prévu ${presenceMinLabel(r.expectedMin)}${Math.abs(ecart) >= 5 ? ` · <span style="color:${ecart<0?'var(--red)':'var(--green)'};">${ecart>0?'+':'−'}${presenceMinLabel(Math.abs(ecart))}</span>` : ''}</div>` : ''}</td>
+        <td>${occ != null ? `<div class="pr-small">${formatHeures(r.tachesH)} · ${occ} %</div><div class="pr-occ"><span class="${occTone}" style="width:${occ}%;"></span></div>` : (r.tachesH > 0 ? `<span class="pr-small">${formatHeures(r.tachesH)}</span>` : '<span class="footer-note">—</span>')}</td>
+        <td>${presenceSourceTags(r.sources, r.corrected)}</td>
+        <td><button class="pr-link" data-action="presence-open-correction" data-user-id="${escapeHtml(r.userId)}" data-day="${dayKey}">${r.pendingN ? `📝 ${r.pendingN}` : 'Corriger'}</button></td>
+      </tr>`;
+  }).join('');
+  const journal = (data.punches || []).filter(p => p.source === 'manuel' || p.type === 'cancel').sort((a, b) => a.createdAt < b.createdAt ? 1 : -1);
+  const journalHtml = journal.length ? `
+    <div class="pr-journal">
+      <div class="modal-section-title">Journal des corrections du jour</div>
+      ${journal.map(p => presenceJournalLineHtml(p, data.punches)).join('')}
+    </div>` : '';
+  return `
+  <section class="panel">
+    <div class="panel-body">
+      ${head}
+      ${tiles}
+      ${pendingHtml}
+      ${alertsHtml}
+      <div class="pr-table-wrap">
+        <table class="ops-table pr-table">
+          <thead><tr><th>Salarié</th><th>Statut</th><th>Prévu</th><th>Arrivée</th><th>Pauses</th><th>Départ</th><th class="pr-frise-cell"><div class="pr-ticks">${ticks.join('')}</div></th><th>Présence</th><th>Sur tâches</th><th>Source</th><th></th></tr></thead>
+          <tbody>${tableRows || `<tr><td colspan="11" class="pr-empty">Personne n'est attendu ni n'a pointé ce jour-là.</td></tr>`}</tbody>
+        </table>
+      </div>
+      <div class="pr-legend">
+        <span><i class="pr-lg pr-seg-work"></i>Présent</span><span><i class="pr-lg pr-seg-pause"></i>Pause</span><span><i class="pr-lg pr-seg-exp"></i>Horaire prévu</span><span><i class="pr-lg pr-seg-work pr-seg-corr"></i>Journée corrigée</span>
+        <span class="pr-legend-note">« Sur tâches » = temps pointé sur les tâches du planning ÷ présence. Les pointages bruts ne sont jamais modifiés : une correction ajoute une ligne tracée (auteur, heure, motif).</span>
+      </div>
+      ${journalHtml}
+    </div>
+  </section>`;
+}
+function presenceJournalLineHtml(p, allPunches){
+  const author = p.createdBy ? presenceUserName(p.createdBy) : '—';
+  const when = new Date(p.createdAt).toLocaleString('fr-FR', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' });
+  let what;
+  if(p.type === 'cancel'){
+    const orig = (allPunches || []).find(x => x.id === p.cancelsId);
+    what = `Annulation ${orig ? `de « ${PRESENCE_TYPE_LABELS[orig.type] || orig.type} ${presenceHhmm(orig.ts)} »` : `du pointage n°${p.cancelsId}`}`;
+  } else {
+    const fem = p.type === 'in' || p.type === 'pause_end';
+    what = `${PRESENCE_TYPE_LABELS[p.type] || p.type} ajouté${fem ? 'e' : ''} à ${presenceHhmm(p.ts)} (${p.ts.slice(8,10)}/${p.ts.slice(5,7)})`;
+  }
+  const st = p.status === 'a_valider' ? ' <span class="pr-pill pr-pause">à valider</span>' : p.status === 'refuse' ? ' <span class="pr-pill pr-absent">refusée</span>' : '';
+  return `<div class="pr-journal-line"><span class="pr-mono pr-dim">${escapeHtml(when)}</span><span><b>${escapeHtml(presenceUserName(p.userId))}</b> — ${escapeHtml(what)} — ${escapeHtml(p.motif || '')}${p.commentaire ? ` <i>(${escapeHtml(p.commentaire)})</i>` : ''} · par ${escapeHtml(author)}${st}</span></div>`;
+}
+// Vue Semaine : présence pointée par jour et par salarié, face à la présence théorique.
+function presenceWeekModel(st, punches, from, now){
+  const days = [0, 1, 2, 3, 4, 5, 6].map(i => addDaysToKey(from, i));
+  const eff = effectivePresencePunches(punches);
+  const map = {};
+  eff.forEach(p => { const k = p.userId + '|' + p.ts.slice(0, 10); (map[k] = map[k] || []).push(p); });
+  const ids = [];
+  (usersList || []).forEach(u => { if(!isHiddenFromTempsProd(st, String(u.id))) ids.push(String(u.id)); });
+  eff.forEach(p => { if(!ids.includes(p.userId)) ids.push(p.userId); });
+  const start = new Date(from + 'T00:00:00');
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
+  const rows = ids.map(uid => {
+    const cells = days.map(d => { const s = presenceDaySummary(map[uid + '|' + d] || [], d, now); return { day: d, sum: s, has: !!(map[uid + '|' + d] || []).length }; });
+    const totalMin = cells.reduce((s, c) => s + c.sum.workMin, 0);
+    const theoH = theoreticalPresenceHoursForUser(uid, st, start, end);
+    return { userId: uid, username: presenceUserName(uid), cells, totalMin, theoH };
+  }).filter(r => r.totalMin > 0 || r.theoH > 0);
+  const showWeekend = rows.some(r => r.cells.slice(5).some(c => c.has));
+  return { days, rows, showWeekend };
+}
+function renderPresenceWeek(){
+  const w = presenceWeekBounds();
+  const key = presenceRangeKey(w.from, w.to, null);
+  const cache = presenceRangeCache[key];
+  if(!cache) loadPresenceRange(w.from, w.to, null);
+  if(!cache || cache.status !== 'ok') return `<div class="pr-empty">${cache && cache.status === 'error' ? escapeHtml(cache.error) : 'Chargement des pointages de la semaine…'}</div>`;
+  const now = new Date();
+  const m = presenceWeekModel(state, cache.punches, w.from, now);
+  const days = m.showWeekend ? m.days : m.days.slice(0, 5);
+  const today = toDateInputValue(now);
+  return `
+    <div class="pr-table-wrap">
+      <table class="ops-table pr-table pr-week">
+        <thead><tr><th>Salarié</th>${days.map(d => `<th class="${d===today?'pr-today':''}">${new Date(d+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'short', day:'numeric'})}</th>`).join('')}<th>Pointé</th><th>Théorique</th><th>Écart</th></tr></thead>
+        <tbody>
+        ${m.rows.map(r => {
+          const ecartH = r.totalMin / 60 - r.theoH;
+          return `<tr>
+            <td><div class="pr-user">${renderAvatar(r.username)}<b>${escapeHtml(r.username)}</b></div></td>
+            ${r.cells.filter(c => days.includes(c.day)).map(c => `<td><button class="pr-weekcell ${c.sum.ouvert?'pr-weekcell-alert':''}" data-action="presence-goto-day" data-day="${c.day}" title="Voir la journée">${c.has ? presenceMinLabel(c.sum.workMin) : '<span class="footer-note">—</span>'}${c.sum.ouvert ? ' ⚠' : ''}</button></td>`).join('')}
+            <td><b>${presenceMinLabel(r.totalMin)}</b></td>
+            <td class="pr-dim">${formatHeures(r.theoH)}</td>
+            <td style="color:${Math.abs(ecartH) < 0.1 ? 'var(--text-dim)' : ecartH < 0 ? 'var(--red)' : 'var(--green)'};">${ecartH > 0 ? '+' : ecartH < 0 ? '−' : ''}${formatHeures(Math.abs(ecartH))}</td>
+          </tr>`;
+        }).join('') || `<tr><td colspan="${days.length + 4}" class="pr-empty">Aucun pointage cette semaine.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    <div class="pr-legend"><span class="pr-legend-note">Présence pointée (pauses déduites) face à la présence théorique (horaire de chacun, jours fériés et congés approuvés retirés). ⚠ = départ non pointé. Cliquez un jour pour le détail.</span></div>`;
+}
+// Export Excel : période affichée (jour ou semaine), ou « Mon pointage » (une personne, un mois).
+function exportPresenceExcel(punches, from, to, titre){
+  if(typeof XLSX === 'undefined'){ alert("La bibliothèque Excel n'a pas pu se charger (connexion internet requise pour cette fonction)."); return; }
+  const now = new Date();
+  const eff = effectivePresencePunches(punches);
+  const byUserDay = {};
+  eff.forEach(p => { const k = p.userId + '|' + p.ts.slice(0, 10); (byUserDay[k] = byUserDay[k] || []).push(p); });
+  const synth = [['Salarié', 'Date', 'Arrivée', 'Départ', 'Pauses (nb)', 'Pauses (h)', 'Présence (h)', 'Horaire prévu (h)', 'Écart (h)', 'Sources', 'Corrigé', 'Départ manquant']];
+  const r2 = x => Math.round(x * 100) / 100;
+  Object.keys(byUserDay).sort((a, b) => { const [ua, da] = a.split('|'), [ub, db] = b.split('|'); return presenceUserName(ua).localeCompare(presenceUserName(ub)) || (da < db ? -1 : 1); }).forEach(k => {
+    const [uid, day] = k.split('|');
+    const s = presenceDaySummary(byUserDay[k], day, now);
+    const exp = expectedDayFor(uid, state, new Date(day + 'T12:00:00'));
+    const expMin = timeIntervalsMinutes(exp.expected);
+    const raw = punches.filter(p => p.userId === uid && p.ts.slice(0, 10) === day);
+    synth.push([presenceUserName(uid), day, s.arrivee ? presenceHhmm(toInputValue(s.arrivee)) : '', s.depart ? presenceHhmm(toInputValue(s.depart)) : '', s.nbPauses, r2(s.pauseMin / 60), r2(s.workMin / 60), r2(expMin / 60), r2((s.workMin - expMin) / 60),
+      [...new Set(byUserDay[k].map(p => PRESENCE_SOURCE_LABELS[p.source] || p.source))].join(', '), raw.some(p => p.source === 'manuel') ? 'oui' : '', s.ouvert ? 'oui' : '']);
+  });
+  const detail = [['Date', 'Heure', 'Salarié', 'Pointage', 'Source', 'Statut', 'Retenu', 'Motif', 'Commentaire', 'Saisi par', 'Saisi le', 'Annule le pointage n°', 'N°']];
+  const effIds = new Set(eff.map(p => p.id));
+  punches.slice().sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.id - b.id).forEach(p => {
+    detail.push([p.ts.slice(0, 10), p.ts.slice(11, 19), presenceUserName(p.userId), PRESENCE_TYPE_LABELS[p.type] || p.type, PRESENCE_SOURCE_LABELS[p.source] || p.source,
+      p.status === 'valide' ? 'validé' : p.status === 'a_valider' ? 'à valider' : 'refusé', effIds.has(p.id) ? 'oui' : (p.type === 'cancel' ? '' : 'non'),
+      p.motif || '', p.commentaire || '', p.createdBy ? presenceUserName(p.createdBy) : '', p.createdAt ? new Date(p.createdAt).toLocaleString('fr-FR') : '', p.cancelsId || '', p.id]);
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[titre], [`Période : du ${from} au ${to}`], [], ...synth]), 'Synthèse');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detail), 'Pointages');
+  XLSX.writeFile(wb, `pointage-presence-${from}${from !== to ? '_' + to : ''}.xlsx`);
+}
+function exportPresencePage(){
+  if(presenceView === 'semaine'){
+    const w = presenceWeekBounds();
+    const c = presenceRangeCache[presenceRangeKey(w.from, w.to, null)];
+    if(!c || c.status !== 'ok'){ showToast('Pointages de la semaine encore en chargement…'); return; }
+    exportPresenceExcel(c.punches, w.from, w.to, 'Pointage présentiel — semaine');
+  } else {
+    const d = presencePageDay();
+    const data = presenceDayData(d);
+    if(!data){ showToast('Pointages encore en chargement…'); return; }
+    exportPresenceExcel(data.punches || [], d, d, 'Pointage présentiel — journée');
+  }
+}
+
+// ---------- Correction (superviseur) / demande de correction (salarié) ----------
+let presenceCorrection = null; // { userId, day, mode:'sup'|'self', punches, status, type, time, motif, commentaire, cancelsId, saving, error }
+async function openPresenceCorrection(userId, day, preset){
+  const mode = canSupervise() ? 'sup' : 'self';
+  const uid = mode === 'self' ? String(currentUser.id) : String(userId);
+  const defTime = day === toDateInputValue(new Date()) ? `${pad(new Date().getHours())}:${pad(new Date().getMinutes())}` : '17:00';
+  presenceCorrection = { userId: uid, day, mode, punches: [], status: 'loading', type: preset || 'in', time: defTime, motif: PRESENCE_MOTIFS[0], commentaire: '', cancelsId: null, saving: false, error: '' };
+  if(preset === 'out'){
+    const exp = expectedDayFor(uid, state, new Date(day + 'T12:00:00'));
+    if(exp.expected.length){ const e = exp.expected[exp.expected.length - 1][1]; presenceCorrection.time = `${pad(e.getHours())}:${pad(e.getMinutes())}`; }
+  }
+  render();
+  try{
+    const q = `from=${day}&to=${day}${mode === 'sup' ? '&userId=' + encodeURIComponent(uid) : ''}`;
+    const res = await fetch('/api/presence/range?' + q, { credentials: 'include' });
+    const json = await res.json().catch(() => ({}));
+    if(!presenceCorrection || presenceCorrection.userId !== uid || presenceCorrection.day !== day) return;
+    if(res.ok){ presenceCorrection.punches = json.punches || []; presenceCorrection.status = 'ok'; }
+    else { presenceCorrection.status = 'error'; presenceCorrection.error = json.error || 'Chargement impossible.'; }
+  }catch(e){ if(presenceCorrection){ presenceCorrection.status = 'error'; presenceCorrection.error = 'Serveur injoignable.'; } }
+  presenceRenderIfIdle();
+}
+async function submitPresenceCorrection(){
+  const d = presenceCorrection; if(!d || d.saving) return;
+  const q = id => (typeof document !== 'undefined' ? document.getElementById(id) : null);
+  const type = d.cancelsId ? 'cancel' : ((q('pc-type') || {}).value || d.type);
+  const time = (q('pc-time') || {}).value || d.time;
+  const motif = (q('pc-motif') || {}).value || d.motif;
+  const commentaire = (q('pc-comment') || {}).value != null ? q('pc-comment').value : d.commentaire;
+  if(motif === 'Autre (préciser)' && !String(commentaire).trim()){ alert('Précisez le motif dans le commentaire.'); return; }
+  if(type !== 'cancel' && !/^\d{2}:\d{2}$/.test(time)){ alert("Indiquez l'heure du pointage."); return; }
+  d.saving = true; render();
+  try{
+    const res = await fetch('/api/presence/correction', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: d.userId, type, ts: `${d.day}T${time}`, motif, commentaire, cancelsId: d.cancelsId }) });
+    const json = await res.json().catch(() => ({}));
+    if(!res.ok){ d.saving = false; alert(json.error || 'Correction refusée.'); render(); return; }
+    presenceCorrection = null;
+    invalidatePresenceCaches();
+    showToast(d.mode === 'sup' ? 'Correction enregistrée — le pointage d’origine reste dans le journal.' : 'Demande envoyée — un superviseur va la valider.');
+    refreshPresenceVisible(true);
+    render();
+  }catch(e){ d.saving = false; alert('Serveur injoignable — correction non enregistrée.'); render(); }
+}
+async function decidePresenceRequest(id, decision){
+  try{
+    const res = await fetch('/api/presence/decide', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: Number(id), decision }) });
+    const json = await res.json().catch(() => ({}));
+    if(!res.ok){ alert(json.error || 'Décision impossible.'); return; }
+    invalidatePresenceCaches();
+    showToast(decision === 'valide' ? 'Demande validée.' : 'Demande refusée.');
+    refreshPresenceVisible(true);
+  }catch(e){ alert('Serveur injoignable.'); }
+}
+function renderPresenceCorrectionModal(){
+  const d = presenceCorrection; if(!d) return '';
+  const name = presenceUserName(d.userId);
+  const eff = effectivePresencePunches(d.punches);
+  const effIds = new Set(eff.map(p => p.id));
+  const exp = expectedDayFor(d.userId, state, new Date(d.day + 'T12:00:00'));
+  const hm = x => `${pad(x.getHours())}:${pad(x.getMinutes())}`;
+  const raw = d.punches.filter(p => p.type !== 'cancel').sort((a, b) => a.ts < b.ts ? -1 : 1);
+  const cards = raw.map(p => {
+    const retenu = effIds.has(p.id);
+    const pendingCancel = d.punches.some(x => x.type === 'cancel' && x.cancelsId === p.id && x.status === 'a_valider');
+    const cls = !retenu ? 'pc-card pc-card-off' : 'pc-card';
+    const statusTxt = p.status === 'a_valider' ? 'demande à valider' : p.status === 'refuse' ? 'refusée' : (!retenu ? 'annulé' : (PRESENCE_SOURCE_LABELS[p.source] || p.source));
+    return `<div class="${cls}">
+      <div class="pc-card-type">${escapeHtml(PRESENCE_TYPE_LABELS[p.type] || p.type)}</div>
+      <div class="pc-card-time">${presenceHhmm(p.ts)}</div>
+      <div class="pc-card-src">${escapeHtml(statusTxt)}${pendingCancel ? ' · annulation demandée' : ''}</div>
+      ${retenu && !pendingCancel ? `<button class="pr-link" data-action="presence-cancel-punch" data-id="${p.id}">${d.mode === 'sup' ? 'Annuler' : 'Signaler une erreur'}</button>` : ''}
+    </div>`;
+  }).join('');
+  const target = d.cancelsId ? d.punches.find(p => p.id === d.cancelsId) : null;
+  const history = d.punches.filter(p => p.source === 'manuel' || p.type === 'cancel').sort((a, b) => a.createdAt < b.createdAt ? 1 : -1);
+  return `
+  <div class="modal-overlay" data-action="presence-correction-close-bg">
+    <div class="modal-box modal-box-wide pc-box" role="dialog" aria-label="Corriger un pointage">
+      <div class="modal-head">
+        <div class="pr-user">${renderAvatar(name)}<div><div class="pc-title">${d.mode === 'sup' ? 'Corriger un pointage' : 'Demander une correction'} — ${escapeHtml(name)}</div>
+        <div class="footer-note" style="text-align:left;">${escapeHtml(presenceDateLabel(d.day))} · horaire prévu ${exp.expected.length ? `${hm(exp.expected[0][0])}–${hm(exp.expected[exp.expected.length-1][1])}` : '—'}</div></div></div>
+        <button class="ghost icon-btn" data-action="presence-correction-close" aria-label="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+      <div class="modal-section-title">Pointages enregistrés (jamais modifiés)</div>
+      ${d.status === 'loading' ? '<div class="pr-empty">Chargement…</div>' : d.status === 'error' ? `<div class="pr-empty">${escapeHtml(d.error)}</div>` : (cards ? `<div class="pc-cards">${cards}</div>` : '<div class="pr-empty">Aucun pointage ce jour-là.</div>')}
+      <div class="modal-section-title" style="margin-top:14px;">${target ? `Annuler « ${escapeHtml(PRESENCE_TYPE_LABELS[target.type] || target.type)} ${presenceHtml(target)} »` : 'Pointage à ajouter'}</div>
+      <div class="pc-form">
+        ${target ? `<div class="pc-cancel-note">Ce pointage restera visible dans le journal, marqué comme annulé. <button class="pr-link" data-action="presence-cancel-punch" data-id="">Revenir à un ajout</button></div>` : `
+        <label class="field">Pointage
+          <select id="pc-type" data-action="presence-correction-field" data-field="type">
+            ${['in','pause_start','pause_end','out'].map(t => `<option value="${t}" ${d.type===t?'selected':''}>${PRESENCE_TYPE_LABELS[t]}</option>`).join('')}
+          </select>
+        </label>
+        <label class="field">Heure<input id="pc-time" type="time" value="${escapeHtml(d.time)}" data-action="presence-correction-field" data-field="time"></label>`}
+        <label class="field">Motif (obligatoire)
+          <select id="pc-motif" data-action="presence-correction-field" data-field="motif">
+            ${PRESENCE_MOTIFS.map(m => `<option ${d.motif===m?'selected':''}>${escapeHtml(m)}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+      <label class="field" style="margin-top:10px;">Commentaire</label><textarea id="pc-comment" class="pc-comment" rows="2" data-action="presence-correction-field" data-field="commentaire" placeholder="Ex. parti après avoir clos la tâche à 17:04">${escapeHtml(d.commentaire)}</textarea>
+      <div class="pc-note">${d.mode === 'sup'
+        ? `La correction est enregistrée à votre nom avec l'heure et le motif ; ${escapeHtml(name)} la voit dans « Mon pointage ».`
+        : 'Votre demande est transmise à un superviseur. Elle ne compte qu’une fois validée ; vous voyez sa réponse dans « Mon pointage ».'}</div>
+      <div class="form-actions">
+        <button data-action="presence-correction-close">Annuler</button>
+        <button class="primary" data-action="presence-correction-submit" ${d.saving || d.status !== 'ok' ? 'disabled' : ''}>${d.saving ? 'Enregistrement…' : d.mode === 'sup' ? 'Enregistrer la correction' : 'Envoyer la demande'}</button>
+      </div>
+      ${history.length ? `<div class="modal-section-title" style="margin-top:14px;">Journal de cette journée</div>${history.map(p => presenceJournalLineHtml(p, d.punches)).join('')}` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+function presenceHtml(p){ return presenceHhmm(p.ts); }
+
+// ---------- Mon pointage (salarié) ----------
+let presencePunchDraft = null; // { type, uid, choices:[{key,label}], unchecked:Set }
+function myPresenceToday(){
+  const today = toDateInputValue(new Date());
+  const data = presenceDayData(today);
+  if(!data || !currentUser) return null;
+  const mine = (data.punches || []).filter(p => p.userId === String(currentUser.id));
+  const eff = effectivePresencePunches(mine);
+  return { data, mine, eff, sum: presenceDaySummary(eff, today, new Date()) };
+}
+function presenceActionsForStatus(status){
+  if(status === 'present') return [{ type: 'pause_start', label: 'Je pars en pause', cls: 'pr-act-pause' }, { type: 'out', label: 'Je termine ma journée', cls: 'pr-act-out' }];
+  if(status === 'pause') return [{ type: 'pause_end', label: 'Je reprends le travail', cls: 'pr-act-in' }, { type: 'out', label: 'Je termine ma journée', cls: 'pr-act-out' }];
+  return [{ type: 'in', label: 'J’arrive', cls: 'pr-act-in' }];
+}
+function startSelfPresencePunch(type){
+  const me = myPresenceToday(); if(!me || !currentUser) return;
+  const choices = presenceTaskChoicesFor(String(currentUser.id), type, me.sum.last);
+  if(choices.length){
+    presencePunchDraft = { type, uid: String(currentUser.id), choices: choices.map(t => ({ key: t.key, label: presenceTaskLabel(t) })), unchecked: new Set() };
+    render();
+    return;
+  }
+  runSelfPresencePunch(type, new Set());
+}
+async function runSelfPresencePunch(type, chosenKeys){
+  const r = await doPresencePunch({ type, source: isNarrowViewport() ? 'mobile' : 'poste', chosenKeys });
+  presencePunchDraft = null;
+  if(!r.ok){ alert(r.error); render(); return; }
+  showToast(`${PRESENCE_TYPE_LABELS[type]} enregistrée à ${presenceHhmm(r.punch.ts)}.`);
+  render();
+}
+function renderPresencePunchModal(){
+  const d = presencePunchDraft; if(!d) return '';
+  const verb = d.type === 'pause_end' ? 'Reprendre aussi ces tâches' : 'Mettre en pause mes tâches en cours';
+  return `
+  <div class="modal-overlay" data-action="presence-punch-cancel-bg">
+    <div class="modal-box" role="dialog" aria-label="${escapeHtml(PRESENCE_TYPE_LABELS[d.type])}">
+      <div class="modal-head"><h2>${escapeHtml(PRESENCE_TYPE_LABELS[d.type])}</h2><button class="ghost icon-btn" data-action="presence-punch-cancel" aria-label="Fermer">✕</button></div>
+      <div class="modal-body">
+      <div class="modal-section-title">${verb}</div>
+      <div class="pr-task-choices">
+        ${d.choices.map(c => `<button class="pr-task-choice ${d.unchecked.has(c.key)?'':'on'}" data-action="presence-punch-toggle" data-key="${escapeHtml(c.key)}" aria-pressed="${d.unchecked.has(c.key)?'false':'true'}"><span class="pr-check">${d.unchecked.has(c.key)?'':'✓'}</span>${escapeHtml(c.label)}</button>`).join('')}
+      </div>
+      <div class="form-actions"><button data-action="presence-punch-cancel">Annuler</button><button class="primary" data-action="presence-punch-confirm">Pointer maintenant</button></div>
+      </div>
+    </div>
+  </div>`;
+}
+function presenceMyWeekBounds(){
+  const monday = startOfWeek(new Date());
+  const from = toDateInputValue(monday);
+  return { from, to: addDaysToKey(from, 6) };
+}
+function renderMonPointagePage(){
+  if(!presenceModuleActive()) return `<section class="panel"><div class="panel-body" style="text-align:center; padding:40px;">Le module Pointage présentiel est désactivé.</div></section>`;
+  const today = toDateInputValue(new Date());
+  const cache = presenceDayCache[today];
+  if(!cache || cache.stale) loadPresenceDay(today, { force: true });
+  const me = myPresenceToday();
+  const name = currentUsername || '';
+  const w = presenceMyWeekBounds();
+  const wKey = presenceRangeKey(w.from, w.to, String(currentUser ? currentUser.id : ''));
+  if(!presenceRangeCache[wKey]) loadPresenceRange(w.from, w.to, String(currentUser ? currentUser.id : ''));
+  const wc = presenceRangeCache[wKey];
+  const hasPin = me ? (me.data.pinUserIds || []).includes(String(currentUser.id)) : null;
+  let statusCard;
+  if(!me){
+    statusCard = `<div class="pr-empty">${cache && cache.status === 'error' ? escapeHtml(cache.error) : 'Chargement…'}</div>`;
+  } else {
+    const s = me.sum;
+    const exp = expectedDayFor(String(currentUser.id), state, new Date());
+    const hm = x => `${pad(x.getHours())}:${pad(x.getMinutes())}`;
+    const since = s.last ? presenceHhmm(s.last.ts) : null;
+    const statusLine = s.status === 'present' ? `<span class="mp-dot pr-present-bg"></span>Présent depuis ${since}`
+      : s.status === 'pause' ? `<span class="mp-dot pr-pause-bg"></span>En pause depuis ${since}`
+      : s.status === 'parti' ? `<span class="mp-dot pr-parti-bg"></span>Journée terminée à ${since}`
+      : `<span class="mp-dot pr-parti-bg"></span>Pas encore pointé aujourd'hui`;
+    const err = me.data.selfPunchError;
+    const actions = presenceActionsForStatus(s.status);
+    statusCard = `
+      <div class="mp-status">${statusLine}</div>
+      <div class="mp-kpis">
+        <div><span>Présence aujourd'hui</span><b>${presenceMinLabel(s.workMin)}</b></div>
+        <div><span>Pauses</span><b>${s.pauseMin ? presenceMinLabel(s.pauseMin) : '—'}</b></div>
+        <div><span>Horaire prévu</span><b>${exp.expected.length ? `${hm(exp.expected[0][0])}–${hm(exp.expected[exp.expected.length-1][1])}` : (exp.leave ? escapeHtml(exp.leave.label) : '—')}</b></div>
+      </div>
+      ${err ? `<div class="mp-err">${escapeHtml(err)}<br><span class="footer-note" style="text-align:left;">Pointez sur la borne de l'atelier.</span></div>`
+            : `<div class="mp-actions">${actions.map((a, i) => `<button class="pr-act ${a.cls} ${i ? 'pr-act-secondary' : ''}" data-action="presence-self-punch" data-type="${a.type}">${escapeHtml(a.label)}</button>`).join('')}</div>`}`;
+  }
+  const todayList = me && me.mine.length ? me.mine.filter(p => p.type !== 'cancel').sort((a, b) => a.ts < b.ts ? -1 : 1).map(p => {
+    const retenu = me.eff.some(e => e.id === p.id);
+    const tag = p.status === 'a_valider' ? '<span class="pr-pill pr-pause">à valider</span>' : p.status === 'refuse' ? '<span class="pr-pill pr-absent">refusée</span>' : !retenu ? '<span class="pr-pill pr-parti">annulé</span>' : `<span class="pr-src">${escapeHtml(PRESENCE_SOURCE_LABELS[p.source] || p.source)}</span>`;
+    return `<div class="mp-line"><span class="pr-mono"><b>${presenceHhmm(p.ts)}</b></span><span>${escapeHtml(PRESENCE_TYPE_LABELS[p.type])}</span>${tag}</div>`;
+  }).join('') : '<div class="footer-note" style="text-align:left;">Aucun pointage aujourd’hui.</div>';
+  let weekHtml = '<div class="footer-note" style="text-align:left;">Chargement…</div>';
+  let requestsHtml = '';
+  if(wc && wc.status === 'ok'){
+    const m = presenceWeekModel(state, wc.punches, w.from, new Date());
+    const row = m.rows.find(r => r.userId === String(currentUser.id)) || { cells: m.days.map(d => ({ day: d, sum: { workMin: 0 }, has: false })), totalMin: 0, theoH: theoreticalPresenceHoursForUser(String(currentUser.id), state, new Date(w.from+'T00:00:00'), new Date(addDaysToKey(w.to,1)+'T00:00:00')) };
+    const maxMin = Math.max(480, ...row.cells.map(c => c.sum.workMin));
+    weekHtml = `
+      <div class="mp-week-head"><span>Semaine du ${new Date(w.from+'T12:00:00').toLocaleDateString('fr-FR',{day:'numeric', month:'long'})}</span><span><b>${presenceMinLabel(row.totalMin)}</b> / ${formatHeures(row.theoH)} prévues</span></div>
+      <div class="mp-week">${row.cells.slice(0, 5).map(c => `<div class="mp-day"><span class="mp-day-h">${c.has ? presenceMinLabel(c.sum.workMin) : '—'}</span><span class="mp-bar"><span style="height:${Math.round(c.sum.workMin / maxMin * 100)}%;" class="${c.day===today?'mp-bar-today':''}"></span></span><span class="mp-day-l">${new Date(c.day+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'short'})}</span></div>`).join('')}</div>`;
+    const mine = wc.punches.filter(p => p.source === 'manuel' || p.type === 'cancel');
+    const pend = (wc.pending || []).filter(p => !mine.some(x => x.id === p.id));
+    const reqs = [...pend, ...mine].sort((a, b) => a.createdAt < b.createdAt ? 1 : -1);
+    if(reqs.length) requestsHtml = `<div class="mp-card"><div class="mp-card-title">Corrections et demandes</div>${reqs.map(p => presenceJournalLineHtml(p, wc.punches)).join('')}</div>`;
+  }
+  return `
+  <section class="panel mp-page">
+    <div class="panel-body">
+      <div class="mp-head">${renderAvatar(name)}<div><h2 class="pr-title" style="margin:0;">🙋 Mon pointage</h2><div class="footer-note" style="text-align:left;">${escapeHtml(name)} · ${escapeHtml(presenceDateLabel(today))}</div></div></div>
+      <div class="mp-grid">
+        <div class="mp-card mp-main">${statusCard}</div>
+        <div class="mp-card"><div class="mp-card-title">Aujourd'hui</div>${todayList}
+          <div style="margin-top:10px;"><button class="pr-link" data-action="presence-open-correction" data-user-id="${currentUser?currentUser.id:''}" data-day="${today}">Un pointage manque ou est faux ? Demander une correction</button></div></div>
+        <div class="mp-card">${weekHtml}</div>
+        <div class="mp-card"><div class="mp-card-title">Code de la borne</div>
+          <div class="footer-note" style="text-align:left; margin-bottom:8px;">Code personnel à 4 chiffres pour pointer sur la borne de l'atelier. ${hasPin === true ? '<b style="color:var(--green);">Code défini.</b>' : hasPin === false ? '<b style="color:var(--red);">Aucun code défini.</b>' : ''}</div>
+          <button class="small" data-action="presence-set-pin">${hasPin ? 'Changer mon code' : 'Définir mon code'}</button>
+          <button class="small" data-action="presence-my-export" style="margin-left:6px;">⬇ Mes pointages du mois</button>
+        </div>
+        ${requestsHtml}
+      </div>
+      <div class="footer-note" style="text-align:left; margin-top:10px;">L'heure enregistrée est celle du serveur. Vous seul (et vos responsables) voyez vos pointages ; ils sont conservés ${presenceCfg().conservationAns} ans puis supprimés.${presenceCfg().telephone ? ' Pointage depuis le téléphone accepté uniquement sur le réseau de l’atelier, sans géolocalisation.' : ''}</div>
+    </div>
+  </section>`;
+}
+async function setMyPresencePin(){
+  const pin = prompt('Choisissez votre code de borne (4 chiffres) :');
+  if(pin === null) return;
+  if(!/^\d{4}$/.test(pin.trim())){ alert('Le code doit contenir exactement 4 chiffres.'); return; }
+  const pin2 = prompt('Retapez le code pour confirmer :');
+  if(pin2 === null) return;
+  if(pin2.trim() !== pin.trim()){ alert('Les deux codes ne correspondent pas.'); return; }
+  try{
+    const res = await fetch('/api/presence/pin', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: pin.trim() }) });
+    const json = await res.json().catch(() => ({}));
+    if(!res.ok){ alert(json.error || 'Code non enregistré.'); return; }
+    showToast('Code de borne enregistré.');
+    loadPresenceDay(toDateInputValue(new Date()), { force: true });
+  }catch(e){ alert('Serveur injoignable.'); }
+}
+async function clearPresencePin(userId){
+  if(!confirm(`Effacer le code de borne de ${presenceUserName(userId)} ? La personne devra en choisir un nouveau dans « Mon pointage ».`)) return;
+  try{
+    const res = await fetch('/api/presence/pin/clear', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId }) });
+    const json = await res.json().catch(() => ({}));
+    if(!res.ok){ alert(json.error || 'Impossible.'); return; }
+    showToast('Code effacé.');
+    loadPresenceDay(toDateInputValue(new Date()), { force: true });
+  }catch(e){ alert('Serveur injoignable.'); }
+}
+async function exportMyPresenceMonth(){
+  const now = new Date();
+  const from = toDateInputValue(new Date(now.getFullYear(), now.getMonth(), 1));
+  const to = toDateInputValue(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+  const uid = String(currentUser.id);
+  await loadPresenceRange(from, to, uid, { force: true, noRender: true });
+  const c = presenceRangeCache[presenceRangeKey(from, to, uid)];
+  if(!c || c.status !== 'ok'){ alert((c && c.error) || 'Chargement impossible.'); return; }
+  exportPresenceExcel(c.punches, from, to, `Mes pointages — ${currentUsername || ''}`);
+}
+// Pastille d'en-tête : statut du jour de la personne connectée, un clic mène à « Mon pointage ».
+function renderPresenceHeaderChip(){
+  if(!presenceModuleActive() || !currentUser) return '';
+  const me = myPresenceToday();
+  if(!me) return '';
+  const s = me.sum;
+  const since = s.last ? presenceHhmm(s.last.ts) : '';
+  const label = s.status === 'present' ? `🟢 Présent · ${since}` : s.status === 'pause' ? `⏸ Pause · ${since}` : s.status === 'parti' ? `✓ Parti · ${since}` : '⏱ Pointer';
+  return `<button class="small pr-chip pr-chip-${s.status}" data-action="goto-mon-pointage" title="Mon pointage — arrivée, pauses, départ">${label}</button>`;
+}
+
+// ---------- Borne de pointage (tablette de l'atelier) ----------
+let borne = { step: 'list', userId: null, pin: '', error: '', busy: false, unchecked: new Set(), done: null, token: 0 };
+function borneReset(){ borne = { step: 'list', userId: null, pin: '', error: '', busy: false, unchecked: new Set(), done: null, token: borne.token + 1 }; }
+function borneModeOn(){ try{ localStorage.setItem(BORNE_MODE_STORAGE_KEY, '1'); }catch(e){} }
+function borneModeOff(){ try{ localStorage.removeItem(BORNE_MODE_STORAGE_KEY); }catch(e){} }
+function borneModeStored(){ try{ return localStorage.getItem(BORNE_MODE_STORAGE_KEY) === '1'; }catch(e){ return false; } }
+function borneTiles(data, now){
+  const dayKey = toDateInputValue(now);
+  const last = {};
+  (data.lastByUser || []).forEach(l => { last[l.userId] = l; });
+  const pins = new Set(data.pinUserIds || []);
+  return (usersList || []).filter(u => !isHiddenFromTempsProd(state, String(u.id))).map(u => {
+    const uid = String(u.id);
+    const l = last[uid];
+    let st = presenceStatusFromType(l && l.type);
+    let label;
+    if(st === 'present') label = `Présent depuis ${presenceHhmm(l.ts)}`;
+    else if(st === 'pause') label = `En pause depuis ${presenceHhmm(l.ts)}`;
+    else if(st === 'parti') label = `Parti à ${presenceHhmm(l.ts)}`;
+    else {
+      const exp = expectedDayFor(uid, state, now);
+      if(exp.leave && !exp.leave.demiJournee){ st = 'conge'; label = exp.leave.label; }
+      else if(exp.expected.length){ const a = exp.expected[0][0]; label = `Attendu à ${pad(a.getHours())}:${pad(a.getMinutes())}`; }
+      else label = 'Pas prévu aujourd’hui';
+    }
+    return { uid, name: u.username, st, label, last: l || null, hasPin: pins.has(uid) };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+}
+function renderBornePage(){
+  const now = new Date();
+  const today = toDateInputValue(now);
+  if(!presenceModuleActive()) return `<div class="borne"><div class="borne-main"><div class="pr-empty">Le module Pointage présentiel est désactivé.</div><button class="small" data-action="borne-exit">Quitter la borne</button></div></div>`;
+  const cache = presenceDayCache[today];
+  if(!cache || cache.stale) loadPresenceDay(today, { force: true });
+  const data = cache && cache.data;
+  const tiles = data ? borneTiles(data, now) : [];
+  const counts = { present: tiles.filter(t => t.st === 'present').length, pause: tiles.filter(t => t.st === 'pause').length, attendus: tiles.filter(t => t.st === 'absent').length };
+  const left = `
+    <div class="borne-side">
+      <div class="borne-brand"><span class="borne-logo">⏱</span><div><div class="borne-brand-t">Pointage</div><div class="borne-brand-s">${escapeHtml(state.config.appTitle || 'Planning Atelier')}</div></div></div>
+      <div><div class="borne-clock" id="borne-clock">${pad(now.getHours())}:${pad(now.getMinutes())}</div><div class="borne-date">${escapeHtml(presenceDateLabel(today))}</div></div>
+      <div class="borne-hint">Touchez votre nom, puis tapez votre code à 4 chiffres.</div>
+      <div class="borne-counts">
+        <div class="bc-present"><b>${counts.present}</b><span>présents</span></div>
+        <div class="bc-pause"><b>${counts.pause}</b><span>en pause</span></div>
+        <div><b>${counts.attendus}</b><span>pas encore là</span></div>
+      </div>
+      <div class="borne-foot">Heure fournie par le serveur. Aucune donnée biométrique. Chacun consulte ses pointages dans « Mon pointage ».
+        <button class="borne-exit" data-action="borne-exit">Quitter la borne</button></div>
+    </div>`;
+  let main;
+  if(!data){
+    main = `<div class="pr-empty">${cache && cache.status === 'error' ? escapeHtml(cache.error) : 'Chargement…'}</div>`;
+  } else if(borne.step === 'done' && borne.done){
+    main = `
+      <div class="borne-done">
+        <div class="borne-check">✓</div>
+        <div class="borne-done-t">${escapeHtml(borne.done.title)}</div>
+        <div class="borne-done-s">${escapeHtml(borne.done.text)}</div>
+        ${borne.done.extra ? `<div class="borne-done-x">${escapeHtml(borne.done.extra)}</div>` : ''}
+        <button class="pr-act pr-act-out borne-done-btn" data-action="borne-cancel">Terminé</button>
+        <div class="footer-note">Retour automatique à la liste dans quelques secondes</div>
+      </div>`;
+  } else if(borne.step === 'pin'){
+    const t = tiles.find(x => x.uid === borne.userId);
+    if(!t){ borneReset(); return renderBornePage(); }
+    const ready = borne.pin.length === 4;
+    const acts = presenceActionsForStatus(t.st === 'present' || t.st === 'pause' ? t.st : 'absent');
+    const keys = ['1','2','3','4','5','6','7','8','9','C','0','←'];
+    const actHtml = acts.map(a => {
+      const choices = ready ? presenceTaskChoicesFor(t.uid, a.type, t.last) : [];
+      return `<div class="borne-act-block">
+        <button class="pr-act ${ready ? a.cls : 'pr-act-off'}" data-action="borne-action" data-type="${a.type}" ${ready && !borne.busy ? '' : 'disabled'}>${escapeHtml(a.label)}</button>
+        ${choices.length ? `<div class="pr-task-choices">${choices.map(c => `<button class="pr-task-choice ${borne.unchecked.has(c.key)?'':'on'}" data-action="borne-toggle" data-key="${escapeHtml(c.key)}" aria-pressed="${borne.unchecked.has(c.key)?'false':'true'}"><span class="pr-check">${borne.unchecked.has(c.key)?'':'✓'}</span>${a.type === 'pause_end' ? 'Reprendre : ' : 'Mettre en pause : '}${escapeHtml(presenceTaskLabel(c))}</button>`).join('')}</div>` : ''}
+      </div>`;
+    }).join('');
+    main = `
+      <div class="borne-pin">
+        <div class="borne-pin-card">
+          ${renderAvatar(t.name)}
+          <div class="borne-pin-name">${escapeHtml(t.name)}</div>
+          <div class="borne-st borne-st-${t.st}">${escapeHtml(t.label)}</div>
+          ${t.hasPin ? `
+          <div class="borne-dots">${[0,1,2,3].map(i => `<span class="${i < borne.pin.length ? 'on' : ''}"></span>`).join('')}</div>
+          <div class="borne-keys">${keys.map(k => `<button class="borne-key ${k==='C'||k==='←'?'borne-key-s':''}" data-action="borne-key" data-key="${k}" aria-label="${k==='C'?'Effacer':k==='←'?'Retour arrière':k}">${k==='C'?'Effacer':k}</button>`).join('')}</div>`
+          : `<div class="borne-nopin">Aucun code défini. Choisissez-le dans « Mon pointage » (téléphone ou poste), ou demandez à votre responsable.</div>`}
+        </div>
+        <div class="borne-acts">
+          <div class="borne-q">Que faites-vous ?</div>
+          <div class="borne-q-s">${borne.error ? `<span class="pr-late">${escapeHtml(borne.error)}</span>` : ready ? 'Code saisi — choisissez votre pointage.' : 'Tapez votre code à 4 chiffres.'}</div>
+          ${actHtml}
+          <button class="pr-link borne-back" data-action="borne-cancel">← Ce n'est pas moi</button>
+        </div>
+      </div>`;
+  } else {
+    main = `
+      <div class="borne-list-head"><h1>Qui pointe ?</h1><span>${tiles.length} salarié${tiles.length>1?'s':''}</span></div>
+      <div class="borne-grid">
+        ${tiles.map(t => `<button class="borne-tile" data-action="borne-pick" data-user-id="${t.uid}" aria-label="${escapeHtml(t.name + ', ' + t.label)}">
+          <span class="borne-av">${renderAvatar(t.name)}<i class="borne-dot borne-dot-${t.st}"></i></span>
+          <span class="borne-tile-n">${escapeHtml(t.name)}</span>
+          <span class="borne-st borne-st-${t.st}">${escapeHtml(t.label)}</span>
+        </button>`).join('') || '<div class="pr-empty">Aucun salarié à afficher.</div>'}
+      </div>`;
+  }
+  return `<div class="borne">${left}<div class="borne-main">${main}</div></div>`;
+}
+async function borneAction(type){
+  const t = borneTiles(presenceDayData(toDateInputValue(new Date())) || {}, new Date()).find(x => x.uid === borne.userId);
+  if(!t || borne.pin.length !== 4 || borne.busy) return;
+  const choices = presenceTaskChoicesFor(t.uid, type, t.last);
+  const chosen = new Set(choices.map(c => c.key).filter(k => !borne.unchecked.has(k)));
+  borne.busy = true; borne.error = ''; render();
+  const r = await doPresencePunch({ type, userId: t.uid, pin: borne.pin, chosenKeys: chosen });
+  if(!r.ok){
+    borne.busy = false; borne.pin = ''; borne.error = r.error; render();
+    return;
+  }
+  const hm = presenceHhmm(r.punch.ts);
+  const first = t.name.split(/\s+/)[0];
+  const titles = { in: `Bonjour ${first}`, pause_start: `Bonne pause, ${first}`, pause_end: `Bon retour, ${first}`, out: `Bonne soirée, ${first}` };
+  const nbTasks = chosen.size;
+  const extra = nbTasks ? (type === 'pause_end' ? `${nbTasks} tâche${nbTasks>1?'s':''} reprise${nbTasks>1?'s':''}.` : `${nbTasks} tâche${nbTasks>1?'s':''} mise${nbTasks>1?'s':''} en pause.`) : '';
+  const tok = borne.token + 1;
+  borne = { step: 'done', userId: t.uid, pin: '', error: '', busy: false, unchecked: new Set(), token: tok,
+    done: { title: titles[type], text: `${PRESENCE_TYPE_LABELS[type]} enregistrée à ${hm}`, extra } };
+  render();
+  setTimeout(() => { if(borne.token === tok && borne.step === 'done'){ borneReset(); if(currentPage === 'borne') render(); } }, 6000);
+}
+async function exitBorne(){
+  const pw = prompt('Mot de passe du compte connecté sur cette tablette, pour quitter la borne :');
+  if(pw === null) return;
+  try{
+    const res = await fetch('/api/presence/verify-password', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) });
+    const json = await res.json().catch(() => ({}));
+    if(!res.ok){ alert(json.error || 'Mot de passe incorrect.'); return; }
+  }catch(e){ alert('Serveur injoignable.'); return; }
+  borneModeOff(); borneReset();
+  currentPage = 'planning';
+  render();
+}
+function gotoBorne(){
+  if(!confirm('Passer ce poste en borne de pointage ?\n\nL’écran n’affichera plus que la borne, même après un rechargement. Pour en sortir : « Quitter la borne » + le mot de passe de ce compte.')) return;
+  borneModeOn(); borneReset();
+  currentPage = 'borne';
+  render();
+}
+
+// ---------- Documents de conformité (Paramètres) ----------
+let presenceDocModal = null; // 'info' | 'registre'
+function presenceDocText(kind){
+  const cfg = presenceCfg();
+  const org = state.config.appTitle && state.config.appTitle !== 'Planning Atelier' ? state.config.appTitle : 'Découpe H2O';
+  const moyens = ['la borne de pointage de l’atelier (nom + code personnel à 4 chiffres)'];
+  if(cfg.telephone) moyens.push(`votre téléphone ou un poste de l’entreprise${cfg.reseaux ? ', uniquement depuis le réseau de l’atelier' : ''}, sans géolocalisation`);
+  if(kind === 'registre') return `FICHE DU REGISTRE DES ACTIVITÉS DE TRAITEMENT (article 30 du RGPD)
+
+Responsable du traitement : ${org} — représenté par [NOM ET FONCTION DU RESPONSABLE], [ADRESSE], [E-MAIL].
+Nom du traitement : Pointage présentiel — décompte du temps de travail.
+Finalités : décompte de la durée du travail de chaque salarié (articles L3171-2 et D3171-8 du Code du travail), calcul des heures supplémentaires et des repos, préparation de la paie, suivi des absences et des retards.
+Base légale : intérêt légitime de l'employeur et respect d'une obligation légale (mesure du temps de travail — CJUE, 14 mai 2019, C-55/18).
+Personnes concernées : salariés de ${org}.
+Données : identité (nom, identifiant), heures d'arrivée, de pause, de fin de pause et de départ, moyen de pointage (borne, téléphone, poste), adresse réseau de l'appareil au moment du pointage, corrections (auteur, heure, motif). Aucune donnée biométrique, aucune géolocalisation.
+Destinataires : le salarié pour ses propres données ; ses responsables (superviseurs) et la direction ; le service paie / l'expert-comptable ; l'inspection du travail sur demande.
+Durée de conservation : ${cfg.conservationAns} ans à compter du pointage, puis suppression automatique (obligation de conservation d'un an, D3171-16 ; prescription des salaires de trois ans, L3245-1).
+Sécurité : application hébergée sur le serveur de l'entreprise, accès par compte nominatif et mot de passe, codes de borne chiffrés, heure fixée par le serveur, pointages non modifiables (toute correction est ajoutée et tracée), sauvegardes.
+Transferts hors Union européenne : aucun.
+Droits : accès (consultation dans « Mon pointage » et export), rectification (demande de correction), limitation et opposition dans les conditions du RGPD — auprès de [CONTACT]. Réclamation possible auprès de la CNIL (www.cnil.fr).
+Information des salariés : note d'information remise le ${cfg.infoDate || '[DATE]'}.${cfg.cseNonConcerne ? '' : `
+Consultation du CSE : ${cfg.cseDate ? 'avis rendu le ' + cfg.cseDate : '[DATE DE L’AVIS DU CSE — obligatoire à partir de 50 salariés]'}.`}`;
+  return `NOTE D'INFORMATION — POINTAGE DU TEMPS DE TRAVAIL
+
+${org} met en place, à compter du [DATE DE MISE EN SERVICE], un système de pointage de vos heures d'arrivée, de pause et de départ, intégré à l'application Planning Atelier.
+
+Pourquoi ? Le Code du travail impose à l'employeur de décompter la durée du travail de chaque salarié lorsque les horaires ne sont pas identiques pour tous (articles L3171-2 et D3171-8), au moyen d'un système objectif, fiable et accessible. Ce pointage sert au calcul de votre temps de travail, de vos heures supplémentaires et de vos repos, et à la préparation de la paie.
+
+Comment pointer ? Avec ${moyens.join(', ou ')}. L'heure enregistrée est celle du serveur de l'entreprise. Aucune donnée biométrique (empreinte, visage) n'est utilisée, et vous n'êtes jamais géolocalisé.
+
+Quelles données ? Vos nom et identifiant, l'heure et le type de chaque pointage (arrivée, pause, fin de pause, départ), le moyen utilisé, l'adresse réseau de l'appareil au moment du pointage, et les éventuelles corrections (qui, quand, pourquoi).
+
+Qui y a accès ? Vous-même, dans « Mon pointage » ; vos responsables et la direction ; le service paie ou l'expert-comptable ; l'inspection du travail sur demande. Vos collègues ne voient pas vos pointages (la borne n'affiche que « présent / en pause »).
+
+Combien de temps ? ${cfg.conservationAns} ans, puis suppression automatique.
+
+Erreur ou oubli ? Un pointage enregistré n'est jamais modifié. Vous pouvez demander une correction dans « Mon pointage » ; elle est validée par un responsable et reste tracée. Un responsable peut aussi ajouter un pointage oublié, toujours avec un motif, et vous le voyez dans « Mon pointage ».
+
+Vos droits : vous pouvez consulter et exporter vos pointages à tout moment dans « Mon pointage », demander leur rectification, et exercer vos droits d'accès, de limitation et d'opposition auprès de [CONTACT]. Vous pouvez adresser une réclamation à la CNIL (www.cnil.fr).
+
+Base légale : intérêt légitime de l'employeur et obligation légale de décompte du temps de travail.
+
+Fait à [VILLE], le [DATE].                    Remis à : ______________________   Signature :`;
+}
+function renderPresenceDocModal(){
+  if(!presenceDocModal) return '';
+  const title = presenceDocModal === 'registre' ? 'Fiche du registre des traitements' : 'Note d’information des salariés';
+  return `
+  <div class="modal-overlay" data-action="presence-doc-close-bg">
+    <div class="modal-box modal-box-wide" role="dialog" aria-label="${escapeHtml(title)}">
+      <div class="modal-head"><h2>${escapeHtml(title)}</h2><button class="ghost icon-btn" data-action="presence-doc-close" aria-label="Fermer">✕</button></div>
+      <div class="modal-body">
+      <div class="footer-note" style="text-align:left; margin-bottom:8px;">Modèle pré-rempli à partir de vos réglages : complétez les champs entre crochets, puis faites-le relire par votre conseil (expert-comptable, avocat) avant diffusion.</div>
+      <textarea id="presence-doc-text" class="presence-doc-text" readonly>${escapeHtml(presenceDocText(presenceDocModal))}</textarea>
+      <div class="form-actions"><button data-action="presence-doc-copy">Copier</button><button data-action="presence-doc-print">Imprimer</button><button class="primary" data-action="presence-doc-close">Fermer</button></div>
+      </div>
+    </div>
+  </div>`;
+}
+function printPresenceDoc(){
+  const text = presenceDocText(presenceDocModal);
+  const w = window.open('', '_blank');
+  if(!w){ alert('Le navigateur a bloqué la fenêtre d’impression.'); return; }
+  w.document.write(`<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Pointage présentiel</title><style>body{font-family:Georgia,serif;font-size:12pt;line-height:1.5;margin:2cm;white-space:pre-wrap;}</style></head><body>${escapeHtml(text)}</body></html>`);
+  w.document.close(); w.focus(); w.print();
+}
+function updatePresenceConfig(field, value){
+  if(!state.config.presence) state.config.presence = {};
+  const p = state.config.presence;
+  if(field === 'retardSeuilMin'){ const n = Math.round(Number(value)); p[field] = isNaN(n) || n < 0 ? 10 : Math.min(120, n); }
+  else if(field === 'conservationAns'){ const n = Number(value); p[field] = n === 5 ? 5 : 3; }
+  else if(field === 'telephone' || field === 'lierTaches' || field === 'cseNonConcerne') p[field] = !!value;
+  else p[field] = String(value || '').trim();
+  commit();
+}
+function renderPresenceSettingsBody(){
+  const cfg = presenceCfg();
+  const actif = presenceModuleActive();
+  const today = toDateInputValue(new Date());
+  if(actif && !presenceDayCache[today]) loadPresenceDay(today);
+  const data = presenceDayData(today);
+  const pins = new Set(data ? (data.pinUserIds || []) : []);
+  const ok = `<span class="pc-ok">✓</span>`, todo = `<span class="pc-todo"></span>`;
+  const users = (usersList || []).filter(u => !isHiddenFromTempsProd(state, String(u.id)));
+  return `
+    <label class="statut-chip" style="margin-bottom:10px;">
+      <input type="checkbox" ${actif?'checked':''} data-action="toggle-module-presence">
+      Activer le module Pointage présentiel
+    </label>
+    <div class="footer-note" style="text-align:left; padding-bottom:12px;">Ajoute la borne de pointage, « Mon pointage » pour chaque salarié et la page « Présence » pour les superviseurs (menu « Plus ▾ »). Désactivé, rien n'apparaît et aucun pointage n'est collecté — les pointages déjà enregistrés sont conservés.</div>
+    ${actif ? `
+    <div class="modal-section-title">Moyens de pointage</div>
+    <div class="footer-note" style="text-align:left; padding-bottom:8px;"><b>Borne</b> : sur la tablette de l'atelier, ouvrez « Plus ▾ → 📟 Borne de pointage » (compte superviseur). Chacun y pointe avec son nom et un code à 4 chiffres qu'il choisit dans « Mon pointage ».</div>
+    <label class="statut-chip" style="margin-bottom:6px;">
+      <input type="checkbox" ${cfg.telephone?'checked':''} data-action="presence-config" data-field="telephone">
+      Autoriser le pointage depuis son téléphone ou un poste (« Mon pointage »)
+    </label>
+    <label class="field" style="margin-top:6px;">Réseaux de l'atelier autorisés pour ce pointage (préfixes d'adresse, séparés par des virgules)
+      <input type="text" value="${escapeHtml(cfg.reseaux)}" placeholder="ex. 192.168.1." data-action="presence-config" data-field="reseaux" ${cfg.telephone?'':'disabled'}>
+    </label>
+    <div class="footer-note" style="text-align:left; padding:4px 0 10px;">Adresse vue par le serveur depuis ce poste : <b class="pr-mono">${data ? escapeHtml(data.clientIp || '?') : '…'}</b>. ${cfg.reseaux ? '' : '<b style="color:var(--amber);">Liste vide : pointage accepté depuis n’importe quel réseau.</b> '}Aucune géolocalisation.</div>
+    <div class="pc-tm">⌛ <b>Pointeuse TimeMoto TM-616</b> — intégration en attente (réception en direct par TimeMoto Cloud ou import du fichier CSV). Les badges RFID pourront alors être associés aux salariés.</div>
+    <div class="modal-section-title" style="margin-top:14px;">Règles</div>
+    <div class="commande-top-fields" style="grid-template-columns:1fr 1fr;">
+      <label class="field">Retard signalé au-delà de (min)
+        <input type="number" min="0" max="120" step="1" value="${cfg.retardSeuilMin}" data-action="presence-config" data-field="retardSeuilMin">
+      </label>
+      <label class="field">Conservation des pointages
+        <select data-action="presence-config" data-field="conservationAns">
+          <option value="3" ${cfg.conservationAns!==5?'selected':''}>3 ans (recommandé)</option>
+          <option value="5" ${cfg.conservationAns===5?'selected':''}>5 ans (maximum CNIL)</option>
+        </select>
+      </label>
+    </div>
+    <label class="statut-chip" style="margin:10px 0 4px;">
+      <input type="checkbox" ${cfg.lierTaches?'checked':''} data-action="presence-config" data-field="lierTaches">
+      Lier au temps de production : pause et départ proposent de mettre en pause les tâches en cours, la fin de pause de les reprendre
+    </label>
+    <div class="footer-note" style="text-align:left; padding-bottom:8px;">Toujours au choix de la personne (cases cochées par défaut). Les pointages ne sont jamais arrondis : l'heure réelle du serveur est conservée. Un oubli de départ est signalé aux superviseurs, jamais complété automatiquement. Un salarié peut demander une correction : elle ne compte qu'une fois validée par un superviseur.</div>
+    <div class="modal-section-title" style="margin-top:14px;">Conformité (Code du travail, RGPD)</div>
+    <div class="pc-checklist">
+      <div class="pc-check">${cfg.infoDate ? ok : todo}<div><b>Note d'information remise aux salariés</b><div class="footer-note" style="text-align:left;">Obligatoire avant la mise en service (L1222-4, article 13 du RGPD).</div></div>
+        <input type="date" value="${escapeHtml(cfg.infoDate)}" data-action="presence-config" data-field="infoDate" aria-label="Date de remise"><button class="small" data-action="presence-doc" data-kind="info">Générer</button></div>
+      <div class="pc-check">${cfg.registreDate ? ok : todo}<div><b>Fiche du registre des traitements</b><div class="footer-note" style="text-align:left;">Article 30 du RGPD — base « intérêt légitime / obligation légale ».</div></div>
+        <input type="date" value="${escapeHtml(cfg.registreDate)}" data-action="presence-config" data-field="registreDate" aria-label="Date d'inscription au registre"><button class="small" data-action="presence-doc" data-kind="registre">Générer</button></div>
+      <div class="pc-check">${(cfg.cseDate || cfg.cseNonConcerne) ? ok : todo}<div><b>Consultation du CSE</b><div class="footer-note" style="text-align:left;">Obligatoire à partir de 50 salariés, avant la mise en service (L2312-38).</div>
+          <label class="statut-chip" style="margin-top:4px;"><input type="checkbox" ${cfg.cseNonConcerne?'checked':''} data-action="presence-config" data-field="cseNonConcerne"> Moins de 50 salariés : non concerné</label></div>
+        <input type="date" value="${escapeHtml(cfg.cseDate)}" data-action="presence-config" data-field="cseDate" aria-label="Date de l'avis du CSE" ${cfg.cseNonConcerne?'disabled':''}><span></span></div>
+      <div class="pc-check">${ok}<div><b>Conservation limitée</b><div class="footer-note" style="text-align:left;">${cfg.conservationAns} ans puis suppression automatique (minimum légal 1 an, D3171-16 ; prescription des salaires 3 ans, L3245-1).</div></div></div>
+      <div class="pc-check">${ok}<div><b>Accès de chacun à ses pointages</b><div class="footer-note" style="text-align:left;">« Mon pointage » + export personnel ; la borne n'affiche que présent / en pause.</div></div></div>
+      <div class="pc-check">${ok}<div><b>Fiable et infalsifiable</b><div class="footer-note" style="text-align:left;">Heure du serveur, lignes jamais modifiées (verrou en base), corrections ajoutées avec auteur et motif. Aucune biométrie.</div></div></div>
+    </div>
+    <div class="modal-section-title" style="margin-top:14px;">Codes de borne</div>
+    <div class="pc-pins">${users.map(u => `<div class="pc-pin"><span>${escapeHtml(u.username)}</span>${pins.has(String(u.id)) ? `<span style="color:var(--green); font-weight:600;">Code défini</span><button class="small" data-action="presence-clear-pin" data-user-id="${u.id}">Effacer</button>` : '<span class="footer-note">aucun code</span>'}</div>`).join('')}</div>
+    <div class="footer-note" style="text-align:left; padding-top:6px;">Chacun choisit son code dans « Mon pointage ». « Effacer » sert en cas d'oubli : la personne en choisit un nouveau.</div>` : ''}`;
+}
+
 function render(){
   applyDocumentPersonalization();
   const appEl = document.getElementById('app');
@@ -14662,6 +16033,26 @@ function render(){
   const kanbanScroll = captureKanbanScroll();
   if(licenseBlocked){
     appEl.innerHTML = renderLicenseBlockScreen();
+    restoreModalScroll(modalScrollTop);
+    restoreFocusRef(focusRef);
+    return;
+  }
+  if(currentPage === 'borne'){
+    // Borne de pointage : plein écran, sans en-tête ni menu — une tablette laissée dans l'atelier ne
+    // doit donner accès à rien d'autre (sortie : « Quitter la borne » + mot de passe du compte).
+    appEl.innerHTML = [renderBornePage(), renderToast()].join('');
+    return;
+  }
+  if(currentPage === 'presence' || currentPage === 'monPointage'){
+    appEl.innerHTML = [
+      renderHeader(),
+      currentPage === 'presence' ? renderPresencePage() : renderMonPointagePage(),
+      renderPresenceCorrectionModal(),
+      renderPresencePunchModal(),
+      renderSettingsModal(),
+      renderPauseReminderModal(otherModalOpen),
+      renderToast()
+    ].join('');
     restoreModalScroll(modalScrollTop);
     restoreFocusRef(focusRef);
     return;
@@ -14895,6 +16286,9 @@ function updateHighlightClasses(){
 /* ---------------- délégation d'événements : clics & changements ---------------- */
 document.addEventListener('click', (e) => {
   if(e.target.classList && e.target.classList.contains('modal-overlay')){
+    // Pop-up de document ouverte PAR-DESSUS Paramètres : ne referme qu'elle, pas Paramètres.
+    if(presenceDocModal){ presenceDocModal = null; render(); return; }
+    presenceCorrection = null; presencePunchDraft = null;
     excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; closeSettingsModal(); return;
   }
   if(contextMenu && !e.target.closest('.context-menu')){
@@ -14969,6 +16363,40 @@ function dispatchClickAction(action, el){
     case 'goto-temps-prod': currentPage = 'tempsProd'; render(); break;
     case 'goto-fiche': if(currentPage !== 'ficheSalarie') openFicheSalarie(defaultFicheUid(), currentPage); break;
     case 'goto-zones': currentPage = 'zones'; render(); break;
+    case 'goto-mon-pointage': currentPage = 'monPointage'; invalidatePresenceCaches(); render(); break;
+    case 'goto-presence': currentPage = 'presence'; invalidatePresenceCaches(); render(); break;
+    case 'goto-borne': gotoBorne(); break;
+    case 'presence-view': presenceView = el.dataset.view === 'semaine' ? 'semaine' : 'jour'; render(); break;
+    case 'presence-date-nav': presenceDate = addDaysToKey(presencePageDay(), (presenceView==='semaine' ? 7 : 1) * Number(el.dataset.dir || 1)); if(presenceDate === toDateInputValue(new Date())) presenceDate = null; render(); break;
+    case 'presence-today': presenceDate = null; render(); break;
+    case 'presence-goto-day': presenceDate = el.dataset.day === toDateInputValue(new Date()) ? null : el.dataset.day; presenceView = 'jour'; render(); break;
+    case 'presence-export': exportPresencePage(); break;
+    case 'presence-open-correction': openPresenceCorrection(el.dataset.userId, el.dataset.day, el.dataset.preset || null); break;
+    case 'presence-cancel-punch': if(presenceCorrection){ presenceCorrection.cancelsId = el.dataset.id ? Number(el.dataset.id) : null; if(presenceCorrection.cancelsId) presenceCorrection.motif = 'Erreur de pointage'; render(); } break;
+    case 'presence-correction-close': presenceCorrection = null; render(); break;
+    case 'presence-correction-submit': submitPresenceCorrection(); break;
+    case 'presence-decide': decidePresenceRequest(el.dataset.id, el.dataset.decision); break;
+    case 'presence-self-punch': startSelfPresencePunch(el.dataset.type); break;
+    case 'presence-punch-toggle': if(presencePunchDraft){ const k = el.dataset.key; presencePunchDraft.unchecked.has(k) ? presencePunchDraft.unchecked.delete(k) : presencePunchDraft.unchecked.add(k); render(); } break;
+    case 'presence-punch-cancel': presencePunchDraft = null; render(); break;
+    case 'presence-punch-confirm': if(presencePunchDraft){ const d = presencePunchDraft; runSelfPresencePunch(d.type, new Set(d.choices.map(c => c.key).filter(k => !d.unchecked.has(k)))); } break;
+    case 'presence-set-pin': setMyPresencePin(); break;
+    case 'presence-clear-pin': clearPresencePin(el.dataset.userId); break;
+    case 'presence-my-export': exportMyPresenceMonth(); break;
+    case 'presence-doc': presenceDocModal = el.dataset.kind === 'registre' ? 'registre' : 'info'; render(); break;
+    case 'presence-doc-close': presenceDocModal = null; render(); break;
+    case 'presence-doc-print': printPresenceDoc(); break;
+    case 'presence-doc-copy': { const t = document.getElementById('presence-doc-text'); if(t){ t.select(); try{ navigator.clipboard.writeText(t.value).then(() => showToast('Texte copié.'), () => { document.execCommand('copy'); showToast('Texte copié.'); }); }catch(e){ document.execCommand('copy'); showToast('Texte copié.'); } } break; }
+    case 'borne-pick': borne = { step: 'pin', userId: el.dataset.userId, pin: '', error: '', busy: false, unchecked: new Set(), done: null, token: borne.token + 1 }; render(); break;
+    case 'borne-key': {
+      const k = el.dataset.key;
+      if(k === 'C') borne.pin = ''; else if(k === '←') borne.pin = borne.pin.slice(0, -1); else if(borne.pin.length < 4) borne.pin += k;
+      borne.error = ''; render(); break;
+    }
+    case 'borne-toggle': { const k = el.dataset.key; borne.unchecked.has(k) ? borne.unchecked.delete(k) : borne.unchecked.add(k); render(); break; }
+    case 'borne-action': borneAction(el.dataset.type); break;
+    case 'borne-cancel': borneReset(); render(); break;
+    case 'borne-exit': exitBorne(); break;
     case 'goto-risques': currentPage = 'risques'; render(); break;
     case 'goto-pointages': currentPage = 'pointages'; render(); break;
     case 'goto-historique': currentPage = 'historique'; render(); break;
@@ -15201,6 +16629,17 @@ function dispatchChangeAction(el, action){
     case 'toggle-fusion-item': toggleFusionItem(el.dataset.key, el.dataset.oid, el.checked); break;
     case 'toggle-module-conges': toggleModuleConges(el.checked); break;
     case 'toggle-module-expedition': toggleModuleExpedition(el.checked); break;
+    case 'toggle-module-presence':
+      state.config.modules.presence = !!el.checked;
+      if(el.checked) invalidatePresenceCaches();
+      commit();
+      if(el.checked) loadPresenceDay(toDateInputValue(new Date()), { force: true });
+      break;
+    case 'presence-config': updatePresenceConfig(el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
+    case 'presence-date-input': if(/^\d{4}-\d{2}-\d{2}$/.test(el.value)){ presenceDate = el.value === toDateInputValue(new Date()) ? null : el.value; render(); } break;
+    // Formulaire de correction : mémorisé sans redessin (un clic sur « Enregistrer » juste après la
+    // sortie d'un champ heure ne doit pas tomber sur un bouton reconstruit entre-temps).
+    case 'presence-correction-field': if(presenceCorrection) presenceCorrection[el.dataset.field] = el.value; break;
     case 'toggle-temps-prod-visibility': toggleTempsProdVisibility(el.dataset.userId); break;
     case 'toggle-user-lunch': toggleUserLunchActive(el.dataset.userId, el.checked); break;
     case 'toggle-user-horaire': toggleUserHoraireActive(el.dataset.userId, el.checked); break;
@@ -15747,6 +17186,8 @@ document.addEventListener('input', (e) => {
   }
 });
 document.addEventListener('keydown', (e) => {
+  if(e.key === 'Escape' && presenceDocModal){ presenceDocModal = null; render(); return; }
+  if(e.key === 'Escape' && (presenceCorrection || presencePunchDraft)){ presenceCorrection = null; presencePunchDraft = null; render(); return; }
   if(e.key === 'Escape' && showSettingsModal){ closeSettingsModal(); }
   if(e.key === 'Escape' && excelImportResult){ excelImportResult = null; render(); }
   if(e.key === 'Escape' && newCommandeZoneNotice){ newCommandeZoneNotice = null; render(); }
@@ -16070,7 +17511,9 @@ function applyUserDefaultPageOnStart(){
   }
   if(pref === 'conges' && !(state.config.modules && state.config.modules.conges)) return; // module désactivé depuis : on garde Planning plutôt que d'ouvrir une page indisponible
   if((pref === 'pointages' || pref === 'historique' || pref === 'dashboard') && !canSupervise()) return; // rôle rétrogradé depuis (n'est plus superviseur/admin) : page devenue inaccessible, on garde Planning
-  if(['conges','tempsProd','zones','risques','pointages','historique','dashboard'].includes(pref)) currentPage = pref;
+  if((pref === 'monPointage' || pref === 'presence') && !presenceModuleActive()) return; // module Pointage présentiel désactivé depuis
+  if(pref === 'presence' && !canSupervise()) return;
+  if(['conges','tempsProd','zones','risques','pointages','historique','dashboard','monPointage','presence'].includes(pref)) currentPage = pref;
 }
 async function startApp(){
   loadLoginBranding(); // en tâche de fond : alimente l'écran de connexion si la session a expiré
@@ -16089,6 +17532,10 @@ async function startApp(){
   state = await loadState();
   invalidateSchedule();
   applyUserDefaultPageOnStart();
+  // Tablette laissée en borne de pointage : elle y revient d'elle-même après un rechargement ou un
+  // redémarrage (sortie uniquement par « Quitter la borne » + mot de passe).
+  if(borneModeStored() && presenceModuleActive() && canSupervise()) currentPage = 'borne';
+  if(presenceModuleActive()) loadPresenceDay(toDateInputValue(new Date()), { noRender: true });
   draft = newDraft();
   loadUsersList(); // nécessaire pour le sélecteur d'opérateur, pas seulement pour la pop-up Paramètres
   if(applyAutoPauseResume(state)) queueSilentSave(); // rattrape le cas où la page est ouverte en pleine pause déjeuner
@@ -16111,6 +17558,17 @@ async function startApp(){
     render(); // rafraîchit aussi l'horloge / l'indicateur de poste
     if(changed) queueSilentSave();
   }, 60000);
+  // Pointage présentiel : rafraîchit la journée toutes les 20 s sur la borne, « Présence » et « Mon
+  // pointage » (un pointage fait ailleurs — autre poste, téléphone — y apparaît vite), et toutes les
+  // minutes ailleurs pour la pastille d'en-tête. Mêmes précautions que le timer ci-dessus.
+  let presenceTick = 0;
+  setInterval(() => {
+    if(!presenceModuleActive()) return;
+    if(showSettingsModal || isTypingInField() || dragCtx || changeProcessingInFlight) return;
+    presenceTick = (presenceTick + 1) % 3;
+    const onPresencePage = currentPage === 'borne' || currentPage === 'presence' || currentPage === 'monPointage';
+    if(onPresencePage || presenceTick === 0) refreshPresenceVisible();
+  }, 20000);
   scheduleNextPoll(); // récupère les modifications des autres utilisateurs
 }
 

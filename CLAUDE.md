@@ -85,9 +85,10 @@ rendent ce geste manuel inutile dans le cas courant :
 | `previsionHistory.js` | Historique des prévisions du moteur avant clôture d'une tâche (voir plus bas). |
 | `autoPauseResume.js` | Reprise automatique de pause déjeuner par personne, tournée côté serveur (voir plus bas). |
 | `reportEmail.js` | Rapport quotidien/hebdomadaire par e-mail (échéances dépassées, retards, rebuts...), voir plus bas. |
+| `presence.js` | Pointage présentiel : table des pointages (arrivée/pause/départ), codes de borne, corrections tracées, purge de conservation (voir plus bas). |
 
-Base SQLite, trois tables : `app_state` (l'état entier en JSON + numéro de version), `users`,
-et `session_history` (voir ci-dessous). Volume Docker nommé `planning-data`.
+Base SQLite : `app_state` (l'état entier en JSON + numéro de version), `users`, `session_history`,
+`prevision_history` et `presence_punches` (voir ci-dessous). Volume Docker nommé `planning-data`.
 
 **Il n'y a pas d'étape de compilation.** On édite `public/index.html` directement.
 
@@ -1293,6 +1294,91 @@ salarié pour **sa propre** fiche, export **Excel et impression A4**.
 - Couvert par un test sur l'export réel (scratchpad `fiche_test.js`, 52 assertions ; `st_menu_test.js`,
   21 assertions pour le menu et la sous-traitance) et rendu vérifié
   (Playwright : 1500/1280/390 px, sans débordement, et aperçu d'impression).
+
+## Pointage présentiel (module activable, `presence.js`)
+
+Demande utilisateur : un module de pointage des présences (arrivée, pause, départ), simple et
+attrayant, conforme au droit français, activable dans Paramètres. Proposition et maquette validées
+avant codage (artefact « Pointage présentiel — maquette ») ; choix : **pointeuse TimeMoto TM-616 en
+attente** (intégration plus tard : webhook TimeMoto Cloud formule Plus, ou import CSV du logiciel
+TimeMoto PC — format exact d'un événement à confirmer sur un vrai envoi avant de coder), **pointage
+depuis le téléphone autorisé**, **demandes de correction d'un salarié validées par un superviseur**.
+Distinct des séances sur les tâches (`sessions[]`) : ici on mesure la PRÉSENCE, pas le travail.
+
+- **Activation** : `config.modules.presence` (`false` par défaut, `migrateState`) ; réglages dans
+  `config.presence` (`{}` migré, valeurs par défaut dans `presenceCfg()` : `telephone` true,
+  `reseaux` '', `retardSeuilMin` 10, `lierTaches` true, `conservationAns` 3, `infoDate`,
+  `registreDate`, `cseDate`, `cseNonConcerne`). Paramètres → « 🙋 Pointage présentiel »
+  (`renderPresenceSettingsBody`, section admin). Désactivé : aucune page, aucune route utilisable
+  (`requirePresence` → 403), rien collecté ; les pointages déjà enregistrés sont conservés.
+- **Données : table `presence_punches`, jamais dans `state`** (grossit sans borne, comme
+  `session_history`) — `id, user_id, type ('in'|'pause_start'|'pause_end'|'out'|'cancel'), ts
+  ("AAAA-MM-JJTHH:mm:ss"), source ('borne'|'mobile'|'poste'|'manuel'), created_by, created_at,
+  status ('valide'|'a_valider'|'refuse'), cancels_id, motif, commentaire, decided_by, decided_at, ip`.
+  Incluse dans les sauvegardes (`data.presencePunches`, copie en mémoire comme `sessionHistory`).
+- **Fiable et infalsifiable** (exigence jurisprudentielle, CJUE C-55/18) : l'heure est TOUJOURS celle
+  du serveur (`localTs(new Date())`, fuseau Europe/Paris fixé par server.js), jamais celle de
+  l'appareil ; un déclencheur SQLite (`presence_punches_immuable`) refuse toute mise à jour des champs
+  de fond d'une ligne. Une correction AJOUTE une ligne (`source:'manuel'`, motif obligatoire, auteur) ;
+  une erreur se neutralise par une ligne `type:'cancel'` + `cancels_id` (l'original reste lisible,
+  barré). Seuls `status/decided_by/decided_at` d'une demande changent, une fois (`decidePunch`). La
+  seule suppression est la purge de conservation (`checkPresencePurge`, horaire + au démarrage).
+- **Pointages retenus** = lignes `valide` moins celles qu'une annulation `valide` neutralise
+  (`effectivePunches` serveur / `effectivePresencePunches` client — même règle, deux copies).
+  `checkTransition` refuse un enchaînement absurde (double arrivée, fin de pause sans début) sur un
+  pointage normal ; jamais sur une correction (le superviseur sait ce qu'il fait).
+- **Routes** (`server.js`) : `GET /api/presence/day?date=` (superviseur : toutes les lignes du jour,
+  journées des 7 jours précédents restées ouvertes `openDays`, demandes en attente `pending` ;
+  salarié : ses lignes + seulement le DERNIER pointage retenu des autres `lastByUser`, pour la borne —
+  jamais le détail d'un collègue ; plus `pinUserIds`, `clientIp`, `selfPunchError`),
+  `GET /api/presence/range?from&to[&userId]` (salarié forcé sur lui-même, 400 jours max),
+  `POST /api/presence/punch` (avec `pin` = borne, pour n'importe qui ; sans `pin` = soi-même
+  seulement, si `telephone` actif et adresse dans `reseaux`), `POST /api/presence/correction`
+  (superviseur : `valide` ; salarié : lui seul, `a_valider`), `POST /api/presence/decide`,
+  `POST /api/presence/pin` / `pin/clear`, `POST /api/presence/verify-password` (sortie de borne).
+- **Codes de borne** : colonne `users.presence_pin_hash` (bcrypt, jamais renvoyé), 4 chiffres dans
+  l'interface (4 à 6 acceptés côté serveur), choisi par chacun dans « Mon pointage » ; un superviseur
+  peut l'effacer (Paramètres). 5 erreurs → 5 min de blocage par personne (en mémoire).
+- **Réseaux de l'atelier** (`reseaux`) : préfixes d'adresse IP vus par le serveur (`trust proxy` déjà
+  actif pour le reverse proxy Synology) ; liste vide = partout (avertissement ambre). Paramètres
+  affiche « Adresse vue par le serveur depuis ce poste » pour savoir quoi saisir — derrière un NAT en
+  épingle, ce peut être l'adresse du routeur plutôt que celle du téléphone. Aucune géolocalisation.
+- **Pages** (clés du menu « Plus ▾ » ajoutées en fin : `monPointage` tout rôle, `presence` et `borne`
+  superviseurs, visibles seulement module actif — `isPageMenuKeyVisible`) :
+  - **Borne** (`currentPage==='borne'`, `renderBornePage`) : plein écran SANS en-tête (une tablette
+    laissée dans l'atelier ne donne accès à rien d'autre), tuiles des salariés non masqués de Temps de
+    production avec statut, clavier à code, actions selon le statut, écran de confirmation (retour
+    auto 6 s). Mode mémorisé par navigateur (`BORNE_MODE_STORAGE_KEY`) : revient seul après un
+    rechargement ; sortie par « Quitter la borne » + mot de passe du compte connecté.
+  - **Mon pointage** (`renderMonPointagePage`) : statut, gros boutons, présence du jour, pointages du
+    jour, semaine en barres, demandes et corrections le concernant, code de borne, export Excel du mois.
+    Sur téléphone, bouton dédié dans le bandeau mobile. Pastille d'en-tête `renderPresenceHeaderChip`.
+  - **Présence** (`renderPresencePage`, superviseurs) : Jour (tuiles, demandes à valider, points à
+    vérifier — oubli de départ des jours précédents, non arrivé, retard > seuil, tâche en cours sans
+    présence —, tableau avec frise horaire prévu/présent/pause, « sur tâches » =
+    `computeProductionTimeByUser` ÷ présence, sources, journal des corrections) et Semaine (présence
+    pointée par jour face à `theoreticalPresenceHoursForUser`). Export Excel (Synthèse + Pointages bruts).
+  - **Correction** (`renderPresenceCorrectionModal`) : pointages bruts du jour (annulables), ajout
+    type/heure/motif/commentaire ; champs mémorisés SANS redessin et relus dans le DOM à l'envoi.
+- **Lien avec les tâches** (`lierTaches`) : pause et départ proposent (cases cochées par défaut) de
+  fermer les séances ouvertes DE CETTE PERSONNE (la tâche passe en pause seulement s'il ne reste
+  personne dessus — travail à plusieurs respecté) ; la fin de pause propose de rouvrir les tâches
+  mises en pause par ce pointage (séance fermée à la même minute) ou en pause déjeuner automatique qui
+  l'attend (rappel soldé). Horodaté à l'heure du pointage serveur, lot fusionné traité en bloc, un seul
+  `commit()` (`applyPresenceTaskLinkage`). Toujours un clic humain, jamais automatique.
+- **Horaire attendu** : `expectedDayFor(uid, st, date)` — même règle que `computeTeamPointage`
+  (pauses exclues, jour ouvré, congé approuvé retiré, demi-journée coupée à la première pause).
+- **Conformité** (liste de contrôle des Paramètres) : note d'information (L1222-4, art. 13 RGPD) et
+  fiche du registre (art. 30) générées par `presenceDocText` (champs entre crochets à compléter, à
+  faire relire), consultation du CSE ≥ 50 salariés (L2312-38) ou « non concerné », conservation
+  3 ou 5 ans (1 an minimum D3171-16, prescription des salaires 3 ans L3245-1, 5 ans maximum CNIL),
+  pas de biométrie (exclue par la CNIL pour le contrôle des horaires), accès de chacun à ses données.
+- Couvert par un test sur l'export réel (scratchpad `presence_test.js`, 34 assertions : migration,
+  visibilité par rôle, pointages retenus, résumé de journée, journée passée ouverte, lignes et
+  anomalies, jour futur, liaison tâches dont travail à plusieurs et pause déjeuner, rendus) et un
+  parcours réel serveur + navigateur (API : code, transitions, refus sans code, réseau refusé,
+  demande → validation, annulation, verrou SQLite ; Playwright 1500 et 390 px, sans débordement).
+- Non fait (pistes) : TM-616 (en attente), présence pointée dans la Fiche salarié, badges RFID.
 
 ## Onglet « Pointages »
 
