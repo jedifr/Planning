@@ -25,6 +25,7 @@ const previsionHistory = require('./previsionHistory');
 const autoPauseResume = require('./autoPauseResume');
 const reportEmail = require('./reportEmail');
 const presence = require('./presence');
+const timemoto = require('./timemotoSync');
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'planning.db');
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -92,6 +93,7 @@ license.bootstrapInitialLicense(db);
 sessionHistory.initSessionHistoryTable(db);
 previsionHistory.initPrevisionHistoryTable(db);
 presence.initPresenceTables(db);
+timemoto.initTimemotoTables(db);
 
 const app = express();
 app.set('trust proxy', 1); // nécessaire pour que les cookies "secure" fonctionnent derrière un reverse proxy (Synology, etc.)
@@ -443,7 +445,8 @@ app.get('/api/presence/day', requireAuth, requireLicense, requirePresence, (req,
     lastByUser, openDays, pending,
     pinUserIds: presence.usersWithPin(db),
     clientIp: presence.normIp(req.ip),
-    selfPunchError: selfPunchCheck(req)
+    selfPunchError: selfPunchCheck(req),
+    timemoto: sup ? timemotoSummary() : null
   });
 });
 // Période [from, to] (jours inclus) : un superviseur peut viser n'importe qui (ou tout le monde),
@@ -533,6 +536,34 @@ app.post('/api/presence/pin/clear', requireAuth, requireLicense, (req, res) => {
   presence.clearPin(db, target);
   res.json({ ok: true });
 });
+// ---------- Pointeuse TimeMoto TM-616 (voir timemotoSync.js et CLAUDE.md) ----------
+function readStateFull(){
+  try{ return JSON.parse(db.prepare('SELECT data FROM app_state WHERE id = 1').get().data) || {}; }
+  catch(e){ return {}; }
+}
+// Résumé pour la page Présence (superviseurs) : rien de secret, seulement l'état de la synchro.
+function timemotoSummary(){
+  const tm = presenceConfig().timemoto || {};
+  if(!tm.actif) return { actif: false };
+  const s = timemoto.status(db);
+  return { actif: true, credentials: s.credentials, lastOkAt: s.lastOkAt, lastError: s.lastError, lastErrorAt: s.lastErrorAt };
+}
+app.get('/api/presence/timemoto/status', requireAuth, requireLicense, requirePresence, (req, res) => {
+  if(!isSupervisorReq(req)) return res.status(403).json({ error: 'Réservé aux superviseurs.' });
+  res.json(timemoto.status(db));
+});
+// Synchronisation immédiate (administrateur). `token` : jeton collé à la main pour un test — utilisé
+// pour cette seule requête, jamais conservé ni journalisé. `dryRun` : aperçu sans rien enregistrer.
+app.post('/api/presence/timemoto/sync', requireAdmin, requireLicense, requirePresence, async (req, res) => {
+  const b = req.body || {};
+  const token = typeof b.token === 'string' && b.token.trim() ? b.token : null;
+  if(token && token.length > 10000) return res.status(400).json({ error: 'Jeton invalide.' });
+  if(b.since != null && b.since !== '' && !presence.DATE_RE.test(String(b.since))) return res.status(400).json({ error: 'Date de reprise invalide.' });
+  const r = await timemoto.runSync(db, readStateFull(), { since: b.since || null, token, dryRun: !!b.dryRun });
+  if(!r.ok) return res.status(502).json({ error: r.error, status: timemoto.status(db) });
+  res.json({ ok: true, result: r.result, status: timemoto.status(db) });
+});
+
 // Sortie du mode borne : mot de passe du compte connecté sur la tablette.
 app.post('/api/presence/verify-password', requireAuth, requireLicense, (req, res) => {
   const ip = req.ip || 'unknown';
@@ -717,6 +748,14 @@ function checkPresencePurge(){
 }
 setInterval(checkPresencePurge, 3600 * 1000);
 checkPresencePurge();
+
+// Pointeuse TimeMoto : contrôle chaque minute (l'intervalle réel est choisi dans Paramètres), premier
+// passage 20 s après le démarrage. Une erreur n'interrompt jamais le serveur.
+function checkTimemotoSync(){
+  timemoto.tick(db, readStateFull()).catch(e => console.error('Synchronisation TimeMoto :', String(e && e.message || e).slice(0, 200)));
+}
+setInterval(checkTimemotoSync, 60000);
+setTimeout(checkTimemotoSync, 20000);
 
 checkAutoPauseResume(); // vérifie aussi tout de suite au démarrage (redémarrage du conteneur), sans attendre 60s
 
