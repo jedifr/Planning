@@ -1418,8 +1418,16 @@ l'utilisateur récupère lui-même dans sa propre session TimeMoto (reCAPTCHA fr
   l'audience ou le scope contient `public-api` (valeur directe, ou champ `access_token`/`accessToken`/
   `token` d'un JSON) puis la copie dans le presse-papier. Première version (v1.78.0) : ne cherchait
   que les clés contenant `oidc.user` — le vrai site TimeMoto range son jeton ailleurs (« Jeton
-  introuvable » constaté en réel, v1.78.1). Si rien n'est trouvé, le marque-page affiche uniquement
-  les NOMS des clés du stockage (jamais leurs valeurs) pour diagnostiquer sans exposer de secret.
+  introuvable » constaté en réel, v1.78.1). v1.78.2 : le stockage réel de TimeMoto ne contient aucune
+  clé au nom évocateur (seulement `0-Cloud`, `applicationSettings`, `initial-authentication-at`...) —
+  la recherche descend donc récursivement (5 niveaux) dans tout JSON, et lit aussi les cookies
+  lisibles par JavaScript. Piège corrigé au passage : `pay()` découpait sur `.` sans vérifier que
+  chaque partie est du base64url, si bien qu'un JSON contenant un jeton (`{"a":"h.PAYLOAD.s"}`) était
+  pris pour le jeton lui-même (et aurait été copié en entier) — `b64ok` vérifie les trois parties ;
+  le code du favori ne doit contenir ni `<`, ni `%`, ni `"`, ni `\` (vérifié par le test).
+  Si rien n'est trouvé, le marque-page affiche uniquement des NOMS et des TAILLES (clés volumineuses :
+  nom, longueur, noms des champs JSON ; noms des cookies) — jamais de valeur — pour diagnostiquer
+  sans exposer de secret.
   Ne lit que le jeton que le navigateur de la personne détient déjà — aucun contournement. Bouton
   « Copier le marque-page » en repli si le glisser-déposer ne marche pas. Écrit sans `<` (illisible en
   attribut `href`), `&` encodé `&amp;` à l'affichage puis re-décodé par le navigateur.
