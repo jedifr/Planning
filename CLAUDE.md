@@ -3335,9 +3335,22 @@ après coup. Quatre pistes proposées, **retenue : la numérotation automatique 
   livraison au plus tôt se recalculent au rendu suivant (`simulateImportStarts` lit déjà les phases). Une
   correction ne renumérote **jamais** les autres lignes — elle reste ponctuelle. La ligne de titre de
   commande passe à `colspan="8"` avec la colonne ajoutée.
-- Réflexe : la numérotation suppose que l'ordre du fichier suit la gamme de fabrication ; si ce n'est pas le
-  cas, décocher la case (tout en phase 1) ou corriger à l'aperçu.
-- Test (scratchpad `phase_test.js`, 8 assertions : étapes successives, lots parallèles, repli sur le poste,
+- **Suivre le numéro de ligne (v1.84.0)** — retour : « si un numéro de ligne existe, il lit bien ce numéro ? »
+  (réponse initiale : non, il ne servait qu'à l'information et aux doublons). `map.phaseParNumeroLigne`
+  (case imbriquée sous la précédente, cochée par défaut pour un nouvel import, `false` pour un profil
+  antérieur ; désactivée si une colonne Phase est associée ou si la numérotation automatique est décochée) :
+  `autoNumberPhasesByFileOrder(groups, parNumeroLigne)` trie alors les lignes d'une pièce par `numeroLigne`
+  (`localeCompare` numérique : « 2 » < « 10 », « 001 » < « 002 » ; stable : à numéro égal, ordre du fichier)
+  **avant** de numéroter, avec la même règle « même étape = même phase ». Garde-fou : si UNE seule ligne de la
+  pièce n'a pas de numéro, toute la pièce retombe sur l'ordre du fichier (pas de tri partiel). Le numéro de
+  ligne n'existe à l'import personnalisé que via « Découper sur le dernier "/" » de la référence.
+- **Ordre d'affichage de l'aperçu (v1.84.0)** : lignes de chaque commande regroupées par pièce (ordre de
+  première apparition au fichier), puis par phase croissante, puis ordre du fichier — calculé à l'affichage
+  seulement (`g.pieces` garde l'ordre du fichier, rien n'est réordonné dans les données), donc une phase
+  corrigée dans l'aperçu fait remonter/descendre la ligne au rendu suivant.
+- Réflexe : la numérotation suppose que l'ordre du fichier (ou le numéro de ligne) suit la gamme de
+  fabrication ; si ce n'est pas le cas, décocher la case (tout en phase 1) ou corriger à l'aperçu.
+- Test (scratchpad `phase_test.js`, 12 assertions dont n° de ligne : étapes successives, lots parallèles, repli sur le poste,
   retour sur une étape, repart à 1 par commande, correction/bornes) et parcours réel navigateur
   (`phase_ui.js` : case cochée/désactivée selon la colonne Phase, aperçu 1,2,3 / 1,2, correction à 2,
   phases transmises dans `preview.groups`).

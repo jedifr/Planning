@@ -1636,7 +1636,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.83.0';
+const APP_VERSION = '1.84.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -7603,7 +7603,7 @@ function handleCustomImportFile(e){
         profileId: null, profileName: '',
         map: { reference:'', referenceSplitSlash:true, reference2:'', reference2Sep:' ', refClient:'', dateBesoin:'', urgence:'', poste:'', piece:'', etape:'',
                quantite:'', dureeMode:'unitaire', dureeColonne:'', phase:'', operateur:'', matiere:'', epaisseur:'', dateDebutPossible:'',
-               defaultMachineId:'', defaultOperatorByMachine:{}, urgenceDefaut:'normale', urgenceDefautActif:true, phaseAuto:true },
+               defaultMachineId:'', defaultOperatorByMachine:{}, urgenceDefaut:'normale', urgenceDefautActif:true, phaseAuto:true, phaseParNumeroLigne:true },
         posteValues: [], posteMapping: {}, groupByValue: {}, sousTraitanceByValue: {}, profileMapSnapshot: null, preview: null
       };
       let lastProfileId = null;
@@ -7635,6 +7635,7 @@ function applyImportProfile(profileId){
   if(customImportState.map.dateDebutPossible === undefined) customImportState.map.dateDebutPossible = ''; // profil créé avant la date de début possible
   if(customImportState.map.urgenceDefaut === undefined) customImportState.map.urgenceDefaut = 'normale'; // profil créé avant l'urgence par défaut
   if(customImportState.map.urgenceDefautActif === undefined) customImportState.map.urgenceDefautActif = true; // profil créé avant la case de désactivation
+  if(customImportState.map.phaseParNumeroLigne === undefined) customImportState.map.phaseParNumeroLigne = false; // idem : profil antérieur, ordre du fichier seul
   if(customImportState.map.phaseAuto === undefined) customImportState.map.phaseAuto = false; // profil créé avant la phase automatique : comportement inchangé (tout en phase 1 sans colonne Phase), jamais activé à son insu
   // Reclasse les clés du profil (valeurs brutes du fichier) selon la même normalisation que le
   // reste de l'import — un profil enregistré avant l'ajout de cette normalisation avait ses clés
@@ -7807,16 +7808,27 @@ function transformCustomRow(row, map, posteMapping, groupByValue, sousTraitanceB
 // étape (numéros de ligne différents, voir « Numéro de ligne ») restent en parallèle, même phase.
 // Étape = libellé d'étape s'il existe, sinon le poste. Appliquée sur les groupes déjà construits, donc
 // seulement aux lignes réellement retenues (jamais aux lignes ignorées), dans l'ordre du fichier.
-function autoNumberPhasesByFileOrder(groups){
+function autoNumberPhasesByFileOrder(groups, parNumeroLigne){
+  const cmpNum = (a, b) => String(a).localeCompare(String(b), 'fr', { numeric: true });
   Object.values(groups).forEach(g => {
-    const last = {};
+    // Lignes de chaque pièce, dans l'ordre du fichier — ou, si demandé ET si TOUTES les lignes de cette
+    // pièce portent un numéro de ligne, triées par ce numéro (tri naturel : "2" < "10", "001" < "002";
+    // à numéro égal, l'ordre du fichier, le tri étant stable). Une seule ligne sans numéro : repli sur
+    // l'ordre du fichier pour toute la pièce plutôt qu'un tri partiel dont on ne saurait où caser l'intruse.
+    const byPiece = {};
     g.pieces.forEach(pc => {
       const pk = String(pc.piece||'').trim().toLowerCase();
-      const step = String(pc.etape||'').trim().toLowerCase() || ('poste:' + (pc.machineId||''));
-      const prev = last[pk];
-      const phase = !prev ? 1 : (prev.step === step ? prev.phase : prev.phase + 1);
-      last[pk] = { step, phase };
-      pc.phase = phase;
+      (byPiece[pk] = byPiece[pk] || []).push(pc);
+    });
+    Object.values(byPiece).forEach(list => {
+      const lines = (parNumeroLigne && list.every(pc => pc.numeroLigne)) ? [...list].sort((a, b) => cmpNum(a.numeroLigne, b.numeroLigne)) : list;
+      let prev = null;
+      lines.forEach(pc => {
+        const step = String(pc.etape||'').trim().toLowerCase() || ('poste:' + (pc.machineId||''));
+        const phase = !prev ? 1 : (prev.step === step ? prev.phase : prev.phase + 1);
+        prev = { step, phase };
+        pc.phase = phase;
+      });
     });
   });
 }
@@ -7831,7 +7843,7 @@ function proceedFromPostes(){
     'Pièce', 'Étape', 'Temps unitaire (min)', 'Quantité', 'Phase', 'Opérateur', 'Matière', 'Épaisseur', 'GroupTag', 'SousTraitance', 'Réf commande client', 'NumeroLigne', 'DateDebutPossible'
   );
   // Une colonne Phase associée prime toujours sur la numérotation automatique.
-  if(cs.map.phaseAuto && !cs.map.phase) autoNumberPhasesByFileOrder(groups);
+  if(cs.map.phaseAuto && !cs.map.phase) autoNumberPhasesByFileOrder(groups, !!cs.map.phaseParNumeroLigne);
   const refs = Object.keys(groups);
   const nbNouvelles = refs.filter(r=>!groups[r].existing && groups[r].pieces.length>0).length;
   const nbFusions = refs.filter(r=>groups[r].existing && groups[r].pieces.length>0).length;
@@ -12851,7 +12863,11 @@ function renderCustomImportModal(){
             <input type="checkbox" style="width:auto;" ${cs.map.phase?'disabled':''} ${(cs.map.phaseAuto && !cs.map.phase)?'checked':''} data-action="toggle-custom-import-phase-auto">
             Numéroter automatiquement selon l'ordre des lignes
           </label>
-          <div class="footer-note" style="text-align:left; margin-top:4px;">${cs.map.phase ? 'Désactivé : la colonne Phase associée prime.' : 'Sans colonne Phase : pour une même pièce, la phase passe à 2, 3… à chaque changement d\'étape d\'une ligne à la suivante (deux lignes de la même étape restent en parallèle). Corrigeable ligne par ligne dans l\'aperçu.'}</div>`)}
+          <label class="field" style="display:flex; align-items:center; gap:6px; font-weight:400; margin-top:4px; padding-left:22px;">
+            <input type="checkbox" style="width:auto;" ${(cs.map.phase || !cs.map.phaseAuto)?'disabled':''} ${cs.map.phaseParNumeroLigne?'checked':''} data-action="toggle-custom-import-phase-numero-ligne">
+            …en suivant le numéro de ligne quand il existe
+          </label>
+          <div class="footer-note" style="text-align:left; margin-top:4px;">${cs.map.phase ? 'Désactivé : la colonne Phase associée prime.' : 'Sans colonne Phase : pour une même pièce, la phase passe à 2, 3… à chaque changement d\'étape d\'une ligne à la suivante (deux lignes de la même étape restent en parallèle). Avec « numéro de ligne » (suffixe après le dernier « / » de la référence), l\'ordre suit ce numéro plutôt que celui du fichier. Corrigeable ligne par ligne dans l\'aperçu.'}</div>`)}
         ${fieldSelect('operateur','Opérateur',false)}
         ${fieldSelect('matiere','Matière',false)}
         ${fieldSelect('epaisseur','Épaisseur',false)}
@@ -12948,7 +12964,15 @@ function renderCustomImportModal(){
       const refFin = (projectedStarts.__finByRef || {})[ref] || null;
       const refStarts = g.pieces.map(pc => projectedStarts[pc.id]).filter(Boolean);
       const refEarliest = refStarts.length ? new Date(Math.min(...refStarts.map(d=>d.getTime()))) : null;
-      const pieceRows = g.pieces.map(pc => {
+      // Affichage uniquement (g.pieces garde l'ordre du fichier) : lignes regroupées par pièce, dans l'ordre
+      // de première apparition au fichier, puis par phase croissante, puis ordre du fichier — l'ordre
+      // affiché reflète donc les phases, y compris après une correction dans cet aperçu.
+      const pieceFirstIdx = {};
+      g.pieces.forEach((pc, i) => { const k = String(pc.piece||'').trim().toLowerCase(); if(pieceFirstIdx[k] === undefined) pieceFirstIdx[k] = i; });
+      const displayPieces = g.pieces.map((pc, i) => ({ pc, i })).sort((a, b) =>
+        (pieceFirstIdx[String(a.pc.piece||'').trim().toLowerCase()] - pieceFirstIdx[String(b.pc.piece||'').trim().toLowerCase()])
+        || ((Number(a.pc.phase)||1) - (Number(b.pc.phase)||1)) || (a.i - b.i)).map(x => x.pc);
+      const pieceRows = displayPieces.map(pc => {
         const debutPrevu = projectedStarts[pc.id];
         return `
         <tr>
@@ -17429,6 +17453,7 @@ function dispatchChangeAction(el, action){
     case 'custom-import-duree-mode': setCustomImportDureeMode(el.value); break;
     case 'custom-import-default-poste': if(customImportState){ customImportState.map.defaultMachineId = el.value; render(); } break;
     case 'custom-import-default-urgence': if(customImportState){ customImportState.map.urgenceDefaut = el.value; render(); } break;
+    case 'toggle-custom-import-phase-numero-ligne': if(customImportState){ customImportState.map.phaseParNumeroLigne = el.checked; render(); } break;
     case 'toggle-custom-import-phase-auto': if(customImportState){ customImportState.map.phaseAuto = el.checked; render(); } break;
     case 'update-import-preview-phase': updateImportPreviewPhase(el.dataset.oid, el.value); break;
     case 'toggle-custom-import-urgence-defaut-actif': if(customImportState){ customImportState.map.urgenceDefautActif = el.checked; render(); } break;
