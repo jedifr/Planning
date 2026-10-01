@@ -4334,6 +4334,21 @@ sont regroupées/exposées.
   quelle par les autres grandes pop-up — import, regroupement, édition de congé — qui n'ont pas ce
   besoin). `.settings-modal-body` (hauteur du corps à deux volets, indépendante du `max-height` du
   `.modal-box` englobant) suit : `height:min(780px, 84vh)` (était `min(620px, 74vh)`).
+  - **Plein écran (v1.85.0).** Retour utilisateur réel, capture à l'appui : les icônes d'une
+    extension de navigateur (gestionnaire de mots de passe, accrochées aux champs e-mail des cartes
+    Utilisateurs) débordaient au-dessus/en dessous du volet de contenu quand on le faisait défiler —
+    l'extension les positionne par rapport à la fenêtre, pas au volet `.settings-content-pane` qui
+    défile en interne. Deux correctifs ensemble : (1) la pop-up occupe tout l'écran
+    (`.modal-overlay.settings-fullscreen` + `.modal-box.settings-fullscreen-box`, 100vw×100vh, sans
+    arrondi, en-tête fixe, `.settings-modal-body` en `flex:1`) — le volet va jusqu'au bas de la
+    fenêtre, plus aucune zone voisine sur laquelle une icône flottante puisse déborder ;
+    (2) `hardenSettingsInputs()` (appelée au début de `restoreModalScroll`, donc après chaque
+    `render()`) pose sur tout `input`/`textarea`/`select` du volet `autocomplete="off"` (sans écraser
+    un `autocomplete` déjà explicite, ex. `new-password`), `data-lpignore`, `data-1p-ignore`,
+    `data-bwignore` et `data-form-type="other"` : les gestionnaires de mots de passe ne doivent pas
+    traiter ces champs comme des identifiants. Rien n'est garanti côté extension (chacune fait comme
+    elle veut) : si une icône persiste, c'est un réglage de l'extension (« ne pas proposer sur ce
+    site »). `.modal-box-xl` reste défini mais n'est plus utilisé seul par une autre pop-up.
 - **`openMiniDropdowns` — état ouvert/fermé des petits menus `<details class="dd-menu">`.** Un
   `render()` complet reconstruit tout le DOM à chaque action (voir le piège "mutation du planning
   sans invalider le cache" plus bas pour le principe général) : un `<details>` sans suivi d'état

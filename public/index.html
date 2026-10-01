@@ -1217,6 +1217,18 @@
      par poste/allée) — retour utilisateur réel : restait visuellement petite même après le passage
      à `modal-box-wide` sur un grand écran. Variante dédiée, plus large et plus haute. */
   .modal-box-xl{width:min(1560px, 97vw); max-height:92vh;}
+  /* Paramètres en plein écran (v1.85.0) — retour utilisateur réel : les icônes d'une extension de
+     navigateur (gestionnaire de mots de passe) accrochées aux champs e-mail débordaient au-dessus/en
+     dessous du volet de contenu quand on le faisait défiler (l'extension les positionne par rapport
+     à la fenêtre, pas au volet qui défile). Plein écran : le volet occupe toute la hauteur sous
+     l'en-tête, plus rien ne peut dépasser vers une zone voisine. */
+  .modal-overlay.settings-fullscreen{padding:0; align-items:stretch; justify-content:stretch;}
+  .modal-box.settings-fullscreen-box{
+    width:100vw; max-width:100vw; height:100vh; max-height:100vh; border-radius:0; border:none;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .settings-fullscreen-box .modal-head{flex-shrink:0;}
+  .settings-fullscreen-box .settings-modal-body{flex:1; height:auto; min-height:0;}
   /* Pop-up de rappel de retour de pause déjeuner (voir CLAUDE.md, « Pop-up de retour de pause
      déjeuner ») — plus large qu'un modal-box par défaut pour que le nom de la commande/pièce et le
      bouton "Reprendre" restent sur une seule ligne même avec plusieurs tâches listées. */
@@ -1636,7 +1648,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.84.1';
+const APP_VERSION = '1.85.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -13738,8 +13750,8 @@ function renderSettingsModal(){
   const showNav = visibleKeys.length > 1;
 
   return `
-  <div class="modal-overlay">
-    <div class="modal-box modal-box-xl" role="dialog" aria-modal="true">
+  <div class="modal-overlay settings-fullscreen">
+    <div class="modal-box modal-box-xl settings-fullscreen-box" role="dialog" aria-modal="true">
       <div class="modal-head">
         <h2>${isAdmin() ? 'Paramètres' : 'Mon compte'}</h2>
         <button class="ghost icon-btn" data-action="close-settings" title="Fermer">✕</button>
@@ -16923,7 +16935,23 @@ function restoreFocusRef(ref){
   }
 }
 var pendingSettingsScroll = null; // position des volets de la pop-up Paramètres, posée par render() juste avant le redessin
+// Les champs de Paramètres ne sont jamais des identifiants de connexion : on demande aux gestionnaires
+// de mots de passe/saisie automatique (LastPass, 1Password, Bitwarden, Dashlane...) de ne pas y
+// accrocher leurs icônes. Les champs mot de passe/identifiant de création de compte gardent leur
+// `autocomplete` explicite (`new-password`/`off`), jamais écrasé ici.
+function hardenSettingsInputs(){
+  const pane = document.querySelector('.settings-content-pane');
+  if(!pane) return;
+  pane.querySelectorAll('input, textarea, select').forEach(el => {
+    if(!el.hasAttribute('autocomplete')) el.setAttribute('autocomplete', 'off');
+    el.setAttribute('data-lpignore', 'true');
+    el.setAttribute('data-1p-ignore', 'true');
+    el.setAttribute('data-bwignore', 'true');
+    el.setAttribute('data-form-type', 'other');
+  });
+}
 function restoreModalScroll(scrollTop){
+  hardenSettingsInputs();
   if(scrollTop === null) return;
   const modal = document.querySelector('.modal-box');
   if(modal) modal.scrollTop = scrollTop;
