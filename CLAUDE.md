@@ -3942,6 +3942,18 @@ jours ».
 - Vérifié (Playwright, export réel) : recherche « priminer » = 0 carte, 15 lignes ; focus conservé en tapant ;
   « Effacer » rétablit 16 cartes ; aucune erreur.
 
+**Alignement des tableaux de retards/dérives et libellé d'étape de repli (v1.87.1).** Retour : « aligner,
+c'est moche » — le tableau « par poste » et le tableau de détail de chaque bloc étaient deux
+`<table>` indépendants (largeurs recalculées selon le contenu, nom de commande en `<button>` qui
+retombait à la ligne). Les quatre tables portent `.rd-table` (`table-layout:fixed`, texte à gauche,
+`vertical-align:top`, bouton de commande en `display:inline; font:inherit`) et un `<colgroup>` commun
+(`rdColgroup`, 16/24/21/14/14/11 %) ; les tableaux « par poste » ont 3 colonnes de contenu puis une
+dernière en `colspan="3"` pour que Poste, colonne 2 et colonne 3 tombent pile sur celles du détail
+(vérifié Playwright : bords gauches identiques). **Étape sans libellé** : beaucoup de pièces n'ont que
+un poste, la chaîne affichait « — » et « — bloque la suite ». `risqueStepName(o)` = étape, sinon nom du
+poste, sinon « Étape » (pastille, note de blocage, tableau détaillé, e-mail « Avertir chef d'atelier ») ;
+chaque pastille affiche aussi son poste (si l'étape a un libellé distinct) et son statut.
+
 ### Pauses de production à risque
 
 Complète « Retard de démarrage » ci-dessus sur un axe différent : celui-ci mesure un retard **avant**

@@ -914,6 +914,9 @@
     text-align:center; max-width:94px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
   .rc-label.blocking{color:var(--red); font-weight:700;}
+  .rc-label-sub{font-size:9.5px; color:var(--text-faint); text-align:center; max-width:94px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px;}
+  .rc-label-sub.rc-label-status.blocking{color:var(--red); font-weight:600;}
+  .rc-label-sub.rc-label-status.done{color:var(--green);}
   .rc-blocking-note{text-align:center; margin:8px 8px 4px;}
   .rc-blocking-note .tag{color:var(--red); font-weight:700; font-size:12px; letter-spacing:0.2px;}
   .rc-blocking-note .sub{color:var(--text-dim); font-size:11px; margin-top:2px;}
@@ -934,6 +937,11 @@
   .search-bar input.search-active{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent);}
   .temps-prod-commande-link{cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px;}
   .temps-prod-commande-link:hover{color:var(--accent);}
+  /* Tableaux « par poste » + « détail » des retards/dérives de démarrage : mêmes largeurs de colonnes
+     (colgroup partagé, table-layout fixe) pour que les colonnes s'alignent d'un tableau à l'autre. */
+  table.ops-table.rd-table{table-layout:fixed;}
+  table.ops-table.rd-table th, table.ops-table.rd-table td{text-align:left; vertical-align:top; overflow-wrap:break-word; padding-left:6px; padding-right:6px;}
+  table.ops-table.rd-table .temps-prod-commande-link{display:inline; text-align:left; font:inherit; line-height:1.3; white-space:normal; overflow-wrap:anywhere;}
   .pointages-ref-link{background:none; border:none; padding:0; font:inherit; color:inherit; font-weight:600; cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px;}
   .pointages-ref-link:hover{color:var(--accent);}
   .temps-prod-pause-row td{color:var(--text-faint); font-style:italic; background:var(--panel-2); text-align:center; font-size:11.5px;}
@@ -1678,7 +1686,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.87.0';
+const APP_VERSION = '1.87.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -10346,6 +10354,17 @@ function risqueRowDateInfo(o){
 // État d'une pastille de la chaîne — 'done' (déjà terminée), 'blocking' (la première pas encore
 // terminée, celle qui retient les suivantes), 'pending' (retenue par elle, quel que soit son propre
 // statut réel — voir pieceChainsForCommande : chain.blockingId est déjà le seul point de vérité).
+// Nom affichable d'une étape : beaucoup de pièces n'ont aucun libellé d'étape (seulement un poste) —
+// retomber sur le nom du poste plutôt que « — », sinon on ne voit pas sur quelle étape on est bloqué.
+function risqueStepName(o){
+  if(o.etape && String(o.etape).trim()) return o.etape;
+  const m = state.machines.find(mm=>mm.id===o.machineId);
+  return m ? m.nom : 'Étape';
+}
+function risqueStepPosteNom(o){
+  const m = state.machines.find(mm=>mm.id===o.machineId);
+  return m ? m.nom : '';
+}
 function risqueChainDotState(o, chain){
   if(o.statut === 'termine') return 'done';
   return o.id === chain.blockingId ? 'blocking' : 'pending';
@@ -10365,7 +10384,7 @@ function renderRisqueChainBlockHtml(chain, machineTimelines, c){
       ? `Terminé — ${info.debutLabel} → ${info.finLabel}`
       : `${opStatutLabel(o.statut)} — début ${info.debutLabel}${info.finVal?` → fin ${info.finLabel}`:''}`;
     const connector = idx>0 ? `<div class="rc-connector ${risqueChainDotState(chain.rows[idx-1], chain)==='done'?'done':''}"></div>` : '';
-    return `${connector}<div class="rc-step"><div class="rc-dot ${st}" title="${escapeHtml(title)}">${dot}</div><div class="rc-label ${st==='blocking'?'blocking':''}">${escapeHtml(o.etape||'—')}</div></div>`;
+    return `${connector}<div class="rc-step"><div class="rc-dot ${st}" title="${escapeHtml(title)}">${dot}</div><div class="rc-label ${st==='blocking'?'blocking':''}" title="${escapeHtml(risqueStepName(o))}">${escapeHtml(risqueStepName(o))}</div>${(o.etape && risqueStepPosteNom(o) && risqueStepPosteNom(o)!==o.etape)?`<div class="rc-label-sub">${escapeHtml(risqueStepPosteNom(o))}</div>`:''}<div class="rc-label-sub rc-label-status ${st}">${escapeHtml(opStatutLabel(o.statut))}</div></div>`;
   }).join('');
 
   const blockingRow = chain.rows.find(o => o.id === chain.blockingId);
@@ -10375,7 +10394,7 @@ function renderRisqueChainBlockHtml(chain, machineTimelines, c){
     const sub = blockingRow.statut === 'a_faire'
       ? `Pas encore commencée · début prévu le ${info.debutVal ? formatDT(info.debutVal) : '—'}`
       : `${opStatutLabel(blockingRow.statut)} depuis le ${info.debutVal ? formatDT(info.debutVal) : '—'}${info.finVal ? ' · reprise prévue le '+formatDT(info.finVal) : ''}`;
-    blockingNoteHtml = `<div class="rc-blocking-note"><div class="tag">⛔ ${escapeHtml(blockingRow.etape||'—')} bloque la suite</div><div class="sub">${escapeHtml(sub)}</div></div>`;
+    blockingNoteHtml = `<div class="rc-blocking-note"><div class="tag">⛔ ${escapeHtml(risqueStepName(blockingRow))}${(blockingRow.etape && risqueStepPosteNom(blockingRow))?' ('+escapeHtml(risqueStepPosteNom(blockingRow))+')':''} bloque la suite</div><div class="sub">${escapeHtml(sub)}</div></div>`;
 
     if(blockingRow.machineId){
       const m = state.machines.find(mm=>mm.id===blockingRow.machineId);
@@ -10413,7 +10432,7 @@ async function avertirChefAtelier(cid, btn){
     const o = chain.rows.find(r => r.id === chain.blockingId);
     if(!o) return null;
     const m = state.machines.find(mm=>mm.id===o.machineId);
-    return `- ${chain.nom} : bloquée sur "${o.etape||'—'}" (${m?m.nom:'poste inconnu'}, ${opStatutLabel(o.statut)})`;
+    return `- ${chain.nom} : bloquée sur "${risqueStepName(o)}" (${m?m.nom:'poste inconnu'}, ${opStatutLabel(o.statut)})`;
   }).filter(Boolean).join('\n');
   const subject = `⚠️ Commande à risque — ${c.nom}`;
   const text = `La commande "${c.nom}"${c.refClient?` (${c.refClient})`:''} est estimée en retard de ${joursRetard} j sur son échéance du ${formatDateFr(c.dateBesoin)}.\n\n${lignes}\n\nÀ consulter dans Planning Atelier, page « ⚠️ Risques de retard ».`;
@@ -10474,7 +10493,7 @@ function renderRisquesPage(){
         const debutCell = info.debutVal ? `${formatDT(info.debutVal)}<div class="footer-note" style="margin:0;">${o.debutReel?'réalisé':'prévu'}</div>` : '—';
         const finCell = info.finVal ? `${formatDT(info.finVal)}<div class="footer-note" style="margin:0;">${o.finReel?'réalisé':'prévu'}</div>` : '—';
         const mainRow = `<tr class="${isBlocking?'risque-row-blocking':''}">
-          <td>${escapeHtml(o.etape||'—')}${o.numeroLigne?` <span class="footer-note" style="margin:0;">(n°${escapeHtml(o.numeroLigne)})</span>`:''}</td>
+          <td>${escapeHtml(risqueStepName(o))}${o.numeroLigne?` <span class="footer-note" style="margin:0;">(n°${escapeHtml(o.numeroLigne)})</span>`:''}</td>
           <td>${escapeHtml(m?m.nom:'—')}</td>
           <td>${opStatutPillHtml(o.statut)}${isBlocking?' <span class="risque-blocking-tag">⛔ bloque la suite</span>':''}</td>
           <td>${debutCell}</td>
@@ -10563,6 +10582,7 @@ function renderRisquesPage(){
   const lotTxt = (r) => r.nbPieces > 1 ? ` <span class="footer-note" style="margin:0;">(+${r.nbPieces-1} pièce(s) du même lot)</span>` : '';
   const commandeLink = (r) => `<button class="temps-prod-commande-link" data-action="isolate-commande-goto-planning" data-cid="${r.commandeId}" style="background:none; border:none; padding:0; color:var(--text);">${escapeHtml(r.commandeNom)}</button>`;
   const pieceCell = (r) => `${escapeHtml([r.piece, r.etape].filter(Boolean).join(' / ')||'—')}${r.numeroLigne?` <span class="footer-note" style="margin:0;">(n°${escapeHtml(r.numeroLigne)})</span>`:''}${lotTxt(r)}`;
+  const rdColgroup = '<colgroup><col style="width:16%"><col style="width:24%"><col style="width:21%"><col style="width:14%"><col style="width:14%"><col style="width:11%"></colgroup>';
   const retardsDemarrageHtml = (retardsDemarrage.length || derive.detail.length) ? `
   <section class="panel">
     <div class="panel-head">
@@ -10576,13 +10596,15 @@ function renderRisquesPage(){
       <div class="footer-note" style="text-align:left; padding-bottom:10px;">Écart entre la date de début que le planning prévoyait <b>à la création</b> d'une tâche et son démarrage — réel pour une tâche déjà démarrée (« constatés »), projeté aujourd'hui par le moteur pour une tâche qui n'a pas encore démarré (« dérive »). Un lot fusionné ne compte que pour une tâche. Mesuré uniquement sur les tâches créées depuis l'introduction de ce suivi. Regroupé par poste plutôt que par personne : cet écart tient à la disponibilité du poste et à l'ordonnancement.</div>
       ${derive.parPoste.length ? `
       <div class="modal-section-title" style="margin-top:4px;">📈 Dérive des démarrages à venir (tâches pas encore démarrées)</div>
-      <table class="ops-table">
-        <thead><tr><th>Poste</th><th>Tâches en dérive</th><th>Dérive moyenne</th><th>Dérive max</th></tr></thead>
-        <tbody>${derive.parPoste.map(r => `<tr><td>${escapeHtml(r.machineNom)}</td><td>${r.nbTaches}</td><td>${Math.round(r.moyenneJours*10)/10} j</td><td>${Math.round(r.maxJours*10)/10} j${miniBarHtml(r.maxJours, derive.parPoste[0].maxJours, 'var(--red)')}</td></tr>`).join('')}</tbody>
+      <table class="ops-table rd-table">
+        ${rdColgroup}
+        <thead><tr><th>Poste</th><th>Tâches en dérive</th><th>Dérive moyenne</th><th colspan="3">Dérive max</th></tr></thead>
+        <tbody>${derive.parPoste.map(r => `<tr><td>${escapeHtml(r.machineNom)}</td><td>${r.nbTaches}</td><td>${Math.round(r.moyenneJours*10)/10} j</td><td colspan="3">${Math.round(r.maxJours*10)/10} j${miniBarHtml(r.maxJours, derive.parPoste[0].maxJours, 'var(--red)')}</td></tr>`).join('')}</tbody>
       </table>
       ${deriveDetail.length ? `
-      <table class="ops-table" style="margin-top:10px;">
-        <thead><tr><th>Poste</th><th>Commande</th><th>Pièce / Étape</th><th>Début prévu à la création</th><th>Début projeté aujourd'hui</th><th>Dérive</th></tr></thead>
+      <table class="ops-table rd-table" style="margin-top:10px;">
+        ${rdColgroup}
+        <thead><tr><th>Poste</th><th>Commande</th><th>Pièce / Étape</th><th>Prévu à la création</th><th>Projeté aujourd'hui</th><th>Dérive</th></tr></thead>
         <tbody>${deriveDetail.map(r => `<tr>
           <td>${escapeHtml(r.machineNom)}</td><td>${commandeLink(r)}</td><td>${pieceCell(r)}</td>
           <td>${formatDT(new Date(r.prevu))}</td><td>${formatDT(new Date(r.projete))}</td>
@@ -10591,13 +10613,15 @@ function renderRisquesPage(){
       </table>` : `<div class="footer-note" style="text-align:left; padding-top:6px;">Aucune tâche en dérive ne correspond à « ${escapeHtml(risquesSearchQuery)} ».</div>`}` : ''}
       ${retardsDemarrage.length ? `
       <div class="modal-section-title" style="margin-top:18px;">🕓 Retards de démarrage constatés (tâches déjà démarrées)</div>
-      <table class="ops-table">
-        <thead><tr><th>Poste</th><th>Tâches démarrées en retard</th><th>Retard moyen</th><th>Retard cumulé</th></tr></thead>
-        <tbody>${retardsDemarrage.map(r => `<tr><td>${escapeHtml(r.machineNom)}</td><td>${r.nbTaches}</td><td>${Math.round(r.moyenneJours*10)/10} j</td><td>${Math.round(r.totalJours*10)/10} j${miniBarHtml(r.totalJours, retardsDemarrage[0].totalJours, 'var(--amber)')}</td></tr>`).join('')}</tbody>
+      <table class="ops-table rd-table">
+        ${rdColgroup}
+        <thead><tr><th>Poste</th><th>Tâches démarrées en retard</th><th>Retard moyen</th><th colspan="3">Retard cumulé</th></tr></thead>
+        <tbody>${retardsDemarrage.map(r => `<tr><td>${escapeHtml(r.machineNom)}</td><td>${r.nbTaches}</td><td>${Math.round(r.moyenneJours*10)/10} j</td><td colspan="3">${Math.round(r.totalJours*10)/10} j${miniBarHtml(r.totalJours, retardsDemarrage[0].totalJours, 'var(--amber)')}</td></tr>`).join('')}</tbody>
       </table>
       ${retardsDemarrageDetail.length ? `
       <div class="modal-section-title" style="margin-top:16px;">Détail des tâches concernées</div>
-      <table class="ops-table">
+      <table class="ops-table rd-table">
+        ${rdColgroup}
         <thead><tr><th>Poste</th><th>Commande</th><th>Pièce / Étape</th><th>Début prévu</th><th>Début réel</th><th>Retard</th></tr></thead>
         <tbody>${retardsDemarrageDetail.map(r => `<tr>
           <td>${escapeHtml(r.machineNom)}</td><td>${commandeLink(r)}</td><td>${pieceCell(r)}</td>
