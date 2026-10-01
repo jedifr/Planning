@@ -4349,6 +4349,39 @@ sont regroupées/exposées.
     traiter ces champs comme des identifiants. Rien n'est garanti côté extension (chacune fait comme
     elle veut) : si une icône persiste, c'est un réglage de l'extension (« ne pas proposer sur ce
     site »). `.modal-box-xl` reste défini mais n'est plus utilisé seul par une autre pop-up.
+- **Paramètres : rubriques et infobulles (v1.86.0).** Retour utilisateur réel, captures à l'appui : « la
+  marge avant échéance concerne la planification, pas les horaires de travail » et « les heures libres des
+  postes ne sont pas dans une section cohérente » → revue d'ensemble (point de vue web designer +
+  administrateur), **option A retenue** (rubriques avec titres) et codée directement.
+  - **`SETTINGS_GROUPS`** (5 rubriques fixes, dans l'ordre de lecture) : *Général* (`moncompte`, `affichage`,
+    `utilisateurs`), *Atelier & planification* (`horaires`, `planification`, `machines`, `storageZones`),
+    *Suivi & alertes* (`alertes`, `presence`, `conges`), *Échanges & données* (`importProfiles`, `emails`,
+    `donnees`), *Système* (`systeme`). `SETTINGS_SECTION_KEYS` en est dérivée (aplatie). Le volet de gauche
+    affiche un titre de rubrique (`.settings-nav-group-title`) puis ses catégories visibles ; ▲/▼
+    (`move-settings-section`) n'échangent qu'avec le voisin **de la même rubrique et visible pour le rôle**.
+    `settingsSectionOrder` reste une liste plate en `localStorage` (ordre relatif conservé, nouvelles clés
+    ajoutées en fin).
+  - **Fusions/déplacements** : `pause` → `horaires` (« Horaires & pauses », deux sous-titres) ; **nouvelle
+    `planification`** = marge avant échéance (`margeEcheanceJours`) + horizon des heures libres
+    (`dispoHorizonJours`, venu de « Pointage & disponibilité ») + regroupement matière/épaisseur
+    (`matiereFusionActive`, venu de « Postes ») ; `risquesRetard` + `suiviPointage` → `alertes` (« Alertes &
+    seuils ») ; `backup` + `emailReport` → `emails` (un seul avertissement SMTP commun) ; `maintenance` →
+    `donnees` (export/import .json, archivage) + `systeme` (synchronisation, « zone dangereuse » de
+    réinitialisation). **Aucun `data-action`/`data-field` n'a changé** : seuls l'emplacement et le
+    regroupement bougent, donc aucune migration de `state`. `SETTINGS_LEGACY_SECTION_KEYS` redirige une
+    ancienne « dernière catégorie consultée » (`pause`, `backup`, `maintenance`…) vers la catégorie qui a repris
+    son contenu.
+  - **Infobulles ⓘ** : `SETTINGS_HELP` (un seul dictionnaire de textes — ce que fait le réglage, où on le
+    voit, valeur par défaut, exemple) + `helpTip(clé)` → `<span class="help-tip" data-tip="…">ⓘ</span>`
+    (clé inconnue = rien). La bulle est **un seul `<div id="help-tip-bubble">` en `position:fixed` ajouté au
+    `<body>`** par un petit gestionnaire global (survol, focus clavier, clic/tap, Échap, masquée au défilement) :
+    elle n'est jamais reconstruite par `render()` ni rognée par le défilement du volet. Le clic sur ⓘ est
+    intercepté en phase de capture (`preventDefault` + `stopPropagation`) : ⓘ placé dans un `<label>` ne
+    coche jamais la case voisine (vérifié) et n'atteint pas le dispatcher de clics. Réflexe : tout nouveau
+    réglage reçoit sa clé dans `SETTINGS_HELP`.
+  - Mobile (≤ 720 px) : la navigation passe au-dessus du contenu (`max-height:32vh`) au lieu de 220 px à gauche.
+  - Vérifié (Playwright sur serveur réel, 1500 et 390 px) : 14 catégories rendues sans erreur, modification de
+    la marge persistée, bulle visible dans l'écran, ⓘ sans effet de bord, réordonnancement intra-rubrique.
 - **`openMiniDropdowns` — état ouvert/fermé des petits menus `<details class="dd-menu">`.** Un
   `render()` complet reconstruit tout le DOM à chaque action (voir le piège "mutation du planning
   sans invalider le cache" plus bas pour le principe général) : un `<details>` sans suivi d'état

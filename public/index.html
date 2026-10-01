@@ -1290,6 +1290,36 @@
   .settings-modal-body{display:flex; height:min(780px, 84vh); min-height:0;}
   .settings-nav{width:220px; flex-shrink:0; border-right:1px solid var(--line-soft); background:var(--panel-2); overflow-y:auto; padding:8px;}
   .settings-nav-item{display:flex; align-items:center; gap:2px;}
+  /* Titres de rubrique de la navigation des Paramètres (v1.86.0) */
+  .settings-nav-group-title{
+    font-family:'Oswald',sans-serif; font-size:10px; font-weight:600; letter-spacing:1.2px;
+    text-transform:uppercase; color:var(--text-dim); opacity:0.75;
+    padding:14px 8px 4px; margin-top:4px; border-top:1px solid var(--line-soft);
+  }
+  .settings-nav-group-title:first-child{border-top:none; margin-top:0; padding-top:4px;}
+  /* Infobulle ⓘ : la bulle elle-même est un seul <div id="help-tip-bubble"> positionné en `fixed` par
+     JS (hors de #app, donc jamais reconstruit par render() ni rogné par le défilement du volet). */
+  .help-tip{
+    display:inline-flex; align-items:center; justify-content:center; vertical-align:middle;
+    width:15px; height:15px; margin-left:4px; border-radius:50%;
+    font-family:'IBM Plex Sans',sans-serif; font-size:10px; font-weight:700; line-height:1; font-style:normal;
+    text-transform:none; letter-spacing:0; color:var(--accent); background:var(--accent-dim);
+    border:1px solid var(--accent); cursor:help; user-select:none;
+  }
+  .help-tip:hover, .help-tip:focus{background:var(--accent); color:#fff; outline:none;}
+  .help-inline{display:inline-flex; align-items:center; margin-right:10px;}
+  /* Téléphone : la navigation passe AU-DESSUS du contenu (sinon 220 px de menu + un contenu écrasé). */
+  @media screen and (max-width:720px){
+    .settings-fullscreen-box .settings-modal-body{flex-direction:column;}
+    .settings-nav{width:auto; max-height:32vh; border-right:none; border-bottom:1px solid var(--line-soft);}
+    .settings-content-pane{padding:14px 14px 20px;}
+  }
+  #help-tip-bubble{
+    position:fixed; z-index:3000; display:none; max-width:min(340px, calc(100vw - 16px));
+    background:#23262b; color:#f3f4f6; font-family:'IBM Plex Sans',sans-serif; font-size:12px; line-height:1.45;
+    font-weight:400; text-transform:none; letter-spacing:0; padding:9px 12px; border-radius:6px;
+    box-shadow:0 6px 20px rgba(0,0,0,0.35); pointer-events:none; white-space:normal;
+  }
   .settings-reorder{display:flex; flex-direction:column; gap:0;}
   .settings-reorder button{padding:0px 4px; font-size:8px; line-height:1.4;}
   .settings-nav-btn{
@@ -1648,7 +1678,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.85.0';
+const APP_VERSION = '1.86.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1739,7 +1769,21 @@ let stateVersion = 0;
 let draft = null;
 let showNewForm = false;
 let showSettingsModal = false;
-const SETTINGS_SECTION_KEYS = ['moncompte', 'horaires', 'pause', 'affichage', 'utilisateurs', 'conges', 'backup', 'emailReport', 'machines', 'storageZones', 'importProfiles', 'risquesRetard', 'suiviPointage', 'presence', 'maintenance'];
+// Rubriques de la navigation des Paramètres (v1.86.0) : chaque catégorie appartient à UNE rubrique,
+// fixe (réorganisation ▲/▼ seulement à l'intérieur d'une rubrique). Ordre de lecture voulu :
+// qui je suis/ce que je vois, puis l'atelier et sa planification, puis le suivi, puis les échanges de
+// données, puis le technique. Voir CLAUDE.md, « Paramètres : rubriques et infobulles ».
+const SETTINGS_GROUPS = [
+  { id:'general',   titre:'Général',                keys:['moncompte', 'affichage', 'utilisateurs'] },
+  { id:'atelier',   titre:'Atelier & planification', keys:['horaires', 'planification', 'machines', 'storageZones'] },
+  { id:'suivi',     titre:'Suivi & alertes',         keys:['alertes', 'presence', 'conges'] },
+  { id:'echanges',  titre:'Échanges & données',      keys:['importProfiles', 'emails', 'donnees'] },
+  { id:'systeme',   titre:'Système',                 keys:['systeme'] }
+];
+const SETTINGS_SECTION_KEYS = SETTINGS_GROUPS.reduce((acc, g) => acc.concat(g.keys), []);
+// Anciennes catégories fusionnées/renommées : une préférence « dernière catégorie consultée »
+// enregistrée avant v1.86.0 retombe sur la catégorie qui a repris son contenu.
+const SETTINGS_LEGACY_SECTION_KEYS = { pause:'horaires', backup:'emails', emailReport:'emails', maintenance:'donnees', risquesRetard:'alertes', suiviPointage:'alertes' };
 const SETTINGS_UI_STORAGE_KEY = 'planning-atelier-settings-ui';
 let settingsSectionOrder = [...SETTINGS_SECTION_KEYS];
 // Pop-up Paramètres en deux volets (catégories à gauche, contenu à droite) — une seule section
@@ -1760,10 +1804,62 @@ function loadSettingsUIPrefs(){
       const kept = parsed.order.filter((k, i) => SETTINGS_SECTION_KEYS.includes(k) && parsed.order.indexOf(k) === i);
       if(kept.length) settingsSectionOrder = [...kept, ...SETTINGS_SECTION_KEYS.filter(k => !kept.includes(k))];
     }
-    if(typeof parsed.active === 'string' && SETTINGS_SECTION_KEYS.includes(parsed.active)){
-      settingsActiveSection = parsed.active;
+    if(typeof parsed.active === 'string'){
+      const act = SETTINGS_LEGACY_SECTION_KEYS[parsed.active] || parsed.active;
+      if(SETTINGS_SECTION_KEYS.includes(act)) settingsActiveSection = act;
     }
   }catch(e){ /* préférence absente ou invalide : on garde les valeurs par défaut */ }
+}
+// Infobulles des Paramètres (v1.86.0) : un seul dictionnaire, relu par `helpTip(clé)`. Chaque texte dit
+// ce que fait le réglage, où on le voit, la valeur par défaut et un exemple quand c'est utile.
+const SETTINGS_HELP = {
+  startTime: "Heure à laquelle la journée de travail commence pour tout l'atelier : les tâches sont placées à partir de cette heure. Peut être remplacée pour un poste précis (Postes → « Horaires spécifiques ») ou pour une personne (Utilisateurs → « Horaires de poste »).",
+  monThuHours: "Nombre d'heures réellement travaillées du lundi au jeudi (pause déjeuner déjà déduite si elle est activée). Détermine l'heure de fin de journée et la capacité d'un poste. Exemple : 8,75 h.",
+  friHours: "Heures travaillées le vendredi, souvent plus courtes. Mettez la même valeur que lun.–jeu. si l'atelier ne raccourcit pas le vendredi, ou 0 s'il est fermé.",
+  pauseActive: "Si coché, la pause déjeuner est retirée des créneaux disponibles : aucune tâche n'est planifiée dessus, et une tâche en cours est mise en pause automatiquement à l'heure de la pause. Chaque personne peut avoir sa propre pause (Utilisateurs).",
+  pauseHeures: "Début et fin de la pause commune à tout l'atelier. La journée se prolonge d'autant pour que la durée travaillée reste celle indiquée ci-dessus.",
+  marge: "Nombre de jours d'avance exigés sur la date de besoin. Avec 2 jours, une commande à livrer le 20 est signalée « en retard » si sa fin estimée dépasse le 18. 0 = aucune marge. Visible dans : badge « Retard estimé », page Risques de retard, rapports e-mail. Par défaut : 0.",
+  dispoHorizon: "Nombre de jours ouvrés regardés pour calculer les « heures libres » de chaque poste sur la Vue d'ensemble (bloc Disponibilité des postes). Plus il est grand, plus l'estimation porte loin. De 1 à 20, par défaut 5.",
+  matiereFusion: "Si coché, le planning propose des regroupements de pièces « à faire » qui partagent le même poste, la même matière et la même épaisseur (panneau « Regroupements possibles »). Sans effet sur le regroupement manuel ni sur celui de l'import personnalisé, toujours disponibles. Ne concerne que les postes marqués « fusionnables ».",
+  fusionnable: "À cocher pour un poste où plusieurs pièces peuvent passer ensemble (ex. découpe laser/jet d'eau avec imbrication sur une même tôle). Seuls ces postes se voient proposer des regroupements.",
+  horairesPoste: "Remplace les horaires de l'atelier pour ce poste uniquement (début, durées, pause). Utile pour un poste qui tourne plus tôt ou plus tard que les autres.",
+  transfertFixe: "Délai fixe, en minutes, avant que la phase suivante puisse démarrer après ce poste, quel que soit le nombre de pièces (déplacement, attente). Exemple : 15 min.",
+  transfertParPiece: "Délai supplémentaire par pièce (manutention). Exemple : 15 min fixes + 0,3 min/pièce → 1 h pour un lot de 150.",
+  tauxHoraire: "Coût horaire « tout compris » (machine + main d'œuvre) de ce poste, en €/h. Sert uniquement à estimer un coût de revient dans l'onglet Pointages. 0 = coût non suivi pour ce poste (affiché « — », jamais « 0 € »).",
+  indispoPoste: "Périodes pendant lesquelles le poste ne peut rien produire (maintenance, panne programmée). Le planning saute ces jours. Les congés des opérateurs liés bloquent aussi un poste automatiquement.",
+  alertePointage: "Active les alertes de suivi de l'équipe : badges dans l'en-tête et détail dans la Vue d'ensemble pour un salarié qui ne pointe aucune tâche, ou qui laisse une affaire trop longtemps en pause.",
+  seuilSansPointage: "Minutes passées dans son horaire (hors pause et congé) sans aucune tâche en cours avant qu'un salarié soit signalé « sans pointage ». Par défaut : 15.",
+  seuilPause: "Minutes d'une pause MANUELLE (jamais la pause déjeuner ni le hors-horaires automatiques) au-delà desquelles une affaire est signalée comme laissée en pause. Par défaut : 30.",
+  rappelOperateur: "Si coché, l'opérateur voit aussi un bandeau de rappel sur son propre poste (« Aucune tâche en cours depuis… »), reportable de 15 minutes.",
+  retardPopup: "Affiche une pop-up à l'opérateur qui démarre une tâche avec au moins un demi-jour de retard sur son démarrage prévu à la création. Jamais à la reprise après une pause. Désactivé par défaut.",
+  zonesSeuil: "Un bandeau en tête de la page Zones de stockage prévient quand il reste moins de ce nombre de casiers libres (ambre), puis plus aucun (rouge : les nouvelles commandes n'auront pas de casier). 0 = jamais d'alerte. Par défaut : 3.",
+  expedition: "Si coché, une commande terminée garde son casier tant que personne n'a cliqué « Prêt à expédier » (utile pour un nettoyage ou conditionnement non modélisé dans la gamme). Sinon, le casier se libère dès la dernière pièce terminée.",
+  conges: "Active la page Congés (demandes, validation, soldes, calendrier). Désactivé : le bouton disparaît et les congés ne bloquent plus les postes ; aucune donnée n'est supprimée.",
+  importTolerance: "Quand une même référence a plusieurs dates de livraison, l'import crée une commande par date. Deux dates séparées d'au plus ce nombre de jours sont regroupées en une seule commande (échéance = la plus proche). 0 = une commande par date exacte.",
+  backupActif: "Envoie chaque jour par e-mail une copie complète des données (zip). Nécessite le compte d'envoi configuré par l'administrateur dans Cfg_backup.yml.",
+  backupZip: "Mot de passe pour protéger le zip joint à l'e-mail. Laisser vide = zip non protégé. À conserver : il sera demandé pour ouvrir la sauvegarde.",
+  reportActif: "Envoie automatiquement un résumé par e-mail : échéances dépassées, tâches démarrées en retard, rebuts, sous-traitances en retard, pauses non expliquées.",
+  reportFrequence: "Quotidien : résumé des dernières 24 h. Hebdomadaire : des 7 derniers jours, envoyé le jour choisi.",
+  syncInterval: "Fréquence, en secondes, à laquelle chaque poste vérifie si un collègue a modifié le planning. Plus court = plus réactif mais plus de requêtes ; minimum 2 s. S'applique immédiatement. Par défaut : 4.",
+  archiveAuto: "Archive à chaque démarrage les commandes entièrement terminées depuis plus longtemps que le délai ci-dessous. Les commandes archivées sortent du calcul du planning (plus rapide) mais restent consultables, désarchivables et incluses dans l'export.",
+  archiveJours: "Délai après lequel une commande entièrement terminée est archivée. Le bouton « Archiver maintenant » applique ce délai tout de suite, même si l'archivage automatique est désactivé.",
+  exportJson: "Télécharge un fichier .json contenant tout le planning (hors historiques volumineux). À conserver comme sauvegarde manuelle ou pour migrer d'un serveur à l'autre.",
+  importJson: "Remplace TOUT le planning par le contenu d'un fichier .json exporté auparavant. Action destructive : une confirmation est demandée.",
+  resetAll: "Efface toutes les commandes et remet les postes à leurs réglages par défaut. IRRÉVERSIBLE — faites d'abord un export .json.",
+  densite: "Compact réduit les espacements pour voir plus d'informations d'un coup à l'écran. Confortable est plus aéré.",
+  couleurUrgence: "Couleur des badges, liserés et surlignages « Importante » et « Urgente » dans tout le planning. Le niveau « Normale » reste neutre.",
+  presenceActif: "Active la borne de pointage, la page « Mon pointage » de chaque salarié et la page « Présence » des superviseurs. Désactivé : rien n'est collecté ; les pointages déjà enregistrés sont conservés.",
+  presenceTelephone: "Autorise un salarié à pointer lui-même depuis son téléphone ou un poste, sans passer par la borne. Combiné aux réseaux autorisés ci-dessous, il limite ce pointage à l'atelier.",
+  presenceReseaux: "Préfixes d'adresse IP (séparés par des virgules) depuis lesquels le pointage personnel est accepté. Exemple : 192.168.1. pour tout le réseau local. Liste vide = accepté de partout (déconseillé).",
+  presenceRetard: "Minutes de retard sur le début de SON horaire au-delà desquelles une arrivée est signalée comme retard (page Présence, fiche salarié). Par défaut : 10.",
+  presenceConservation: "Durée de conservation des pointages avant suppression automatique : 3 ans (recommandé, prescription des salaires) ou 5 ans (maximum admis par la CNIL).",
+  presenceLier: "Si coché, un pointage de pause ou de départ propose de mettre en pause les tâches en cours de la personne, et la fin de pause de les reprendre. Toujours au choix de la personne, jamais automatique.",
+  userForfait: "Pas de « non arrivé », de retard ni de départ non pointé signalés pour cette personne. Si elle pointe, sa présence compte normalement."
+};
+function helpTip(key){
+  const t = SETTINGS_HELP[key];
+  if(!t) return '';
+  return `<span class="help-tip" tabindex="0" role="note" data-tip="${escapeHtml(t)}" aria-label="${escapeHtml(t)}">ⓘ</span>`;
 }
 function saveSettingsUIPrefs(){
   try{ localStorage.setItem(SETTINGS_UI_STORAGE_KEY, JSON.stringify({ order: settingsSectionOrder, active: settingsActiveSection })); }
@@ -13335,21 +13431,21 @@ function renderSettingsModal(){
       <input type="datetime-local" value="${m.dispo}" data-action="update-machine-dispo" data-id="${m.id}">
       <label class="statut-chip" style="margin-top:10px;">
         <input type="checkbox" ${active?'checked':''} data-action="toggle-machine-horaires" data-id="${m.id}">
-        Horaires spécifiques à ce poste
+        Horaires spécifiques à ce poste ${helpTip('horairesPoste')}
       </label>
       <label class="statut-chip" style="margin-top:6px;">
         <input type="checkbox" ${m.fusionnable?'checked':''} data-action="toggle-machine-fusionnable" data-id="${m.id}">
-        Ce poste permet de fusionner plusieurs pièces sur un même passage (découpe, imbrication matière)
+        Ce poste permet de fusionner plusieurs pièces sur un même passage (découpe, imbrication matière) ${helpTip('fusionnable')}
       </label>
       <div class="modal-section-title" style="margin-top:12px; font-size:10.5px;">Transfert après ce poste</div>
       <div class="machine-horaires">
-        <div><label class="field">Fixe (min)</label><input type="number" min="0" step="1" value="${m.transfertFixeMin||0}" data-action="machine-transfert" data-id="${m.id}" data-field="transfertFixeMin" title="Temps de déplacement, indépendant du nombre de pièces"></div>
-        <div><label class="field">Par pièce (min)</label><input type="number" min="0" step="0.1" value="${m.transfertParPieceMin||0}" data-action="machine-transfert" data-id="${m.id}" data-field="transfertParPieceMin" title="Manutention proportionnelle à la quantité"></div>
+        <div><label class="field">Fixe (min) ${helpTip('transfertFixe')}</label><input type="number" min="0" step="1" value="${m.transfertFixeMin||0}" data-action="machine-transfert" data-id="${m.id}" data-field="transfertFixeMin" title="Temps de déplacement, indépendant du nombre de pièces"></div>
+        <div><label class="field">Par pièce (min) ${helpTip('transfertParPiece')}</label><input type="number" min="0" step="0.1" value="${m.transfertParPieceMin||0}" data-action="machine-transfert" data-id="${m.id}" data-field="transfertParPieceMin" title="Manutention proportionnelle à la quantité"></div>
       </div>
       <div class="footer-note" style="text-align:left; margin-top:4px;">Délai avant que la phase suivante puisse démarrer, y compris si elle reste sur ce poste. Exemple : 15 min + 0,3 min/pièce → 1 h pour un lot de 150. Laisser à 0 pour aucun délai.</div>
       <div class="modal-section-title" style="margin-top:12px; font-size:10.5px;">Coût de revient approximatif</div>
       <div class="machine-horaires">
-        <div><label class="field">Taux horaire "tout compris" (€/h)</label><input type="number" min="0" step="0.5" value="${m.tauxHoraireH||0}" data-action="machine-transfert" data-id="${m.id}" data-field="tauxHoraireH" title="Machine + main d'œuvre, une seule valeur par poste"></div>
+        <div><label class="field">Taux horaire "tout compris" (€/h) ${helpTip('tauxHoraire')}</label><input type="number" min="0" step="0.5" value="${m.tauxHoraireH||0}" data-action="machine-transfert" data-id="${m.id}" data-field="tauxHoraireH" title="Machine + main d'œuvre, une seule valeur par poste"></div>
       </div>
       <div class="footer-note" style="text-align:left; margin-top:4px;">Sert uniquement à estimer un coût de revient approximatif (temps × taux) dans l'onglet Pointages — laisser à 0 pour ne pas suivre le coût de ce poste.</div>
       ${active ? `
@@ -13366,7 +13462,7 @@ function renderSettingsModal(){
           <div><label class="field">Fin pause</label><input type="time" value="${h.pauseFin}" data-action="machine-horaire" data-id="${m.id}" data-field="pauseFin" ${h.pauseActive?'':'disabled'}></div>
         </div>
       </div>` : ''}
-      <div class="modal-section-title" style="margin-top:12px; font-size:10px;">Indisponibilités (congés, maintenance...)</div>
+      <div class="modal-section-title" style="margin-top:12px; font-size:10px;">Indisponibilités (congés, maintenance...) ${helpTip('indispoPoste')}</div>
       <div class="machine-indispo-list">
         ${(m.indisponibilites||[]).map(p => `
           <div class="machine-indispo-row">
@@ -13399,24 +13495,37 @@ function renderSettingsModal(){
     </div>`).join('');
 
   const sectionDefs = {
-    horaires: { title: 'Horaires de travail', body: `
+    horaires: { title: 'Horaires & pauses', body: `
+      <div class="modal-section-title" style="margin-top:0;">Journée de travail de l'atelier</div>
       <div class="machines-grid">
-        <div><label class="field">Heure de début de journée</label><input type="time" value="${pad(cfg.startHour)}:${pad(cfg.startMinute)}" data-action="update-config" data-field="startTime"></div>
-        <div><label class="field">Durée travaillée lun. – jeu. (heures)</label><input type="number" min="0" step="0.25" value="${cfg.monThuHours}" data-action="update-config" data-field="monThuHours"></div>
-        <div><label class="field">Durée travaillée vendredi (heures)</label><input type="number" min="0" step="0.25" value="${cfg.friHours}" data-action="update-config" data-field="friHours"></div>
-        <div><label class="field">Marge avant échéance (jours)</label><input type="number" min="0" step="1" value="${cfg.margeEcheanceJours||0}" data-action="update-config" data-field="margeEcheanceJours" title="Les tâches devront être terminées ce nombre de jours avant la date de besoin réelle"></div>
+        <div><label class="field">Heure de début de journée ${helpTip('startTime')}</label><input type="time" value="${pad(cfg.startHour)}:${pad(cfg.startMinute)}" data-action="update-config" data-field="startTime"></div>
+        <div><label class="field">Durée travaillée lun. – jeu. (heures) ${helpTip('monThuHours')}</label><input type="number" min="0" step="0.25" value="${cfg.monThuHours}" data-action="update-config" data-field="monThuHours"></div>
+        <div><label class="field">Durée travaillée vendredi (heures) ${helpTip('friHours')}</label><input type="number" min="0" step="0.25" value="${cfg.friHours}" data-action="update-config" data-field="friHours"></div>
       </div>
-      <div class="footer-note" style="text-align:left; padding-top:10px;">La marge décale l'échéance utilisée pour les indicateurs "en retard" — une commande sera signalée en retard si sa fin estimée dépasse (date de besoin − marge), pas seulement la date de besoin elle-même. 0 = pas de marge.</div>` },
-    pause: { title: 'Pause déjeuner', body: `
+      <div class="footer-note" style="text-align:left; padding-top:8px;">Ces horaires s'appliquent à tout l'atelier. Un poste (Postes de production) ou une personne (Utilisateurs) peut avoir les siens.</div>
+      <div class="modal-section-title" style="margin-top:20px;">Pause déjeuner</div>
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${cfg.pauseActive?'checked':''} data-action="update-config" data-field="pauseActive">
-        Intégrer une pause déjeuner au planning
+        Intégrer une pause déjeuner au planning ${helpTip('pauseActive')}
       </label>
       <div class="machines-grid">
-        <div><label class="field">Début de la pause</label><input type="time" value="${cfg.pauseDebut}" data-action="update-config" data-field="pauseDebut" ${cfg.pauseActive?'':'disabled'}></div>
+        <div><label class="field">Début de la pause ${helpTip('pauseHeures')}</label><input type="time" value="${cfg.pauseDebut}" data-action="update-config" data-field="pauseDebut" ${cfg.pauseActive?'':'disabled'}></div>
         <div><label class="field">Fin de la pause</label><input type="time" value="${cfg.pauseFin}" data-action="update-config" data-field="pauseFin" ${cfg.pauseActive?'':'disabled'}></div>
       </div>
       <div class="footer-note" style="text-align:left; padding-top:10px;">La pause est automatiquement exclue des créneaux disponibles — la journée se prolonge d'autant pour que la durée travaillée reste bien celle indiquée ci-dessus.</div>` },
+    planification: { title: 'Planification', body: `
+      <div class="footer-note" style="text-align:left; padding-bottom:12px;">Réglages qui influencent la façon dont le moteur place les tâches et signale les retards.</div>
+      <div class="machines-grid">
+        <div><label class="field">Marge avant échéance (jours) ${helpTip('marge')}</label><input type="number" min="0" step="1" value="${cfg.margeEcheanceJours||0}" data-action="update-config" data-field="margeEcheanceJours"></div>
+        <div><label class="field">Heures libres des postes sur (jours ouvrés) ${helpTip('dispoHorizon')}</label><input type="number" min="1" max="20" step="1" value="${dispoHorizonJours()}" data-action="update-config" data-field="dispoHorizonJours"></div>
+      </div>
+      <div class="footer-note" style="text-align:left; padding:8px 0 16px;">La marge décale l'échéance utilisée pour les indicateurs « en retard » : une commande est signalée en retard si sa fin estimée dépasse (date de besoin − marge). 0 = pas de marge. L'horizon des heures libres alimente le bloc « Disponibilité des postes » de la Vue d'ensemble.</div>
+      <div class="modal-section-title">Regroupement de pièces</div>
+      <label class="statut-chip" style="margin-bottom:10px;">
+        <input type="checkbox" ${state.config.matiereFusionActive?'checked':''} data-action="update-config" data-field="matiereFusionActive">
+        Proposer automatiquement des regroupements de pièces par matière/épaisseur sur les postes fusionnables ${helpTip('matiereFusion')}
+      </label>
+      <div class="footer-note" style="text-align:left;">Une fois activé, le panneau « Regroupements possibles » apparaît sur le planning dès que des pièces « à faire » partagent poste, matière et épaisseur. Les postes concernés se choisissent dans Postes de production (case « fusionnable »).</div>` },
     affichage: { title: 'Affichage', body: `
       <div class="machines-grid">
         <div><label class="field">Nom affiché dans l'en-tête</label><input type="text" value="${escapeHtml(cfg.appTitle||'Planning Atelier')}" data-action="update-config" data-field="appTitle" placeholder="Planning Atelier"></div>
@@ -13447,7 +13556,7 @@ function renderSettingsModal(){
       <div class="footer-note" style="text-align:left; padding-bottom:10px;">S'applique aux boutons principaux, à la ligne "aujourd'hui" du planning, aux surlignages de recherche, etc.</div>
       <div class="modal-section-title" style="margin-top:18px;">Densité d'affichage</div>
       <div class="machines-grid">
-        <div><label class="field">Espacement</label>
+        <div><label class="field">Espacement ${helpTip('densite')}</label>
           <select data-action="update-config" data-field="density">
             <option value="confortable" ${(cfg.density||'confortable')==='confortable'?'selected':''}>Confortable</option>
             <option value="compact" ${cfg.density==='compact'?'selected':''}>Compact</option>
@@ -13455,7 +13564,7 @@ function renderSettingsModal(){
         </div>
       </div>
       <div class="footer-note" style="text-align:left; padding-bottom:10px;">Le mode compact réduit les espacements pour voir davantage d'informations à l'écran d'un coup.</div>
-      <div class="modal-section-title" style="margin-top:18px;">Couleurs d'urgence</div>
+      <div class="modal-section-title" style="margin-top:18px;">Couleurs d'urgence ${helpTip('couleurUrgence')}</div>
       <div class="machines-grid">
         <div><label class="field">Couleur "Importante"</label><input type="color" value="${uc.importante}" data-action="update-config" data-field="urgencyColors.importante"></div>
         <div><label class="field">Couleur "Urgente"</label><input type="color" value="${uc.urgente}" data-action="update-config" data-field="urgencyColors.urgente"></div>
@@ -13519,9 +13628,9 @@ function renderSettingsModal(){
               <input type="checkbox" ${isHiddenFromTempsProd(state, uid_)?'':'checked'} data-action="toggle-temps-prod-visibility" data-user-id="${uid_}">
               Afficher dans le temps de production
             </label>
-            ${presenceModuleActive() ? `<label class="statut-chip" style="margin-bottom:10px;" title="Pas de « non arrivé », de retard ni de départ non pointé signalés pour cette personne ; si elle pointe, sa présence compte normalement.">
+            ${presenceModuleActive() ? `<label class="statut-chip" style="margin-bottom:10px;">
               <input type="checkbox" ${isForfaitUser(state, uid_)?'checked':''} data-action="toggle-presence-forfait" data-user-id="${uid_}">
-              Au forfait — non tenu de pointer
+              Au forfait — non tenu de pointer ${helpTip('userForfait')}
             </label>` : ''}
 
             <div class="modal-section-title" style="font-size:10px;">Postes liés</div>
@@ -13567,35 +13676,40 @@ function renderSettingsModal(){
         <button class="primary" data-action="add-user-submit">+ Ajouter</button>
       </div>
       <div class="footer-note" style="text-align:left; padding-top:12px;">Chaque personne devant accéder au planning depuis l'extérieur doit avoir son propre compte. Supprimez un compte pour couper l'accès à cette personne immédiatement. Seuls les administrateurs peuvent créer/supprimer des comptes ou changer un rôle — mais un Superviseur peut, comme un administrateur, valider les demandes de congé et gérer les soldes. La gestion des congés se fait désormais dans sa propre page (bouton "🏖 Congés" en haut de l'écran).</div>` },
-    conges: { title: 'Module Congés', body: `
+    conges: { title: 'Congés (module)', body: `
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${(state.config.modules&&state.config.modules.conges)?'checked':''} data-action="toggle-module-conges">
-        Activer le module Congés (page dédiée, demandes, validation, soldes)
+        Activer le module Congés (page dédiée, demandes, validation, soldes) ${helpTip('conges')}
       </label>
       <div class="footer-note" style="text-align:left;">Une fois désactivé, le bouton "🏖 Congés" disparaît de l'en-tête et le blocage automatique des postes basé sur les congés approuvés est suspendu. Aucune donnée n'est supprimée — tout réapparaît tel quel à la réactivation.</div>` },
-    backup: { title: 'Sauvegarde automatique par e-mail', body: `
+    emails: { title: 'E-mails (sauvegarde & rapports)', body: `
+      <div class="footer-note" style="text-align:left; padding-bottom:12px;">Les deux envois utilisent le même compte d'envoi (serveur SMTP), configuré par l'administrateur dans le fichier Cfg_backup.yml — voir le README. Sans cette configuration, les boutons de test échoueront.</div>
+      <div class="modal-section-title" style="margin-top:0;">💾 Sauvegarde automatique</div>
+
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${bk.actif?'checked':''} data-action="update-config" data-field="backup.actif">
-        Envoyer une sauvegarde chaque jour
+        Envoyer une sauvegarde chaque jour ${helpTip('backupActif')}
       </label>
       <div class="machines-grid">
         <div><label class="field">Adresse e-mail destinataire</label><input type="email" placeholder="exemple@entreprise.fr" value="${escapeHtml(bk.destinataire||'')}" data-action="update-config" data-field="backup.destinataire"></div>
-        <div><label class="field">Mot de passe du zip (optionnel)</label><input type="text" placeholder="laisser vide = pas de mot de passe" value="${escapeHtml(bk.motDePasse||'')}" data-action="update-config" data-field="backup.motDePasse"></div>
+        <div><label class="field">Mot de passe du zip (optionnel) ${helpTip('backupZip')}</label><input type="text" placeholder="laisser vide = pas de mot de passe" value="${escapeHtml(bk.motDePasse||'')}" data-action="update-config" data-field="backup.motDePasse"></div>
         <div><label class="field">Heure d'envoi</label><input type="time" value="${bk.heure||'02:00'}" data-action="update-config" data-field="backup.heure"></div>
       </div>
       <div style="margin-top:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         <button class="small" id="test-backup-btn" data-action="test-backup">Tester l'envoi maintenant</button>
         ${bk.dernierEnvoi ? `<span class="footer-note" style="margin:0;">Dernier envoi : ${escapeHtml(bk.dernierEnvoi)}</span>` : ''}
       </div>
-      <div class="footer-note" style="text-align:left; padding-top:8px;">Le serveur SMTP (compte d'envoi) est configuré par l'administrateur dans le fichier Cfg_backup.yml, pas ici — voir le README. Sans cette configuration, le bouton de test échouera.</div>` },
-    emailReport: { title: 'Rapports par e-mail', body: `
+      <div class="footer-note" style="text-align:left; padding-top:8px;">Le serveur SMTP (compte d'envoi) est configuré par l'administrateur dans le fichier Cfg_backup.yml, pas ici — voir le README. Sans cette configuration, le bouton de test échouera.</div>
+      <hr style="border:none; border-top:1px solid var(--line-soft); margin:22px 0 16px;">
+      <div class="modal-section-title" style="margin-top:0;">📧 Rapport automatique</div>
+
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${er.actif?'checked':''} data-action="update-config" data-field="emailReport.actif">
-        Envoyer un rapport automatique par e-mail
+        Envoyer un rapport automatique par e-mail ${helpTip('reportActif')}
       </label>
       <div class="machines-grid">
         <div><label class="field">Adresse(s) e-mail destinataire(s)</label><input type="text" placeholder="exemple@entreprise.fr, autre@entreprise.fr" value="${escapeHtml(er.destinataires||'')}" data-action="update-config" data-field="emailReport.destinataires"></div>
-        <div><label class="field">Fréquence</label><select data-action="update-config" data-field="emailReport.frequence">
+        <div><label class="field">Fréquence ${helpTip('reportFrequence')}</label><select data-action="update-config" data-field="emailReport.frequence">
           <option value="quotidien" ${er.frequence==='quotidien'?'selected':''}>Quotidien</option>
           <option value="hebdomadaire" ${er.frequence==='hebdomadaire'?'selected':''}>Hebdomadaire</option>
         </select></div>
@@ -13616,22 +13730,18 @@ function renderSettingsModal(){
       </div>
       <div class="footer-note" style="text-align:left; padding-top:8px;">Résume, depuis le dernier envoi (les dernières 24h en quotidien, les 7 derniers jours en hebdomadaire) : commandes dont l'échéance est déjà dépassée, tâches démarrées en retard, rebuts déclarés, sous-traitances en retard, et pauses actuellement non expliquées. Ce résumé n'utilise volontairement pas le moteur de planification complet (pas de notion de commande "à risque" ni de fin projetée) — voir CLAUDE.md, section « Alertes e-mail ». Même serveur SMTP que la sauvegarde automatique ci-dessus (Cfg_backup.yml) — sans cette configuration, le bouton de test échouera.</div>` },
     machines: { title: `Postes de production (${state.machines.length})`, body: `
-      <label class="statut-chip" style="margin-bottom:12px;">
-        <input type="checkbox" ${state.config.matiereFusionActive?'checked':''} data-action="update-config" data-field="matiereFusionActive">
-        Proposer automatiquement des regroupements de pièces par matière/épaisseur sur les postes fusionnables
-      </label>
-      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Une fois activé, le panneau "Regroupements possibles" apparaît sur le planning dès que des pièces "à faire" partagent poste, matière et épaisseur. Sans effet sur le regroupement manuel (bouton "Regrouper les lignes du même poste" en création de commande) ni sur celui de l'import personnalisé, qui restent toujours disponibles.</div>
+      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Un poste = une machine ou une activité (Laser, Pliage, Sous-traitance…). Chaque poste a sa couleur, son icône, ses transferts et, au besoin, ses propres horaires. Le regroupement automatique de pièces se règle dans Planification.</div>
       <div class="machines-grid">${machineCards}</div>
       <div class="add-machine-row"><button data-action="add-machine">+ Ajouter un poste</button></div>` },
     storageZones: { title: `Zones de stockage (${(cfg.storageZones||[]).reduce((s,a)=>s+(Number(a.nbEmplacements)||0),0)} emplacements)`, body: `
       <div class="footer-note" style="text-align:left; padding-bottom:10px;">Chaque allée devient un ensemble d'emplacements numérotés à partir de son code (ex. code "A", 16 emplacements → A1 à A16). La couleur sert à reconnaître l'allée d'un coup d'œil dans le planning, le Kanban et la page "Zones de stockage".</div>
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${(state.config.modules&&state.config.modules.expedition)?'checked':''} data-action="toggle-module-expedition">
-        Libération manuelle du casier (nettoyage/conditionnement)
+        Libération manuelle du casier (nettoyage/conditionnement) ${helpTip('expedition')}
       </label>
       <div class="footer-note" style="text-align:left; padding-bottom:14px;">Une fois activé, une commande dont toutes les pièces sont terminées n'occupe plus la gamme de production, mais garde son casier tant que personne n'a cliqué "Prêt à expédier" (ex. nettoyage ou conditionnement non modélisé dans la gamme) — voir le badge et le bouton dédiés sur sa carte. Désactivé (par défaut), le casier se libère automatiquement dès la dernière pièce terminée, comme avant cette fonctionnalité.</div>
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
-        <label class="field" style="margin:0;">Alerter quand il reste moins de</label>
+        <label class="field" style="margin:0;">Alerter quand il reste moins de ${helpTip('zonesSeuil')}</label>
         <input type="number" min="0" step="1" value="${Number(cfg.storageZonesAlerteSeuil)||0}" data-action="update-config" data-field="storageZonesAlerteSeuil" style="max-width:80px;">
         <span class="footer-note" style="margin:0;">casier(s) libre(s) — bandeau en tête de la page « Zones de stockage » (0 = jamais).</span>
       </div>
@@ -13640,7 +13750,7 @@ function renderSettingsModal(){
     importProfiles: { title: `Profils d'import personnalisé (${(state.importProfiles||[]).length})`, body: `
       <div class="modal-section-title" style="margin-top:0;">Regroupement des dates de livraison proches</div>
       <div class="machines-grid" style="margin-bottom:6px;">
-        <div><label class="field">Tolérance (jours)</label><input type="number" min="0" step="1" value="${cfg.importDateGroupingToleranceDays||0}" data-action="update-config" data-field="importDateGroupingToleranceDays" style="max-width:100px;"></div>
+        <div><label class="field">Tolérance (jours) ${helpTip('importTolerance')}</label><input type="number" min="0" step="1" value="${cfg.importDateGroupingToleranceDays||0}" data-action="update-config" data-field="importDateGroupingToleranceDays" style="max-width:100px;"></div>
       </div>
       <div class="footer-note" style="text-align:left; padding-bottom:14px;">Quand une même référence porte plusieurs dates de livraison réellement différentes (ex. deux numéros de ligne de la même référence à livrer à des dates distinctes), l'import éclate désormais la référence en plusieurs commandes — une par date. Deux dates séparées d'au plus cette tolérance sont regroupées dans une seule commande (une seule mise en campagne), avec l'échéance la plus proche des deux comme date retenue. 0 (par défaut) = aucun regroupement, une commande par date exacte.</div>
       <hr style="border:none; border-top:1px solid var(--line-soft); margin:0 0 16px;">
@@ -13665,63 +13775,66 @@ function renderSettingsModal(){
         </table>` : ''}
       </div>`).join('')}
       <div class="footer-note" style="text-align:left; padding-top:8px;">La correspondance des colonnes elle-même (quelle colonne du fichier va dans quel champ) se modifie au prochain import personnalisé, en choisissant ce profil.</div>` },
-    maintenance: { title: 'Maintenance', body: `
+    donnees: { title: 'Données & archivage', body: `
+      <div class="modal-section-title" style="margin-top:0;">Sauvegarde manuelle complète</div>
       <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
         <button class="small" data-action="export-data" title="Télécharger un fichier .json — à déposer dans un dossier synchronisé avec votre NAS">Exporter (.json)</button>
+        <span class="help-inline">${helpTip('exportJson')}</span>
         <button class="small" data-action="trigger-import" title="Recharger un fichier .json exporté précédemment">Importer (.json)</button>
+        <span class="help-inline">${helpTip('importJson')}</span>
         <input type="file" id="import-file-input" accept="application/json" style="display:none;" onchange="handleImportFile(event)">
-        <span class="footer-note" style="margin:0;">Sauvegarde/restauration manuelle complète du planning.</span>
       </div>
-      <hr style="border:none; border-top:1px solid var(--line-soft); margin:14px 0;">
-      <div class="machines-grid" style="margin-bottom:16px;">
-        <div><label class="field">Délai de synchronisation entre postes (secondes)</label><input type="number" min="2" max="120" step="1" value="${cfg.syncIntervalSec||4}" data-action="update-config" data-field="syncIntervalSec"></div>
-      </div>
-      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Fréquence à laquelle chaque poste va vérifier si un collègue a modifié le planning. Plus court = plus réactif mais plus de requêtes vers le serveur ; plus long = l'inverse. Minimum 2 secondes. Prend effet immédiatement, sans recharger la page.</div>
-      <hr style="border:none; border-top:1px solid var(--line-soft); margin:14px 0;">
+      <div class="footer-note" style="text-align:left;">Sauvegarde/restauration manuelle complète du planning. Pour une sauvegarde quotidienne automatique, voir « E-mails ».</div>
+      <div class="modal-section-title" style="margin-top:22px;">Archivage des commandes terminées</div>
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${cfg.archiveAutoActive?'checked':''} data-action="update-config" data-field="archiveAutoActive">
-        Archiver automatiquement les commandes terminées (à chaque démarrage de l'application)
+        Archiver automatiquement les commandes terminées (à chaque démarrage de l'application) ${helpTip('archiveAuto')}
       </label>
       <div class="machines-grid">
-        <div><label class="field">Archiver les commandes terminées après (jours)</label>
+        <div><label class="field">Archiver les commandes terminées après (jours) ${helpTip('archiveJours')}</label>
           <div style="display:flex; gap:6px; align-items:center;">
             <input type="number" min="0" step="1" value="${cfg.archiveApresJours||0}" data-action="update-config" data-field="archiveApresJours" title="Une commande n'est archivée que lorsque TOUTES ses pièces sont terminées." style="flex:1;">
             <button class="ghost small" data-action="archive-now" title="Applique ce seuil immédiatement, sans attendre le prochain démarrage de l'application">Archiver maintenant</button>
           </div>
         </div>
       </div>
-      <div class="footer-note" style="text-align:left; padding:10px 0;">Les commandes archivées sont écartées du calcul du planning pour garder l'appli réactive — elles restent consultables et désarchivables dans le panneau "Commandes archivées", et toujours incluses dans l'export .json complet. Décocher la case ci-dessus n'empêche pas "Archiver maintenant" de fonctionner ponctuellement.</div>
-      <hr style="border:none; border-top:1px solid var(--line-soft); margin:14px 0;">
-      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Efface toutes les commandes et remet les postes à leurs réglages par défaut. Cette action est irréversible — une confirmation vous sera demandée.</div>
+      <div class="footer-note" style="text-align:left; padding:10px 0;">Les commandes archivées sont écartées du calcul du planning pour garder l'appli réactive — elles restent consultables et désarchivables dans le panneau « Commandes archivées », et toujours incluses dans l'export .json complet.</div>` },
+    systeme: { title: 'Système', body: `
+      <div class="modal-section-title" style="margin-top:0;">Synchronisation entre postes</div>
+      <div class="machines-grid" style="margin-bottom:6px;">
+        <div><label class="field">Délai de synchronisation entre postes (secondes) ${helpTip('syncInterval')}</label><input type="number" min="2" max="120" step="1" value="${cfg.syncIntervalSec||4}" data-action="update-config" data-field="syncIntervalSec"></div>
+      </div>
+      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Fréquence à laquelle chaque poste vérifie si un collègue a modifié le planning. Prend effet immédiatement, sans recharger la page.</div>
+      <div class="modal-section-title" style="margin-top:26px; color:var(--red);">⚠ Zone dangereuse</div>
+      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Efface toutes les commandes et remet les postes à leurs réglages par défaut. Cette action est irréversible — une confirmation vous sera demandée. ${helpTip('resetAll')}</div>
       <button class="danger-ghost small" style="border:1px solid var(--red); padding:7px 14px;" data-action="reset-all">Réinitialiser tout le planning</button>` },
-    risquesRetard: { title: '🕓 Risques de retard', body: `
+    alertes: { title: 'Alertes & seuils', body: `
+      <div class="footer-note" style="text-align:left; padding-bottom:12px;">Ce qui déclenche un signalement (badge, bandeau, pop-up) et à partir de quel seuil.</div>
+      <div class="modal-section-title" style="margin-top:0;">🕓 Démarrage en retard</div>
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${cfg.retardDemarragePopupActive?'checked':''} data-action="update-config" data-field="retardDemarragePopupActive">
-        Avertir l'opérateur par une pop-up quand il démarre une tâche en retard sur son démarrage théorique
+        Avertir l'opérateur par une pop-up quand il démarre une tâche en retard sur son démarrage théorique ${helpTip('retardPopup')}
       </label>
-      <div class="footer-note" style="text-align:left; padding-bottom:10px;">S'affiche juste après un clic sur "▶ Démarrer" (jamais à la reprise après pause), seulement si le retard dépasse un demi-jour — le même seuil et la même donnée que le badge "🕓" déjà affiché sur les tâches concernées (voir "Retard de démarrage" dans la page ⚠️ Risques de retard). Désactivée par défaut.</div>` },
-    presence: { title: '🙋 Pointage présentiel', body: renderPresenceSettingsBody() },
-    suiviPointage: { title: '👥 Pointage & disponibilité', body: `
+      <div class="footer-note" style="text-align:left; padding-bottom:6px;">S'affiche juste après un clic sur « ▶ Démarrer » (jamais à la reprise après pause), seulement si le retard dépasse un demi-jour — le même seuil et la même donnée que le badge « 🕓 » déjà affiché sur les tâches concernées. Désactivée par défaut.</div>
+      <div class="modal-section-title" style="margin-top:22px;">👥 Pointage de l'équipe</div>
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${cfg.pointageAlerteActive!==false?'checked':''} data-action="update-config" data-field="pointageAlerteActive">
-        Alerter quand un salarié ne pointe pas ou laisse une affaire trop longtemps en pause
+        Alerter quand un salarié ne pointe pas ou laisse une affaire trop longtemps en pause ${helpTip('alertePointage')}
       </label>
-      <div class="commande-top-fields" style="grid-template-columns:1fr 1fr 1fr;">
-        <label class="field">Sans pointage au-delà de (min)
+      <div class="commande-top-fields" style="grid-template-columns:1fr 1fr;">
+        <label class="field">Sans pointage au-delà de (min) ${helpTip('seuilSansPointage')}
           <input type="number" min="1" step="1" value="${pointageSettings().seuilSansPointageMin}" data-action="update-config" data-field="pointageSeuilSansPointageMin">
         </label>
-        <label class="field">Affaire en pause au-delà de (min)
+        <label class="field">Affaire en pause au-delà de (min) ${helpTip('seuilPause')}
           <input type="number" min="1" step="1" value="${pointageSettings().seuilPauseMin}" data-action="update-config" data-field="pointagePauseSeuilMin">
-        </label>
-        <label class="field">Heures libres des postes sur (jours ouvrés)
-          <input type="number" min="1" max="20" step="1" value="${dispoHorizonJours()}" data-action="update-config" data-field="dispoHorizonJours">
         </label>
       </div>
       <label class="statut-chip" style="margin:10px 0;">
         <input type="checkbox" ${cfg.pointageRappelOperateur!==false?'checked':''} data-action="update-config" data-field="pointageRappelOperateur">
-        Afficher aussi un rappel à l'opérateur lui-même, sur son poste
+        Afficher aussi un rappel à l'opérateur lui-même, sur son poste ${helpTip('rappelOperateur')}
       </label>
-      <div class="footer-note" style="text-align:left; padding-bottom:10px;">« Sans pointage » : dans son horaire, hors pause prévue et hors congé, aucune tâche en cours depuis le seuil. « Affaire en pause » : mise en pause à la main aujourd'hui (jamais une pause déjeuner ou hors horaires automatique) et pas reprise depuis le seuil. Les superviseurs voient un badge dans l'en-tête et le détail dans la Vue d'ensemble ; l'opérateur voit un bandeau de rappel (reportable de 15 min). Un salarié décoché de « Afficher dans le temps de production » (Paramètres → Utilisateurs) n'est jamais attendu.</div>` }
+      <div class="footer-note" style="text-align:left; padding-bottom:10px;">« Sans pointage » : dans son horaire, hors pause prévue et hors congé, aucune tâche en cours depuis le seuil. « Affaire en pause » : mise en pause à la main aujourd'hui (jamais une pause déjeuner ou hors horaires automatique) et pas reprise depuis le seuil. Les superviseurs voient un badge dans l'en-tête et le détail dans la Vue d'ensemble ; l'opérateur voit un bandeau de rappel (reportable de 15 min). Un salarié décoché de « Afficher dans le temps de production » (Utilisateurs) n'est jamais attendu. L'horizon des heures libres des postes se règle dans Planification.</div>` },
+    presence: { title: '🙋 Pointage présentiel', body: renderPresenceSettingsBody() },
   };
 
   // "Mon compte" est la SEULE section accessible à tout rôle (mot de passe, page d'accueil par
@@ -13734,14 +13847,21 @@ function renderSettingsModal(){
   // Retombe sur la première catégorie visible si la préférence enregistrée pointe vers une clé
   // absente (ancienne préférence, catégorie supprimée entre-temps) — jamais un volet de droite vide.
   const activeKey = visibleKeys.includes(settingsActiveSection) ? settingsActiveSection : visibleKeys[0];
-  const navHtml = visibleKeys.map((key, idx) => `
+  // Navigation par rubriques (SETTINGS_GROUPS) : titre de rubrique puis ses catégories visibles, dans
+  // l'ordre mémorisé (`settingsSectionOrder`). ▲/▼ n'échangent qu'avec le voisin de la MÊME rubrique.
+  const navItemHtml = (key, posInGroup, groupLen) => `
     <div class="settings-nav-item">
       <button class="settings-nav-btn ${key===activeKey?'active':''}" data-action="select-settings-section" data-key="${key}">${sectionDefs[key].title}</button>
       <div class="settings-reorder">
-        <button class="ghost icon-btn" data-action="move-settings-section" data-key="${key}" data-dir="-1" ${idx===0?'disabled':''} title="Monter">▲</button>
-        <button class="ghost icon-btn" data-action="move-settings-section" data-key="${key}" data-dir="1" ${idx===visibleKeys.length-1?'disabled':''} title="Descendre">▼</button>
+        <button class="ghost icon-btn" data-action="move-settings-section" data-key="${key}" data-dir="-1" ${posInGroup===0?'disabled':''} title="Monter dans la rubrique">▲</button>
+        <button class="ghost icon-btn" data-action="move-settings-section" data-key="${key}" data-dir="1" ${posInGroup===groupLen-1?'disabled':''} title="Descendre dans la rubrique">▼</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  const navHtml = SETTINGS_GROUPS.map(g => {
+    const keys = visibleKeys.filter(k => g.keys.includes(k));
+    if(!keys.length) return '';
+    return `<div class="settings-nav-group-title">${escapeHtml(g.titre)}</div>` + keys.map((k, pos) => navItemHtml(k, pos, keys.length)).join('');
+  }).join('');
   const activeDef = activeKey ? sectionDefs[activeKey] : null;
   // Un non-administrateur n'a jamais qu'une seule catégorie visible ("Mon compte") — le volet de
   // navigation n'aurait alors aucune utilité (rien entre quoi naviguer) et n'afficherait qu'une
@@ -16668,7 +16788,7 @@ function renderPresenceSettingsBody(){
   return `
     <label class="statut-chip" style="margin-bottom:10px;">
       <input type="checkbox" ${actif?'checked':''} data-action="toggle-module-presence">
-      Activer le module Pointage présentiel
+      Activer le module Pointage présentiel ${helpTip('presenceActif')}
     </label>
     <div class="footer-note" style="text-align:left; padding-bottom:12px;">Ajoute la borne de pointage, « Mon pointage » pour chaque salarié et la page « Présence » pour les superviseurs (menu des pages, thème « Temps &amp; présence » par défaut). Désactivé, rien n'apparaît et aucun pointage n'est collecté — les pointages déjà enregistrés sont conservés.</div>
     ${actif ? `
@@ -16676,19 +16796,19 @@ function renderPresenceSettingsBody(){
     <div class="footer-note" style="text-align:left; padding-bottom:8px;"><b>Borne</b> : sur la tablette de l'atelier, ouvrez « 📟 Borne de pointage » dans le menu des pages (thème « Temps &amp; présence » par défaut) (compte superviseur). Chacun y pointe avec son nom et un code à 4 chiffres qu'il choisit dans « Mon pointage ».</div>
     <label class="statut-chip" style="margin-bottom:6px;">
       <input type="checkbox" ${cfg.telephone?'checked':''} data-action="presence-config" data-field="telephone">
-      Autoriser le pointage depuis son téléphone ou un poste (« Mon pointage »)
+      Autoriser le pointage depuis son téléphone ou un poste (« Mon pointage ») ${helpTip('presenceTelephone')}
     </label>
-    <label class="field" style="margin-top:6px;">Réseaux de l'atelier autorisés pour ce pointage (préfixes d'adresse, séparés par des virgules)
+    <label class="field" style="margin-top:6px;">Réseaux de l'atelier autorisés pour ce pointage (préfixes d'adresse, séparés par des virgules) ${helpTip('presenceReseaux')}
       <input type="text" value="${escapeHtml(cfg.reseaux)}" placeholder="ex. 192.168.1." data-action="presence-config" data-field="reseaux" ${cfg.telephone?'':'disabled'}>
     </label>
     <div class="footer-note" style="text-align:left; padding:4px 0 10px;">Adresse vue par le serveur depuis ce poste : <b class="pr-mono">${data ? escapeHtml(data.clientIp || '?') : '…'}</b>. ${cfg.reseaux ? '' : '<b style="color:var(--amber);">Liste vide : pointage accepté depuis n’importe quel réseau.</b> '}Aucune géolocalisation.</div>
     ${renderTimemotoSettings()}
     <div class="modal-section-title" style="margin-top:14px;">Règles</div>
     <div class="commande-top-fields" style="grid-template-columns:1fr 1fr;">
-      <label class="field">Retard signalé au-delà de (min)
+      <label class="field">Retard signalé au-delà de (min) ${helpTip('presenceRetard')}
         <input type="number" min="0" max="120" step="1" value="${cfg.retardSeuilMin}" data-action="presence-config" data-field="retardSeuilMin">
       </label>
-      <label class="field">Conservation des pointages
+      <label class="field">Conservation des pointages ${helpTip('presenceConservation')}
         <select data-action="presence-config" data-field="conservationAns">
           <option value="3" ${cfg.conservationAns!==5?'selected':''}>3 ans (recommandé)</option>
           <option value="5" ${cfg.conservationAns===5?'selected':''}>5 ans (maximum CNIL)</option>
@@ -16697,7 +16817,7 @@ function renderPresenceSettingsBody(){
     </div>
     <label class="statut-chip" style="margin:10px 0 4px;">
       <input type="checkbox" ${cfg.lierTaches?'checked':''} data-action="presence-config" data-field="lierTaches">
-      Lier au temps de production : pause et départ proposent de mettre en pause les tâches en cours, la fin de pause de les reprendre
+      Lier au temps de production : pause et départ proposent de mettre en pause les tâches en cours, la fin de pause de les reprendre ${helpTip('presenceLier')}
     </label>
     <div class="footer-note" style="text-align:left; padding-bottom:8px;">Toujours au choix de la personne (cases cochées par défaut). Les pointages ne sont jamais arrondis : l'heure réelle du serveur est conservée. Un oubli de départ est signalé aux superviseurs, jamais complété automatiquement. Un salarié peut demander une correction : elle ne compte qu'une fois validée par un superviseur.</div>
     <div class="modal-section-title" style="margin-top:14px;">Conformité (Code du travail, RGPD)</div>
@@ -17024,6 +17144,46 @@ function updateHighlightClasses(){
 }
 
 /* ---------------- délégation d'événements : clics & changements ---------------- */
+// Infobulles ⓘ des Paramètres (v1.86.0) — survol, focus clavier ET clic/tap (pas de survol au doigt).
+// Une seule bulle `fixed` ajoutée au <body> : indépendante des re-rendus de #app et du défilement du volet.
+(function(){
+  let bubble = null, current = null;
+  function ensure(){
+    if(!bubble){
+      bubble = document.createElement('div');
+      bubble.id = 'help-tip-bubble';
+      bubble.setAttribute('role', 'tooltip');
+      document.body.appendChild(bubble);
+    }
+    return bubble;
+  }
+  function hide(){ if(bubble) bubble.style.display = 'none'; current = null; }
+  function show(el){
+    const b = ensure();
+    b.textContent = el.getAttribute('data-tip') || '';
+    b.style.display = 'block';
+    const r = el.getBoundingClientRect();
+    const bw = b.offsetWidth, bh = b.offsetHeight;
+    let left = Math.min(Math.max(8, r.left + r.width / 2 - bw / 2), window.innerWidth - bw - 8);
+    let top = r.bottom + 8;
+    if(top + bh > window.innerHeight - 8) top = Math.max(8, r.top - bh - 8);
+    b.style.left = left + 'px';
+    b.style.top = top + 'px';
+    current = el;
+  }
+  const tipOf = (e) => (e.target && e.target.closest) ? e.target.closest('.help-tip') : null;
+  document.addEventListener('mouseover', (e) => { const t = tipOf(e); if(t) show(t); else if(current) hide(); });
+  document.addEventListener('focusin', (e) => { const t = tipOf(e); if(t) show(t); });
+  document.addEventListener('focusout', (e) => { if(tipOf(e)) hide(); });
+  document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && current) hide(); });
+  window.addEventListener('scroll', () => { if(current) hide(); }, true);
+  // Clic : bascule la bulle (tap sur mobile) et empêche le <label> parent d'activer sa case/son champ.
+  document.addEventListener('click', (e) => {
+    const t = tipOf(e);
+    if(t){ e.preventDefault(); e.stopPropagation(); if(current === t) hide(); else show(t); }
+    else if(current) hide();
+  }, true);
+})();
 document.addEventListener('click', (e) => {
   if(e.target.classList && e.target.classList.contains('modal-overlay')){
     // Pop-up de document ouverte PAR-DESSUS Paramètres : ne referme qu'elle, pas Paramètres.
@@ -17282,12 +17442,17 @@ function dispatchClickAction(action, el){
     case 'clear-user-machines': clearUserMachines(el.dataset.userId); break;
     case 'select-settings-section': settingsActiveSection = el.dataset.key; saveSettingsUIPrefs(); render(); break;
     case 'move-settings-section': {
+      // Échange avec le voisin de la même rubrique ET visible pour ce rôle (sinon un échange avec une
+      // catégorie masquée n'aurait aucun effet à l'écran).
       const key = el.dataset.key, dir = Number(el.dataset.dir);
-      const idx = settingsSectionOrder.indexOf(key);
-      const newIdx = idx + dir;
-      if(newIdx >= 0 && newIdx < settingsSectionOrder.length){
+      const grp = SETTINGS_GROUPS.find(g => g.keys.includes(key));
+      if(!grp) break;
+      const sameGroup = settingsSectionOrder.filter(k => grp.keys.includes(k) && (k === 'moncompte' || isAdmin()));
+      const pos = sameGroup.indexOf(key), other = sameGroup[pos + dir];
+      if(pos >= 0 && other){
         const arr = settingsSectionOrder;
-        [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+        const a = arr.indexOf(key), b = arr.indexOf(other);
+        [arr[a], arr[b]] = [arr[b], arr[a]];
         saveSettingsUIPrefs();
         render();
       }
