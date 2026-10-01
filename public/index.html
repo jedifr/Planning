@@ -1303,6 +1303,13 @@
     padding:9px 6px; border-bottom:1px solid var(--line-soft);
   }
   .page-menu-item:last-child{border-bottom:none;}
+  .menu-theme-box{border:1px solid var(--line); border-radius:10px; background:var(--panel-2); padding:8px 10px; margin:8px 0;}
+  .menu-theme-head{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:4px;}
+  .menu-theme-head select{width:auto;}
+  .menu-theme-head input[type=text]{flex:1; min-width:140px; font-weight:600;}
+  .menu-theme-box .menu-page-row{padding-left:14px;}
+  .menu-place-select{width:auto; max-width:190px;}
+  .menu-layout-actions{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;}
   .page-menu-label{font-size:13px; color:var(--text);}
   .page-menu-label .pinned-tag{color:var(--accent); font-weight:600;}
   .page-menu-actions{display:flex; align-items:center; gap:6px; flex:none;}
@@ -1629,7 +1636,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.81.0';
+const APP_VERSION = '1.82.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1781,10 +1788,18 @@ function isPageMenuKeyVisible(key){
   if(key === 'presence' || key === 'borne') return presenceModuleActive() && canSupervise();
   return true;
 }
-// Ordre enregistré : clés inconnues/en double ignorées, et toute page ajoutée depuis par une nouvelle
-// version (ex. « Fiche salarié ») complétée EN FIN — jamais une réinitialisation complète de l'ordre
-// personnalisé à chaque nouvelle page (même principe que dashboardLayoutFor). Rien d'exploitable
-// enregistré : ordre par défaut.
+// ---- Disposition personnalisable du menu (v1.82.0) : thèmes (menus déroulants) et pages directes ----
+// Remplace l'ancien couple « ordre + épingles » (state.userPageMenuOrder / userPinnedMenuPages, encore LUS
+// pour migrer en silence la disposition d'une personne qui les avait réglés, jamais plus écrits).
+// `state.userMenuLayout[userId]` = { items: [ { type:'page', key } | { type:'theme', id, nom, icone, pages:[key] } ] } :
+// la liste ORDONNÉE de ce qui s'affiche dans la barre après « Planning » — une page directe est un bouton,
+// un thème est un menu déroulant qui ouvre ses pages. Propre à la personne, synchronisée par commit().
+const MENU_THEME_ICONS = ['🏭', '⏱', '📈', '🏖', '👥', '📍', '📋', '🔧', '📦', '🧰', '⭐', '📁'];
+const DEFAULT_MENU_THEMES = [
+  { id: 'atelier', nom: 'Atelier', icone: '🏭', pages: ['zones', 'risques', 'dashboard', 'historique'] },
+  { id: 'temps', nom: 'Temps & présence', icone: '⏱', pages: ['tempsProd', 'pointages', 'presence', 'monPointage', 'fiche', 'borne'] }
+];
+// Ordre enregistré par l'ancien système : clés inconnues/en double ignorées, pages ajoutées depuis complétées EN FIN.
 function getUserPageMenuOrder(userId){
   const stored = (state.userPageMenuOrder || {})[String(userId)];
   if(!Array.isArray(stored)) return PAGE_MENU_KEYS;
@@ -1793,55 +1808,176 @@ function getUserPageMenuOrder(userId){
   if(!kept.length) return PAGE_MENU_KEYS;
   return [...kept, ...PAGE_MENU_KEYS.filter(k => !kept.includes(k))];
 }
-// Déplace `key` parmi les seules clés VISIBLES pour ce rôle/cette config (voir `isPageMenuKeyVisible`)
-// — la pop-up "Mon compte" n'affiche que ce sous-ensemble, et les flèches ▲/▼ doivent donc échanger
-// avec le voisin VISIBLE suivant, jamais avec une clé masquée occupant la position adjacente dans le
-// tableau complet (sinon le clic n'aurait silencieusement aucun effet visible pour cette personne).
-// Les clés masquées gardent leur position ABSOLUE d'origine dans le tableau complet stocké — seul
-// l'ordre relatif des clés visibles entre elles change.
-function moveUserPageMenuItem(userId, key, dir){
+function defaultMenuLayout(){
+  return { items: [
+    ...DEFAULT_PINNED_PAGE_KEYS.map(key => ({ type: 'page', key })),
+    ...DEFAULT_MENU_THEMES.map(t => ({ type: 'theme', id: t.id, nom: t.nom, icone: t.icone, pages: [...t.pages] }))
+  ] };
+}
+// Personne qui avait réglé l'ancien ordre/les anciennes épingles : ses épingles restent directes (dans son
+// ordre), le reste rejoint les thèmes par défaut dans son ancien ordre — rien ne bouge sous ses doigts.
+function legacyMenuLayout(uid){
+  const hasOrder = Array.isArray((state.userPageMenuOrder || {})[uid]);
+  const hasPins = Array.isArray((state.userPinnedMenuPages || {})[uid]);
+  if(!hasOrder && !hasPins) return defaultMenuLayout();
+  const order = getUserPageMenuOrder(uid);
+  const pins = (hasPins ? state.userPinnedMenuPages[uid] : DEFAULT_PINNED_PAGE_KEYS).filter(k => PAGE_MENU_KEYS.includes(k));
+  const pinned = order.filter(k => pins.includes(k));
+  return { items: [
+    ...pinned.map(key => ({ type: 'page', key })),
+    ...DEFAULT_MENU_THEMES.map(t => ({ type: 'theme', id: t.id, nom: t.nom, icone: t.icone, pages: order.filter(k => t.pages.includes(k) && !pinned.includes(k)) })),
+    // Congés dépinglé dans l'ancien système (donc rangé dans « Plus ») : un thème à part plutôt que de le noyer dans un autre.
+    ...(pinned.includes('conges') ? [] : [{ type: 'theme', id: 'equipe', nom: 'Équipe', icone: '🏖', pages: ['conges'] }])
+  ] };
+}
+// Disposition COMPLÈTE (toutes les pages, visibles ou non pour ce rôle — la visibilité n'est qu'un filtre
+// appliqué à l'affichage, jamais à ce qu'on stocke) : clés inconnues/en double ignorées, identifiants nettoyés,
+// page absente (ajoutée depuis par une nouvelle version) rangée dans son thème par défaut s'il existe encore,
+// sinon dans le dernier thème, sinon en page directe — jamais perdue, jamais une réinitialisation complète.
+function normalizeMenuLayout(raw){
+  const seen = new Set(), ids = new Set(), items = [];
+  (raw && Array.isArray(raw.items) ? raw.items : []).forEach(it => {
+    if(!it) return;
+    if(it.type === 'page' && PAGE_MENU_KEYS.includes(it.key) && !seen.has(it.key)){ seen.add(it.key); items.push({ type: 'page', key: it.key }); }
+    else if(it.type === 'theme'){
+      const id = String(it.id || '').replace(/[^A-Za-z0-9_-]/g, '');
+      if(!id || ids.has(id)) return;
+      ids.add(id);
+      const pages = [];
+      (Array.isArray(it.pages) ? it.pages : []).forEach(k => { if(PAGE_MENU_KEYS.includes(k) && !seen.has(k)){ seen.add(k); pages.push(k); } });
+      items.push({ type: 'theme', id, nom: String(it.nom || '').trim().slice(0, 30) || 'Thème', icone: String(it.icone || '').slice(0, 4), pages });
+    }
+  });
+  PAGE_MENU_KEYS.filter(k => !seen.has(k)).forEach(k => {
+    const def = DEFAULT_MENU_THEMES.find(t => t.pages.includes(k));
+    const th = (def && items.find(i => i.type === 'theme' && i.id === def.id)) || [...items].reverse().find(i => i.type === 'theme');
+    if(th) th.pages.push(k); else items.push({ type: 'page', key: k });
+  });
+  return { items };
+}
+function getUserMenuLayout(userId){
   const uid_ = String(userId);
-  const full = getUserPageMenuOrder(uid_);
-  const visible = full.filter(k => isPageMenuKeyVisible(k));
-  const idx = visible.indexOf(key);
-  const newIdx = idx + dir;
-  if(idx === -1 || newIdx < 0 || newIdx >= visible.length) return;
-  const reordered = [...visible];
-  [reordered[idx], reordered[newIdx]] = [reordered[newIdx], reordered[idx]];
-  let vi = 0;
-  const arr = full.map(k => visible.includes(k) ? reordered[vi++] : k);
-  if(!state.userPageMenuOrder) state.userPageMenuOrder = {};
-  state.userPageMenuOrder[uid_] = arr;
+  const stored = (state.userMenuLayout || {})[uid_];
+  return normalizeMenuLayout(stored && Array.isArray(stored.items) ? stored : legacyMenuLayout(uid_));
+}
+// Une opération = une mutation de la disposition complète + UN seul commit().
+function editMenuLayout(userId, fn){
+  const uid_ = String(userId);
+  const layout = getUserMenuLayout(uid_);
+  if(fn(layout) === false) return;
+  if(!state.userMenuLayout) state.userMenuLayout = {};
+  state.userMenuLayout[uid_] = layout;
   commit();
 }
-// Épingler une page en accès direct (à côté de Planning) plutôt que dans "Plus ▾" — retour
-// utilisateur réel, question directe : « comment faire pour avoir Zone de stockage en dehors de
-// Plus ? ». Même principe "propre à la personne" que l'ordre ci-dessus : `state.userPinnedMenuPages
-// [userId]`, sous-ensemble de `PAGE_MENU_KEYS`, jamais une préférence de navigateur.
-function getUserPinnedMenuPages(userId){
-  const stored = (state.userPinnedMenuPages || {})[String(userId)];
-  // Rien d'enregistré pour cette personne (jamais touché aux épingles) : `conges` est épinglée par
-  // défaut (voir DEFAULT_PINNED_PAGE_KEYS) — dès qu'un tableau existe, même vide (tout dépinglé
-  // explicitement), il fait foi tel quel.
-  const base = Array.isArray(stored) ? stored : DEFAULT_PINNED_PAGE_KEYS;
-  // Une page masquée pour le rôle/la config courante ne doit jamais s'afficher comme bouton direct
-  // cassé — filtrée ici, exactement comme getUserPageMenuOrder/moveUserPageMenuItem le font déjà.
-  return base.filter(k => PAGE_MENU_KEYS.includes(k) && isPageMenuKeyVisible(k));
+// Échange avec le voisin VISIBLE dans le sens demandé (les éléments masqués pour ce rôle gardent leur place) —
+// sinon un clic ▲/▼ pourrait n'avoir aucun effet visible face à une page réservée aux superviseurs.
+function swapAmongVisible(arr, idx, dir, isVisible){
+  let j = idx + dir;
+  while(j >= 0 && j < arr.length && !isVisible(arr[j])) j += dir;
+  if(idx < 0 || j < 0 || j >= arr.length) return false;
+  [arr[idx], arr[j]] = [arr[j], arr[idx]];
 }
-function toggleUserPinnedMenuPage(userId, key){
+const menuItemVisible = it => it.type === 'theme' || isPageMenuKeyVisible(it.key);
+function moveMenuPage(userId, key, dir){
+  editMenuLayout(userId, layout => {
+    const th = layout.items.find(i => i.type === 'theme' && i.pages.includes(key));
+    if(th) return swapAmongVisible(th.pages, th.pages.indexOf(key), dir, isPageMenuKeyVisible);
+    return swapAmongVisible(layout.items, layout.items.findIndex(i => i.type === 'page' && i.key === key), dir, menuItemVisible);
+  });
+}
+function moveMenuTheme(userId, themeId, dir){
+  editMenuLayout(userId, layout => swapAmongVisible(layout.items, layout.items.findIndex(i => i.type === 'theme' && i.id === themeId), dir, menuItemVisible));
+}
+// themeId vide = page directe dans la barre (ajoutée en fin de barre).
+function setMenuPageTheme(userId, key, themeId){
+  editMenuLayout(userId, layout => {
+    if(!PAGE_MENU_KEYS.includes(key)) return false;
+    const target = themeId ? layout.items.find(i => i.type === 'theme' && i.id === themeId) : null;
+    if(themeId && !target) return false;
+    layout.items.forEach(i => { if(i.type === 'theme') i.pages = i.pages.filter(k => k !== key); });
+    layout.items = layout.items.filter(i => !(i.type === 'page' && i.key === key));
+    if(target) target.pages.push(key); else layout.items.push({ type: 'page', key });
+  });
+}
+function addMenuTheme(userId){
+  editMenuLayout(userId, layout => {
+    let id; do { id = 'th' + Math.random().toString(36).slice(2, 7); } while(layout.items.some(i => i.type === 'theme' && i.id === id));
+    layout.items.push({ type: 'theme', id, nom: 'Nouveau thème', icone: '📁', pages: [] });
+  });
+}
+function updateMenuTheme(userId, themeId, field, value){
+  editMenuLayout(userId, layout => {
+    const th = layout.items.find(i => i.type === 'theme' && i.id === themeId);
+    if(!th) return false;
+    if(field === 'nom') th.nom = String(value || '').trim().slice(0, 30) || 'Thème';
+    else if(field === 'icone') th.icone = MENU_THEME_ICONS.includes(value) ? value : '';
+    else return false;
+  });
+}
+// Supprimer un thème ne supprime aucune page : elles deviennent des boutons directs, à sa place.
+function deleteMenuTheme(userId, themeId){
+  editMenuLayout(userId, layout => {
+    const idx = layout.items.findIndex(i => i.type === 'theme' && i.id === themeId);
+    if(idx === -1) return false;
+    layout.items.splice(idx, 1, ...layout.items[idx].pages.map(key => ({ type: 'page', key })));
+  });
+}
+function renderMenuLayoutEditor(userId){
+  const layout = getUserMenuLayout(userId);
+  const themes = layout.items.filter(i => i.type === 'theme');
+  const pageRow = (key, siblings, themeId) => {
+    const vis = siblings.filter(isPageMenuKeyVisible);
+    const idx = vis.indexOf(key);
+    return `
+      <div class="page-menu-item menu-page-row">
+        <span class="page-menu-label">${PAGE_MENU_LABELS[key]}</span>
+        <div class="page-menu-actions">
+          <select class="menu-place-select" data-action="menu-page-to" data-key="${key}" aria-label="Emplacement de ${escapeHtml(PAGE_MENU_LABELS[key])}">
+            <option value="" ${themeId ? '' : 'selected'}>📌 Accès direct (barre)</option>
+            ${themes.map(t => `<option value="${t.id}" ${t.id === themeId ? 'selected' : ''}>${escapeHtml((t.icone ? t.icone + ' ' : '') + t.nom)}</option>`).join('')}
+          </select>
+          <button data-action="menu-move-page" data-key="${key}" data-dir="-1" ${idx <= 0 ? 'disabled' : ''} title="Monter">▲</button>
+          <button data-action="menu-move-page" data-key="${key}" data-dir="1" ${idx === vis.length - 1 ? 'disabled' : ''} title="Descendre">▼</button>
+        </div>
+      </div>`;
+  };
+  const topKeys = layout.items.map(i => i.type === 'page' ? { type: 'page', key: i.key } : i);
+  const visTop = topKeys.filter(menuItemVisible);
+  const body = topKeys.map(it => {
+    if(it.type === 'page'){
+      if(!isPageMenuKeyVisible(it.key)) return '';
+      return pageRow(it.key, layout.items.filter(i => i.type === 'page').map(i => i.key), '');
+    }
+    const tIdx = visTop.indexOf(it);
+    const rows = it.pages.filter(isPageMenuKeyVisible).map(k => pageRow(k, it.pages, it.id)).join('');
+    return `
+      <div class="menu-theme-box">
+        <div class="menu-theme-head">
+          <select data-action="menu-theme-icon" data-theme-id="${it.id}" aria-label="Icône du thème">
+            <option value="" ${it.icone ? '' : 'selected'}>—</option>
+            ${MENU_THEME_ICONS.map(ic => `<option value="${ic}" ${ic === it.icone ? 'selected' : ''}>${ic}</option>`).join('')}
+          </select>
+          <input type="text" maxlength="30" value="${escapeHtml(it.nom)}" data-action="menu-theme-name" data-theme-id="${it.id}" aria-label="Nom du thème">
+          <div class="page-menu-actions">
+            <button data-action="menu-move-theme" data-theme-id="${it.id}" data-dir="-1" ${tIdx <= 0 ? 'disabled' : ''} title="Monter ce thème dans la barre">▲</button>
+            <button data-action="menu-move-theme" data-theme-id="${it.id}" data-dir="1" ${tIdx === visTop.length - 1 ? 'disabled' : ''} title="Descendre ce thème dans la barre">▼</button>
+            <button data-action="menu-theme-del" data-theme-id="${it.id}" title="Supprimer ce thème (ses pages deviennent des boutons directs)">🗑</button>
+          </div>
+        </div>
+        ${rows || `<div class="footer-note" style="text-align:left; padding:6px 0;">Thème vide — rangez-y une page avec le menu « Emplacement » d'une page.</div>`}
+      </div>`;
+  }).join('');
+  return `
+      <div class="menu-layout-editor">${body}</div>
+      <div class="menu-layout-actions">
+        <button class="small" data-action="menu-theme-add">＋ Nouveau thème</button>
+        <button class="small" data-action="menu-reset">↺ Rétablir par défaut</button>
+      </div>`;
+}
+function resetMenuLayout(userId){
+  if(!confirm('Rétablir la disposition par défaut du menu (thèmes « Atelier » et « Temps & présence », Congés en accès direct) ?')) return;
   const uid_ = String(userId);
-  if(!state.userPinnedMenuPages) state.userPinnedMenuPages = {};
-  const stored = state.userPinnedMenuPages[uid_];
-  // Matérialise le tableau complet des épingles par DÉFAUT (DEFAULT_PINNED_PAGE_KEYS, jamais
-  // filtré par visibilité — même réflexe que `toggleKanbanMachineFilter`, voir CLAUDE.md) au premier
-  // basculement pour cette personne, sinon `toggleUserPinnedMenuPage('op1','zones')` sur un compte
-  // n'ayant jamais rien enregistré perdrait silencieusement Congés (épinglée par défaut) au lieu de
-  // simplement lui ajouter Zones de stockage. Repartir de `getUserPinnedMenuPages` (déjà filtré par
-  // rôle/config) casserait au contraire une page épinglée mais temporairement masquée (ex. un
-  // superviseur rétrogradé) — elle doit rester dans le tableau brut, prête à réapparaître si le rôle
-  // est restauré, jamais effacée par un simple basculement d'une AUTRE page.
-  const current = Array.isArray(stored) ? stored : DEFAULT_PINNED_PAGE_KEYS;
-  state.userPinnedMenuPages[uid_] = current.includes(key) ? current.filter(k => k!==key) : [...current, key];
+  ['userMenuLayout', 'userPageMenuOrder', 'userPinnedMenuPages'].forEach(k => { if(state[k]) delete state[k][uid_]; });
   commit();
 }
 let searchQuery = '';
@@ -2388,6 +2524,7 @@ function migrateState(st){
   if(!st.userDefaultPlanningView) st.userDefaultPlanningView = {}; // { [userId]: 'jour'|'semaine'|'mois'|'annee'|'kanban'|'liste' } — vue du planning appliquée à la connexion quand la page d'accueil est Planning, voir applyUserDefaultPageOnStart
   if(!st.userDashboardLayout) st.userDashboardLayout = {}; // { [userId]: { blocks:{order,hidden}, tiles:{order,hidden} } } — Vue d'ensemble personnalisable, propre à la personne
   if(!st.userPageMenuOrder) st.userPageMenuOrder = {}; // { [userId]: PAGE_MENU_KEYS réordonnée } — ordre du menu "Plus ▾" de l'en-tête, propre à la personne (voir CLAUDE.md « Navigation »)
+  if(!st.userMenuLayout) st.userMenuLayout = {}; // { [userId]: { items:[ {type:'page',key} | {type:'theme',id,nom,icone,pages} ] } } — disposition du menu de pages de l'en-tête (thèmes déroulants + pages directes), propre à la personne (voir CLAUDE.md « Navigation »). Absence = migration de l'ancien ordre/des anciennes épingles, sinon défaut.
   if(!st.userPinnedMenuPages) st.userPinnedMenuPages = {}; // { [userId]: string[] } — sous-ensemble de PAGE_MENU_KEYS épinglé en accès direct à côté de Planning, au lieu de rester dans "Plus ▾" (voir CLAUDE.md « Navigation ») — absence d'entrée pour une personne = épingles par défaut (getUserPinnedMenuPages, DEFAULT_PINNED_PAGE_KEYS = Congés), jamais "rien d'épinglé"
   if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
   Object.keys(st.userLunch).forEach(uid_ => {
@@ -7930,59 +8067,51 @@ function renderHeader(){
       <button class="page-switch-btn ${currentPage==='zones'?'active':''}" data-action="goto-zones">📍 Zones de stockage</button>
       ${presenceModuleActive() ? `<button class="page-switch-btn ${currentPage==='monPointage'?'active':''}" data-action="goto-mon-pointage">🙋 Mon pointage</button>` : ''}
     </div>` : (() => {
-      // Menu "Plus ▾" (voir CLAUDE.md « Navigation ») : regroupe, par défaut, tout sauf Planning
-      // (seule page qui reste hors de ce système — l'ancrage permanent de l'appli) — désencombre la
-      // barre sur bureau, sans rien retirer côté mobile (déjà traité ci-dessus). Ordre configurable
-      // par personne (state.userPageMenuOrder, Paramètres → Mon compte), synchronisé comme
-      // userDefaultPage/userDefaultPlanningView. N'importe laquelle de ces pages peut en plus être
-      // ÉPINGLÉE (state.userPinnedMenuPages, même page Paramètres → Mon compte) pour rejoindre
-      // Planning en accès direct plutôt que rester dans "Plus" — retour utilisateur réel, question
-      // directe : « comment faire pour avoir Zone de stockage en dehors de Plus ? ». Congés (épinglée
-      // par DÉFAUT, voir DEFAULT_PINNED_PAGE_KEYS) fait partie de ce même système depuis un second
-      // retour utilisateur, symétrique : « comment faire pour mettre Congés DANS Plus ? » — plus
-      // besoin de la coder en dur en accès direct pour ça.
+      // Menu de pages (voir CLAUDE.md « Navigation ») : après « Planning » (seule page toujours en accès
+      // direct), la disposition PROPRE À LA PERSONNE (state.userMenuLayout, Paramètres → Mon compte) :
+      // des boutons directs et des THÈMES — chaque thème est un menu déroulant qui ouvre ses pages.
+      const presencePendingN = (presenceModuleActive() && canSupervise()) ? (() => { const d = presenceDayData(toDateInputValue(new Date())); return d && d.pending ? d.pending.length : 0; })() : 0;
       const pageMenuDefs = {
-        conges: congesActif ? `🏖 Congés${(canSupervise()&&pendingCount>0)?` <span class="pending-count-badge">${pendingCount}</span>`:''}` : null,
+        conges: congesActif ? '🏖 Congés' : null,
         tempsProd: `⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}`,
         fiche: `📋 ${canSupervise()?'Fiche salarié':'Ma fiche'}`,
         zones: '📍 Zones de stockage',
-        risques: `⚠️ Risques de retard${nbRisque>0?` <span class="pending-count-badge">${nbRisque}</span>`:''}`,
+        risques: '⚠️ Risques de retard',
         pointages: canSupervise() ? '🕘 Pointages' : null,
         historique: canSupervise() ? '📈 Historique' : null,
         dashboard: canSupervise() ? "📊 Vue d'ensemble" : null,
         monPointage: presenceModuleActive() ? '🙋 Mon pointage' : null,
-        presence: (presenceModuleActive() && canSupervise()) ? `👥 Présence${(() => { const d = presenceDayData(toDateInputValue(new Date())); const n = d && d.pending ? d.pending.length : 0; return n>0 ? ` <span class="pending-count-badge">${n}</span>` : ''; })()}` : null,
+        presence: (presenceModuleActive() && canSupervise()) ? '👥 Présence' : null,
         borne: (presenceModuleActive() && canSupervise()) ? '📟 Borne de pointage' : null
       };
+      // Pastilles de comptage : par page, et additionnées sur le déclencheur d'un thème qui les contient.
+      const pageBadgeN = { conges: (canSupervise() && pendingCount > 0) ? pendingCount : 0, risques: nbRisque, presence: presencePendingN };
+      const badgeHtml = n => n > 0 ? ` <span class="pending-count-badge">${n}</span>` : '';
       const gotoAction = { conges:'goto-conges', tempsProd:'goto-temps-prod', fiche:'goto-fiche', zones:'goto-zones', risques:'goto-risques', pointages:'goto-pointages', historique:'goto-historique', dashboard:'goto-dashboard', monPointage:'goto-mon-pointage', presence:'goto-presence', borne:'goto-borne' };
-      const uidForMenu = currentUser ? currentUser.id : '';
-      const pageMenuOrder = getUserPageMenuOrder(uidForMenu);
-      const pinned = getUserPinnedMenuPages(uidForMenu);
-      // Boutons épinglés : rendus EXACTEMENT comme Planning (même classe `.page-switch-btn`, pas
-      // `.small`/`.dd-page-item`) — ils rejoignent l'accès direct, pas la liste compacte du panneau
-      // déroulant. Ordre respecté via `pageMenuOrder`, pas l'ordre d'épinglage.
       // La clé de menu « fiche » correspond à la page « ficheSalarie » (les autres portent le nom de leur page).
       const isCurrentKey = k => currentPage === (k === 'fiche' ? 'ficheSalarie' : k);
-      const pinnedButtons = pageMenuOrder.filter(k => pinned.includes(k) && pageMenuDefs[k] != null).map(k => `
-      <button class="page-switch-btn ${isCurrentKey(k)?'active':''}" data-action="${gotoAction[k]}">${pageMenuDefs[k]}</button>`).join('');
-      const remaining = pageMenuOrder.filter(k => !pinned.includes(k) && pageMenuDefs[k] != null);
-      const items = remaining.map(k => `
-        <button class="page-switch-btn small dd-page-item ${isCurrentKey(k)?'active':''}" data-action="${gotoAction[k]}">${pageMenuDefs[k]}</button>`).join('');
-      // "Plus" disparaît entièrement s'il ne reste plus rien dedans (tout épinglé) — jamais un menu
-      // déroulant vide affiché pour la forme. Les deux badges (risques, congés en attente) restent
-      // visibles sur le déclencheur "Plus" lui-même tant que la page correspondante y est encore —
-      // même principe pour les deux, pas seulement pour risques.
-      const plusBadges = `${(nbRisque>0 && remaining.includes('risques'))?` <span class="pending-count-badge">${nbRisque}</span>`:''}${(canSupervise()&&pendingCount>0 && remaining.includes('conges'))?` <span class="pending-count-badge">${pendingCount}</span>`:''}`;
-      const plusMenu = remaining.length === 0 ? '' : `
-      <details class="dd-menu" data-dd-key="page-plus" ontoggle="openMiniDropdowns['page-plus']=this.open" ${openMiniDropdowns['page-plus']?'open':''}>
-        <summary class="page-switch-btn ${remaining.some(isCurrentKey)?'active':''}">Plus${plusBadges} ▾</summary>
-        <div class="dd-panel dd-page-panel">${items}</div>
+      const layout = getUserMenuLayout(currentUser ? currentUser.id : '');
+      const menuHtml = layout.items.map(it => {
+        if(it.type === 'page'){
+          if(pageMenuDefs[it.key] == null) return '';
+          return `<button class="page-switch-btn ${isCurrentKey(it.key)?'active':''}" data-action="${gotoAction[it.key]}">${pageMenuDefs[it.key]}${badgeHtml(pageBadgeN[it.key])}</button>`;
+        }
+        // Un thème sans aucune page visible pour ce rôle/cette config n'est pas affiché (jamais un menu vide).
+        const pages = it.pages.filter(k => pageMenuDefs[k] != null);
+        if(!pages.length) return '';
+        const ddKey = 'theme-' + it.id;
+        const total = pages.reduce((n, k) => n + (pageBadgeN[k] || 0), 0);
+        return `
+      <details class="dd-menu" data-dd-key="${ddKey}" ontoggle="openMiniDropdowns['${ddKey}']=this.open" ${openMiniDropdowns[ddKey]?'open':''}>
+        <summary class="page-switch-btn ${pages.some(isCurrentKey)?'active':''}">${it.icone ? escapeHtml(it.icone) + ' ' : ''}${escapeHtml(it.nom)}${badgeHtml(total)} ▾</summary>
+        <div class="dd-panel dd-page-panel">${pages.map(k => `
+          <button class="page-switch-btn small dd-page-item ${isCurrentKey(k)?'active':''}" data-action="${gotoAction[k]}">${pageMenuDefs[k]}${badgeHtml(pageBadgeN[k])}</button>`).join('')}</div>
       </details>`;
+      }).join('');
       return `
     <div class="page-switcher">
       <button class="page-switch-btn ${currentPage==='planning'?'active':''}" data-action="goto-planning">Planning</button>
-      ${pinnedButtons}
-      ${plusMenu}
+      ${menuHtml}
     </div>`;
     })();
   return `
@@ -13281,22 +13410,10 @@ function renderSettingsModal(){
         ${['jour','semaine','mois','annee','kanban','liste'].map(v => `<option value="${v}" ${(state.userDefaultPlanningView||{})[String(currentUser?currentUser.id:'')]===v?'selected':''}>${{jour:'Jour',semaine:'Semaine',mois:'Mois',annee:'Année',kanban:'Kanban',liste:'Liste'}[v]}</option>`).join('')}
       </select>
       <div class="footer-note" style="text-align:left; padding-top:6px;">Vue du planning ouverte automatiquement à la connexion (Jour, Semaine, Mois, Année, Kanban ou Liste).</div>` : ''}
-      <div class="modal-section-title" style="margin-top:18px;">Pages du menu « Plus ▾ »</div>
-      <div class="footer-note" style="text-align:left; padding-bottom:8px;">Planning et Congés restent toujours en accès direct, à côté du menu. Pour chacune des pages ci-dessous : « ▲/▼ » change son ordre à l'intérieur de « Plus ▾ » (ou parmi les pages épinglées, voir ci-dessous) ; « 📌 Épingler » la fait rejoindre Planning/Congés en accès direct, sans passer par « Plus ▾ ». Propre à VOTRE compte : vous retrouvez ces choix identiques quel que soit le poste depuis lequel vous vous connectez, jamais réinitialisés par un vidage de cache navigateur.</div>
-      ${(() => {
-        const uid_ = currentUser ? currentUser.id : '';
-        const order = getUserPageMenuOrder(uid_).filter(key => isPageMenuKeyVisible(key));
-        const pinned = getUserPinnedMenuPages(uid_);
-        return order.map((key, idx) => `
-      <div class="page-menu-item">
-        <span class="page-menu-label">${PAGE_MENU_LABELS[key]}${pinned.includes(key)?' <span class="pinned-tag">(épinglée)</span>':''}</span>
-        <div class="page-menu-actions">
-          <button class="${pinned.includes(key)?'pinned':''}" data-action="toggle-page-menu-pin" data-key="${key}" title="${pinned.includes(key)?'Remettre dans « Plus ▾ »':'Épingler en accès direct, à côté de Planning/Congés'}">${pinned.includes(key)?'📥 Retirer':'📌 Épingler'}</button>
-          <button data-action="move-page-menu-item" data-key="${key}" data-dir="-1" ${idx===0?'disabled':''} title="Monter">▲</button>
-          <button data-action="move-page-menu-item" data-key="${key}" data-dir="1" ${idx===order.length-1?'disabled':''} title="Descendre">▼</button>
-        </div>
-      </div>`).join('');
-      })()}` },
+      <div class="modal-section-title" style="margin-top:18px;">Menu des pages</div>
+      <div class="footer-note" style="text-align:left; padding-bottom:8px;">Composez la barre de navigation à votre façon : « Planning » reste toujours à gauche, puis vos <b>thèmes</b> (un menu déroulant qui ouvre ses pages) et vos pages en <b>accès direct</b>, dans l'ordre ci-dessous. Chaque page se range dans le thème de votre choix (ou en accès direct) ; vous pouvez créer, renommer et supprimer des thèmes — supprimer un thème ne supprime aucune page. Propre à VOTRE compte : retrouvé à l'identique sur tous les postes, jamais réinitialisé par un vidage de cache.</div>
+      ${renderMenuLayoutEditor(currentUser ? currentUser.id : '')}
+    ` },
     utilisateurs: { title: `Utilisateurs (${usersList.length})`, body: `
       <div class="machines-grid">
         ${usersList.map(u => {
@@ -16476,10 +16593,10 @@ function renderPresenceSettingsBody(){
       <input type="checkbox" ${actif?'checked':''} data-action="toggle-module-presence">
       Activer le module Pointage présentiel
     </label>
-    <div class="footer-note" style="text-align:left; padding-bottom:12px;">Ajoute la borne de pointage, « Mon pointage » pour chaque salarié et la page « Présence » pour les superviseurs (menu « Plus ▾ »). Désactivé, rien n'apparaît et aucun pointage n'est collecté — les pointages déjà enregistrés sont conservés.</div>
+    <div class="footer-note" style="text-align:left; padding-bottom:12px;">Ajoute la borne de pointage, « Mon pointage » pour chaque salarié et la page « Présence » pour les superviseurs (menu des pages, thème « Temps &amp; présence » par défaut). Désactivé, rien n'apparaît et aucun pointage n'est collecté — les pointages déjà enregistrés sont conservés.</div>
     ${actif ? `
     <div class="modal-section-title">Moyens de pointage</div>
-    <div class="footer-note" style="text-align:left; padding-bottom:8px;"><b>Borne</b> : sur la tablette de l'atelier, ouvrez « Plus ▾ → 📟 Borne de pointage » (compte superviseur). Chacun y pointe avec son nom et un code à 4 chiffres qu'il choisit dans « Mon pointage ».</div>
+    <div class="footer-note" style="text-align:left; padding-bottom:8px;"><b>Borne</b> : sur la tablette de l'atelier, ouvrez « 📟 Borne de pointage » dans le menu des pages (thème « Temps &amp; présence » par défaut) (compte superviseur). Chacun y pointe avec son nom et un code à 4 chiffres qu'il choisit dans « Mon pointage ».</div>
     <label class="statut-chip" style="margin-bottom:6px;">
       <input type="checkbox" ${cfg.telephone?'checked':''} data-action="presence-config" data-field="telephone">
       Autoriser le pointage depuis son téléphone ou un poste (« Mon pointage »)
@@ -17068,14 +17185,11 @@ function dispatchClickAction(action, el){
       }
       break;
     }
-    case 'move-page-menu-item': {
-      moveUserPageMenuItem(currentUser ? currentUser.id : '', el.dataset.key, Number(el.dataset.dir));
-      break;
-    }
-    case 'toggle-page-menu-pin': {
-      toggleUserPinnedMenuPage(currentUser ? currentUser.id : '', el.dataset.key);
-      break;
-    }
+    case 'menu-move-page': moveMenuPage(currentUser ? currentUser.id : '', el.dataset.key, Number(el.dataset.dir)); break;
+    case 'menu-move-theme': moveMenuTheme(currentUser ? currentUser.id : '', el.dataset.themeId, Number(el.dataset.dir)); break;
+    case 'menu-theme-add': addMenuTheme(currentUser ? currentUser.id : ''); break;
+    case 'menu-theme-del': deleteMenuTheme(currentUser ? currentUser.id : '', el.dataset.themeId); break;
+    case 'menu-reset': resetMenuLayout(currentUser ? currentUser.id : ''); break;
     case 'close-settings': closeSettingsModal(); break;
     case 'close-excel-import-result': excelImportResult = null; render(); break;
     case 'close-new-commande-zone-notice': newCommandeZoneNotice = null; render(); break;
@@ -17186,6 +17300,9 @@ function dispatchChangeAction(el, action){
     case 'toggle-user-horaire': toggleUserHoraireActive(el.dataset.userId, el.checked); break;
     case 'user-role': changeUserRole(el.dataset.userId, el.value); break;
     case 'user-email': changeUserEmail(el.dataset.userId, el.value); break;
+    case 'menu-page-to': setMenuPageTheme(currentUser ? currentUser.id : '', el.dataset.key, el.value); break;
+    case 'menu-theme-name': updateMenuTheme(currentUser ? currentUser.id : '', el.dataset.themeId, 'nom', el.value); break;
+    case 'menu-theme-icon': updateMenuTheme(currentUser ? currentUser.id : '', el.dataset.themeId, 'icone', el.value); break;
     case 'user-default-page': updateUserDefaultPage(el.dataset.userId, el.value); break;
     case 'user-default-planning-view': updateUserDefaultPlanningView(el.dataset.userId, el.value); break;
     case 'leave-type-field': updateLeaveTypeField(el.dataset.typeId, el.dataset.field, el.type==='checkbox' ? el.checked : el.value); break;

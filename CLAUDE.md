@@ -2413,6 +2413,51 @@ existante (`backup.js`), mais pour du contenu plutôt qu'un export complet des d
 
 ## Navigation (menu « Plus ▾ », ordre configurable)
 
+> **v1.82.0 — ce système (menu unique « Plus ▾ » + ordre + épingles) est REMPLACÉ par la disposition
+> personnalisable décrite juste ci-dessous.** Le reste de cette section reste le journal des
+> décisions et des pièges qui y ont mené (police du déclencheur, boutons peu visibles, `toggle` qui
+> doit partir de la valeur par défaut...) ; `state.userPageMenuOrder`/`userPinnedMenuPages` ne sont plus
+> écrits, seulement LUS une fois pour migrer la disposition de qui les avait réglés.
+
+### Disposition personnalisable du menu : thèmes déroulants + pages directes (v1.82.0)
+
+Demande utilisateur : « un menu avec un thème qui permet d'ouvrir les pages concernées », vraiment
+personnalisable. Trois propositions faites (thèmes prédéfinis réglables / thèmes entièrement
+personnalisables / barre latérale) — **option retenue : thèmes entièrement personnalisables**.
+
+- **`state.userMenuLayout[userId]`** = `{ items: [ { type:'page', key } | { type:'theme', id, nom, icone,
+  pages:[key] } ] }` (`migrateState` → `{}`) : la liste ORDONNÉE de ce qui s'affiche après « Planning »
+  (seule page toujours en accès direct) — un `page` est un bouton direct, un `theme` un
+  `<details class="dd-menu">` (`data-dd-key="theme-<id>"`, état dans `openMiniDropdowns`) qui ouvre ses
+  pages. Propre à la PERSONNE (`currentUser`), synchronisé par `commit()`, comme `userPageMenuOrder`.
+  Bureau seulement : le bandeau mobile (`mobileHeader`) est inchangé.
+- **Défaut** (`defaultMenuLayout`) : Congés direct, thème « 🏭 Atelier » (Zones, Risques, Vue d'ensemble,
+  Historique) et « ⏱ Temps & présence » (Temps de production, Pointages, Présence, Mon pointage, Fiche
+  salarié, Borne). `legacyMenuLayout(uid)` migre en silence qui avait réglé l'ancien ordre/les anciennes
+  épingles (épingles → boutons directs dans leur ordre, le reste dans les thèmes par défaut ; Congés
+  dépinglé → thème « Équipe »).
+- **`normalizeMenuLayout`** — appliquée à CHAQUE lecture (`getUserMenuLayout`) : la disposition stockée
+  est COMPLÈTE (toutes les pages, visibles ou non pour le rôle — la visibilité, `isPageMenuKeyVisible`,
+  n'est qu'un filtre d'affichage, jamais de stockage, pour qu'un superviseur rétrogradé retrouve sa
+  disposition s'il redevient superviseur) ; clés inconnues/doublons ignorés ; identifiants de thème
+  nettoyés (`[A-Za-z0-9_-]` — l'id finit dans l'attribut inline `ontoggle`, jamais d'injection) ; une page
+  absente (ajoutée par une version ultérieure) est rangée dans son thème par défaut s'il existe encore,
+  sinon dans le dernier thème, sinon en page directe — jamais perdue, jamais de réinitialisation.
+- **Affichage** (`renderHeader`) : un thème sans aucune page visible n'apparaît pas (jamais un menu vide) ;
+  les pastilles de comptage (Congés à valider, Risques, demandes de correction de Présence) s'additionnent
+  sur le déclencheur du thème qui les contient (`pageBadgeN`). Le déclencheur porte `.page-switch-btn`
+  (piège de la police, voir plus bas).
+- **Édition** (Paramètres → Mon compte, `renderMenuLayoutEditor`) : une ligne par élément dans l'ordre de la
+  barre ; chaque page a un sélecteur « Emplacement » (accès direct ou un thème) et ▲/▼ ; un thème a icône
+  (liste fermée `MENU_THEME_ICONS`), nom, ▲/▼ et 🗑 ; « ＋ Nouveau thème », « ↺ Rétablir par défaut »
+  (`confirm()`, efface aussi les anciennes préférences). Chaque action = UNE mutation + UN `commit()`
+  (`editMenuLayout`). ▲/▼ échangent avec le voisin VISIBLE (`swapAmongVisible`) — même réflexe que
+  l'ancien `moveUserPageMenuItem` (un échange avec une page masquée n'aurait aucun effet visible).
+  Supprimer un thème ne supprime aucune page : elles deviennent des boutons directs à sa place.
+- Test (scratchpad `menu_test.js`, 16 assertions : défaut, migration, opérations, employé, id piégé,
+  disposition corrompue, réinitialisation) et parcours réel serveur + navigateur (`menu_ui.js` : barre,
+  ouverture d'un thème, éditeur, nouveau thème, sauvegarde serveur, mobile inchangé à 390 px).
+
 Retour utilisateur réel, capture d'écran à l'appui : la barre de pages de l'en-tête (Planning,
 Congés, Temps de production, Zones de stockage, Risques de retard, Pointages, Historique, Vue
 d'ensemble) déborde visuellement une fois toutes les pages superviseur ajoutées. Demande : la rendre
