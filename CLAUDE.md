@@ -4604,6 +4604,17 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   reprises). Un rendu du type "Jour : {jour du début}" fait croire à tort que tout s'est joué ce
   jour-là (bug réel : une tâche commencée un vendredi et terminée le lundi suivant affichait
   seulement "vendredi"). Toujours comparer les deux dates et afficher la plage si elles diffèrent.
+- **Pop-up Paramètres qui remonte en haut à chaque redessin (bug réel, v1.84.1).** Depuis le passage de la
+  pop-up Paramètres en deux volets, ce n'est plus `.modal-box` qui défile mais `.settings-content-pane`
+  (contenu) et `.settings-nav` (catégories, `overflow-y:auto`) — or `render()` ne mémorisait/restaurait que
+  `.modal-box.scrollTop` (`modalScrollTop`/`restoreModalScroll`, écrit pour l'ancien accordéon à défilement
+  unique). Tout `render()` déclenché depuis la pop-up (« + Ajouter une pause » dans Utilisateurs, cocher une
+  case...) renvoyait donc le contenu tout en haut. Corrigé : `render()` mémorise aussi le défilement des deux
+  volets (`pendingSettingsScroll`) avec la catégorie affichée (`data-section` du volet), restauré par
+  `restoreModalScroll` **seulement si la catégorie est restée la même** (changer de catégorie repart bien
+  en haut). Réflexe : tout nouveau conteneur à défilement interne d'une pop-up doit être ajouté à ce
+  capture-avant/restaure-après, `.modal-box` n'étant plus le seul à défiler. Vérifié en navigateur
+  (`scroll_ui.js`) : 209 → 0 avant correctif, 209 → 209 après ; changement de catégorie → 0.
 - **Ascenseur d'une colonne remonté en haut par un `render()` intégral.** Chaque colonne du Kanban
   (`.kanban-col-body`) a son propre défilement indépendant. Cliquer une carte pour isoler sa commande
   (`card-isolate` → `toggleIsolateCommande` → `render()`) reconstruit tout `#app`, donc tous les

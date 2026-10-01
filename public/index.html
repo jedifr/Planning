@@ -1636,7 +1636,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.84.0';
+const APP_VERSION = '1.84.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -13746,7 +13746,7 @@ function renderSettingsModal(){
       </div>
       <div class="settings-modal-body">
         ${showNav ? `<div class="settings-nav">${navHtml}</div>` : ''}
-        <div class="settings-content-pane">${activeDef ? (showNav ? `<h3 class="settings-content-title">${activeDef.title}</h3>` : '') + activeDef.body : ''}</div>
+        <div class="settings-content-pane" data-section="${escapeHtml(String(activeKey||''))}">${activeDef ? (showNav ? `<h3 class="settings-content-title">${activeDef.title}</h3>` : '') + activeDef.body : ''}</div>
       </div>
     </div>
   </div>${renderPresenceDocModal()}`;
@@ -16714,6 +16714,14 @@ function render(){
   // position de défilement à chaque validation — on la mémorise juste avant, on la réapplique juste après.
   const openModal = document.querySelector('.modal-box');
   const modalScrollTop = openModal ? openModal.scrollTop : null;
+  // Depuis la pop-up Paramètres à deux volets, ce n'est plus `.modal-box` qui défile mais ses deux
+  // volets (`.settings-content-pane`, `.settings-nav`) : sans les mémoriser eux aussi, tout rendu
+  // (ex. « + Ajouter une pause » dans Utilisateurs) remontait le contenu tout en haut (bug réel signalé).
+  // Mémorisé avec la catégorie affichée : changer de catégorie repart bien en haut, seul un redessin de
+  // la MÊME catégorie conserve la position.
+  const settingsPaneEl = document.querySelector('.settings-content-pane');
+  const settingsNavEl = document.querySelector('.settings-nav');
+  pendingSettingsScroll = settingsPaneEl ? { section: settingsPaneEl.dataset.section, pane: settingsPaneEl.scrollTop, nav: settingsNavEl ? settingsNavEl.scrollTop : 0 } : null;
   // La pop-up de retour de pause déjeuner (renderPauseReminderModal) ne doit jamais s'empiler
   // par-dessus une autre pop-up déjà ouverte (Paramètres, correction de pointage...) — elle
   // réapparaîtra au rendu suivant, une fois cette autre pop-up refermée. Calculé sur le DOM d'AVANT
@@ -16914,10 +16922,17 @@ function restoreFocusRef(ref){
     try{ el.setSelectionRange(ref.selectionStart, ref.selectionEnd); }catch(e){ /* pas pris en charge sur ce type de champ */ }
   }
 }
+var pendingSettingsScroll = null; // position des volets de la pop-up Paramètres, posée par render() juste avant le redessin
 function restoreModalScroll(scrollTop){
   if(scrollTop === null) return;
   const modal = document.querySelector('.modal-box');
   if(modal) modal.scrollTop = scrollTop;
+  if(pendingSettingsScroll){
+    const pane = document.querySelector('.settings-content-pane');
+    if(pane && pane.dataset.section === pendingSettingsScroll.section) pane.scrollTop = pendingSettingsScroll.pane;
+    const nav = document.querySelector('.settings-nav');
+    if(nav) nav.scrollTop = pendingSettingsScroll.nav;
+  }
 }
 function captureKanbanScroll(){
   const bodies = document.querySelectorAll('.kanban-col-body[data-col-key]');
