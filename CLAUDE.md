@@ -3910,6 +3910,38 @@ au-dessus.
   cohérent avec l'existant plutôt qu'un traitement différent entre les deux tableaux d'une même
   section ; à revoir si la liste devient trop longue sur une installation avec beaucoup d'historique.
 
+**Lot fusionné compté une seule fois, dérive des démarrages à venir, recherche (v1.87.0).** Retour
+utilisateur réel, export à l'appui : « le retard cumulé est de 23,7 j au Laser ? ces retards proviennent d'un
+regroupement » et « je ne vois aucun retard pour Mazak, Priminer, Tour alors que je constate une dérive tous les
+jours ».
+- **Dédoublonnage par `fusionGroupId`** dans `computeRetardDemarrageParPoste`, `computeRetardDemarrageDetail`
+  (donc aussi le graphique Historique et la tuile « tâches démarrées en retard » de la Vue d'ensemble) et
+  `reportEmail.tachesDemarreesEnRetard` : un lot démarre d'un seul geste (mêmes horodatages sur chaque membre) =
+  UNE tâche en retard. Sur l'export réel : Laser 33 tâches / 23,7 j cumulés → 5 tâches / 4,0 j ; le détail
+  affiche « (+N pièce(s) du même lot) » (`nbPieces`). Même famille de bug que la somme de durées d'un lot (voir
+  « Temps de production vs présence théorique »).
+- **Pourquoi Mazak/Priminer/Tour n'affichaient rien — deux causes.** (1) Le retard « constaté » ne regarde que les
+  tâches DÉJÀ démarrées ET créées depuis l'introduction du suivi : sur l'export, 5 pièces Mazak démarrées sur
+  ~72 ont une prévision (toutes démarrées EN AVANCE de 1 à 11 j sur la file prévue à la création), 1 pour Tour,
+  0 pour Priminer (les 6 pièces démarrées sont antérieures au suivi). (2) La dérive que l'atelier voit au
+  quotidien est surtout celle de tâches qui n'ont **pas encore démarré** et dont le début projeté glisse de jour
+  en jour — invisible tant qu'elles n'ont pas commencé.
+- **`computeDeriveDemarrageAVenir(st, schedule)`** : pour chaque pièce encore `a_faire` (hors sous-traitance/
+  hors planning/poste « sous-traitance »), écart entre son début PROJETÉ aujourd'hui (`o.start` du planning calculé)
+  et la prévision figée à la création (`previsionAuDemarrage.debut`) — même référence que le retard constaté.
+  Seuil 0,5 j, lot compté une fois, instantané recalculé à chaque rendu (rien de stocké). Renvoie `{ parPoste
+  (nb, moyenne, MAX — pas de cumul : sommer des dérives de tâches indépendantes n'a pas de sens), detail }`. Sur
+  l'export : Priminer et Tour +7 j, Chaudronnerie +7 j, Laser +8,6 j max, Mazak +1,3 j. Rendu dans la section
+  renommée « 🕓 Retards et dérives de démarrage » (même clé de repli `retardsDemarrage`), au-dessus des retards
+  constatés ; la section s'affiche dès que l'une des deux listes est non vide.
+- **Recherche de la page Risques** (`risquesSearchQuery`, `#risques-search-input`, `risques-search-clear`,
+  transitoire, même mécanisme de saisie « live » que les Pointages) : filtre les cartes de commandes à risque
+  (nom, réf. client, pièce, étape) et les tableaux DÉTAILLÉS (pauses, retards, dérive : commande, pièce, étape,
+  poste, n° de ligne). **Le tableau de bord du haut et les résumés par poste restent globaux** (`atRiskAll`) —
+  un chiffre par poste qui changerait à la frappe serait trompeur ; le compteur de l'en-tête affiche « N sur M ».
+- Vérifié (Playwright, export réel) : recherche « priminer » = 0 carte, 15 lignes ; focus conservé en tapant ;
+  « Effacer » rétablit 16 cartes ; aucune erreur.
+
 ### Pauses de production à risque
 
 Complète « Retard de démarrage » ci-dessus sur un axe différent : celui-ci mesure un retard **avant**

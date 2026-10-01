@@ -1678,7 +1678,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.86.0';
+const APP_VERSION = '1.87.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -10034,9 +10034,14 @@ function machineNeighbors(byMachine, machineId, pieceId){
 // retardDemarrageBadgeHtml).
 function computeRetardDemarrageParPoste(st){
   const byMachine = {};
+  // Un lot fusionné démarre d'un seul geste (mêmes horodatages sur chaque membre, voir « Regroupement ») :
+  // c'est UNE seule tâche en retard, pas N — sinon un lot de 33 pièces gonflait le retard cumulé d'un
+  // poste de 33 × 0,7 j = 23,7 j (bug réel signalé sur le Laser).
+  const seenGroups = new Set();
   const consider = (o) => {
     const j = retardDemarrageJours(o);
     if(j == null || j < 0.5) return;
+    if(o.fusionGroupId){ if(seenGroups.has(o.fusionGroupId)) return; seenGroups.add(o.fusionGroupId); }
     const key = o.machineId || '—';
     const rec = byMachine[key] || (byMachine[key] = { nbTaches:0, totalJours:0 });
     rec.nbTaches++;
@@ -10057,23 +10062,70 @@ function computeRetardDemarrageParPoste(st){
 // mêmes règles de sélection (retard ≥ 0,5 j, commandes actives ET archivées, `retardDemarrageJours`
 // comme unique source du calcul — jamais un second calcul divergent), triée du retard le plus grand
 // au plus petit (même sens que `commandeRiskDaysLate` sur la liste "⚠️ À risque" de cette page).
+// Un lot fusionné n'y figure qu'UNE fois (`nbPieces` = taille du lot, affichée « +N pièces du même lot »).
 function computeRetardDemarrageDetail(st){
   const rows = [];
+  const byGroup = {};
   const consider = (c, o) => {
     const j = retardDemarrageJours(o);
     if(j == null || j < 0.5) return;
+    if(o.fusionGroupId){
+      if(byGroup[o.fusionGroupId]){ byGroup[o.fusionGroupId].nbPieces++; return; }
+    }
     const m = st.machines.find(mm=>mm.id===o.machineId);
-    rows.push({
+    const row = {
       machineNom: m ? m.nom : 'Poste supprimé',
       commandeId: c.id, commandeNom: c.nom,
       piece: o.piece, etape: o.etape, numeroLigne: o.numeroLigne,
       prevu: o.previsionAuDemarrage.debut, reel: o.debutReel,
-      joursRetard: j
-    });
+      joursRetard: j, nbPieces: 1
+    };
+    if(o.fusionGroupId) byGroup[o.fusionGroupId] = row;
+    rows.push(row);
   };
   (st.commandes||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
   (st.commandesArchivees||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
   return rows.sort((a,b) => b.joursRetard - a.joursRetard);
+}
+// DÉRIVE des démarrages À VENIR (v1.87.0) — retour utilisateur réel : « je ne vois pas de retard de
+// démarrage pour Mazak, Priminer et Tour, je constate quotidiennement une dérive ». Les retards
+// « constatés » ci-dessus ne regardent que les tâches DÉJÀ démarrées : une tâche qui n'a pas encore
+// démarré et dont le début projeté glisse de jour en jour (poste surchargé, tâches précédentes qui
+// débordent) restait invisible tant qu'elle n'avait pas commencé. Ici : pour chaque tâche encore
+// `a_faire`, écart entre son début PROJETÉ aujourd'hui par le moteur (`o.start` du planning calculé) et la
+// prévision figée à sa création (`previsionAuDemarrage.debut`) — la même référence que le retard constaté,
+// donc les deux se lisent ensemble. Seuil 0,5 j, lot fusionné compté une fois, sous-traitance/hors
+// planning exclues (aucune file sur un poste). Instantané : recalculé à chaque rendu, rien de stocké.
+function computeDeriveDemarrageAVenir(st, schedule){
+  const rows = [];
+  const byGroup = {};
+  (schedule||[]).forEach(c => (c.pieces||[]).forEach(o => {
+    if(!o || o.statut !== 'a_faire' || o.sousTraitance || o.horsPlanning) return;
+    const mSt = (st.machines||[]).find(mm=>mm.id===o.machineId);
+    if(mSt && machineNameLooksLikeSousTraitance(mSt.nom)) return;
+    if(!o.previsionAuDemarrage || !o.previsionAuDemarrage.debut || !o.start) return;
+    const j = (new Date(o.start) - new Date(o.previsionAuDemarrage.debut)) / 86400000;
+    if(!(j >= 0.5)) return;
+    if(o.fusionGroupId && byGroup[o.fusionGroupId]){ byGroup[o.fusionGroupId].nbPieces++; return; }
+    const m = (st.machines||[]).find(mm=>mm.id===o.machineId);
+    const row = {
+      machineId: o.machineId || '—', machineNom: m ? m.nom : 'Poste supprimé',
+      commandeId: c.id, commandeNom: c.nom,
+      piece: o.piece, etape: o.etape, numeroLigne: o.numeroLigne,
+      prevu: o.previsionAuDemarrage.debut, projete: o.start,
+      joursDerive: j, nbPieces: 1
+    };
+    if(o.fusionGroupId) byGroup[o.fusionGroupId] = row;
+    rows.push(row);
+  }));
+  const parMachine = {};
+  rows.forEach(r => {
+    const rec = parMachine[r.machineId] || (parMachine[r.machineId] = { machineNom: r.machineNom, nbTaches:0, totalJours:0, maxJours:0 });
+    rec.nbTaches++; rec.totalJours += r.joursDerive; if(r.joursDerive > rec.maxJours) rec.maxJours = r.joursDerive;
+  });
+  const parPoste = Object.keys(parMachine).map(k => ({ machineId:k, machineNom: parMachine[k].machineNom, nbTaches: parMachine[k].nbTaches,
+    moyenneJours: parMachine[k].totalJours / parMachine[k].nbTaches, maxJours: parMachine[k].maxJours })).sort((a,b) => b.maxJours - a.maxJours);
+  return { parPoste, detail: rows.sort((a,b) => b.joursDerive - a.joursDerive) };
 }
 // Instantané de l'état de chaque poste, pour la page "📊 Vue d'ensemble" (voir CLAUDE.md, section
 // dédiée) — 'actif' dès qu'une pièce en_cours occupe le poste (priorité sur 'pause' : un poste
@@ -10378,13 +10430,25 @@ async function avertirChefAtelier(cid, btn){
   }
   if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
 }
+// Recherche de la page « Risques de retard » (v1.87.0) — transitoire, jamais persistée. Filtre les cartes de
+// commandes à risque et les tableaux DÉTAILLÉS (pauses, retards, dérives) ; les résumés par poste et le
+// tableau de bord du haut restent globaux (un chiffre par poste qui changerait avec la frappe serait trompeur).
+var risquesSearchQuery = '';
+function risquesSearchMatch(...parts){
+  const q = String(risquesSearchQuery || '').trim().toLowerCase();
+  if(!q) return true;
+  return parts.some(p => p != null && String(p).toLowerCase().includes(q));
+}
 function renderRisquesPage(){
   const schedule = getSchedule();
   // Même filtre "commande active" que la liste principale (renderCommandes) : une commande
   // totalement terminée peut apparaître en retard sur sa toute dernière étape sans que ce soit
   // pertinent à afficher ici — elle est déjà finie.
   const active = schedule.filter(c => c.pieces.length===0 || !c.pieces.every(o=>o.statut==='termine'));
-  const atRisk = active.filter(isCommandeAtRisk).sort((a,b) => commandeRiskDaysLate(b) - commandeRiskDaysLate(a));
+  const atRiskAll = active.filter(isCommandeAtRisk).sort((a,b) => commandeRiskDaysLate(b) - commandeRiskDaysLate(a));
+  // `atRiskAll` alimente le tableau de bord et les calculs globaux ; `atRisk` (filtré par la recherche) ne
+  // sert qu'à l'affichage des cartes et du détail des pauses.
+  const atRisk = atRiskAll.filter(c => risquesSearchMatch(c.nom, c.refClient, ...c.pieces.map(o => o.piece), ...c.pieces.map(o => o.etape)));
   const machineTimelines = buildMachineTimelines(schedule);
   const bodyCards = atRisk.length ? atRisk.map(c => {
     const joursRetard = Math.ceil(commandeRiskDaysLate(c));
@@ -10455,7 +10519,9 @@ function renderRisquesPage(){
       </table>` : ''}
     </div>`;
   }).join('') : '';
-  const body = atRisk.length ? bodyCards : `<div class="empty-state"><strong>Aucune commande à risque</strong>Toutes les commandes en cours respectent leur échéance estimée.</div>`;
+  const body = atRisk.length ? bodyCards : (atRiskAll.length
+    ? `<div class="empty-state"><strong>Aucune commande à risque ne correspond à « ${escapeHtml(risquesSearchQuery)} »</strong>Effacez la recherche pour revoir les ${atRiskAll.length} commande(s) à risque.</div>`
+    : `<div class="empty-state"><strong>Aucune commande à risque</strong>Toutes les commandes en cours respectent leur échéance estimée.</div>`);
   const nowPauses = new Date();
   const pauseParPoste = computePauseTimeParPoste(state, nowPauses);
   const pausesARisque = computePausesARisque(atRisk, nowPauses);
@@ -10491,37 +10557,57 @@ function renderRisquesPage(){
     </div>`}
   </section>` : '';
   const retardsDemarrage = computeRetardDemarrageParPoste(state);
-  const retardsDemarrageDetail = computeRetardDemarrageDetail(state);
-  const retardsDemarrageHtml = retardsDemarrage.length ? `
+  const retardsDemarrageDetail = computeRetardDemarrageDetail(state).filter(r => risquesSearchMatch(r.commandeNom, r.piece, r.etape, r.machineNom, r.numeroLigne));
+  const derive = computeDeriveDemarrageAVenir(state, schedule);
+  const deriveDetail = derive.detail.filter(r => risquesSearchMatch(r.commandeNom, r.piece, r.etape, r.machineNom, r.numeroLigne));
+  const lotTxt = (r) => r.nbPieces > 1 ? ` <span class="footer-note" style="margin:0;">(+${r.nbPieces-1} pièce(s) du même lot)</span>` : '';
+  const commandeLink = (r) => `<button class="temps-prod-commande-link" data-action="isolate-commande-goto-planning" data-cid="${r.commandeId}" style="background:none; border:none; padding:0; color:var(--text);">${escapeHtml(r.commandeNom)}</button>`;
+  const pieceCell = (r) => `${escapeHtml([r.piece, r.etape].filter(Boolean).join(' / ')||'—')}${r.numeroLigne?` <span class="footer-note" style="margin:0;">(n°${escapeHtml(r.numeroLigne)})</span>`:''}${lotTxt(r)}`;
+  const retardsDemarrageHtml = (retardsDemarrage.length || derive.detail.length) ? `
   <section class="panel">
     <div class="panel-head">
-      <h2>🕓 Retards de démarrage constatés</h2>
+      <h2>🕓 Retards et dérives de démarrage</h2>
       <div style="display:flex; align-items:center; gap:8px;">
         <span class="footer-note" style="margin:0;">Par poste, jamais par personne</span>
         <button class="ghost icon-btn collapse-chevron ${isPanelEffectivelyCollapsed('retardsDemarrage')?'collapsed':''}" data-action="toggle-panel-collapse" data-key="retardsDemarrage" title="${isPanelEffectivelyCollapsed('retardsDemarrage')?'Déplier':'Replier'}">▾</button>
       </div>
     </div>
     ${isPanelEffectivelyCollapsed('retardsDemarrage') ? '' : `<div class="panel-body">
-      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Écart entre la date de début que le planning prévoyait juste avant qu'une tâche ne démarre réellement, et son démarrage effectif. Mesuré uniquement à partir de maintenant — aucune donnée avant l'introduction de ce suivi. Regroupé par poste plutôt que par personne : ce retard tient à la disponibilité du poste et à l'ordonnancement, pas à qui a fini par exécuter la tâche.</div>
+      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Écart entre la date de début que le planning prévoyait <b>à la création</b> d'une tâche et son démarrage — réel pour une tâche déjà démarrée (« constatés »), projeté aujourd'hui par le moteur pour une tâche qui n'a pas encore démarré (« dérive »). Un lot fusionné ne compte que pour une tâche. Mesuré uniquement sur les tâches créées depuis l'introduction de ce suivi. Regroupé par poste plutôt que par personne : cet écart tient à la disponibilité du poste et à l'ordonnancement.</div>
+      ${derive.parPoste.length ? `
+      <div class="modal-section-title" style="margin-top:4px;">📈 Dérive des démarrages à venir (tâches pas encore démarrées)</div>
+      <table class="ops-table">
+        <thead><tr><th>Poste</th><th>Tâches en dérive</th><th>Dérive moyenne</th><th>Dérive max</th></tr></thead>
+        <tbody>${derive.parPoste.map(r => `<tr><td>${escapeHtml(r.machineNom)}</td><td>${r.nbTaches}</td><td>${Math.round(r.moyenneJours*10)/10} j</td><td>${Math.round(r.maxJours*10)/10} j${miniBarHtml(r.maxJours, derive.parPoste[0].maxJours, 'var(--red)')}</td></tr>`).join('')}</tbody>
+      </table>
+      ${deriveDetail.length ? `
+      <table class="ops-table" style="margin-top:10px;">
+        <thead><tr><th>Poste</th><th>Commande</th><th>Pièce / Étape</th><th>Début prévu à la création</th><th>Début projeté aujourd'hui</th><th>Dérive</th></tr></thead>
+        <tbody>${deriveDetail.map(r => `<tr>
+          <td>${escapeHtml(r.machineNom)}</td><td>${commandeLink(r)}</td><td>${pieceCell(r)}</td>
+          <td>${formatDT(new Date(r.prevu))}</td><td>${formatDT(new Date(r.projete))}</td>
+          <td style="color:var(--red); font-weight:600;">+${Math.round(r.joursDerive*10)/10} j</td>
+        </tr>`).join('')}</tbody>
+      </table>` : `<div class="footer-note" style="text-align:left; padding-top:6px;">Aucune tâche en dérive ne correspond à « ${escapeHtml(risquesSearchQuery)} ».</div>`}` : ''}
+      ${retardsDemarrage.length ? `
+      <div class="modal-section-title" style="margin-top:18px;">🕓 Retards de démarrage constatés (tâches déjà démarrées)</div>
       <table class="ops-table">
         <thead><tr><th>Poste</th><th>Tâches démarrées en retard</th><th>Retard moyen</th><th>Retard cumulé</th></tr></thead>
         <tbody>${retardsDemarrage.map(r => `<tr><td>${escapeHtml(r.machineNom)}</td><td>${r.nbTaches}</td><td>${Math.round(r.moyenneJours*10)/10} j</td><td>${Math.round(r.totalJours*10)/10} j${miniBarHtml(r.totalJours, retardsDemarrage[0].totalJours, 'var(--amber)')}</td></tr>`).join('')}</tbody>
       </table>
+      ${retardsDemarrageDetail.length ? `
       <div class="modal-section-title" style="margin-top:16px;">Détail des tâches concernées</div>
       <table class="ops-table">
         <thead><tr><th>Poste</th><th>Commande</th><th>Pièce / Étape</th><th>Début prévu</th><th>Début réel</th><th>Retard</th></tr></thead>
         <tbody>${retardsDemarrageDetail.map(r => `<tr>
-          <td>${escapeHtml(r.machineNom)}</td>
-          <td><button class="temps-prod-commande-link" data-action="isolate-commande-goto-planning" data-cid="${r.commandeId}" style="background:none; border:none; padding:0; color:var(--text);">${escapeHtml(r.commandeNom)}</button></td>
-          <td>${escapeHtml([r.piece, r.etape].filter(Boolean).join(' / ')||'—')}${r.numeroLigne?` <span class="footer-note" style="margin:0;">(n°${escapeHtml(r.numeroLigne)})</span>`:''}</td>
-          <td>${formatDT(new Date(r.prevu))}</td>
-          <td>${formatDT(new Date(r.reel))}</td>
+          <td>${escapeHtml(r.machineNom)}</td><td>${commandeLink(r)}</td><td>${pieceCell(r)}</td>
+          <td>${formatDT(new Date(r.prevu))}</td><td>${formatDT(new Date(r.reel))}</td>
           <td>${Math.round(r.joursRetard*10)/10} j</td>
         </tr>`).join('')}</tbody>
-      </table>
+      </table>` : `<div class="footer-note" style="text-align:left; padding-top:6px;">Aucun retard constaté ne correspond à « ${escapeHtml(risquesSearchQuery)} ».</div>`}` : ''}
     </div>`}
   </section>` : '';
-  const summary = computeRisquesSummaryStats(atRisk, pauseParPoste, retardsDemarrage);
+  const summary = computeRisquesSummaryStats(atRiskAll, pauseParPoste, retardsDemarrage);
   const summaryHtml = `
   <section class="panel">
     <div class="panel-head">
@@ -10557,7 +10643,7 @@ function renderRisquesPage(){
     <div class="panel-head">
       <h2>⚠️ Risques de retard</h2>
       <div style="display:flex; align-items:center; gap:8px;">
-        <span class="footer-note" style="margin:0;">${atRisk.length} commande(s) à risque</span>
+        <span class="footer-note" style="margin:0;">${risquesSearchQuery.trim() ? `${atRisk.length} sur ${atRiskAll.length}` : atRisk.length} commande(s) à risque</span>
         <button class="ghost icon-btn collapse-chevron ${isPanelEffectivelyCollapsed('atRisk')?'collapsed':''}" data-action="toggle-panel-collapse" data-key="atRisk" title="${isPanelEffectivelyCollapsed('atRisk')?'Déplier':'Replier'}">▾</button>
       </div>
     </div>
@@ -10570,8 +10656,14 @@ function renderRisquesPage(){
   // à gauche (des cartes, profitent d'une colonne pleine largeur plutôt que de se partager une
   // grille avec d'autres cartes de hauteur très différente) ; Pauses de production + Retards de
   // démarrage empilés à droite (des tableaux par poste, plus courts et plus réguliers en hauteur).
+  const searchBarHtml = `
+  <div class="search-bar" style="margin:0 0 12px;">
+    <input type="text" id="risques-search-input" placeholder="🔍 Rechercher une commande, une pièce, une étape, un poste, une référence client..." value="${escapeHtml(risquesSearchQuery)}" style="width:auto; flex:1; min-width:220px;">
+    ${risquesSearchQuery.trim() ? `<button class="ghost small" data-action="risques-search-clear">✕ Effacer</button>` : ''}
+  </div>`;
   return `
   ${summaryHtml}
+  ${searchBarHtml}
   <div class="risques-two-col">
     <div class="risques-col-left">${risquesHtml}</div>
     <div class="risques-col-right">${pausesHtml}${retardsDemarrageHtml}</div>
@@ -17440,6 +17532,7 @@ function dispatchClickAction(action, el){
     case 'change-user-password': changeUserPassword(el.dataset.id, el.dataset.username); break;
     case 'change-my-password': changeMyPassword(); break;
     case 'clear-user-machines': clearUserMachines(el.dataset.userId); break;
+    case 'risques-search-clear': risquesSearchQuery = ''; render(); break;
     case 'select-settings-section': settingsActiveSection = el.dataset.key; saveSettingsUIPrefs(); render(); break;
     case 'move-settings-section': {
       // Échange avec le voisin de la même rubrique ET visible pour ce rôle (sinon un échange avec une
@@ -18110,6 +18203,12 @@ document.addEventListener('input', (e) => {
     zonesSearchQuery = e.target.value;
     render();
     const el = document.getElementById('zones-search-input');
+    if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
+  }
+  if(e.target.id === 'risques-search-input'){
+    risquesSearchQuery = e.target.value;
+    render();
+    const el = document.getElementById('risques-search-input');
     if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
   }
   if(e.target.id === 'pointages-search-input'){

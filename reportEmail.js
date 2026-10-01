@@ -37,12 +37,18 @@ function retardDemarrageJours(o){
 // computeRetardDemarrageDetail côté client.
 function tachesDemarreesEnRetard(state, since){
   const rows = [];
+  // Un lot fusionné démarre d'un seul geste : une seule tâche en retard, pas une par pièce du lot
+  // (même règle que computeRetardDemarrageDetail côté client).
+  const seenGroups = new Set();
   const consider = (c, o) => {
     if(!o.debutReel) return;
     const d = new Date(o.debutReel);
     if(isNaN(d.getTime()) || d < since) return;
     const j = retardDemarrageJours(o);
-    if(j != null && j >= 0.5) rows.push({ commandeNom: c.nom, piece: o.piece, etape: o.etape, joursRetard: j });
+    if(j != null && j >= 0.5){
+      if(o.fusionGroupId){ if(seenGroups.has(o.fusionGroupId)) return; seenGroups.add(o.fusionGroupId); }
+      rows.push({ commandeNom: c.nom, piece: o.piece, etape: o.etape, joursRetard: j });
+    }
   };
   (state.commandes||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
   (state.commandesArchivees||[]).forEach(c => c.pieces.forEach(o => consider(c, o)));
