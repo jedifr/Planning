@@ -1636,7 +1636,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.82.0';
+const APP_VERSION = '1.83.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -7603,7 +7603,7 @@ function handleCustomImportFile(e){
         profileId: null, profileName: '',
         map: { reference:'', referenceSplitSlash:true, reference2:'', reference2Sep:' ', refClient:'', dateBesoin:'', urgence:'', poste:'', piece:'', etape:'',
                quantite:'', dureeMode:'unitaire', dureeColonne:'', phase:'', operateur:'', matiere:'', epaisseur:'', dateDebutPossible:'',
-               defaultMachineId:'', defaultOperatorByMachine:{}, urgenceDefaut:'normale', urgenceDefautActif:true },
+               defaultMachineId:'', defaultOperatorByMachine:{}, urgenceDefaut:'normale', urgenceDefautActif:true, phaseAuto:true },
         posteValues: [], posteMapping: {}, groupByValue: {}, sousTraitanceByValue: {}, profileMapSnapshot: null, preview: null
       };
       let lastProfileId = null;
@@ -7635,6 +7635,7 @@ function applyImportProfile(profileId){
   if(customImportState.map.dateDebutPossible === undefined) customImportState.map.dateDebutPossible = ''; // profil créé avant la date de début possible
   if(customImportState.map.urgenceDefaut === undefined) customImportState.map.urgenceDefaut = 'normale'; // profil créé avant l'urgence par défaut
   if(customImportState.map.urgenceDefautActif === undefined) customImportState.map.urgenceDefautActif = true; // profil créé avant la case de désactivation
+  if(customImportState.map.phaseAuto === undefined) customImportState.map.phaseAuto = false; // profil créé avant la phase automatique : comportement inchangé (tout en phase 1 sans colonne Phase), jamais activé à son insu
   // Reclasse les clés du profil (valeurs brutes du fichier) selon la même normalisation que le
   // reste de l'import — un profil enregistré avant l'ajout de cette normalisation avait ses clés
   // dans la casse d'origine, ce qui les rendait invisibles aux comparaisons normalisées actuelles.
@@ -7800,6 +7801,25 @@ function transformCustomRow(row, map, posteMapping, groupByValue, sousTraitanceB
     'DateDebutPossible': map.dateDebutPossible ? row[map.dateDebutPossible] : ''
   };
 }
+// Phase automatique selon l'ordre des lignes du fichier (voir CLAUDE.md « Phase automatique à l'import
+// personnalisé ») : pour une MÊME pièce d'une même commande, la phase augmente à chaque changement
+// d'étape par rapport à la ligne précédente de cette pièce — jamais à chaque ligne : deux lots de la même
+// étape (numéros de ligne différents, voir « Numéro de ligne ») restent en parallèle, même phase.
+// Étape = libellé d'étape s'il existe, sinon le poste. Appliquée sur les groupes déjà construits, donc
+// seulement aux lignes réellement retenues (jamais aux lignes ignorées), dans l'ordre du fichier.
+function autoNumberPhasesByFileOrder(groups){
+  Object.values(groups).forEach(g => {
+    const last = {};
+    g.pieces.forEach(pc => {
+      const pk = String(pc.piece||'').trim().toLowerCase();
+      const step = String(pc.etape||'').trim().toLowerCase() || ('poste:' + (pc.machineId||''));
+      const prev = last[pk];
+      const phase = !prev ? 1 : (prev.step === step ? prev.phase : prev.phase + 1);
+      last[pk] = { step, phase };
+      pc.phase = phase;
+    });
+  });
+}
 function proceedFromPostes(){
   const cs = customImportState;
   // L'association n'est plus obligatoire : un poste laissé "— à associer —" fait simplement
@@ -7810,6 +7830,8 @@ function proceedFromPostes(){
     transformedRows, 'Référence commande', 'Date de besoin (JJ/MM/AAAA)', 'Urgence', 'Poste',
     'Pièce', 'Étape', 'Temps unitaire (min)', 'Quantité', 'Phase', 'Opérateur', 'Matière', 'Épaisseur', 'GroupTag', 'SousTraitance', 'Réf commande client', 'NumeroLigne', 'DateDebutPossible'
   );
+  // Une colonne Phase associée prime toujours sur la numérotation automatique.
+  if(cs.map.phaseAuto && !cs.map.phase) autoNumberPhasesByFileOrder(groups);
   const refs = Object.keys(groups);
   const nbNouvelles = refs.filter(r=>!groups[r].existing && groups[r].pieces.length>0).length;
   const nbFusions = refs.filter(r=>groups[r].existing && groups[r].pieces.length>0).length;
@@ -7824,6 +7846,19 @@ function updateImportPreviewPoste(oid, machineId){
   Object.values(cs.preview.groups).forEach(g => {
     const pc = g.pieces.find(pp=>pp.id===oid);
     if(pc) pc.machineId = machineId;
+  });
+  render();
+}
+// Phase corrigeable ligne par ligne dans l'aperçu, qu'elle vienne du fichier, de la numérotation
+// automatique ou de rien (1) : le « Début au mieux » se recalcule au rendu qui suit. Ne renumérote jamais
+// les autres lignes — une correction ponctuelle reste ponctuelle.
+function updateImportPreviewPhase(oid, value){
+  const cs = customImportState;
+  if(!cs || !cs.preview) return;
+  const val = Math.max(1, Math.round(Number(value)) || 1);
+  Object.values(cs.preview.groups).forEach(g => {
+    const pc = g.pieces.find(pp=>pp.id===oid);
+    if(pc) pc.phase = val;
   });
   render();
 }
@@ -12811,7 +12846,12 @@ function renderCustomImportModal(){
           </select>
         </div>
         ${fieldSelect('dureeColonne', cs.map.dureeMode==='total' ? 'Colonne durée totale (h)' : 'Colonne temps unitaire (min)', true)}
-        ${fieldSelect('phase','Phase',false)}
+        ${fieldSelect('phase','Phase',false, `
+          <label class="field" style="display:flex; align-items:center; gap:6px; font-weight:400; margin-top:6px;">
+            <input type="checkbox" style="width:auto;" ${cs.map.phase?'disabled':''} ${(cs.map.phaseAuto && !cs.map.phase)?'checked':''} data-action="toggle-custom-import-phase-auto">
+            Numéroter automatiquement selon l'ordre des lignes
+          </label>
+          <div class="footer-note" style="text-align:left; margin-top:4px;">${cs.map.phase ? 'Désactivé : la colonne Phase associée prime.' : 'Sans colonne Phase : pour une même pièce, la phase passe à 2, 3… à chaque changement d\'étape d\'une ligne à la suivante (deux lignes de la même étape restent en parallèle). Corrigeable ligne par ligne dans l\'aperçu.'}</div>`)}
         ${fieldSelect('operateur','Opérateur',false)}
         ${fieldSelect('matiere','Matière',false)}
         ${fieldSelect('epaisseur','Épaisseur',false)}
@@ -12916,6 +12956,7 @@ function renderCustomImportModal(){
           <td><select data-action="update-import-preview-poste" data-oid="${pc.id}">${machineOptions(pc.machineId)}</select></td>
           <td><select data-action="update-import-preview-operateur" data-oid="${pc.id}">${operatorOptions(pc.operatorUserId)}</select></td>
           <td>${durationLabel((pc.tempsUnitaire*pc.quantite)/60)}</td>
+          <td><input type="number" min="1" step="1" class="phase-input" style="width:60px;" value="${pc.phase||1}" data-action="update-import-preview-phase" data-oid="${pc.id}" title="Une phase supérieure attend la fin de la phase précédente de la même pièce"></td>
           <td><input type="date" value="${pc.dateDebutPossible||''}" data-action="update-import-preview-date-debut-possible" data-oid="${pc.id}" title="Optionnel — la tâche ne pourra jamais démarrer avant, ex. en attente d'une matière"></td>
           <td>${debutPrevu ? formatDT(debutPrevu) : '—'}</td>
           <td>${projectedEnds[pc.id] ? formatDT(projectedEnds[pc.id]) : '—'}</td>
@@ -12936,15 +12977,15 @@ function renderCustomImportModal(){
           <option value="urgente" ${g.urgence==='urgente'?'selected':''}>Urgente</option>
         </select>
       </span>`;
-      return `<tr><td colspan="7" style="background:var(--panel-2); font-weight:600;">${escapeHtml(ref)} — ${g.existing?'fusion dans commande existante':'nouvelle commande'}${refHeadSuffix}${g.existing?'':urgenceSelect}</td></tr>${pieceRows}`;
+      return `<tr><td colspan="8" style="background:var(--panel-2); font-weight:600;">${escapeHtml(ref)} — ${g.existing?'fusion dans commande existante':'nouvelle commande'}${refHeadSuffix}${g.existing?'':urgenceSelect}</td></tr>${pieceRows}`;
     }).join('');
     body = `
       <div class="modal-section-title" style="margin-top:0;">Aperçu avant import</div>
       <div class="leave-confirm-banner">
         <strong>${p.nbNouvelles}</strong> nouvelle(s) commande(s), <strong>${p.nbFusions}</strong> fusion(s) dans une commande existante, <strong>${p.nbPieces}</strong> pièce(s) au total.
       </div>
-      <div class="footer-note" style="text-align:left; margin-bottom:6px;">Poste, opérateur et date de début possible peuvent être corrigés ici avant de valider, ligne par ligne — les colonnes "Début au mieux"/"Fin au mieux" et la livraison au plus tôt de chaque commande se recalculent aussitôt en fonction. L'urgence, elle, se corrige une fois par commande (sélecteur à côté de son nom, ci-dessous) — pas de fusion dans une commande existante, dont l'urgence n'est jamais modifiée par l'import. C'est une simulation sur l'état actuel du planning, pas un engagement figé : la position réelle une fois importée dépendra de ce qui aura changé entre-temps (autres commandes, priorités).</div>
-      ${refRows ? `<table class="ops-table"><thead><tr><th>Pièce / Étape</th><th>Poste</th><th>Opérateur</th><th>Durée</th><th>Départ possible</th><th>Début au mieux</th><th>Fin au mieux</th></tr></thead><tbody>${refRows}</tbody></table>` : ''}
+      <div class="footer-note" style="text-align:left; margin-bottom:6px;">Poste, opérateur, phase et date de début possible peuvent être corrigés ici avant de valider, ligne par ligne — les colonnes "Début au mieux"/"Fin au mieux" et la livraison au plus tôt de chaque commande se recalculent aussitôt en fonction. L'urgence, elle, se corrige une fois par commande (sélecteur à côté de son nom, ci-dessous) — pas de fusion dans une commande existante, dont l'urgence n'est jamais modifiée par l'import. C'est une simulation sur l'état actuel du planning, pas un engagement figé : la position réelle une fois importée dépendra de ce qui aura changé entre-temps (autres commandes, priorités).</div>
+      ${refRows ? `<table class="ops-table"><thead><tr><th>Pièce / Étape</th><th>Poste</th><th>Opérateur</th><th>Durée</th><th title="Une phase supérieure attend la fin de la phase précédente de la même pièce">Phase</th><th>Départ possible</th><th>Début au mieux</th><th>Fin au mieux</th></tr></thead><tbody>${refRows}</tbody></table>` : ''}
       ${(() => {
         // Détail complet (valeurs du fichier), pas juste un résumé texte par ligne — pour retrouver
         // à quoi correspondait une ligne ignorée sans devoir rouvrir l'Excel.
@@ -17388,6 +17429,8 @@ function dispatchChangeAction(el, action){
     case 'custom-import-duree-mode': setCustomImportDureeMode(el.value); break;
     case 'custom-import-default-poste': if(customImportState){ customImportState.map.defaultMachineId = el.value; render(); } break;
     case 'custom-import-default-urgence': if(customImportState){ customImportState.map.urgenceDefaut = el.value; render(); } break;
+    case 'toggle-custom-import-phase-auto': if(customImportState){ customImportState.map.phaseAuto = el.checked; render(); } break;
+    case 'update-import-preview-phase': updateImportPreviewPhase(el.dataset.oid, el.value); break;
     case 'toggle-custom-import-urgence-defaut-actif': if(customImportState){ customImportState.map.urgenceDefautActif = el.checked; render(); } break;
     case 'update-import-preview-urgence': updateImportPreviewUrgence(el.dataset.ref, el.value); break;
     case 'custom-import-default-operator-for-machine': if(customImportState){

@@ -3307,6 +3307,41 @@ pas démarrer avant l'arrivée d'une matière première, connue au moment de pr�
   (`isDeferredTimeField`, voir Pièges) — aucun code supplémentaire nécessaire, le mécanisme est
   générique à tout champ `type="date"`/`"time"` porteur d'un `data-action`.
 
+### Phase automatique et phase corrigeable à l'aperçu (import personnalisé, v1.83.0)
+
+Retour utilisateur réel : « comment réorganiser mes phases de production à l'import personnalisé ? » —
+jusque-là, seule une colonne « Phase » du fichier les fixait ; sans elle, tout arrivait en phase 1 (aucun
+ordre imposé par le moteur, voir « Dépendances de phase ») et il fallait tout corriger ligne par ligne
+après coup. Quatre pistes proposées, **retenue : la numérotation automatique + la correction à l'aperçu**.
+
+- `map.phaseAuto` (bool) — case « Numéroter automatiquement selon l'ordre des lignes », sous le champ
+  « Phase » de l'étape de correspondance. **Cochée par défaut pour un nouvel import**, mais un profil
+  enregistré avant ce champ retombe sur `false` (`applyImportProfile`) : jamais activée à l'insu de qui
+  avait un comportement existant. **Une colonne Phase associée prime toujours** (case désactivée, note
+  explicite) — la numérotation ne sert qu'à défaut de colonne.
+- `autoNumberPhasesByFileOrder(groups)` (appelée par `proceedFromPostes`, sur les groupes déjà construits —
+  donc seulement les lignes retenues, jamais les lignes ignorées — dans l'ordre du fichier) : pour une MÊME
+  pièce d'une même commande/campagne (nom insensible à la casse, comme les dépendances de phase), la phase
+  vaut 1 à la première ligne, **augmente à chaque changement d'étape par rapport à la ligne précédente de
+  cette pièce**, reste identique si l'étape est la même. Étape = libellé d'étape, sinon le poste. Règle
+  « changement par rapport à la ligne d'avant » et non « n-ième ligne » : deux lots de la même étape (numéros
+  de ligne différents, voir « Numéro de ligne ») restent en parallèle au lieu d'être chaînés à tort ; un retour
+  sur une étape déjà vue (Laser → Pliage → Laser) compte bien une nouvelle phase. Une même pièce dans deux
+  commandes repart à 1 dans chacune. Fusion dans une commande existante : le décalage `existingMaxPhase` de
+  `commitImportGroups` s'applique comme avant.
+- **Colonne « Phase » éditable dans l'aperçu** (`updateImportPreviewPhase(oid, value)`, `data-action=
+  "update-import-preview-phase"`, entier ≥ 1, valeur invalide → 1) : comme poste/opérateur/départ possible,
+  un champ de PIÈCE retrouvé par `oid` dans `cs.preview.groups`. « Début au mieux »/« Fin au mieux » et la
+  livraison au plus tôt se recalculent au rendu suivant (`simulateImportStarts` lit déjà les phases). Une
+  correction ne renumérote **jamais** les autres lignes — elle reste ponctuelle. La ligne de titre de
+  commande passe à `colspan="8"` avec la colonne ajoutée.
+- Réflexe : la numérotation suppose que l'ordre du fichier suit la gamme de fabrication ; si ce n'est pas le
+  cas, décocher la case (tout en phase 1) ou corriger à l'aperçu.
+- Test (scratchpad `phase_test.js`, 8 assertions : étapes successives, lots parallèles, repli sur le poste,
+  retour sur une étape, repart à 1 par commande, correction/bornes) et parcours réel navigateur
+  (`phase_ui.js` : case cochée/désactivée selon la colonne Phase, aperçu 1,2,3 / 1,2, correction à 2,
+  phases transmises dans `preview.groups`).
+
 ### Urgence par défaut à l'import personnalisé
 
 Retour utilisateur réel, capture d'écran à l'appui (export GPAO client, colonne "Urgence" laissée
