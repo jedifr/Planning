@@ -1532,10 +1532,14 @@ l'utilisateur récupère lui-même dans sa propre session TimeMoto (reCAPTCHA fr
   jamais un pointage annulé à la main par un superviseur. Journée disparue de TimeMoto annulée
   seulement après une lecture complète et non vide. Salarié non associé : non importé. Relancer un
   import ne crée jamais de doublon.
-- Interface : Paramètres → Pointage présentiel → « ⏱ Pointeuse TimeMoto TM-616 »
-  (`renderTimemotoSettings`) : marque-page, champ jeton + Aperçu/Importer, reprise d'historique,
-  association des salariés (suggestions par le nom). Rappel « import à faire » sur la page Présence si
-  le dernier import date de plus de 24 h. Auteur `timemoto` affiché « Synchro TimeMoto ».
+- Interface (v1.81.0) : **l'import vit sur la page Présence**, bouton « ⏱ TimeMoto » de l'en-tête
+  (administrateurs uniquement, comme la route) qui déplie `renderTimemotoImportPanel` (`presenceTmOpen`,
+  transitoire, aussi bien en vue Jour qu'en vue Semaine) : case d'activation, marque-page, champ jeton +
+  Aperçu/Importer, reprise d'historique, résultat, association des salariés (suggestions par le nom).
+  Paramètres → Pointage présentiel garde seulement `renderTimemotoSettings` (case d'activation + bouton
+  « Ouvrir la page Présence », `presence-tm-goto`) : un seul endroit pour importer, pas deux. Le rappel
+  « import à faire » (> 24 h) de la page Présence porte un bouton « Ouvrir l'import ». Auteur
+  `timemoto` affiché « Synchro TimeMoto ».
 - **Reste possible plus tard** (non fait) : import du fichier exporté par TimeMoto Cloud (Excel/CSV),
   ou passage à la formule Plus pour des webhooks officiels et un vrai 24h/24.
 - **Non testé automatiquement** : pas de faux serveur TimeMoto (génération bloquée). La lecture par
