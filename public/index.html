@@ -1686,7 +1686,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.87.4';
+const APP_VERSION = '1.88.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -7990,6 +7990,23 @@ function updateImportPreviewPhase(oid, value){
   });
   render();
 }
+// Retirer une ligne (opération) de l'aperçu avant de confirmer : n'enlève que cette pièce de son groupe
+// (jamais les autres lignes, jamais de renumérotation des phases). Un groupe vidé disparaît de l'aperçu et
+// n'est jamais créé (commitImportGroups ignore déjà un groupe sans pièce). Les compteurs de l'en-tête sont
+// recalculés ici, car cs.preview les fige à la construction. Annulable en « Recommencer la correspondance ».
+function removeImportPreviewPiece(oid){
+  const cs = customImportState;
+  if(!cs || !cs.preview) return;
+  Object.values(cs.preview.groups).forEach(g => {
+    const i = g.pieces.findIndex(pp=>pp.id===oid);
+    if(i >= 0){ g.pieces.splice(i, 1); cs.preview.nbRetirees = (cs.preview.nbRetirees||0) + 1; }
+  });
+  const gs = Object.values(cs.preview.groups);
+  cs.preview.nbNouvelles = gs.filter(g=>!g.existing && g.pieces.length>0).length;
+  cs.preview.nbFusions = gs.filter(g=>g.existing && g.pieces.length>0).length;
+  cs.preview.nbPieces = gs.reduce((n,g)=>n+g.pieces.length, 0);
+  render();
+}
 function updateImportPreviewOperateur(oid, operatorUserId){
   const cs = customImportState;
   if(!cs || !cs.preview) return;
@@ -13280,6 +13297,7 @@ function renderCustomImportModal(){
           <td><input type="date" value="${pc.dateDebutPossible||''}" data-action="update-import-preview-date-debut-possible" data-oid="${pc.id}" title="Optionnel — la tâche ne pourra jamais démarrer avant, ex. en attente d'une matière"></td>
           <td>${debutPrevu ? formatDT(debutPrevu) : '—'}</td>
           <td>${projectedEnds[pc.id] ? formatDT(projectedEnds[pc.id]) : '—'}</td>
+          <td><button class="ghost small danger-ghost" data-action="remove-import-preview-piece" data-oid="${pc.id}" title="Ne pas importer cette opération">🗑</button></td>
         </tr>`;
       }).join('');
       const refHeadSuffix = (refEarliest ? ` <span class="footer-note" style="margin:0;">— début au mieux : ${formatDT(refEarliest)}</span>` : '')
@@ -13297,15 +13315,15 @@ function renderCustomImportModal(){
           <option value="urgente" ${g.urgence==='urgente'?'selected':''}>Urgente</option>
         </select>
       </span>`;
-      return `<tr><td colspan="8" style="background:var(--panel-2); font-weight:600;">${escapeHtml(ref)} — ${g.existing?'fusion dans commande existante':'nouvelle commande'}${refHeadSuffix}${g.existing?'':urgenceSelect}</td></tr>${pieceRows}`;
+      return `<tr><td colspan="9" style="background:var(--panel-2); font-weight:600;">${escapeHtml(ref)} — ${g.existing?'fusion dans commande existante':'nouvelle commande'}${refHeadSuffix}${g.existing?'':urgenceSelect}</td></tr>${pieceRows}`;
     }).join('');
     body = `
       <div class="modal-section-title" style="margin-top:0;">Aperçu avant import</div>
       <div class="leave-confirm-banner">
-        <strong>${p.nbNouvelles}</strong> nouvelle(s) commande(s), <strong>${p.nbFusions}</strong> fusion(s) dans une commande existante, <strong>${p.nbPieces}</strong> pièce(s) au total.
+        <strong>${p.nbNouvelles}</strong> nouvelle(s) commande(s), <strong>${p.nbFusions}</strong> fusion(s) dans une commande existante, <strong>${p.nbPieces}</strong> pièce(s) au total.${p.nbRetirees ? ` <span style="color:var(--amber);">${p.nbRetirees} opération(s) retirée(s) de l'import.</span>` : ''}
       </div>
-      <div class="footer-note" style="text-align:left; margin-bottom:6px;">Poste, opérateur, phase et date de début possible peuvent être corrigés ici avant de valider, ligne par ligne — les colonnes "Début au mieux"/"Fin au mieux" et la livraison au plus tôt de chaque commande se recalculent aussitôt en fonction. L'urgence, elle, se corrige une fois par commande (sélecteur à côté de son nom, ci-dessous) — pas de fusion dans une commande existante, dont l'urgence n'est jamais modifiée par l'import. C'est une simulation sur l'état actuel du planning, pas un engagement figé : la position réelle une fois importée dépendra de ce qui aura changé entre-temps (autres commandes, priorités).</div>
-      ${refRows ? `<table class="ops-table"><thead><tr><th>Pièce / Étape</th><th>Poste</th><th>Opérateur</th><th>Durée</th><th title="Une phase supérieure attend la fin de la phase précédente de la même pièce">Phase</th><th>Départ possible</th><th>Début au mieux</th><th>Fin au mieux</th></tr></thead><tbody>${refRows}</tbody></table>` : ''}
+      <div class="footer-note" style="text-align:left; margin-bottom:6px;">Poste, opérateur, phase et date de début possible peuvent être corrigés ici avant de valider, ligne par ligne, et une opération inutile se retire avec 🗑 (elle n'est alors pas importée) — les colonnes "Début au mieux"/"Fin au mieux" et la livraison au plus tôt de chaque commande se recalculent aussitôt en fonction. L'urgence, elle, se corrige une fois par commande (sélecteur à côté de son nom, ci-dessous) — pas de fusion dans une commande existante, dont l'urgence n'est jamais modifiée par l'import. C'est une simulation sur l'état actuel du planning, pas un engagement figé : la position réelle une fois importée dépendra de ce qui aura changé entre-temps (autres commandes, priorités).</div>
+      ${refRows ? `<table class="ops-table"><thead><tr><th>Pièce / Étape</th><th>Poste</th><th>Opérateur</th><th>Durée</th><th title="Une phase supérieure attend la fin de la phase précédente de la même pièce">Phase</th><th>Départ possible</th><th>Début au mieux</th><th>Fin au mieux</th><th title="Retirer une opération de l'import">Retirer</th></tr></thead><tbody>${refRows}</tbody></table>` : ''}
       ${(() => {
         // Détail complet (valeurs du fichier), pas juste un résumé texte par ligne — pour retrouver
         // à quoi correspondait une ligne ignorée sans devoir rouvrir l'Excel.
@@ -13330,7 +13348,7 @@ function renderCustomImportModal(){
       })()}
       <div class="form-actions" style="margin-top:16px;">
         <button class="ghost" data-action="custom-import-back-to-mapping">← Recommencer la correspondance</button>
-        <button class="primary" data-action="confirm-custom-import">✓ Confirmer l'import</button>
+        <button class="primary" data-action="confirm-custom-import" ${p.nbPieces===0?'disabled title="Aucune opération à importer"':''}>✓ Confirmer l'import</button>
       </div>`;
   }
   return `
@@ -17441,6 +17459,7 @@ function dispatchClickAction(action, el){
     case 'custom-import-back-to-mapping': backToMappingStep(); break;
     case 'custom-import-next-from-postes': proceedFromPostes(); break;
     case 'confirm-custom-import': confirmCustomImport(); break;
+    case 'remove-import-preview-piece': removeImportPreviewPiece(el.dataset.oid); break;
     case 'delete-import-profile': deleteImportProfile(el.dataset.id); break;
     case 'delete-current-import-profile': if(customImportState && customImportState.profileId) deleteImportProfile(customImportState.profileId); break;
     case 'fuse-selected': fuseSelected(el.dataset.key); break;

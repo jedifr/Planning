@@ -3369,6 +3369,16 @@ après coup. Quatre pistes proposées, **retenue : la numérotation automatique 
   livraison au plus tôt se recalculent au rendu suivant (`simulateImportStarts` lit déjà les phases). Une
   correction ne renumérote **jamais** les autres lignes — elle reste ponctuelle. La ligne de titre de
   commande passe à `colspan="8"` avec la colonne ajoutée.
+- **Retirer une opération de l'import avant de confirmer (v1.88.0).** Retour : « ajouter la possibilité de
+  supprimer une opération avant l'import ». Colonne « Retirer » (🗑, `data-action="remove-import-preview-piece"`,
+  clic) dans l'aperçu : `removeImportPreviewPiece(oid)` retire la seule pièce de `cs.preview.groups[...].pieces`
+  (jamais les autres lignes, **aucune renumérotation** des phases), recalcule `nbNouvelles`/`nbFusions`/`nbPieces`
+  (figés à la construction de l'aperçu) et incrémente `nbRetirees` (« N opération(s) retirée(s) de l'import » dans le
+  bandeau). Un groupe vidé disparaît de l'aperçu et n'est jamais créé (`commitImportGroups` ignore déjà un groupe
+  sans pièce) ; « Confirmer l'import » est désactivé si plus aucune pièce. Les lignes retirées ne sont pas des
+  « lignes ignorées » (pas de motif d'erreur). Pas d'annulation unitaire : « Recommencer la correspondance »
+  reconstruit tout l'aperçu. Le « Début au mieux »/livraison se recalculent au rendu suivant (simulation sur les
+  pièces restantes). Ligne de titre de commande à `colspan="9"`.
 - **Suivre le numéro de ligne (v1.84.0)** — retour : « si un numéro de ligne existe, il lit bien ce numéro ? »
   (réponse initiale : non, il ne servait qu'à l'information et aux doublons). `map.phaseParNumeroLigne`
   (case imbriquée sous la précédente, cochée par défaut pour un nouvel import, `false` pour un profil
