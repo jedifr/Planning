@@ -1414,6 +1414,24 @@ Distinct des séances sur les tâches (`sessions[]`) : ici on mesure la PRÉSENC
   `commit()` (`applyPresenceTaskLinkage`). Toujours un clic humain, jamais automatique.
 - **Horaire attendu** : `expectedDayFor(uid, st, date)` — même règle que `computeTeamPointage`
   (pauses exclues, jour ouvré, congé approuvé retiré, demi-journée coupée à la première pause).
+- **« Mon pointage » : détail d'un jour et navigation (v1.90.0).** Retour (capture) : cliquer un jour de la
+  semaine pour en voir le détail, et pouvoir naviguer sur un jour précis. `monPointageDay` (`null` = aujourd'hui,
+  transitoire, comme `presenceDate`) / `monPointageDayKey()` / `setMonPointageDay(dayKey)` (retombe sur `null` si
+  c'est aujourd'hui) ; `myPresenceDay(dayKey)` généralise `myPresenceToday()` (conservée, alias). Barre de
+  navigation dans l'en-tête de la page : ‹ / sélecteur de date / › / « Aujourd'hui » (`mon-pointage-nav`,
+  `mon-pointage-date-input` — redessin différé au `focusout` comme tout champ date —, `mon-pointage-today`) et pastille
+  « jour passé »/« jour à venir ». **Les barres de la semaine sont des boutons** (`mon-pointage-day`, jour retenu
+  surligné) ; la semaine affichée est celle du jour choisi (`presenceMyWeekBounds`), 7 jours si le jour choisi ou un
+  pointage tombe le week-end. Le jour affiché est chargé par `loadPresenceDay` (la route accepte déjà n'importe quelle
+  date et ne renvoie à un salarié que SES lignes) ; aujourd'hui reste toujours chargé (pastille d'en-tête). Carte
+  principale : aujourd'hui = statut + boutons de pointage (inchangé) ; autre jour = statut du jour (« Journée terminée
+  à », « Départ non pointé », « Aucun pointage ce jour-là », « Jour à venir »), présence, pauses, horaire prévu et un
+  bouton « Revenir à aujourd'hui » — **jamais de pointage depuis un autre jour**. Nouvelle carte « Détail de la
+  journée » : frise prévu/présent/pause (`presenceFriseHtml`/`presenceFriseWindow` réutilisés tels quels de la page
+  Présence), arrivée, départ, pauses (« → en cours » pour la dernière si aujourd'hui), écart à l'horaire. La liste
+  des pointages et le lien « Demander une correction » portent sur le jour affiché (`data-day`). `goto-mon-pointage`
+  remet le jour à aujourd'hui. Vérifié (Playwright, serveur réel, pointages semés sur la veille) : clic sur un jour,
+  ‹ ›, sélecteur de date, retour à aujourd'hui, aucune erreur.
 - **Conformité** (liste de contrôle des Paramètres) : note d'information (L1222-4, art. 13 RGPD) et
   fiche du registre (art. 30) générées par `presenceDocText` (champs entre crochets à compléter, à
   faire relire), consultation du CSE ≥ 50 salariés (L2312-38) ou « non concerné », conservation

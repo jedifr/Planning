@@ -1588,6 +1588,17 @@
   .mp-bar span{position:absolute; left:0; right:0; bottom:0; background:var(--green); border-radius:6px;}
   .mp-bar span.mp-bar-today{background:var(--accent);}
   .mp-day-l{font-size:12px; font-weight:600; text-transform:capitalize;}
+  .mp-day-btn{background:none; border:1px solid transparent; border-radius:8px; padding:4px 2px; cursor:pointer; font:inherit; color:inherit;}
+  .mp-day-btn:hover{background:var(--panel-2);}
+  .mp-day-sel{border-color:var(--accent); background:var(--accent-dim);}
+  .mp-day-sel .mp-day-l{color:var(--accent);}
+  .mp-datenav{margin-left:auto; display:flex; align-items:center; gap:6px; flex-wrap:wrap;}
+  .mp-detail{grid-column:1 / -1;}
+  .mp-ticks{margin-bottom:2px;}
+  .mp-kpis-4{display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-top:12px;}
+  .mp-kpis-4 > div{display:flex; flex-direction:column; gap:2px; background:var(--panel-2); border-radius:8px; padding:8px 10px;}
+  .mp-kpis-4 > div span{font-size:11px; color:var(--text-dim);}
+  .mp-lg{display:inline-block; width:14px; height:10px; border-radius:3px; box-sizing:border-box;}
   .tm-box{background:var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-top:6px;}
   .tm-title{font-weight:600; font-size:14px;}
   .tm-status{display:flex; flex-direction:column; gap:4px; font-size:12.5px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 10px;}
@@ -1705,7 +1716,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.89.2';
+const APP_VERSION = '1.90.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -16560,14 +16571,21 @@ function presenceHtml(p){ return presenceHhmm(p.ts); }
 
 // ---------- Mon pointage (salarié) ----------
 let presencePunchDraft = null; // { type, uid, choices:[{key,label}], unchecked:Set }
-function myPresenceToday(){
-  const today = toDateInputValue(new Date());
-  const data = presenceDayData(today);
+// Jour affiché dans « Mon pointage » (null = aujourd'hui) — transitoire, jamais persisté, comme presenceDate.
+let monPointageDay = null;
+function monPointageDayKey(){ return monPointageDay || toDateInputValue(new Date()); }
+function setMonPointageDay(dayKey){
+  monPointageDay = (/^\d{4}-\d{2}-\d{2}$/.test(String(dayKey || '')) && dayKey !== toDateInputValue(new Date())) ? dayKey : null;
+  render();
+}
+function myPresenceDay(dayKey){
+  const data = presenceDayData(dayKey);
   if(!data || !currentUser) return null;
   const mine = (data.punches || []).filter(p => p.userId === String(currentUser.id));
   const eff = effectivePresencePunches(mine);
-  return { data, mine, eff, sum: presenceDaySummary(eff, today, new Date()) };
+  return { data, mine, eff, sum: presenceDaySummary(eff, dayKey, new Date()) };
 }
+function myPresenceToday(){ return myPresenceDay(toDateInputValue(new Date())); }
 function presenceActionsForStatus(status){
   if(status === 'present') return [{ type: 'pause_start', label: 'Je pars en pause', cls: 'pr-act-pause' }, { type: 'out', label: 'Je termine ma journée', cls: 'pr-act-out' }];
   if(status === 'pause') return [{ type: 'pause_end', label: 'Je reprends le travail', cls: 'pr-act-in' }, { type: 'out', label: 'Je termine ma journée', cls: 'pr-act-out' }];
@@ -16608,60 +16626,99 @@ function renderPresencePunchModal(){
   </div>`;
 }
 function presenceMyWeekBounds(){
-  const monday = startOfWeek(new Date());
+  const monday = startOfWeek(new Date(monPointageDayKey() + 'T12:00:00'));
   const from = toDateInputValue(monday);
   return { from, to: addDaysToKey(from, 6) };
 }
 function renderMonPointagePage(){
   if(!presenceModuleActive()) return `<section class="panel"><div class="panel-body" style="text-align:center; padding:40px;">Le module Pointage présentiel est désactivé.</div></section>`;
-  const today = toDateInputValue(new Date());
+  const nowD = new Date();
+  const today = toDateInputValue(nowD);
+  const dayKey = monPointageDayKey();
+  const isToday = dayKey === today;
+  const isFuture = dayKey > today;
+  // Le jour d'aujourd'hui est toujours chargé (pastille d'en-tête, boutons de pointage) ; un autre jour affiché aussi.
   const cache = presenceDayCache[today];
   if(!cache || cache.stale) loadPresenceDay(today, { force: true });
-  const me = myPresenceToday();
+  const dcache = presenceDayCache[dayKey];
+  if(!isToday && (!dcache || dcache.stale)) loadPresenceDay(dayKey, { force: !!dcache });
+  const me = myPresenceDay(dayKey);
   const name = currentUsername || '';
   const w = presenceMyWeekBounds();
   const wKey = presenceRangeKey(w.from, w.to, String(currentUser ? currentUser.id : ''));
   if(!presenceRangeCache[wKey]) loadPresenceRange(w.from, w.to, String(currentUser ? currentUser.id : ''));
   const wc = presenceRangeCache[wKey];
   const hasPin = me ? (me.data.pinUserIds || []).includes(String(currentUser.id)) : null;
+  const hm = x => `${pad(x.getHours())}:${pad(x.getMinutes())}`;
+  const exp = expectedDayFor(String(currentUser ? currentUser.id : ''), state, new Date(dayKey + 'T12:00:00'));
+  const expTxt = exp.expected.length ? `${hm(exp.expected[0][0])}–${hm(exp.expected[exp.expected.length-1][1])}` : (exp.leave ? escapeHtml(exp.leave.label) : '—');
   let statusCard;
   if(!me){
-    statusCard = `<div class="pr-empty">${cache && cache.status === 'error' ? escapeHtml(cache.error) : 'Chargement…'}</div>`;
+    const c = isToday ? cache : dcache;
+    statusCard = `<div class="pr-empty">${c && c.status === 'error' ? escapeHtml(c.error) : 'Chargement…'}</div>`;
   } else {
     const s = me.sum;
-    const exp = expectedDayFor(String(currentUser.id), state, new Date());
-    const hm = x => `${pad(x.getHours())}:${pad(x.getMinutes())}`;
     const since = s.last ? presenceHhmm(s.last.ts) : null;
-    const statusLine = s.status === 'present' ? `<span class="mp-dot pr-present-bg"></span>Présent depuis ${since}`
-      : s.status === 'pause' ? `<span class="mp-dot pr-pause-bg"></span>En pause depuis ${since}`
-      : s.status === 'parti' ? `<span class="mp-dot pr-parti-bg"></span>Journée terminée à ${since}`
-      : `<span class="mp-dot pr-parti-bg"></span>Pas encore pointé aujourd'hui`;
+    const statusLine = isToday
+      ? (s.status === 'present' ? `<span class="mp-dot pr-present-bg"></span>Présent depuis ${since}`
+        : s.status === 'pause' ? `<span class="mp-dot pr-pause-bg"></span>En pause depuis ${since}`
+        : s.status === 'parti' ? `<span class="mp-dot pr-parti-bg"></span>Journée terminée à ${since}`
+        : `<span class="mp-dot pr-parti-bg"></span>Pas encore pointé aujourd'hui`)
+      : (s.ouvert ? `<span class="mp-dot pr-pause-bg"></span>Départ non pointé (dernier pointage à ${since})`
+        : s.last ? `<span class="mp-dot pr-parti-bg"></span>Journée terminée à ${since}`
+        : isFuture ? `<span class="mp-dot pr-parti-bg"></span>Jour à venir`
+        : `<span class="mp-dot pr-parti-bg"></span>Aucun pointage ce jour-là`);
     const err = me.data.selfPunchError;
     const actions = presenceActionsForStatus(s.status);
     statusCard = `
       <div class="mp-status">${statusLine}</div>
       <div class="mp-kpis">
-        <div><span>Présence aujourd'hui</span><b>${presenceMinLabel(s.workMin)}</b></div>
+        <div><span>${isToday ? 'Présence aujourd\'hui' : 'Présence'}</span><b>${presenceMinLabel(s.workMin)}</b></div>
         <div><span>Pauses</span><b>${s.pauseMin ? presenceMinLabel(s.pauseMin) : '—'}</b></div>
-        <div><span>Horaire prévu</span><b>${exp.expected.length ? `${hm(exp.expected[0][0])}–${hm(exp.expected[exp.expected.length-1][1])}` : (exp.leave ? escapeHtml(exp.leave.label) : '—')}</b></div>
+        <div><span>Horaire prévu</span><b>${expTxt}</b></div>
       </div>
-      ${err ? `<div class="mp-err">${escapeHtml(err)}<br><span class="footer-note" style="text-align:left;">Pointez sur la borne de l'atelier.</span></div>`
+      ${!isToday ? `<div class="mp-actions"><button class="pr-act pr-act-in" data-action="mon-pointage-today">Revenir à aujourd'hui</button></div>`
+        : err ? `<div class="mp-err">${escapeHtml(err)}<br><span class="footer-note" style="text-align:left;">Pointez sur la borne de l'atelier.</span></div>`
             : `<div class="mp-actions">${actions.map((a, i) => `<button class="pr-act ${a.cls} ${i ? 'pr-act-secondary' : ''}" data-action="presence-self-punch" data-type="${a.type}">${escapeHtml(a.label)}</button>`).join('')}</div>`}`;
   }
   const todayList = me && me.mine.length ? me.mine.filter(p => p.type !== 'cancel').sort((a, b) => a.ts < b.ts ? -1 : 1).map(p => {
     const retenu = me.eff.some(e => e.id === p.id);
     const tag = p.status === 'a_valider' ? '<span class="pr-pill pr-pause">à valider</span>' : p.status === 'refuse' ? '<span class="pr-pill pr-absent">refusée</span>' : !retenu ? '<span class="pr-pill pr-parti">annulé</span>' : `<span class="pr-src">${escapeHtml(PRESENCE_SOURCE_LABELS[p.source] || p.source)}</span>`;
     return `<div class="mp-line"><span class="pr-mono"><b>${presenceHhmm(p.ts)}</b></span><span>${escapeHtml(PRESENCE_TYPE_LABELS[p.type])}</span>${tag}</div>`;
-  }).join('') : '<div class="footer-note" style="text-align:left;">Aucun pointage aujourd’hui.</div>';
+  }).join('') : `<div class="footer-note" style="text-align:left;">${isToday ? 'Aucun pointage aujourd’hui.' : 'Aucun pointage ce jour-là.'}</div>`;
+  // Détail de la journée : frise prévu / présent / pauses (même rendu que la page Présence) + arrivée, départ, pauses.
+  let detailHtml = '';
+  if(me){
+    const row = { exp, sum: me.sum, eff: me.eff, corrected: me.mine.some(p => p.source === 'manuel') };
+    const win = presenceFriseWindow([row], dayKey);
+    const ticks = [];
+    for(let h = win.minH; h <= win.maxH; h += 2) ticks.push(`<span style="left:${((h - win.minH) / (win.maxH - win.minH) * 100).toFixed(2)}%;">${h}h</span>`);
+    const s = me.sum;
+    const pausesTxt = s.pauses.length ? s.pauses.map(([a, b], i) => (isToday && i === s.pauses.length - 1 && s.status === 'pause') ? `${hm(a)} → en cours` : `${hm(a)}–${hm(b)}`).join(' · ') : '—';
+    const expectedMin = exp.expected.reduce((t, [a, b]) => t + (b - a) / 60000, 0);
+    const ecart = expectedMin ? s.workMin - expectedMin : null;
+    detailHtml = `<div class="mp-card mp-detail"><div class="mp-card-title">Détail de la journée</div>
+      <div class="pr-ticks mp-ticks">${ticks.join('')}</div>
+      ${presenceFriseHtml(row, win.winStart, win.winEnd, nowD, isToday)}
+      <div class="pr-legend"><span><i class="mp-lg" style="border:1px dashed #9aa0a5;"></i>Horaire prévu</span><span><i class="mp-lg" style="background:var(--green);"></i>Présent</span><span><i class="mp-lg" style="background:#d9b680;"></i>Pause</span></div>
+      <div class="mp-kpis mp-kpis-4">
+        <div><span>Arrivée</span><b>${s.arrivee ? hm(s.arrivee) : '—'}</b></div>
+        <div><span>Départ</span><b>${s.depart ? hm(s.depart) : (s.ouvert ? '<span class="pr-late">manquant</span>' : '—')}</b></div>
+        <div><span>Pauses${s.nbPauses ? ` (${s.nbPauses})` : ''}</span><b style="font-size:13px;">${pausesTxt}</b></div>
+        <div><span>Écart à l'horaire</span><b>${ecart == null ? '—' : (ecart >= 0 ? '+' : '−') + presenceMinLabel(Math.abs(ecart))}</b></div>
+      </div></div>`;
+  }
   let weekHtml = '<div class="footer-note" style="text-align:left;">Chargement…</div>';
   let requestsHtml = '';
   if(wc && wc.status === 'ok'){
     const m = presenceWeekModel(state, wc.punches, w.from, new Date());
     const row = m.rows.find(r => r.userId === String(currentUser.id)) || { cells: m.days.map(d => ({ day: d, sum: { workMin: 0 }, has: false })), totalMin: 0, theoH: theoreticalPresenceHoursForUser(String(currentUser.id), state, new Date(w.from+'T00:00:00'), new Date(addDaysToKey(w.to,1)+'T00:00:00')) };
     const maxMin = Math.max(480, ...row.cells.map(c => c.sum.workMin));
+    const nbDays = row.cells.slice(5).some(c => c.has) || dayKey > addDaysToKey(w.from, 4) ? 7 : 5;
     weekHtml = `
       <div class="mp-week-head"><span>Semaine du ${new Date(w.from+'T12:00:00').toLocaleDateString('fr-FR',{day:'numeric', month:'long'})}</span><span><b>${presenceMinLabel(row.totalMin)}</b> / ${formatHeures(row.theoH)} prévues</span></div>
-      <div class="mp-week">${row.cells.slice(0, 5).map(c => `<div class="mp-day"><span class="mp-day-h">${c.has ? presenceMinLabel(c.sum.workMin) : '—'}</span><span class="mp-bar"><span style="height:${Math.round(c.sum.workMin / maxMin * 100)}%;" class="${c.day===today?'mp-bar-today':''}"></span></span><span class="mp-day-l">${new Date(c.day+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'short'})}</span></div>`).join('')}</div>`;
+      <div class="mp-week" style="grid-template-columns:repeat(${nbDays}, minmax(0, 1fr));">${row.cells.slice(0, nbDays).map(c => `<button type="button" class="mp-day mp-day-btn ${c.day===dayKey?'mp-day-sel':''}" data-action="mon-pointage-day" data-day="${c.day}" title="Voir le détail du ${escapeHtml(presenceDateLabel(c.day))}"><span class="mp-day-h">${c.has ? presenceMinLabel(c.sum.workMin) : '—'}</span><span class="mp-bar"><span style="height:${Math.round(c.sum.workMin / maxMin * 100)}%;" class="${c.day===today?'mp-bar-today':''}"></span></span><span class="mp-day-l">${new Date(c.day+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'short'})}</span></button>`).join('')}</div>
+      <div class="footer-note" style="text-align:left; margin-top:8px;">Cliquez sur un jour pour en voir le détail.</div>`;
     const mine = wc.punches.filter(p => p.source === 'manuel' || p.type === 'cancel');
     const pend = (wc.pending || []).filter(p => !mine.some(x => x.id === p.id));
     const reqs = [...pend, ...mine].sort((a, b) => a.createdAt < b.createdAt ? 1 : -1);
@@ -16670,11 +16727,19 @@ function renderMonPointagePage(){
   return `
   <section class="panel mp-page">
     <div class="panel-body">
-      <div class="mp-head">${renderAvatar(name)}<div><h2 class="pr-title" style="margin:0;">🙋 Mon pointage</h2><div class="footer-note" style="text-align:left;">${escapeHtml(name)} · ${escapeHtml(presenceDateLabel(today))}</div></div></div>
+      <div class="mp-head">${renderAvatar(name)}<div><h2 class="pr-title" style="margin:0;">🙋 Mon pointage</h2><div class="footer-note" style="text-align:left;">${escapeHtml(name)} · ${escapeHtml(presenceDateLabel(dayKey))}${isToday ? '' : ` <span class="pr-pill pr-pause">${isFuture ? 'jour à venir' : 'jour passé'}</span>`}</div></div>
+        <div class="pr-datenav mp-datenav">
+          <button class="small" data-action="mon-pointage-nav" data-dir="-1" aria-label="Jour précédent">‹</button>
+          <input type="date" value="${dayKey}" data-action="mon-pointage-date-input" aria-label="Choisir un jour">
+          <button class="small" data-action="mon-pointage-nav" data-dir="1" aria-label="Jour suivant">›</button>
+          ${isToday ? '' : `<button class="small" data-action="mon-pointage-today">Aujourd'hui</button>`}
+        </div>
+      </div>
       <div class="mp-grid">
         <div class="mp-card mp-main">${statusCard}</div>
-        <div class="mp-card"><div class="mp-card-title">Aujourd'hui</div>${todayList}
-          <div style="margin-top:10px;"><button class="pr-link" data-action="presence-open-correction" data-user-id="${currentUser?currentUser.id:''}" data-day="${today}">Un pointage manque ou est faux ? Demander une correction</button></div></div>
+        <div class="mp-card"><div class="mp-card-title">${isToday ? 'Aujourd\'hui' : 'Pointages du ' + escapeHtml(presenceDateLabel(dayKey))}</div>${todayList}
+          <div style="margin-top:10px;"><button class="pr-link" data-action="presence-open-correction" data-user-id="${currentUser?currentUser.id:''}" data-day="${dayKey}">Un pointage manque ou est faux ? Demander une correction</button></div></div>
+        ${detailHtml}
         <div class="mp-card">${weekHtml}</div>
         <div class="mp-card"><div class="mp-card-title">Code de la borne</div>
           <div class="footer-note" style="text-align:left; margin-bottom:8px;">Code personnel à 4 chiffres pour pointer sur la borne de l'atelier. ${hasPin === true ? '<b style="color:var(--green);">Code défini.</b>' : hasPin === false ? '<b style="color:var(--red);">Aucun code défini.</b>' : ''}</div>
@@ -17648,7 +17713,10 @@ function dispatchClickAction(action, el){
     case 'goto-temps-prod': currentPage = 'tempsProd'; render(); break;
     case 'goto-fiche': if(currentPage !== 'ficheSalarie') openFicheSalarie(defaultFicheUid(), currentPage); break;
     case 'goto-zones': currentPage = 'zones'; render(); break;
-    case 'goto-mon-pointage': currentPage = 'monPointage'; invalidatePresenceCaches(); render(); break;
+    case 'goto-mon-pointage': currentPage = 'monPointage'; monPointageDay = null; invalidatePresenceCaches(); render(); break;
+    case 'mon-pointage-day': setMonPointageDay(el.dataset.day); break;
+    case 'mon-pointage-nav': setMonPointageDay(addDaysToKey(monPointageDayKey(), Number(el.dataset.dir || 1))); break;
+    case 'mon-pointage-today': setMonPointageDay(null); break;
     case 'goto-presence': currentPage = 'presence'; invalidatePresenceCaches(); render(); break;
     case 'goto-borne': gotoBorne(); break;
     case 'presence-view': presenceView = el.dataset.view === 'semaine' ? 'semaine' : 'jour'; render(); break;
@@ -17955,6 +18023,7 @@ function dispatchChangeAction(el, action){
     case 'presence-config': updatePresenceConfig(el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
     case 'tm-config': updateTimemotoConfig(el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
     case 'tm-user-map': setTimemotoUserMap(el.dataset.tmId, el.value); break;
+    case 'mon-pointage-date-input': setMonPointageDay(el.value); break;
     case 'presence-date-input': if(/^\d{4}-\d{2}-\d{2}$/.test(el.value)){ presenceDate = el.value === toDateInputValue(new Date()) ? null : el.value; render(); } break;
     // Formulaire de correction : mémorisé sans redessin (un clic sur « Enregistrer » juste après la
     // sortie d'un champ heure ne doit pas tomber sur un bouton reconstruit entre-temps).
