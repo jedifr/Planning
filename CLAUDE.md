@@ -2986,12 +2986,12 @@ disponibilité des postes »), seuils et horizon demandés réglables.
 - `computeMachineAvailability(st, schedule, now, horizon)` — par poste (hors Sous-traitance,
   `machineNameLooksLikeSousTraitance`, sans capacité propre) : tâches non terminées du planning
   calculé (lot fusionné une fois), charge et capacité (`workingHoursBetween`, `configForMachineId`,
-  jour bloqué = capacité 0) par jour ouvré sur `max(10, horizon)` jours, **prochain créneau libre**
+  jour bloqué = capacité 0) par jour ouvré sur exactement `horizon` jours (v1.87.2 ; avant : `max(10, horizon)` avec les derniers jours estompés — l'utilisateur croyait son réglage ignoré), **prochain créneau libre**
   = premier trou d'au moins `DISPO_CRENEAU_MIN_H` (1 h) ramené à un instant ouvré, **heures libres**
   = capacité − charge sur `horizon` jours. Trié du plus tôt disponible au plus chargé.
 - `renderMachineAvailabilitySection` — une carte par poste : « Libre · Maintenant » en vert,
   prochain créneau (« Aujourd'hui 15h28 », « Jeu. 1/10 · 9h58 ») en rouge si moins de 15 % de la
-  capacité reste libre, heures libres, barres de charge par jour (estompées au-delà de l'horizon,
+  capacité reste libre, heures libres, barres de charge par jour (une par jour de l'horizon,
   hachurées si poste indisponible).
 
 ### Vue d'ensemble personnalisable (choix et ordre des blocs et des tuiles)

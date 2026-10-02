@@ -1686,7 +1686,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.87.1';
+const APP_VERSION = '1.87.2';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -11024,7 +11024,9 @@ function renderTeamPointageSection(now){
 // une fois (ses membres partagent le même créneau). Sous-traitance exclue : pas de capacité propre.
 const DISPO_CRENEAU_MIN_H = 1;
 function computeMachineAvailability(st, schedule, now, horizon){
-  const nbDays = Math.max(10, horizon);
+  // Exactement `horizon` jours ouvrés : les barres affichées correspondent au réglage (avant, 10 jours
+  // minimum étaient calculés et les derniers estompés, ce qui laissait croire que le réglage était ignoré).
+  const nbDays = Math.max(1, horizon);
   const ops = schedule.flatMap(c => c.pieces);
   return (st.machines||[]).filter(m => !machineNameLooksLikeSousTraitance(m.nom)).map(m => {
     const cfg = configForMachineId(m.id, st);
@@ -11101,7 +11103,7 @@ function renderMachineAvailabilitySection(schedule, now){
   }).join('');
   return `<div class="trend-section-title" style="margin-top:24px;">🗓 Disponibilité des postes</div>
     <div class="dp-grid">${cards}</div>
-    <div class="footer-note" style="text-align:left; margin-top:6px;">Prochain créneau libre : premier trou d'au moins ${DISPO_CRENEAU_MIN_H} h dans le planning du poste. Heures libres : capacité du poste moins le travail planifié sur les ${horizon} prochains jours ouvrés (réglable dans Paramètres). Barres : charge de chaque jour ouvré (pleine = poste saturé, estompée = au-delà de l'horizon). Triés du plus tôt disponible au plus chargé ; Sous-traitance exclue.</div>`;
+    <div class="footer-note" style="text-align:left; margin-top:6px;">Prochain créneau libre : premier trou d'au moins ${DISPO_CRENEAU_MIN_H} h dans le planning du poste. Heures libres : capacité du poste moins le travail planifié sur les ${horizon} prochains jours ouvrés (réglable dans Paramètres). Barres : charge de chacun de ces jours ouvrés (pleine = poste saturé, hachurée = poste indisponible). Triés du plus tôt disponible au plus chargé ; Sous-traitance exclue.</div>`;
 }
 
 /* ---------------- Vue d'ensemble personnalisable (voir CLAUDE.md) ---------------- */
