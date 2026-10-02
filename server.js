@@ -364,6 +364,13 @@ app.get('/api/session-history/:cid/:oid', requireAuth, requireLicense, (req, res
 // expose déjà à chacun les séances en cours de toute l'équipe, et un poste partagé peut cibler
 // « Mon temps de production » sur une autre identité que le compte connecté (activeIdentityId) —
 // la restriction « un employé ne voit que sa propre fiche » est appliquée par l'interface.
+// Temps de production : séances archivées de toute l'équipe sur [from, to[ (même niveau d'accès).
+app.get('/api/session-history-range', requireAuth, requireLicense, (req, res) => {
+  const re = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
+  const { from, to } = req.query || {};
+  if(!re.test(String(from||'')) || !re.test(String(to||''))) return res.status(400).json({ error: 'Paramètres "from" et "to" (AAAA-MM-JJTHH:mm) requis.' });
+  res.json({ entries: sessionHistory.getSessionHistoryRange(db, from, to) });
+});
 app.get('/api/session-history-user/:uid', requireAuth, requireLicense, (req, res) => {
   const re = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
   const { from, to } = req.query || {};

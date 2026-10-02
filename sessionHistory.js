@@ -81,6 +81,19 @@ function getSessionHistoryForUser(db, userId, from, to){
     ORDER BY debut ASC
   `).all(String(userId), String(to), String(from));
 }
+// Temps de production sur une période : séances archivées (toutes personnes) des pièces qui recoupent
+// [from, to[. Sert à répartir au jour le jour une tâche close dont sessions[] a été purgé de l'état
+// (sinon tout son temps était attribué en bloc à la date de clôture).
+function getSessionHistoryRange(db, from, to){
+  // TOUTES les séances des pièces qui recoupent la période (pas seulement celles qui la recoupent) :
+  // le client a besoin du total de la pièce pour répartir son temps figé (dureeReelleH) au prorata.
+  return db.prepare(`
+    SELECT piece_id AS oid, operator_user_id AS operatorUserId, debut, fin
+    FROM session_history
+    WHERE piece_id IN (SELECT piece_id FROM session_history WHERE debut < ? AND (fin IS NULL OR fin > ?))
+    ORDER BY debut ASC
+  `).all(String(to), String(from));
+}
 // Pièces ayant au moins une séance archivée pour cette personne (toutes dates) : permet au client de
 // distinguer une tâche close dont le détail existe (hors période affichée) d'une tâche close avant
 // l'archivage des séances, dont seul le total est connu.
@@ -97,5 +110,5 @@ function getAllSessionHistory(db){
 }
 
 module.exports = {
-  initSessionHistoryTable, insertSessionHistoryBatch, getSessionHistoryForPiece, getSessionHistoryForUser, getSessionHistoryPieceIdsForUser, getAllSessionHistory
+  initSessionHistoryTable, insertSessionHistoryBatch, getSessionHistoryForPiece, getSessionHistoryForUser, getSessionHistoryRange, getSessionHistoryPieceIdsForUser, getAllSessionHistory
 };

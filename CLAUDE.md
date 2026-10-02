@@ -160,6 +160,32 @@ une table SQLite **séparée**, jamais incluse dans `app_state` ni dans la synch
   réellement ouverte), pas celui de la pièce — voir `computeProductionTimeByUser` et la note sur
   `operatorUserId` dans le modèle de données.
 
+### Temps de production d'une tâche close, réparti jour par jour (v1.87.3)
+
+Bug réel signalé (Romain, R046006818 : séances du 28/09 au 01/10, 7 h) : une fois `sessions[]` purgé
+de l'état, `computeProductionTimeByUser`/`computeProductionTimeByMachine` n'avaient plus que
+`dureeReelleH`, attribué **en bloc** à la date de clôture — la page Temps de production affichait donc
+les 7 h le 01/10 (et 0 h les trois jours précédents).
+
+- `GET /api/session-history-range?from&to` (`getSessionHistoryRange`, `sessionHistory.js`) renvoie les
+  séances archivées de **toutes les séances des pièces qui recoupent** la période (pas seulement les
+  séances recoupantes : le client a besoin du total de la pièce pour répartir). Même niveau d'accès que
+  les autres routes `session-history`.
+- `ensureArchivedSessions(start, end)` (une requête par période affichée, `archivedSessionsCache`
+  `{key,status,byPiece}`, rendu relancé au retour) est appelé par `renderTempsProdPage`/
+  `renderTempsProdSelfPage`. `archivedSessionsFor(o, start, end)` ne rend les séances que si la clé du
+  cache correspond **exactement** à la période demandée : tout autre appelant (Vue d'ensemble,
+  Présence, Fiche…) garde l'ancien repli — pas de régression, mais pas de bénéfice non plus tant qu'il
+  n'appelle pas `ensureArchivedSessions`.
+- `archivedPieceHoursInPeriod(o, sessions, cfg, start, end)` : le temps **figé** de la pièce
+  (`dureeReelleParOperateur`, sinon `dureeReelleH` si un seul opérateur) est réparti au prorata des
+  heures comptées (`countedHoursBetween`) de chaque séance — le total de la pièce reste celui des
+  Pointages/du coût (vérifié : jour 28/09 + … + jour 01/10 = 7,03 h sur une semaine), seule sa
+  répartition dans le temps change. Sans séance archivée pour la pièce (close avant `session_history`),
+  repli inchangé : tout à la date de clôture.
+- La colonne « Date » du détail par salarié affiche « 28/09/2026 → 01/10/2026 » quand le temps compté
+  s'étend sur plusieurs jours (`details[].dateDebut`/`date` = première/dernière séance dans la période).
+
 ### Qui a réellement produit, vs qui est assigné
 
 `applySingleStatusChange` tague chaque session ouverte (`en_cours`) avec `activeIdentityId()` au

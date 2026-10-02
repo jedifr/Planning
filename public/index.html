@@ -1686,7 +1686,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.87.2';
+const APP_VERSION = '1.87.3';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -11553,6 +11553,65 @@ function sumDedupedByFusionGroup(pieces, getValue){
     return s + (getValue(o) || 0);
   }, 0);
 }
+// Séances archivées côté serveur (session_history) pour UNE période — une pièce close dont sessions[]
+// a été purgé n'avait plus que dureeReelleH, attribué EN BLOC à la date de clôture : une tâche
+// commencée le 28/09 et finie le 01/10 affichait ses 7 h le 01/10 (bug réel signalé). Avec ces
+// séances, le temps se répartit au jour le jour. Une requête par période affichée ; les calculs ne
+// lisent le cache que si sa clé correspond EXACTEMENT à la période demandée (sinon repli historique).
+let archivedSessionsCache = { key: null, status: null, byPiece: {} };
+function archivedSessionsKey(start, end){ return toInputValue(start) + '|' + toInputValue(end); }
+function ensureArchivedSessions(start, end){
+  const key = archivedSessionsKey(start, end);
+  if(archivedSessionsCache.key === key) return;
+  archivedSessionsCache = { key, status: 'loading', byPiece: {} };
+  if(typeof fetch !== 'function') return;
+  const qs = `from=${encodeURIComponent(toInputValue(start))}&to=${encodeURIComponent(toInputValue(end))}`;
+  fetch(`/api/session-history-range?${qs}`, { credentials: 'same-origin' })
+    .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+    .then(data => {
+      if(archivedSessionsCache.key !== key) return;
+      const byPiece = {};
+      (Array.isArray(data.entries) ? data.entries : []).forEach(e => { (byPiece[e.oid] = byPiece[e.oid] || []).push(e); });
+      archivedSessionsCache = { key, status: 'ok', byPiece };
+      if(currentPage === 'tempsProd') render();
+    })
+    .catch(() => { if(archivedSessionsCache.key === key) archivedSessionsCache = { key, status: 'error', byPiece: {} }; });
+}
+// Répartit le temps FIGÉ d'une pièce close (dureeReelleParOperateur / dureeReelleH) sur la période, au
+// prorata de ses séances archivées : poids = heures comptées (countedHoursBetween) de chaque séance.
+// Le total de la pièce reste ainsi celui des Pointages/du coût (jamais recalculé autrement), seule sa
+// répartition dans le temps change. Renvoie { byOp:{op:h dans la période}, first:{op:Date}, last:{op:Date} }.
+function archivedPieceHoursInPeriod(o, sessions, cfg, periodStart, periodEnd){
+  const wins = exceptionWindowsFor(o);
+  const full = {}, inP = {}, first = {}, last = {}, nbOps = {};
+  const now = new Date();
+  sessions.forEach(e => {
+    const op = String(e.operatorUserId || o.operatorUserId || '');
+    if(!op) return;
+    const a = new Date(e.debut), b = e.fin ? new Date(e.fin) : now;
+    if(!(b > a)) return;
+    full[op] = (full[op]||0) + countedHoursBetween(a, b, cfg, wins);
+    const ca = a < periodStart ? periodStart : a, cb = b > periodEnd ? periodEnd : b;
+    if(cb > ca){
+      inP[op] = (inP[op]||0) + countedHoursBetween(ca, cb, cfg, wins);
+      if(!first[op] || a < first[op]) first[op] = a;
+      if(!last[op] || a > last[op]) last[op] = a;
+    }
+  });
+  const ops = Object.keys(full);
+  const par = o.dureeReelleParOperateur || null;
+  const byOp = {};
+  ops.forEach(op => {
+    if(!inP[op]) return;
+    let target = par && par[op] != null ? Number(par[op]) : (ops.length === 1 && o.dureeReelleH > 0 ? o.dureeReelleH : null);
+    byOp[op] = (target != null && full[op] > 1e-9) ? target * inP[op] / full[op] : inP[op];
+  });
+  return { byOp, first, last };
+}
+function archivedSessionsFor(o, periodStart, periodEnd){
+  if(archivedSessionsCache.status !== 'ok' || archivedSessionsCache.key !== archivedSessionsKey(periodStart, periodEnd)) return null;
+  return archivedSessionsCache.byPiece[o.id] || null;
+}
 // Temps de production par salarié sur [periodStart, periodEnd[, à partir des commandes actives ET
 // archivées. Deux sources, comme dureePasseeH() : les sessions[] (tâche en_cours/en_pause, ou pas
 // encore purgées — voir purgeOldSessions) donnent le détail réel, chaque session étant bornée à la
@@ -11594,8 +11653,12 @@ function computeProductionTimeByUser(st, periodStart, periodEnd){
     const prevuH = dureePrevueH(o);
     const nbLot = o.fusionGroupId ? fusionGroupCounts[o.fusionGroupId] : 1;
     const pieceLabel = nbLot > 1 ? `${o.piece} (+${nbLot-1} pièce${nbLot-1>1?'s':''} du même lot)` : o.piece;
-    const hByOperator = {}, dateByOperator = {};
-    if(o.sessions && o.sessions.length){
+    const hByOperator = {}, dateByOperator = {}, firstDateByOperator = {};
+    const archSessions = (!(o.sessions && o.sessions.length) && o.statut === 'termine') ? archivedSessionsFor(o, periodStart, periodEnd) : null;
+    if(archSessions){
+      const r = archivedPieceHoursInPeriod(o, archSessions, cfg, periodStart, periodEnd);
+      Object.keys(r.byOp).forEach(op => { hByOperator[op] = r.byOp[op]; dateByOperator[op] = r.last[op]; firstDateByOperator[op] = r.first[op]; });
+    } else if(o.sessions && o.sessions.length){
       o.sessions.forEach(s => {
         const opUid = s.operatorUserId || o.operatorUserId;
         if(!opUid) return;
@@ -11607,6 +11670,7 @@ function computeProductionTimeByUser(st, periodStart, periodEnd){
           const h = countedHoursBetween(clampStart, clampEnd, cfg, exceptionWindowsFor(o));
           hByOperator[opUid] = (hByOperator[opUid]||0) + h;
           if(!dateByOperator[opUid] || sStart > dateByOperator[opUid]) dateByOperator[opUid] = sStart;
+          if(!firstDateByOperator[opUid] || sStart < firstDateByOperator[opUid]) firstDateByOperator[opUid] = sStart;
         }
       });
     } else if(o.statut === 'termine' && o.dureeReelleH != null && o.dureeReelleH > 0){
@@ -11640,7 +11704,7 @@ function computeProductionTimeByUser(st, periodStart, periodEnd){
         const u = ensure(uid);
         u.totalH += h;
         u.totalPrevuH += prevuH;
-        u.details.push({ cid:c.id, oid:o.id, commandeNom:c.nom, refClient:c.refClient||'', piece:pieceLabel, etape:o.etape, machineNom: m?m.nom:'—', h, prevuH, date: dateByOperator[opUid] });
+        u.details.push({ cid:c.id, oid:o.id, commandeNom:c.nom, refClient:c.refClient||'', piece:pieceLabel, etape:o.etape, machineNom: m?m.nom:'—', h, prevuH, date: dateByOperator[opUid], dateDebut: firstDateByOperator[opUid] || dateByOperator[opUid] });
       }
     });
   };
@@ -11663,7 +11727,11 @@ function computeProductionTimeByMachine(st, periodStart, periodEnd){
     }
     const cfg = configForPiece(o, st);
     let h = 0;
-    if(o.sessions && o.sessions.length){
+    const archSessions = (!(o.sessions && o.sessions.length) && o.statut === 'termine') ? archivedSessionsFor(o, periodStart, periodEnd) : null;
+    if(archSessions){
+      const r = archivedPieceHoursInPeriod(o, archSessions, cfg, periodStart, periodEnd);
+      h = Object.keys(r.byOp).reduce((t, op) => t + r.byOp[op], 0);
+    } else if(o.sessions && o.sessions.length){
       o.sessions.forEach(s => {
         const sStart = new Date(s.debut);
         const sEnd = s.fin ? new Date(s.fin) : new Date();
@@ -11922,7 +11990,7 @@ function renderTempsProdDetail(row, indent){
     <td><span class="temps-prod-commande-link" data-action="show-temps-prod-sessions" data-cid="${d.cid}" data-oid="${d.oid}" title="Voir le détail des horaires (jours, début, pauses, fin)">${escapeHtml(d.commandeNom)}</span>${d.refClient?` <span class="footer-note" style="margin:0;">(${escapeHtml(d.refClient)})</span>`:''}</td>
     <td>${escapeHtml(d.piece)} / ${escapeHtml(d.etape)}</td>
     <td>${escapeHtml(d.machineNom)}</td>
-    <td>${d.date ? d.date.toLocaleDateString('fr-FR') : '—'}</td>
+    <td>${d.date ? ((d.dateDebut && d.dateDebut.toLocaleDateString('fr-FR') !== d.date.toLocaleDateString('fr-FR')) ? `${d.dateDebut.toLocaleDateString('fr-FR')} → ${d.date.toLocaleDateString('fr-FR')}` : d.date.toLocaleDateString('fr-FR')) : '—'}</td>
     <td>${formatHeures(d.prevuH)}</td>
     <td>${formatHeures(d.h)}${correctable ? ` <button class="ghost small" data-action="open-correct-operator" data-cid="${d.cid}" data-oid="${d.oid}" title="Corriger qui a réellement réalisé cette tâche (ex. temps compté à tort sur l'opérateur assigné plutôt que sur qui a vraiment travaillé)" style="padding:1px 4px; font-size:9px;">✎</button>` : ''}</td>
     <td>${formatEcart(d.h - d.prevuH)}${overrun?` <span title="Dépassement notable (+50% et plus de 15 min)">⚠️</span>`:''}</td>
@@ -12201,6 +12269,7 @@ function renderEmployeeDetailBlocks(rows){
 // partagé — voir activeIdentityId) — jamais la liste des collègues. Même moteur de calcul
 // (computeProductionTimeByUser) que la vue superviseur, simplement filtré à cette seule identité.
 function renderTempsProdSelfPage(start, end, label){
+  ensureArchivedSessions(start, end);
   const uid = activeIdentityId();
   const byUser = computeProductionTimeByUser(state, start, end);
   const rec = byUser[uid] || { totalH:0, totalPrevuH:0, details:[] };
@@ -12230,6 +12299,7 @@ function renderTempsProdSelfPage(start, end, label){
 }
 function renderTempsProdPage(){
   const { start, end, label } = tempsProdPeriodBounds();
+  ensureArchivedSessions(start, end);
   if(!canSupervise()) return renderTempsProdSelfPage(start, end, label);
   const byUser = computeProductionTimeByUser(state, start, end);
   const rows = tempsProdRows(byUser, start, end).filter(r => !isHiddenFromTempsProd(state, r.uid));
