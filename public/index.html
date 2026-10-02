@@ -1705,7 +1705,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.89.1';
+const APP_VERSION = '1.89.2';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -10462,6 +10462,27 @@ function renderRisqueChainBlockHtml(chain, machineTimelines, c){
 let parcoursModal = null;
 function openParcours(cid){ if(!cid) return; parcoursModal = { cid, search:'', pieceFilter:'' }; render(); }
 function closeParcours(){ parcoursModal = null; render(); }
+// Bouton « 🧭 Parcours » de la barre de recherche des commandes (v1.89.2, déplacé depuis l'en-tête de chaque carte) :
+// ouvre le parcours de CE que la barre désigne — la commande isolée si aucune saisie, sinon la 1re commande
+// active correspondant à la saisie (restreinte à la pièce tapée si c'en est une) ; plusieurs correspondances →
+// la saisie est reportée dans la recherche de la pop-up pour choisir ; aucune → pop-up avec son message.
+function openParcoursFromSearch(){
+  const q = String(searchQuery||'').trim();
+  const schedule = getSchedule();
+  if(!q){
+    parcoursModal = { cid: selectedCommandeId || null, search:'', pieceFilter:'' };
+    render(); return;
+  }
+  const results = parcoursSearchResults(schedule, q);
+  if(!results.length){ parcoursModal = { cid:null, search:q, pieceFilter:'' }; render(); return; }
+  const first = results[0];
+  parcoursModal = {
+    cid: first.id,
+    search: results.length > 1 ? q : '',
+    pieceFilter: parcoursPieceMatches(first, q) ? q : ''
+  };
+  render();
+}
 // Choisir un résultat : si la saisie correspond à un NOM DE PIÈCE de cette commande (pas seulement à son
 // numéro, sa réf. client ou une étape), le parcours est restreint à cette pièce (`pieceFilter`) — retour : « si je
 // mets un numéro de pièce, seule la pièce demandée doit être affichée ».
@@ -10531,7 +10552,7 @@ function renderParcoursModal(){
     : '';
   let bodyHtml;
   if(!c){
-    bodyHtml = `<div class="footer-note" style="text-align:left;">Commande introuvable parmi les commandes actives (archivée ou supprimée). Utilisez la recherche ci-dessus.</div>`;
+    bodyHtml = `<div class="footer-note" style="text-align:left;">${parcoursModal.cid ? 'Commande introuvable parmi les commandes actives (archivée ou supprimée). ' : ''}Tapez ci-dessus un numéro de commande, une référence client, une pièce ou une étape.</div>`;
   } else {
     const urgenceTxt = c.urgence==='urgente' ? 'Urgente' : c.urgence==='importante' ? 'Importante' : 'Normale';
     const allChains = pieceChainsForCommande(c);
@@ -15457,7 +15478,6 @@ function renderCommandeCard(c, idx, total){
       <div class="due-field">Échéance <input type="date" required value="${c.dateBesoin}" data-action="commande-field" data-cid="${c.id}" data-field="dateBesoin"></div>
       ${zoneSelect}
       ${badge}
-      <button class="small" data-action="open-parcours" data-cid="${c.id}" title="Étapes de cette commande avec leurs dates théoriques de production">🧭 Parcours</button>
     </div>
     ${expeditionBlock}
     ${activeBlock}
@@ -15531,6 +15551,7 @@ function renderCommandes(schedule){
   <div class="search-bar">
     <input type="text" id="commande-search-input" class="${searchQuery?'search-active':''}" placeholder="Rechercher une commande ou une pièce…" value="${escapeHtml(searchQuery)}">
     ${searchQuery ? `<button class="ghost small" data-action="clear-search">✕ Effacer</button>` : ''}
+    <button class="small" data-action="open-parcours-search" title="Étapes de la commande (ou de la pièce) recherchée avec leurs dates théoriques de production">🧭 Parcours</button>
   </div>
   ${isolatedCommande ? `<div class="isolate-banner">Commande isolée : <strong>${escapeHtml(isolatedCommande.nom)}</strong><button class="ghost small" data-action="clear-isolate">✕ Afficher toutes les commandes</button></div>` : ''}`;
 
@@ -17696,6 +17717,7 @@ function dispatchClickAction(action, el){
     case 'close-correct-pointage': closeCorrectPointage(); break;
     case 'ctx-parcours': contextMenu = null; openParcours(el.dataset.cid); break;
     case 'open-parcours': openParcours(el.dataset.cid); break;
+    case 'open-parcours-search': openParcoursFromSearch(); break;
     case 'close-parcours': closeParcours(); break;
     case 'parcours-pick': pickParcours(el.dataset.cid); break;
     case 'parcours-clear-piece': clearParcoursPieceFilter(); break;

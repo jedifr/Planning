@@ -4041,6 +4041,16 @@ seulement celles à risque. Pop-up retenue (pas de page dédiée), **sans impres
   de commande seul, filtre périmé), toutes les frises s'affichent. `openParcours` repart sans filtre.
 - Vérifié (Playwright, commande synthétique 3 pièces) : 3 frises → 1 en tapant la pièce, 3 en tapant le seul
   numéro de commande, 1 après clic sur un résultat, 3 après « Afficher toutes les pièces », focus conservé.
+- **Bouton déplacé dans la barre de recherche (v1.89.2).** Retour (capture, flèche à droite de « ✕ Effacer ») :
+  le bouton « 🧭 Parcours » n'est plus dans l'en-tête de chaque carte commande mais dans `.search-bar` (toujours
+  visible, avec ou sans saisie), `data-action="open-parcours-search"` → `openParcoursFromSearch()` : saisie vide →
+  la commande isolée (`selectedCommandeId`) sinon pop-up vide invitant à chercher ; saisie → la 1re commande
+  active correspondante (`parcoursSearchResults`), parcours restreint à la pièce tapée si c'en est une
+  (`pieceFilter`) ; **plusieurs correspondances** → la saisie est reportée dans la recherche de la pop-up pour
+  choisir ; aucune → message « Aucune commande active ne correspond ». Les autres points d'entrée restent (menu
+  contextuel `ctx-parcours`, bouton des cartes de la page Risques). Vérifié (Playwright) : bouton absent des
+  cartes, présent dans la barre ; pièce tapée → 1 frise + barre de filtre ; numéro de commande → 3 frises ;
+  « zzzz » et saisie vide → messages attendus, aucune erreur.
 
 ### Pauses de production à risque
 
