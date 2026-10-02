@@ -4029,6 +4029,18 @@ seulement celles à risque. Pop-up retenue (pas de page dédiée), **sans impres
   fond (`parcoursModal=null` ajouté à la liste de réinitialisation du clic sur `.modal-overlay`).
 - Vérifié (Playwright, export réel) : 16 frises/37 étapes pour C026-0693, recherche + bascule, focus conservé,
   ouverture depuis la carte, le menu contextuel et la page Risques, aucune erreur.
+- **Filtre sur la pièce saisie (v1.89.1).** Retour : « si je mets un numéro de pièce, que seule la pièce demandée
+  soit affichée ». `parcoursModal.pieceFilter` (transitoire) + `parcoursPieceMatches(c, needle)` (le texte tapé
+  recoupe le nom d'au moins une pièce de la commande affichée, insensible à la casse). **Deux voies** :
+  (1) *en tapant* — si le texte recoupe une pièce de la commande ouverte, seules les frises correspondantes
+  restent affichées au fil de la frappe ; (2) *au clic sur un résultat* (`pickParcours`) — le texte tapé est
+  conservé comme `pieceFilter` si cette pièce existe dans la commande choisie (la recherche par numéro de pièce
+  mène donc directement à SA frise). Une barre bleue (`.pc-filter-bar`) rappelle le filtre avec le bouton
+  « Afficher toutes les pièces » (`parcours-clear-piece`). Les résultats de recherche indiquent « 🔎 pièce : … »
+  quand la saisie correspond à une pièce. **Jamais de parcours vide** : sans pièce correspondante (saisie = numéro
+  de commande seul, filtre périmé), toutes les frises s'affichent. `openParcours` repart sans filtre.
+- Vérifié (Playwright, commande synthétique 3 pièces) : 3 frises → 1 en tapant la pièce, 3 en tapant le seul
+  numéro de commande, 1 après clic sur un résultat, 3 après « Afficher toutes les pièces », focus conservé.
 
 ### Pauses de production à risque
 

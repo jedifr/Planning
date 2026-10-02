@@ -938,6 +938,8 @@
   .pc-results{display:flex; flex-direction:column; border:1px solid var(--line); margin-top:4px; max-height:200px; overflow:auto;}
   .pc-result{background:var(--panel); border:none; border-bottom:1px solid var(--line); text-align:left; padding:6px 10px; cursor:pointer; font-family:inherit; font-size:13px;}
   .pc-result:hover{background:var(--panel-2);}
+  .pc-result-piece{font-size:11px; color:var(--blue); margin-left:8px;}
+  .pc-filter-bar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:12px; background:rgba(49,111,152,0.08); border:1px solid rgba(49,111,152,0.3); padding:6px 10px; margin:8px 0 4px;}
   @media (max-width:720px){
     .rc-track{overflow-x:auto;}
   }
@@ -1703,7 +1705,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.89.0';
+const APP_VERSION = '1.89.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -10458,9 +10460,25 @@ function renderRisqueChainBlockHtml(chain, machineTimelines, c){
 // dès que l'horaire réel existe) et pieceChainsForCommande — aucun nouveau calcul de planification, rien
 // d'enregistré. `parcoursModal` : { cid, search } transitoire côté client, jamais dans state.
 let parcoursModal = null;
-function openParcours(cid){ if(!cid) return; parcoursModal = { cid, search:'' }; render(); }
+function openParcours(cid){ if(!cid) return; parcoursModal = { cid, search:'', pieceFilter:'' }; render(); }
 function closeParcours(){ parcoursModal = null; render(); }
-function pickParcours(cid){ if(parcoursModal){ parcoursModal.cid = cid; parcoursModal.search = ''; render(); } }
+// Choisir un résultat : si la saisie correspond à un NOM DE PIÈCE de cette commande (pas seulement à son
+// numéro, sa réf. client ou une étape), le parcours est restreint à cette pièce (`pieceFilter`) — retour : « si je
+// mets un numéro de pièce, seule la pièce demandée doit être affichée ».
+function parcoursPieceMatches(c, needle){
+  const n = String(needle||'').trim().toLowerCase();
+  if(!n) return false;
+  return pieceChainsForCommande(c).some(ch => String(ch.nom||'').toLowerCase().includes(n));
+}
+function pickParcours(cid){
+  if(!parcoursModal) return;
+  const c = getSchedule().find(cc => cc.id === cid);
+  const needle = parcoursModal.search.trim();
+  parcoursModal.pieceFilter = (c && parcoursPieceMatches(c, needle)) ? needle : '';
+  parcoursModal.cid = cid; parcoursModal.search = '';
+  render();
+}
+function clearParcoursPieceFilter(){ if(parcoursModal){ parcoursModal.pieceFilter = ''; parcoursModal.search = ''; render(); } }
 // Retrouve une commande ACTIVE (celles du planning calculé) par numéro, référence client, pièce ou étape.
 function parcoursSearchResults(schedule, q){
   const needle = String(q||'').trim().toLowerCase();
@@ -10508,7 +10526,7 @@ function renderParcoursModal(){
   const results = parcoursSearchResults(schedule, parcoursModal.search);
   const resultsHtml = parcoursModal.search.trim()
     ? (results.length
-        ? `<div class="pc-results">${results.map(r => `<button class="pc-result" data-action="parcours-pick" data-cid="${r.id}"><strong>${escapeHtml(r.nom)}</strong>${r.refClient?` <span class="footer-note" style="margin:0;">(${escapeHtml(r.refClient)})</span>`:''}<span class="footer-note" style="margin:0 0 0 8px;">échéance ${escapeHtml(formatDateFr(r.dateBesoin))}</span></button>`).join('')}</div>`
+        ? `<div class="pc-results">${results.map(r => `<button class="pc-result" data-action="parcours-pick" data-cid="${r.id}"><strong>${escapeHtml(r.nom)}</strong>${r.refClient?` <span class="footer-note" style="margin:0;">(${escapeHtml(r.refClient)})</span>`:''}<span class="footer-note" style="margin:0 0 0 8px;">échéance ${escapeHtml(formatDateFr(r.dateBesoin))}</span>${parcoursPieceMatches(r, parcoursModal.search) ? ` <span class="pc-result-piece">🔎 pièce : ${escapeHtml(pieceChainsForCommande(r).filter(ch=>String(ch.nom||'').toLowerCase().includes(parcoursModal.search.trim().toLowerCase())).map(ch=>ch.nom).join(', '))}</span>` : ''}</button>`).join('')}</div>`
         : `<div class="footer-note" style="text-align:left;">Aucune commande active ne correspond.</div>`)
     : '';
   let bodyHtml;
@@ -10516,8 +10534,17 @@ function renderParcoursModal(){
     bodyHtml = `<div class="footer-note" style="text-align:left;">Commande introuvable parmi les commandes actives (archivée ou supprimée). Utilisez la recherche ci-dessus.</div>`;
   } else {
     const urgenceTxt = c.urgence==='urgente' ? 'Urgente' : c.urgence==='importante' ? 'Importante' : 'Normale';
-    const chains = pieceChainsForCommande(c);
-    const chainsHtml = chains.map(chain => {
+    const allChains = pieceChainsForCommande(c);
+    // Filtre actif : la saisie en cours si elle désigne une pièce de CETTE commande (effet immédiat à la frappe),
+    // sinon la pièce retenue au clic sur un résultat. Rien ne correspond → toutes les pièces (jamais un parcours vide).
+    const typed = parcoursModal.search.trim();
+    const activeFilter = parcoursPieceMatches(c, typed) ? typed : (parcoursModal.pieceFilter || '');
+    const fl = activeFilter.toLowerCase();
+    const filtered = fl ? allChains.filter(ch => String(ch.nom||'').toLowerCase().includes(fl)) : allChains;
+    const chains = filtered.length ? filtered : allChains;
+    const filterBar = (fl && filtered.length && filtered.length < allChains.length)
+      ? `<div class="pc-filter-bar">🔎 Pièce « <strong>${escapeHtml(activeFilter)}</strong> » — ${filtered.length} sur ${allChains.length} pièce(s) de la commande <button class="small" data-action="parcours-clear-piece">Afficher toutes les pièces</button></div>` : '';
+    const chainsHtml = filterBar + chains.map(chain => {
       const finPiece = chain.rows.map(o => risqueRowDateInfo(o).finVal).filter(Boolean).reduce((m, d) => (!m || d > m) ? d : m, null);
       const nbDone = chain.rows.filter(o => o.statut === 'termine').length;
       return `<div class="rc-chain-block">
@@ -17671,6 +17698,7 @@ function dispatchClickAction(action, el){
     case 'open-parcours': openParcours(el.dataset.cid); break;
     case 'close-parcours': closeParcours(); break;
     case 'parcours-pick': pickParcours(el.dataset.cid); break;
+    case 'parcours-clear-piece': clearParcoursPieceFilter(); break;
     case 'ctx-declare-done': contextMenu = null; openDeclareDone(el.dataset.cid, el.dataset.oid); break;
     case 'close-declare-done': closeDeclareDone(); break;
     case 'submit-declare-done': submitDeclareDone(); break;
