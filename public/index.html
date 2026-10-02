@@ -653,6 +653,8 @@
   .dash-custom-cols{display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:16px;}
   .dash-custom-col{background:var(--panel); border:1px solid var(--line-soft); border-radius:var(--radius); padding:8px 12px; min-width:0;}
   .dash-custom-hidden .page-menu-label{color:var(--text-faint); text-decoration:line-through;}
+  .flash-target{animation:flashTarget 1.6s ease-out;}
+  @keyframes flashTarget{0%,40%{background:var(--accent-dim);}100%{background:transparent;}}
   /* Pointage de l'équipe (Vue d'ensemble) — voir renderTeamPointageSection. Classes préfixées pt-
      pour ne jamais entrer en collision avec un nom générique (.now, .gap...). */
   .pt-team{display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:0 14px;}
@@ -1716,7 +1718,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.90.0';
+const APP_VERSION = '1.90.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -6781,6 +6783,32 @@ let pausedBannerDismissedDate = null; // AAAA-MM-JJ à laquelle la bannière a �
 function loadPausedBannerDismissDate(){
   try{ pausedBannerDismissedDate = localStorage.getItem(PAUSED_BANNER_DISMISS_KEY); }catch(e){ /* stockage indisponible : la bannière réapparaîtra à chaque rechargement, tant pis */ }
 }
+// Le bandeau « en pause depuis la veille » n'est composé que sur la page Planning : depuis toute autre
+// page (Vue d'ensemble comprise), le bouton « N en pause » de l'en-tête ne faisait donc rien de visible
+// (bug réel, v1.90.1). On rouvre aussi la fermeture mémorisée (localStorage), sinon un rechargement
+// la rétablirait.
+function revealPausedBanner(){
+  pausedBannerDismissedDate = null;
+  try{ localStorage.removeItem(PAUSED_BANNER_DISMISS_KEY); }catch(e){}
+  currentPage = 'planning';
+  render();
+  const b = document.querySelector('.paused-banner');
+  if(b && b.scrollIntoView){ try{ b.scrollIntoView({ block:'start', behavior:'smooth' }); }catch(e){} }
+}
+// Badges d'alerte de l'en-tête → Vue d'ensemble, amenée jusqu'au bloc concerné (déjà sur la page, le
+// simple changement de page ne montrait rien : bug réel, v1.90.1). Un bloc masqué par la
+// personnalisation de la page laisse simplement la page en haut.
+function gotoDashboardAt(targetId){
+  currentPage = 'dashboard';
+  render();
+  if(!targetId) return;
+  const t = document.getElementById(targetId);
+  if(t && t.scrollIntoView){
+    try{ t.scrollIntoView({ block:'start', behavior:'smooth' }); }catch(e){}
+    t.classList.add('flash-target');
+    setTimeout(() => t.classList.remove('flash-target'), 1800);
+  }
+}
 function dismissPausedBanner(){
   pausedBannerDismissedDate = toDateInputValue(new Date());
   try{ localStorage.setItem(PAUSED_BANNER_DISMISS_KEY, pausedBannerDismissedDate); }catch(e){}
@@ -11081,9 +11109,9 @@ function renderPointageHeaderBadges(){
   const nSans = computeTeamPointage(state, now).filter(r => r.status==='sansPointage').length;
   const nPause = computeLongPausedToday(state, now, settings.seuilPauseMin).length;
   let html = '';
-  if(nSans) html += `<button class="small pointage-alert-badge red" data-action="goto-dashboard" title="Salariés dans leur horaire sans tâche en cours depuis plus de ${settings.seuilSansPointageMin} min — détail dans la Vue d'ensemble">● ${nSans} sans pointage</button>`;
+  if(nSans) html += `<button class="small pointage-alert-badge red" data-action="goto-dashboard" data-target="dash-pointage-section" title="Salariés dans leur horaire sans tâche en cours depuis plus de ${settings.seuilSansPointageMin} min — détail dans la Vue d'ensemble">● ${nSans} sans pointage</button>`;
   html += declBadge;
-  if(nPause) html += `<button class="small pointage-alert-badge amber" data-action="goto-dashboard" title="Affaires mises en pause aujourd'hui et pas reprises depuis plus de ${settings.seuilPauseMin} min — détail dans la Vue d'ensemble">⏸ ${nPause} affaire${nPause>1?'s':''} en pause</button>`;
+  if(nPause) html += `<button class="small pointage-alert-badge amber" data-action="goto-dashboard" data-target="dash-paused-today" title="Affaires mises en pause aujourd'hui et pas reprises depuis plus de ${settings.seuilPauseMin} min — détail dans la Vue d'ensemble">⏸ ${nPause} affaire${nPause>1?'s':''} en pause</button>`;
   return html;
 }
 // Rappel adressé à l'opérateur lui-même (identité active du poste), sur toutes les pages : rien en
@@ -11193,7 +11221,7 @@ function renderTeamPointageSection(now){
     </div>`;
   }).join('');
   const pausedHtml = paused.length ? `
-    <div class="trend-section-title" style="margin-top:14px; color:var(--amber);">⏸ Affaires en pause depuis plus de ${settings.seuilPauseMin} min aujourd'hui</div>
+    <div id="dash-paused-today" class="trend-section-title" style="margin-top:14px; color:var(--amber);">⏸ Affaires en pause depuis plus de ${settings.seuilPauseMin} min aujourd'hui</div>
     <div class="pt-paused-list">${paused.map(p => {
       const m = state.machines.find(mm => mm.id===p.machineId);
       return `<div class="pt-paused">
@@ -11204,7 +11232,7 @@ function renderTeamPointageSection(now){
         </div>
       </div>`; }).join('')}</div>` : '';
   const empty = !rows.length ? `<div class="footer-note" style="text-align:left;">Aucun salarié attendu aujourd'hui.</div>` : '';
-  return `<div class="trend-section-title" style="margin-top:20px;">👥 Pointage de l'équipe aujourd'hui</div>
+  return `<div id="dash-pointage-section" class="trend-section-title" style="margin-top:20px;">👥 Pointage de l'équipe aujourd'hui</div>
     ${!settings.actif ? `<div class="footer-note" style="text-align:left;">Alertes désactivées (Paramètres → Pointage & disponibilité) — la frise reste affichée.</div>` : ''}
     <div class="pt-team">${rowsHtml}${empty}</div>
     <div class="pt-legend">
@@ -17778,7 +17806,7 @@ function dispatchClickAction(action, el){
     case 'goto-historique': currentPage = 'historique'; render(); break;
     case 'open-historique-detail': openHistoriqueDetail(el.dataset.weekIdx, el.dataset.metric); break;
     case 'close-historique-detail': closeHistoriqueDetail(); break;
-    case 'goto-dashboard': currentPage = 'dashboard'; render(); break;
+    case 'goto-dashboard': gotoDashboardAt(el.dataset.target); break;
     case 'pointages-view-mode': pointagesViewMode = el.dataset.mode; render(); break;
     case 'pointages-view-reference': pointagesFilters.search = el.dataset.piece; pointagesViewMode = 'liste'; render(); break;
     case 'open-correct-pointage': openCorrectPointage(el.dataset.cid, el.dataset.oid); break;
@@ -17987,7 +18015,7 @@ function dispatchClickAction(action, el){
     case 'ctx-lunch-exception': contextMenu = null; setLunchException(el.dataset.cid, el.dataset.oid); break;
     case 'resume-paused-task': setOpStatut(el.dataset.cid, el.dataset.oid, 'en_cours'); break;
     case 'dismiss-paused-banner': dismissPausedBanner(); break;
-    case 'show-paused-banner': pausedBannerDismissedDate = null; render(); break;
+    case 'show-paused-banner': revealPausedBanner(); break;
     case 'resume-pause-reminder': resumeFromPauseReminder(el.dataset.cid, el.dataset.oid); break;
     case 'resume-all-pause-reminders': resumeAllPauseReminders(); break;
     case 'snooze-pause-reminders': snoozeAllPauseReminders(Number(el.dataset.minutes)); break;

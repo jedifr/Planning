@@ -253,6 +253,18 @@ pause manuelle ne re-tague rien, contrairement à l'ouverture d'une session) —
 mettre en pause le poste de quelqu'un d'autre ; l'affichage reste correct dans ce cas au sens où il
 répond quand même à « qui était sur cette tâche », l'info concrètement utile ici.
 
+  **Boutons d'en-tête « ⏸ N en pause » et « ⏸ N affaire(s) en pause » morts hors du Planning (v1.90.1).** Retour
+  utilisateur (capture, Vue d'ensemble) : les deux boutons ne faisaient rien. Deux causes distinctes.
+  (1) `renderPausedTasksBanner()` n'est composé que dans la page Planning de `render()` : `show-paused-banner`
+  (`pausedBannerDismissedDate = null; render()`) ne montrait donc rien depuis une autre page — `revealPausedBanner()`
+  vide aussi la fermeture mémorisée (`localStorage`, sinon un rechargement la rétablit), bascule sur Planning et
+  amène le bandeau à l'écran. (2) Les badges du pointage (`renderPointageHeaderBadges`) faisaient `goto-dashboard`,
+  sans effet déjà sur la Vue d'ensemble : `gotoDashboardAt(targetId)` (`data-target`) y défile jusqu'au bloc
+  concerné (`#dash-pointage-section` pour « sans pointage », `#dash-paused-today` pour « affaires en pause ») avec un
+  bref surlignage (`.flash-target`). Réflexe : un bouton d'en-tête qui révèle un élément doit garantir que cet
+  élément existe dans la page courante, sinon changer de page ou défiler. Vérifié (Playwright, horloge simulée un
+  jeudi 13h30, tâches en pause hier et aujourd'hui) : page Planning + bandeau présent ; défilement jusqu'au bloc.
+
 ### Travail à plusieurs sur une même pièce
 
 Cas volontairement géré, distinct du split en plusieurs lignes utilisé pour deux **machines**
