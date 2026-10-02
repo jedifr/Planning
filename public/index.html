@@ -1686,7 +1686,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.87.3';
+const APP_VERSION = '1.87.4';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -14745,17 +14745,23 @@ function renderKanbanView(schedule){
   // l'un efface l'autre, voir `toggleIsolateCommande`/le dispatch de la recherche) — aucun risque de
   // conflit entre les deux filtres.
   if(selectedCommandeId) allOps = allOps.filter(o => o.cid === selectedCommandeId);
-  // Même neutralisation que doneCutoff/effectiveKanbanDoneLimit ci-dessous pendant une recherche ou
-  // un isolement (highlightActive()) : le filtre "Postes affichés" ne doit pas non plus pouvoir
-  // masquer le résultat trouvé/isolé si un poste avait été décoché lors d'un tri précédent.
-  if(kanbanMachineFilters && !highlightActive()) allOps = allOps.filter(o => {
+  // Le filtre "Postes affichés" s'applique TOUJOURS, y compris pendant une recherche ou un isolement
+  // de commande : c'est un choix explicite et visible de la personne (retour utilisateur réel — un
+  // isolement resté actif neutralisait ce filtre en silence, « malgré le filtre sur jet d'eau, tous
+  // les autres postes apparaissent »). Pour ne pas masquer en silence un résultat trouvé/isolé, le
+  // nombre de tâches écartées par ce seul filtre est signalé en bandeau avec un bouton « Tout
+  // afficher » (`machinesMasqueesParFiltre`, voir plus bas).
+  let machinesMasqueesParFiltre = 0;
+  if(kanbanMachineFilters) allOps = allOps.filter(o => {
     // Une tâche sans poste (pointage rapide sans machine choisie, voir CLAUDE.md) n'appartient à
     // aucun des postes du filtre — elle a ses deux propres pseudo-entrées, jamais celles des postes.
+    let ok;
     if(o.machineId === null){
-      if(kanbanMachineFilters.has(KANBAN_SANS_POSTE_TOUS)) return true;
-      return kanbanMachineFilters.has(KANBAN_SANS_POSTE_MOI) && String(o.operatorUserId) === String(activeIdentityId());
-    }
-    return kanbanMachineFilters.has(o.machineId);
+      ok = kanbanMachineFilters.has(KANBAN_SANS_POSTE_TOUS) ||
+        (kanbanMachineFilters.has(KANBAN_SANS_POSTE_MOI) && String(o.operatorUserId) === String(activeIdentityId()));
+    } else ok = kanbanMachineFilters.has(o.machineId);
+    if(!ok) machinesMasqueesParFiltre++;
+    return ok;
   });
 
   // Filet de sécurité complémentaire au filtre par cid ci-dessus, pour une RECHERCHE texte (qui ne
@@ -14917,6 +14923,7 @@ function renderKanbanView(schedule){
   const nbVisibles = kanbanMachineFilters ? state.machines.filter(m=>kanbanMachineFilters.has(m.id)).length : state.machines.length;
   return `<div class="panel-body">
     ${absenceBannerHtml([new Date()])}
+    ${(highlightActive() && machinesMasqueesParFiltre>0) ? `<div class="footer-note" style="text-align:left; padding:6px 0;">⚠ ${machinesMasqueesParFiltre} tâche(s) de la recherche/commande isolée masquée(s) par le filtre « Postes affichés ». <button class="small" data-action="kanban-machines-all">Tout afficher</button></div>` : ''}
     <div class="kanban-machine-filters">
       <details class="dd-menu" data-dd-key="kanban-postes" ontoggle="openMiniDropdowns['kanban-postes']=this.open" ${openMiniDropdowns['kanban-postes']?'open':''}>
         <summary class="small">Postes affichés (${nbVisibles}/${state.machines.length}) ▾</summary>

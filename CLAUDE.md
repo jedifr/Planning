@@ -2137,6 +2137,14 @@ il fallait descendre les ascenseurs à la main pour la retrouver.
     surlignage ne "répare" rien tant que le vrai problème est l'absence de tri/filtre par
     commande, pas une histoire de fenêtre de récence ou de limite d'affichage (qui n'étaient sans
     doute même pas la cause réelle sur l'installation qui a signalé le bug).
+  - **Exception depuis v1.87.4 : le filtre « Postes affichés » n'est PLUS neutralisé pendant un isolement/une
+    recherche.** Bug réel signalé (capture à l'appui, « Postes affichés (1/10) » sur Jet d'eau mais tous les autres
+    postes visibles) : un isolement de commande resté actif (`selectedCommandeId`) neutralisait en silence ce
+    filtre, choix explicite et visible de la personne. `renderKanbanView` l'applique donc toujours ; pour ne pas
+    masquer en silence un résultat trouvé/isolé, `machinesMasqueesParFiltre` compte les tâches écartées par ce seul
+    filtre et un bandeau « ⚠ N tâche(s) … masquée(s) par le filtre « Postes affichés » » + bouton « Tout afficher »
+    (`kanban-machines-all`) s'affiche pendant une recherche/un isolement. `doneCutoff`/`kanbanDoneLimit` restent
+    neutralisés comme avant.
   - **Cause racine, repérée en comparant au comportement de `renderCommandes`** : les panneaux
     « Tâches en cours »/« Tâches terminées » n'ont, eux, jamais fonctionné en surlignage pour
     l'isolement — ils **restreignent** la liste à la seule commande isolée
