@@ -3998,6 +3998,38 @@ un poste, la chaîne affichait « — » et « — bloque la suite ». `risqueSt
 poste, sinon « Étape » (pastille, note de blocage, tableau détaillé, e-mail « Avertir chef d'atelier ») ;
 chaque pastille affiche aussi son poste (si l'étape a un libellé distinct) et son statut.
 
+### Pop-up « 🧭 Parcours » d'une commande (v1.89.0)
+
+Demande : obtenir vite les étapes d'une affaire/commande avec les dates théoriques de production, dans
+la même représentation que la chaîne en pastilles de la page Risques — pour **toute** commande, pas
+seulement celles à risque. Pop-up retenue (pas de page dédiée), **sans impression ni export**.
+
+- `parcoursModal` (`{ cid, search } | null`, transitoire, jamais dans `state`) / `openParcours(cid)` /
+  `closeParcours()` / `pickParcours(cid)`. `renderParcoursModal()` — **purement de la composition** :
+  relit `getSchedule()` (donc les commandes ACTIVES seulement ; une archivée → message « introuvable »),
+  `pieceChainsForCommande` et `risqueRowDateInfo`/`risqueStepName`/`risqueStepPosteNom` (réutilisés
+  tels quels, aucun nouveau calcul de planification).
+- **Une frise par pièce** (`.rc-track.pc-track`, `parcoursStepHtml`) : pastille colorée par STATUT réel
+  (vert terminée ✓, bleu en cours ▶, ambre en pause ⏸, grise à faire ●) — différent de la chaîne des Risques
+  (là le rouge « bloquant » signale un problème ; ici une commande saine ne doit rien montrer de rouge) ;
+  l'anneau (`pc-current`) marque la première étape pas encore terminée (`chain.blockingId`). Sous chaque
+  pastille : libellé, poste, statut, **Début/Fin en gras si réalisés, en italique si prévus** (`debutReel`/
+  `finReel` sinon `o.start`/`o.end`), durée prévue et opérateur assigné. Étape sous-traitée/hors planning
+  sans dates : « Sous-traitance · retour {date} »/« Hors planning ». Titre de frise : « n/N étape(s)
+  terminée(s) · fin prévue … ».
+- **En-tête** : numéro, réf. client, échéance, urgence, **livraison théorique** (`c.finEstimee`) + verdict
+  `deliveryVerdictHtml` (le même que le formulaire de saisie et l'aperçu d'import).
+- **Recherche** (`#parcours-search-input`, même mécanisme de saisie « live » que les autres : `render()` puis
+  refocus) : numéro, réf. client, nom de pièce ou d'étape, 8 résultats max, un clic bascule
+  (`parcours-pick`) sans fermer la pop-up.
+- **Points d'entrée** : bouton « 🧭 Parcours » de l'en-tête de chaque carte commande (`renderCommandeCard`),
+  entrée « 🧭 Parcours de la commande » du menu contextuel (clic droit Kanban/Gantt/Liste, `ctx-parcours`),
+  bouton « 🧭 Parcours » des cartes de la page Risques. Composée dans `render()` pour la page Planning et la
+  page Risques seulement (les deux seules où ces boutons existent). Fermeture : ✕, Fermer, Échap, clic sur le
+  fond (`parcoursModal=null` ajouté à la liste de réinitialisation du clic sur `.modal-overlay`).
+- Vérifié (Playwright, export réel) : 16 frises/37 étapes pour C026-0693, recherche + bascule, focus conservé,
+  ouverture depuis la carte, le menu contextuel et la page Risques, aucune erreur.
+
 ### Pauses de production à risque
 
 Complète « Retard de démarrage » ci-dessus sur un axe différent : celui-ci mesure un retard **avant**

@@ -921,6 +921,23 @@
   .rc-blocking-note .tag{color:var(--red); font-weight:700; font-size:12px; letter-spacing:0.2px;}
   .rc-blocking-note .sub{color:var(--text-dim); font-size:11px; margin-top:2px;}
   .rc-context-line{font-size:11.5px; color:var(--text-dim); text-align:center; margin:2px 8px 0;}
+  .pc-track .rc-step{width:136px;}
+  .rc-dot.pc-done{background:var(--green);}
+  .rc-dot.pc-run{background:var(--blue);}
+  .rc-dot.pc-pause{background:var(--amber);}
+  .rc-dot.pc-todo{background:var(--panel); border-color:var(--line); color:var(--text-faint);}
+  .rc-dot.pc-current{box-shadow:0 0 0 4px rgba(49,111,152,0.22); border-color:rgba(49,111,152,0.45);}
+  .pc-label-current{color:var(--blue); font-weight:700;}
+  .pc-status-done{color:var(--green)!important;} .pc-status-run{color:var(--blue)!important; font-weight:600;} .pc-status-pause{color:var(--amber)!important; font-weight:600;}
+  .pc-date{font-size:10.5px; color:var(--text-dim); text-align:center; margin-top:2px; max-width:132px; white-space:normal;}
+  .pc-k{font-size:9px; text-transform:uppercase; letter-spacing:0.3px; color:var(--text-faint);}
+  .pc-reel{font-weight:700; color:var(--text);} .pc-prevu{font-style:italic;}
+  .pc-chain-sum{font-weight:400; text-transform:none; letter-spacing:0; color:var(--text-faint);}
+  .pc-head{display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start; margin:10px 0 4px;}
+  .pc-verdict{font-size:12px; text-align:right;}
+  .pc-results{display:flex; flex-direction:column; border:1px solid var(--line); margin-top:4px; max-height:200px; overflow:auto;}
+  .pc-result{background:var(--panel); border:none; border-bottom:1px solid var(--line); text-align:left; padding:6px 10px; cursor:pointer; font-family:inherit; font-size:13px;}
+  .pc-result:hover{background:var(--panel-2);}
   @media (max-width:720px){
     .rc-track{overflow-x:auto;}
   }
@@ -1686,7 +1703,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.88.0';
+const APP_VERSION = '1.89.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -10434,6 +10451,107 @@ function renderRisqueChainBlockHtml(chain, machineTimelines, c){
     ${contextHtml}
   </div>`;
 }
+// ---------------------------------------------------------------------------------------------
+// Pop-up « 🧭 Parcours » d'une commande (v1.89.0) — demande : obtenir vite les étapes d'une affaire/commande
+// avec leurs dates théoriques, dans la même représentation que la chaîne en pastilles de la page Risques.
+// Purement de la composition : relit getSchedule() (dates prévues recalculées à chaque rendu, « réalisé »
+// dès que l'horaire réel existe) et pieceChainsForCommande — aucun nouveau calcul de planification, rien
+// d'enregistré. `parcoursModal` : { cid, search } transitoire côté client, jamais dans state.
+let parcoursModal = null;
+function openParcours(cid){ if(!cid) return; parcoursModal = { cid, search:'' }; render(); }
+function closeParcours(){ parcoursModal = null; render(); }
+function pickParcours(cid){ if(parcoursModal){ parcoursModal.cid = cid; parcoursModal.search = ''; render(); } }
+// Retrouve une commande ACTIVE (celles du planning calculé) par numéro, référence client, pièce ou étape.
+function parcoursSearchResults(schedule, q){
+  const needle = String(q||'').trim().toLowerCase();
+  if(!needle) return [];
+  return schedule.filter(c =>
+    (c.nom && c.nom.toLowerCase().includes(needle)) ||
+    (c.refClient && c.refClient.toLowerCase().includes(needle)) ||
+    c.pieces.some(o => (o.piece && o.piece.toLowerCase().includes(needle)) || (o.etape && o.etape.toLowerCase().includes(needle)))
+  ).slice(0, 8);
+}
+// Pastille d'une étape du parcours : une couleur par STATUT réel (terminée / en cours / en pause / à faire),
+// l'anneau marque la première étape pas encore terminée de la pièce (celle sur laquelle on en est).
+function parcoursStepHtml(o, chain, idx){
+  const st = o.statut === 'termine' ? 'done' : o.statut === 'en_cours' ? 'run' : o.statut === 'en_pause' ? 'pause' : 'todo';
+  const icon = st==='done' ? '✓' : st==='run' ? '▶' : st==='pause' ? '⏸' : '●';
+  const info = risqueRowDateInfo(o);
+  const isCurrent = o.id === chain.blockingId;
+  const connector = idx>0 ? `<div class="rc-connector ${chain.rows[idx-1].statut==='termine'?'done':''}"></div>` : '';
+  const fmt = (d, reel) => d ? `<span class="${reel?'pc-reel':'pc-prevu'}">${escapeHtml(formatDT(d))}</span>` : '—';
+  let dates;
+  if((o.sousTraitance || o.horsPlanning) && !info.debutVal){
+    dates = o.sousTraitance
+      ? `<div class="pc-date">Sous-traitance${o.sousTraitanceDateRetour?` · retour ${escapeHtml(formatDateFr(o.sousTraitanceDateRetour))}`:''}</div>`
+      : `<div class="pc-date">Hors planning</div>`;
+  } else {
+    dates = `<div class="pc-date"><span class="pc-k">Début</span> ${fmt(info.debutVal, !!o.debutReel)}</div>
+      <div class="pc-date"><span class="pc-k">Fin</span> ${fmt(info.finVal, !!o.finReel)}</div>`;
+  }
+  const poste = risqueStepPosteNom(o);
+  const op = o.operatorUserId ? usersList.find(u => String(u.id) === String(o.operatorUserId)) : null;
+  const dureeH = dureePrevueH(o);
+  const meta = [dureeH>0 ? durationLabel(dureeH) : '', op ? '👤 '+op.username : ''].filter(Boolean).join(' · ');
+  return `${connector}<div class="rc-step pc-step"><div class="rc-dot pc-${st} ${isCurrent?'pc-current':''}" title="${escapeHtml(opStatutLabel(o.statut))}">${icon}</div>
+    <div class="rc-label ${isCurrent?'pc-label-current':''}" title="${escapeHtml(risqueStepName(o))}">${escapeHtml(risqueStepName(o))}</div>
+    ${(o.etape && poste && poste!==o.etape)?`<div class="rc-label-sub">${escapeHtml(poste)}</div>`:''}
+    <div class="rc-label-sub pc-status-${st}">${escapeHtml(opStatutLabel(o.statut))}</div>
+    ${dates}
+    ${meta?`<div class="rc-label-sub">${escapeHtml(meta)}</div>`:''}
+  </div>`;
+}
+function renderParcoursModal(){
+  if(!parcoursModal) return '';
+  const schedule = getSchedule();
+  const c = schedule.find(cc => cc.id === parcoursModal.cid);
+  const results = parcoursSearchResults(schedule, parcoursModal.search);
+  const resultsHtml = parcoursModal.search.trim()
+    ? (results.length
+        ? `<div class="pc-results">${results.map(r => `<button class="pc-result" data-action="parcours-pick" data-cid="${r.id}"><strong>${escapeHtml(r.nom)}</strong>${r.refClient?` <span class="footer-note" style="margin:0;">(${escapeHtml(r.refClient)})</span>`:''}<span class="footer-note" style="margin:0 0 0 8px;">échéance ${escapeHtml(formatDateFr(r.dateBesoin))}</span></button>`).join('')}</div>`
+        : `<div class="footer-note" style="text-align:left;">Aucune commande active ne correspond.</div>`)
+    : '';
+  let bodyHtml;
+  if(!c){
+    bodyHtml = `<div class="footer-note" style="text-align:left;">Commande introuvable parmi les commandes actives (archivée ou supprimée). Utilisez la recherche ci-dessus.</div>`;
+  } else {
+    const urgenceTxt = c.urgence==='urgente' ? 'Urgente' : c.urgence==='importante' ? 'Importante' : 'Normale';
+    const chains = pieceChainsForCommande(c);
+    const chainsHtml = chains.map(chain => {
+      const finPiece = chain.rows.map(o => risqueRowDateInfo(o).finVal).filter(Boolean).reduce((m, d) => (!m || d > m) ? d : m, null);
+      const nbDone = chain.rows.filter(o => o.statut === 'termine').length;
+      return `<div class="rc-chain-block">
+        <div class="rc-chain-piece-lbl">${escapeHtml(chain.nom)} <span class="pc-chain-sum">· ${nbDone}/${chain.rows.length} étape(s) terminée(s)${finPiece?` · fin prévue ${escapeHtml(formatDT(finPiece))}`:''}</span></div>
+        <div class="rc-track pc-track">${chain.rows.map((o, i) => parcoursStepHtml(o, chain, i)).join('')}</div>
+      </div>`;
+    }).join('');
+    bodyHtml = `
+      <div class="pc-head">
+        <div><strong style="font-size:15px;">${escapeHtml(c.nom)}</strong>${c.refClient?` <span class="footer-note" style="margin:0;">(${escapeHtml(c.refClient)})</span>`:''}
+          <div class="footer-note" style="margin:2px 0 0; text-align:left;">Échéance : ${escapeHtml(formatDateFr(c.dateBesoin))} · Urgence : ${urgenceTxt}</div></div>
+        <div class="pc-verdict">${c.finEstimee ? `📦 livraison théorique : <strong>${escapeHtml(formatDT(c.finEstimee))}</strong> ${deliveryVerdictHtml(c.finEstimee, c.dateBesoin)}` : ''}</div>
+      </div>
+      ${chainsHtml || `<div class="footer-note" style="text-align:left;">Cette commande n'a aucune étape.</div>`}
+      <div class="footer-note" style="text-align:left; margin-top:8px;">Dates en gras = réalisées ; en italique = prévues par le planning, recalculées à chaque modification. L'anneau marque l'étape sur laquelle on en est.</div>`;
+  }
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box modal-box-wide" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>🧭 Parcours d'une commande</h2>
+        <button class="ghost icon-btn" data-action="close-parcours" title="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="text" id="parcours-search-input" placeholder="🔍 Autre commande : numéro, réf. client, pièce, étape..." value="${escapeHtml(parcoursModal.search)}" autocomplete="off">
+        ${resultsHtml}
+        ${bodyHtml}
+        <div class="form-actions" style="margin-top:16px;">
+          <button class="ghost" data-action="close-parcours">Fermer</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
 // "📣 Avertir chef d'atelier" (bouton de carte, voir CLAUDE.md) — réutilise TEL QUEL
 // POST /api/notify-admins, déjà en place pour les notifications de congés (server.js) : envoie aux
 // comptes de rôle admin, aucune nouvelle route serveur ni nouveau champ de configuration nécessaire.
@@ -10541,6 +10659,7 @@ function renderRisquesPage(){
         </div>
         <div class="rc-actions">
           <span class="risque-days-late">+${joursRetard} j de dépassement estimé</span>
+          <button class="rc-btn" data-action="open-parcours" data-cid="${c.id}" title="Étapes de cette commande avec leurs dates théoriques">🧭 Parcours</button>
           <button class="rc-btn" data-action="isolate-commande-goto-planning" data-cid="${c.id}" title="Isoler cette commande dans le planning">🔄 Replanifier</button>
           <button class="rc-btn rc-btn-alert" data-action="risque-avertir-chef" data-cid="${c.id}" title="Envoyer un e-mail d'alerte aux administrateurs">📣 Avertir chef d'atelier</button>
         </div>
@@ -13604,6 +13723,7 @@ function renderContextMenu(){
     items.push({action:'ctx-lunch-exception', label:'🍽 Je travaille pendant la pause'});
   }
   if(o.statut==='termine') items.push({action:'ctx-reopen', label:'↺ Rouvrir (À faire)'});
+  items.push({action:'ctx-parcours', label:'🧭 Parcours de la commande'});
   const label = [c.nom, o.piece, o.etape].filter(Boolean).join(' · ');
   const left = Math.min(contextMenu.x, window.innerWidth - 220);
   const top = Math.min(contextMenu.y, window.innerHeight - (items.length*38+50));
@@ -15310,6 +15430,7 @@ function renderCommandeCard(c, idx, total){
       <div class="due-field">Échéance <input type="date" required value="${c.dateBesoin}" data-action="commande-field" data-cid="${c.id}" data-field="dateBesoin"></div>
       ${zoneSelect}
       ${badge}
+      <button class="small" data-action="open-parcours" data-cid="${c.id}" title="Étapes de cette commande avec leurs dates théoriques de production">🧭 Parcours</button>
     </div>
     ${expeditionBlock}
     ${activeBlock}
@@ -17166,6 +17287,7 @@ function render(){
     appEl.innerHTML = [
       renderHeader(),
       renderRisquesPage(),
+      renderParcoursModal(),
       renderSettingsModal(),
       renderPauseReminderModal(otherModalOpen),
       renderToast()
@@ -17236,6 +17358,7 @@ function render(){
     renderCorrectOperatorModal(),
     renderQuickPointageModal(),
     renderDeclareDoneModal(),
+    renderParcoursModal(),
     renderContextMenu(),
     renderPauseReminderModal(otherModalOpen),
     renderToast()
@@ -17402,7 +17525,7 @@ document.addEventListener('click', (e) => {
     // Pop-up de document ouverte PAR-DESSUS Paramètres : ne referme qu'elle, pas Paramètres.
     if(presenceDocModal){ presenceDocModal = null; render(); return; }
     presenceCorrection = null; presencePunchDraft = null;
-    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; closeSettingsModal(); return;
+    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; parcoursModal = null; closeSettingsModal(); return;
   }
   if(contextMenu && !e.target.closest('.context-menu')){
     contextMenu = null; render();
@@ -17544,6 +17667,10 @@ function dispatchClickAction(action, el){
     case 'pointages-view-reference': pointagesFilters.search = el.dataset.piece; pointagesViewMode = 'liste'; render(); break;
     case 'open-correct-pointage': openCorrectPointage(el.dataset.cid, el.dataset.oid); break;
     case 'close-correct-pointage': closeCorrectPointage(); break;
+    case 'ctx-parcours': contextMenu = null; openParcours(el.dataset.cid); break;
+    case 'open-parcours': openParcours(el.dataset.cid); break;
+    case 'close-parcours': closeParcours(); break;
+    case 'parcours-pick': pickParcours(el.dataset.cid); break;
     case 'ctx-declare-done': contextMenu = null; openDeclareDone(el.dataset.cid, el.dataset.oid); break;
     case 'close-declare-done': closeDeclareDone(); break;
     case 'submit-declare-done': submitDeclareDone(); break;
@@ -18321,6 +18448,12 @@ document.addEventListener('input', (e) => {
     const el = document.getElementById('archive-search-input');
     if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
   }
+  if(e.target.id === 'parcours-search-input'){
+    if(parcoursModal) parcoursModal.search = e.target.value;
+    render();
+    const el = document.getElementById('parcours-search-input');
+    if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
+  }
   if(e.target.id === 'zones-search-input'){
     zonesSearchQuery = e.target.value;
     render();
@@ -18349,6 +18482,7 @@ document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && retardDemarragePopupInfo){ closeRetardDemarragePopup(); }
   if(e.key === 'Escape' && rebutDraft){ closeRebutDraft(); }
   if(e.key === 'Escape' && historiqueDetailInfo){ closeHistoriqueDetail(); }
+  if(e.key === 'Escape' && parcoursModal){ closeParcours(); }
   if(e.key === 'Escape' && quickPointageDraft){ closeQuickPointage(); }
   if(e.key === 'Escape' && declareDoneDraft){ closeDeclareDone(); }
   if(e.key === 'Escape' && correctOperatorDraft){ closeCorrectOperator(); }
