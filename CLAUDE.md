@@ -1276,6 +1276,21 @@ inchangés.
 - Vérifié (Playwright, export réel du 05/10) : 4 colonnes égales, séparateurs Lundi/Mardi, Compact masque r3,
   séparateurs désactivables, vue groupée, mobile 390 px sans débordement (onglets de statut conservés), aucune erreur.
 
+- **Ascenseur horizontal dans les colonnes et troncature (v1.94.1).** Retour (capture) : une barre de défilement
+  horizontale apparaissait en bas des colonnes « À faire »/« Terminée » et le casier disparaissait des cartes.
+  Cause : `commandeNom` contient déjà le client (« C026-0753 FR68 FAURECIA HYDROGEN SOLUTIONS FRANCE »), or `.kc-cmd`
+  était en `nowrap` sans pouvoir se tronquer — la ligne 1 débordait de la carte et poussait le casier hors champ.
+  Corrigé : le **numéro** (premier mot du nom) reste seul en police fixe (`.kc-cmd`, `flex:0 0 auto`, `max-width:60%`) ;
+  le **reste du nom + la réf. client** passent dans `.kc-cli` (`flex:1 1 0`, ellipsis, nom complet en infobulle), seule
+  zone à se tronquer ; `.kc-zone{flex:0 0 auto}` ne disparaît donc plus. `.kanban-col-body` reçoit en plus
+  `overflow-x:hidden` (filet de sécurité : `overflow-y:auto` seul force `overflow-x:auto`). Barre d'options du Kanban
+  (`.kanban-limit-toolbar`) : `flex-wrap:wrap`, alignée à gauche sous 900 px — elle était en `justify-content:flex-end`
+  sans retour à la ligne et débordait **à gauche** (cases coupées) sur téléphone.
+  Vérifié (Playwright, export réel, vue groupée) à 1500/1280/1100/900/800/720/390 px : aucun ascenseur horizontal de
+  colonne, casier visible sur 100 % des cartes. **Non traité (hors Kanban)** : entre ~721 et ~850 px, la page entière
+  déborde de ~12 px à cause de l'en-tête (`.page-switcher`, `.title-block`) et du tableau « Tâches en cours »
+  (`table.ops-table`) — pas lié aux cartes.
+
 ### Déclarer terminée une tâche jamais démarrée (oubli de démarrage)
 
 Demande utilisateur réelle : classer « Terminée » une tâche du Kanban « À faire » qu'on a oublié de

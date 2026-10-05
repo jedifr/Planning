@@ -297,12 +297,15 @@
     display:flex; align-items:center; gap:8px;
   }
   .kanban-done-limit-select{width:auto; padding:2px 6px; font-size:10.5px;}
-  .kanban-limit-toolbar{display:flex; align-items:center; gap:8px; justify-content:flex-end; margin-bottom:10px; font-size:11px; color:var(--text-faint);}
+  .kanban-limit-toolbar{display:flex; align-items:center; flex-wrap:wrap; gap:6px 8px; justify-content:flex-end; margin-bottom:10px; font-size:11px; color:var(--text-faint);}
+  .kanban-limit-toolbar > *{margin-left:0 !important;}
+  .kanban-limit-toolbar .statut-chip{margin-left:10px !important;}
+  @media screen and (max-width:900px){ .kanban-limit-toolbar{justify-content:flex-start;} .kanban-limit-toolbar .statut-chip{margin-left:0 !important; margin-right:10px;} }
   /* Filtre par poste en cases à cocher : un opérateur qui conduit plusieurs machines coche les
      siennes et retrouve sa sélection à chaque visite (mémorisée sur son propre poste de travail). */
   .kanban-machine-filters{display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:8px;}
   .dd-panel-check .machine-dot{width:8px; height:8px; border-radius:2px; display:inline-block;}
-  .kanban-col-body{padding:8px; display:flex; flex-direction:column; gap:7px; flex:1; overflow-y:auto; max-height:520px;}
+  .kanban-col-body{padding:8px; display:flex; flex-direction:column; gap:7px; flex:1; overflow-y:auto; overflow-x:hidden; max-height:520px;}
   .kanban-card{
     background:var(--panel); border:1px solid var(--line-soft); border-radius:3px; padding:8px 10px 9px; cursor:pointer;
     transition:border-color .12s; display:flex; flex-direction:column; gap:5px; min-width:0;
@@ -312,8 +315,10 @@
      opérateur, durée prévue — 4 quand + échéance ; puis pastille de disponibilité (À faire) ou barre
      de temps (En cours/En pause). Toujours au même endroit d'une carte à l'autre. */
   .kc-r1{display:flex; align-items:baseline; gap:8px; min-width:0;}
-  .kc-cmd{font-family:'IBM Plex Mono',monospace; font-weight:500; font-size:11.5px; white-space:nowrap; color:var(--text);}
-  .kc-cli{font-size:11px; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1;}
+  .kc-cmd{font-family:'IBM Plex Mono',monospace; font-weight:500; font-size:11.5px; white-space:nowrap; color:var(--text); flex:0 0 auto; max-width:60%; overflow:hidden; text-overflow:ellipsis;}
+  .kc-cli{font-size:11px; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1 1 0;}
+  .kc-ref{color:var(--text-faint);}
+  .kc-zone{flex:0 0 auto;}
   .kc-zone{font-family:'IBM Plex Mono',monospace; font-size:10.5px; font-weight:600; padding:1px 7px; border-radius:9px; background:rgba(47,127,209,0.12); color:var(--blue); white-space:nowrap; margin-left:auto;}
   .kc-r2{font-size:13px; font-weight:600; line-height:1.3; color:var(--text); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere;}
   .kc-r2 span{font-weight:400; color:var(--text-dim);}
@@ -1748,7 +1753,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.94.0';
+const APP_VERSION = '1.94.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -15235,8 +15240,16 @@ function renderKanbanView(schedule){
       const hlK = isFusionAwareHighlighted(o);
       const hlClsK = hlOnK ? (hlK ? 'spotlight' : 'dimmed') : '';
       // --- Ligne 1 : commande, client, casier ---
-      const cmdTxtK = o._fusionMembers ? (distinctCmdK.length===1 ? distinctCmdK[0] : `${distinctCmdK.length} commandes`) : (o.commandeNom || '—');
-      const clientTxtK = (!o._fusionMembers || distinctCmdK.length===1) ? (o.refClient || '') : '';
+      // `commandeNom` contient souvent le client (« C026-0753 FR68 FAURECIA HYDROGEN SOLUTIONS FRANCE ») :
+      // la première « mot » (numéro de commande) reste en police fixe, le reste passe dans la zone client,
+      // seule à pouvoir se tronquer (v1.94.1 — le nom entier en `nowrap` poussait le casier hors de la carte
+      // et créait un ascenseur horizontal dans la colonne).
+      const nomK = o._fusionMembers ? (distinctCmdK.length===1 ? distinctCmdK[0] : '') : (o.commandeNom || '');
+      const mNomK = String(nomK).trim().match(/^(\S+)\s*(.*)$/);
+      const cmdTxtK = o._fusionMembers && distinctCmdK.length>1 ? `${distinctCmdK.length} commandes` : (mNomK ? mNomK[1] : '—');
+      const nomResteK = mNomK ? mNomK[2] : '';
+      const refCliK = (!o._fusionMembers || distinctCmdK.length===1) ? (o.refClient || '') : '';
+      const clientTxtK = [nomResteK, refCliK].filter(Boolean).join(' · ');
       const zoneAlleeK = o.zoneStockage ? zonesInfoK.byCode[o.zoneStockage] : null;
       // Affichée sauf sur une carte fusionnée MULTI-COMMANDES (voir plus haut) — bug réel passé : le
       // casier disparaissait à tort sur une fusion mono-commande.
@@ -15336,7 +15349,7 @@ function renderKanbanView(schedule){
         ? `<div class="kc-r4"><span class="kc-done">✓ ${escapeHtml(whenK)}</span>${doneLineK}</div>`
         : `<div class="kc-r4"><span class="kc-when">${escapeHtml(whenK)}</span>${dueK}</div>`;
       const html = `<div class="kanban-card ${hlClsK}" data-action="card-isolate" data-cid="${o.cid}" data-oid="${o.id}" data-fusion-group="${o._fusionMembers ? o.fusionGroupId : ''}" style="border-left:3px solid ${urgBorder};" title="${escapeHtml(titleAttrK)}">
-        <div class="kc-r1"><span class="kc-cmd">${escapeHtml(cmdTxtK)}</span><span class="kc-cli" title="${escapeHtml(clientTxtK)}">${escapeHtml(clientTxtK)}</span>${zoneChipK}</div>
+        <div class="kc-r1"><span class="kc-cmd">${escapeHtml(cmdTxtK)}</span><span class="kc-cli" title="${escapeHtml(clientTxtK)}">${escapeHtml(nomResteK)}${refCliK ? `${nomResteK ? ' ' : ''}<span class="kc-ref">${escapeHtml(refCliK)}</span>` : ''}</span>${zoneChipK}</div>
         <div class="kc-r2">${escapeHtml(titreK)}${subK ? ` <span>· ${escapeHtml(subK)}</span>` : ''}</div>
         <div class="kc-r3"><span class="kc-poste"><i class="machine-swatch" style="background:${color}"></i>${m?escapeHtml(m.nom):'—'}</span>${operateurHtmlK}${dureeTxtK ? `<span class="kc-dur">${dureeTxtK}</span>` : ''}</div>
         ${barK}
