@@ -86,6 +86,7 @@ rendent ce geste manuel inutile dans le cas courant :
 | `autoPauseResume.js` | Reprise automatique de pause déjeuner par personne, tournée côté serveur (voir plus bas). |
 | `reportEmail.js` | Rapport quotidien/hebdomadaire par e-mail (échéances dépassées, retards, rebuts...), voir plus bas. |
 | `presence.js` | Pointage présentiel : table des pointages (arrivée/pause/départ), codes de borne, corrections tracées, purge de conservation (voir plus bas). |
+| `timemotoSync.js` | Import manuel (par jeton) des pointages de la pointeuse TimeMoto TM-616 via TimeMoto Cloud (voir « Pointeuse TimeMoto TM-616 »). |
 
 Base SQLite : `app_state` (l'état entier en JSON + numéro de version), `users`, `session_history`,
 `prevision_history` et `presence_punches` (voir ci-dessous). Volume Docker nommé `planning-data`.
@@ -159,6 +160,32 @@ une table SQLite **séparée**, jamais incluse dans `app_state` ni dans la synch
   réellement ouverte), pas celui de la pièce — voir `computeProductionTimeByUser` et la note sur
   `operatorUserId` dans le modèle de données.
 
+### Temps de production d'une tâche close, réparti jour par jour (v1.87.3)
+
+Bug réel signalé (Romain, R046006818 : séances du 28/09 au 01/10, 7 h) : une fois `sessions[]` purgé
+de l'état, `computeProductionTimeByUser`/`computeProductionTimeByMachine` n'avaient plus que
+`dureeReelleH`, attribué **en bloc** à la date de clôture — la page Temps de production affichait donc
+les 7 h le 01/10 (et 0 h les trois jours précédents).
+
+- `GET /api/session-history-range?from&to` (`getSessionHistoryRange`, `sessionHistory.js`) renvoie les
+  séances archivées de **toutes les séances des pièces qui recoupent** la période (pas seulement les
+  séances recoupantes : le client a besoin du total de la pièce pour répartir). Même niveau d'accès que
+  les autres routes `session-history`.
+- `ensureArchivedSessions(start, end)` (une requête par période affichée, `archivedSessionsCache`
+  `{key,status,byPiece}`, rendu relancé au retour) est appelé par `renderTempsProdPage`/
+  `renderTempsProdSelfPage`. `archivedSessionsFor(o, start, end)` ne rend les séances que si la clé du
+  cache correspond **exactement** à la période demandée : tout autre appelant (Vue d'ensemble,
+  Présence, Fiche…) garde l'ancien repli — pas de régression, mais pas de bénéfice non plus tant qu'il
+  n'appelle pas `ensureArchivedSessions`.
+- `archivedPieceHoursInPeriod(o, sessions, cfg, start, end)` : le temps **figé** de la pièce
+  (`dureeReelleParOperateur`, sinon `dureeReelleH` si un seul opérateur) est réparti au prorata des
+  heures comptées (`countedHoursBetween`) de chaque séance — le total de la pièce reste celui des
+  Pointages/du coût (vérifié : jour 28/09 + … + jour 01/10 = 7,03 h sur une semaine), seule sa
+  répartition dans le temps change. Sans séance archivée pour la pièce (close avant `session_history`),
+  repli inchangé : tout à la date de clôture.
+- La colonne « Date » du détail par salarié affiche « 28/09/2026 → 01/10/2026 » quand le temps compté
+  s'étend sur plusieurs jours (`details[].dateDebut`/`date` = première/dernière séance dans la période).
+
 ### Qui a réellement produit, vs qui est assigné
 
 `applySingleStatusChange` tague chaque session ouverte (`en_cours`) avec `activeIdentityId()` au
@@ -225,6 +252,18 @@ pause (`pausedByUserIds` : toutes les sessions fermées exactement à `pausedAt`
 pause manuelle ne re-tague rien, contrairement à l'ouverture d'une session) — un superviseur peut
 mettre en pause le poste de quelqu'un d'autre ; l'affichage reste correct dans ce cas au sens où il
 répond quand même à « qui était sur cette tâche », l'info concrètement utile ici.
+
+  **Boutons d'en-tête « ⏸ N en pause » et « ⏸ N affaire(s) en pause » morts hors du Planning (v1.90.1).** Retour
+  utilisateur (capture, Vue d'ensemble) : les deux boutons ne faisaient rien. Deux causes distinctes.
+  (1) `renderPausedTasksBanner()` n'est composé que dans la page Planning de `render()` : `show-paused-banner`
+  (`pausedBannerDismissedDate = null; render()`) ne montrait donc rien depuis une autre page — `revealPausedBanner()`
+  vide aussi la fermeture mémorisée (`localStorage`, sinon un rechargement la rétablit), bascule sur Planning et
+  amène le bandeau à l'écran. (2) Les badges du pointage (`renderPointageHeaderBadges`) faisaient `goto-dashboard`,
+  sans effet déjà sur la Vue d'ensemble : `gotoDashboardAt(targetId)` (`data-target`) y défile jusqu'au bloc
+  concerné (`#dash-pointage-section` pour « sans pointage », `#dash-paused-today` pour « affaires en pause ») avec un
+  bref surlignage (`.flash-target`). Réflexe : un bouton d'en-tête qui révèle un élément doit garantir que cet
+  élément existe dans la page courante, sinon changer de page ou défiler. Vérifié (Playwright, horloge simulée un
+  jeudi 13h30, tâches en pause hier et aujourd'hui) : page Planning + bandeau présent ; défilement jusqu'au bloc.
 
 ### Travail à plusieurs sur une même pièce
 
@@ -1165,6 +1204,38 @@ habituels et ne retrouvait plus son propre pointage rapide).
   "toggle-kanban-machine"` que les postes (aucun nouveau cas de dispatch nécessaire, `machineId` y
   est traité comme une clé opaque) : « 📋 Sans poste (moi) » et « 📋 Sans poste (tout) ».
 
+### Disponibilité des pièces dans le Kanban (pastille « En attente de… », filtre « Pièces disponibles seulement », v1.91.0)
+
+Demande utilisateur (exemple C026-0775 ISYCOD : des pièces en fraisage attendent le jet d'eau) : savoir, sur
+une carte « À faire », si la pièce est réellement disponible, ou ce qu'elle attend. Cadrage proposé puis
+validé avant codage : pastille de couleur + texte, « À faire » pour une pièce sans étape précédente, et un filtre.
+
+- **Aucun nouveau calcul de planification** : `kanbanWaitInfoMap(schedule)` réutilise `resolveEffectiveDeps`
+  (même règle que le moteur : même pièce, phases inférieures, lot fusionné compris — une pièce qui attend un
+  lot fusionné attend le lot entier) et les dates déjà posées par `computeSchedule` (`o.end` de l'étape
+  précédente, `finReel` si terminée). Calculée sur le planning COMPLET, avant les filtres de recherche/poste
+  (un filtre ne doit jamais faire croire qu'une étape précédente n'existe pas). Seules les pièces `a_faire`
+  sont concernées ; En cours / En pause / Terminée inchangées.
+- États (`kanbanWaitInfoFor`) : `free` (aucune étape précédente → pastille verte « ● À faire »), `ready`
+  (toutes terminées → verte « ● Disponible · {poste} terminé le … »), `wip` (l'étape bloquante est en
+  cours/en pause → ambre « ● En attente : {poste} (en cours) · fin prévue … »), `waiting` (pas commencée →
+  rouge « ● En attente : {poste} (à faire) · fin prévue … »). Étape bloquante = celle des étapes précédentes non
+  terminées dont la fin prévue est la plus tardive (les autres, comptées dans l'infobulle « (+N autres
+  étapes précédentes) ») ; le texte nomme le POSTE (« Jet d'eau »), l'infobulle donne pièce/étape complètes.
+- **Vue groupée** (`kanbanGroupedView`) : une carte fusionnée prend l'état du membre le plus contraint
+  (`kanbanWaitInfoForGroup` : en attente > en cours > disponible > première phase, à égalité la fin la plus
+  tardive).
+- **Filtre « 🟢 Pièces disponibles seulement »** (`kanbanOnlyAvailable`, préférence de navigateur
+  `KANBAN_ONLY_AVAILABLE_KEY`, comme la vue groupée) : masque dans « À faire » les cartes `wip`/`waiting`, avant
+  la limite d'affichage (« Limiter À faire et Terminée à… » s'applique donc aux seules pièces disponibles) ; la
+  barre indique « N en attente masquées ». **Neutralisé pendant une recherche ou un isolement de commande**
+  (`highlightActive()`, note « suspendu… ») : même principe que la fenêtre de récence — rien ne doit masquer un
+  résultat trouvé.
+- Vérifié (Playwright, export réel du 05/10) : C026-0775 → les 3 « JET EAU » et les 3 pièces sans précédent
+  (USINAGE ×2, FRAISAGE 2040) en vert « À faire », les 3 « FRAISAGE » en rouge « En attente : Jet d'eau (à
+  faire) · fin prévue mar 06 oct., 08:56 » ; filtre actif sur tout le Kanban : 83 cartes disponibles,
+  35 masquées ; vue groupée cohérente ; aucune erreur.
+
 ### Déclarer terminée une tâche jamais démarrée (oubli de démarrage)
 
 Demande utilisateur réelle : classer « Terminée » une tâche du Kanban « À faire » qu'on a oublié de
@@ -1352,7 +1423,8 @@ Distinct des séances sur les tâches (`sessions[]`) : ici on mesure la PRÉSENC
   `GET /api/presence/range?from&to[&userId]` (salarié forcé sur lui-même, 400 jours max),
   `POST /api/presence/punch` (avec `pin` = borne, pour n'importe qui ; sans `pin` = soi-même
   seulement, si `telephone` actif et adresse dans `reseaux`), `POST /api/presence/correction`
-  (superviseur : `valide` ; salarié : lui seul, `a_valider`), `POST /api/presence/decide`,
+  (superviseur : `valide` ; salarié : lui seul, `a_valider`), `POST /api/presence/correction/batch`
+  (superviseur : corrections en lot — voir ci-dessous), `POST /api/presence/decide`,
   `POST /api/presence/pin` / `pin/clear`, `POST /api/presence/verify-password` (sortie de borne).
 - **Codes de borne** : colonne `users.presence_pin_hash` (bcrypt, jamais renvoyé), 4 chiffres dans
   l'interface (4 à 6 acceptés côté serveur), choisi par chacun dans « Mon pointage » ; un superviseur
@@ -1386,6 +1458,24 @@ Distinct des séances sur les tâches (`sessions[]`) : ici on mesure la PRÉSENC
   `commit()` (`applyPresenceTaskLinkage`). Toujours un clic humain, jamais automatique.
 - **Horaire attendu** : `expectedDayFor(uid, st, date)` — même règle que `computeTeamPointage`
   (pauses exclues, jour ouvré, congé approuvé retiré, demi-journée coupée à la première pause).
+- **« Mon pointage » : détail d'un jour et navigation (v1.90.0).** Retour (capture) : cliquer un jour de la
+  semaine pour en voir le détail, et pouvoir naviguer sur un jour précis. `monPointageDay` (`null` = aujourd'hui,
+  transitoire, comme `presenceDate`) / `monPointageDayKey()` / `setMonPointageDay(dayKey)` (retombe sur `null` si
+  c'est aujourd'hui) ; `myPresenceDay(dayKey)` généralise `myPresenceToday()` (conservée, alias). Barre de
+  navigation dans l'en-tête de la page : ‹ / sélecteur de date / › / « Aujourd'hui » (`mon-pointage-nav`,
+  `mon-pointage-date-input` — redessin différé au `focusout` comme tout champ date —, `mon-pointage-today`) et pastille
+  « jour passé »/« jour à venir ». **Les barres de la semaine sont des boutons** (`mon-pointage-day`, jour retenu
+  surligné) ; la semaine affichée est celle du jour choisi (`presenceMyWeekBounds`), 7 jours si le jour choisi ou un
+  pointage tombe le week-end. Le jour affiché est chargé par `loadPresenceDay` (la route accepte déjà n'importe quelle
+  date et ne renvoie à un salarié que SES lignes) ; aujourd'hui reste toujours chargé (pastille d'en-tête). Carte
+  principale : aujourd'hui = statut + boutons de pointage (inchangé) ; autre jour = statut du jour (« Journée terminée
+  à », « Départ non pointé », « Aucun pointage ce jour-là », « Jour à venir »), présence, pauses, horaire prévu et un
+  bouton « Revenir à aujourd'hui » — **jamais de pointage depuis un autre jour**. Nouvelle carte « Détail de la
+  journée » : frise prévu/présent/pause (`presenceFriseHtml`/`presenceFriseWindow` réutilisés tels quels de la page
+  Présence), arrivée, départ, pauses (« → en cours » pour la dernière si aujourd'hui), écart à l'horaire. La liste
+  des pointages et le lien « Demander une correction » portent sur le jour affiché (`data-day`). `goto-mon-pointage`
+  remet le jour à aujourd'hui. Vérifié (Playwright, serveur réel, pointages semés sur la veille) : clic sur un jour,
+  ‹ ›, sélecteur de date, retour à aujourd'hui, aucune erreur.
 - **Conformité** (liste de contrôle des Paramètres) : note d'information (L1222-4, art. 13 RGPD) et
   fiche du registre (art. 30) générées par `presenceDocText` (champs entre crochets à compléter, à
   faire relire), consultation du CSE ≥ 50 salariés (L2312-38) ou « non concerné », conservation
@@ -1397,7 +1487,152 @@ Distinct des séances sur les tâches (`sessions[]`) : ici on mesure la PRÉSENC
   parcours réel serveur + navigateur (API : code, transitions, refus sans code, réseau refusé,
   demande → validation, annulation, verrou SQLite ; Playwright 1500 et 390 px, sans débordement).
 - **Présence pointée dans la Fiche salarié** (v1.76.0) : voir « Fiche salarié ».
-- Non fait (pistes) : TM-616 (en attente), badges RFID.
+- Non fait (pistes) : badges RFID.
+
+### Corriger plusieurs pointages d'un coup (changement de type, annulation, ajout — en lot)
+
+Retour utilisateur réel (capture de la pop-up « Corriger un pointage ») : un pointage étrange annulé à
+la main laisse une séquence absurde derrière lui (TimeMoto : 07:50 arrivée, ~~09:21 début de pause~~
+annulé, 10:02 *fin* de pause, 10:12 *début* de pause, 12:00 *fin* de pause) — à reclasser en début de
+pause / fin de pause / départ. Première version (v1.79.0) : « Changer le type » enregistrait tout de
+suite, une correction à la fois, la pop-up se refermait → question directe : « pouvoir changer plusieurs
+données sans avoir à enregistrer la correction ? ». Oui : **liste de modifications en attente**.
+
+- `presenceCorrection.staged` (`{ kind:'retype'|'cancel'|'add', id?, type?, time? }[]`, superviseur
+  uniquement — `d.mode==='sup'`) : rien n'est envoyé avant « Enregistrer N modification(s) ». Sur
+  chaque carte de pointage retenu : **« Annuler »** (empile une annulation) et **« Changer le type »**
+  (ouvre un petit éditeur — nouveau type, suggestion = le type opposé, heure d'origine modifiable — puis
+  « Valider ce changement » empile) ; une carte modifiée s'affiche en surbrillance avec l'ancien type
+  barré (« ~~Fin de pause~~ → **Début de pause** ») et « Modifier »/« Rétablir » ; une annulation
+  empilée s'affiche barrée « sera annulé » ; un ajout empilé est une carte en pointillé. Résumé sous
+  les cartes (« Modifications en attente (N) », « Retirer » par ligne). Re-modifier un pointage déjà
+  empilé REMPLACE son entrée (`presenceStage`, jamais de doublon). Le formulaire « Pointage à ajouter »
+  a son bouton **« ＋ Ajouter à la liste »** ; **motif et commentaire sont communs au lot**.
+- **Liste vide** : « Enregistrer la correction » ajoute simplement le pointage du formulaire
+  (comportement d'origine). **Liste non vide** : « Enregistrer N modifications » envoie UNIQUEMENT la
+  liste — le formulaire d'ajout n'est jamais envoyé par défaut (il faut « Ajouter à la liste »), pour
+  ne jamais enregistrer un ajout oublié par défaut (« Départ 13:30 »).
+- **Salarié : inchangé** (une demande à la fois, `POST /api/presence/correction`, « Signaler une
+  erreur », validée ensuite par un superviseur) — pas de liste, pas d'éditeur.
+- Champs relus dans le DOM avant chaque redessin (`presenceSyncCorrectionForm`) : les zones de saisie ne
+  déclenchent pas de `render()` à la frappe (voir Pièges) — sans ça, empiler une modification ferait
+  perdre le motif et le commentaire en cours de saisie.
+- **Toujours jamais une modification** (immuabilité, voir plus haut) : `POST /api/presence/correction/batch`
+  (superviseur) → `presence.applyCorrections`. Un `retype` = une ligne `cancel` sur l'original + un
+  remplaçant `source:'manuel'` validé d'office, **même heure, secondes comprises** (le client n'envoie
+  `ts` que si l'heure a changé) ; un `cancel` = une ligne d'annulation ; un `add` = un pointage ajouté.
+  **Tout est validé AVANT d'écrire, puis écrit dans UNE transaction : un lot est appliqué en entier ou
+  pas du tout** (un original n'est jamais annulé sans remplaçant ; une opération invalide rejette tout
+  le lot avec un message qui cite le pointage fautif). Refus : pointage introuvable / d'un autre
+  salarié / non validé / déjà annulé (ou annulation en attente), même pointage visé par deux opérations,
+  retype sans changement, autre jour, dans le futur, plus de 30 opérations, lot vide. Les lignes d'un
+  retype portent un commentaire automatique « Changement : Fin de pause 10:02 → Début de pause
+  10:02 » (+ le commentaire du lot) : le journal de la journée se lit sans code supplémentaire.
+- Pas de contrôle d'enchaînement (`checkTransition`) sur une correction (le superviseur sait ce qu'il
+  fait) : l'ordre des changements d'un lot importe donc peu.
+- **Compatible avec l'import TimeMoto** : l'original importé est annulé par un humain → la
+  réconciliation le respecte (`humanCancelled`) et ne le réimporte jamais ; le remplaçant, non référencé
+  dans `timemoto_punch_refs`, n'est jamais annulé par un import ultérieur.
+- Tests (scratchpad) : `retype_test.js` (19 assertions sur un vrai SQLite : lot de 3 changements = 6
+  lignes, séquence finale `in 07:50, pause_start 10:02, pause_end 10:12, out 12:00`, tout-ou-rien,
+  atomicité sur échec d'écriture) ; `forfait_test.js` (interface : rien d'envoyé avant « Enregistrer »,
+  un seul envoi, heures d'origine conservées) ; `batch_ui.js` (Playwright sur serveur réel, scénario
+  complet + capture).
+
+### Salariés au forfait — non tenus de pointer
+
+Retour utilisateur réel : « j'ai aussi des salariés au forfait qui ne sont pas tenus de pointer » —
+sans réglage, ils remontaient en permanence en « Non arrivé »/« Aucun pointage »/« Départ non pointé ».
+
+- `state.presenceForfaitUserIds` (`string[]`, `migrateState` → `[]`), `isForfaitUser(st, userId)`,
+  `togglePresenceForfait(userId)` (un `commit()`). Case « Au forfait — non tenu de pointer »
+  (Paramètres → Utilisateurs, sous « Afficher dans le temps de production », visible seulement module
+  Pointage présentiel actif). Distinct de `hiddenTempsProdUserIds` (qui masque la personne du TEMPS DE
+  PRODUCTION sur tâches) : les deux réglages sont indépendants.
+- **Une attente, jamais une restriction ni un masquage** : le forfait peut pointer (borne, téléphone) —
+  sa présence s'affiche et se compte normalement. Pour lui, `computePresenceRows` ne produit plus de
+  statut `nonArrive`/`nonPointe`/`attendu` mais `forfait` (« Au forfait ») quand il n'a pas pointé, et
+  aucune anomalie `retard`/`nonArrive`/`nonPointe`/`ouvert` (départ non pointé)/`tache` (tâche en cours
+  sans présence) ; `demande` (correction à valider) reste signalée. Page Présence : exclu de
+  « Présents x / attendus », de « Non arrivés » et de « En pause », mention « N au forfait » dans la
+  tuile ; ses journées passées restées ouvertes (`openDays`, calculées côté serveur) sont filtrées côté
+  client. Vue Semaine : pas de ⚠ ni d'écart rouge (« forfait » à la place de l'écart). Fiche salarié
+  (`computeFichePresence`) : pas de départ non pointé, de retard, de journée sans pointage ni de
+  « sur tâches hors présence » ; ligne « Statut : Au forfait — pointage facultatif ».
+- **Volontairement non touché** : le bloc « 👥 Pointage de l'équipe » de la Vue d'ensemble et ses
+  alertes « sans pointage » (`computeTeamPointage`) mesurent les SÉANCES sur tâches, pas la présence :
+  pour qu'un forfait qui ne travaille pas sur tâches n'y figure pas, décocher « Afficher dans le temps de
+  production » (même exclusion que pour un compte admin).
+
+### Pointeuse TimeMoto TM-616 (`timemotoSync.js`) — import manuel par jeton
+
+Sans formule Plus (ni webhook ni clé d'API officielle), la seule voie est l'API **interne** de
+TimeMoto Cloud (non documentée, peut changer). **Aucune connexion automatique** : la page de
+connexion de TimeMoto est protégée par un **reCAPTCHA** (constaté en réel — champs
+`Recaptcha.Validation…` sur le formulaire), qu'un serveur ne peut pas franchir et qu'on ne cherche
+pas à contourner. La tentative initiale de connexion serveur par e-mail/mot de passe (OAuth code +
+PKCE, cookie de session, `parseLoginForm`) a donc été **retirée** — elle butait de toute façon sur
+le reCAPTCHA. L'import est **déclenché à la main** par un administrateur, avec un jeton que
+l'utilisateur récupère lui-même dans sa propre session TimeMoto (reCAPTCHA franchi par lui).
+
+- **Récupération du jeton par marque-page** (`TIMEMOTO_BOOKMARKLET`, `public/index.html`) — un
+  bookmarklet `javascript:` que l'utilisateur glisse dans sa barre de favoris, puis clique depuis un
+  onglet TimeMoto où il est connecté : il parcourt TOUT le
+  `sessionStorage`/`localStorage` et retient la première valeur qui est un JWT non expiré dont
+  l'audience ou le scope contient `public-api` (valeur directe, ou champ `access_token`/`accessToken`/
+  `token` d'un JSON) puis la copie dans le presse-papier. Première version (v1.78.0) : ne cherchait
+  que les clés contenant `oidc.user` — le vrai site TimeMoto range son jeton ailleurs (« Jeton
+  introuvable » constaté en réel, v1.78.1). v1.78.2 : le stockage réel de TimeMoto ne contient aucune
+  clé au nom évocateur (seulement `0-Cloud`, `applicationSettings`, `initial-authentication-at`...) —
+  la recherche descend donc récursivement (5 niveaux) dans tout JSON, et lit aussi les cookies
+  lisibles par JavaScript. Piège corrigé au passage : `pay()` découpait sur `.` sans vérifier que
+  chaque partie est du base64url, si bien qu'un JSON contenant un jeton (`{"a":"h.PAYLOAD.s"}`) était
+  pris pour le jeton lui-même (et aurait été copié en entier) — `b64ok` vérifie les trois parties ;
+  le code du favori ne doit contenir ni `<`, ni `%`, ni `"`, ni `\` (vérifié par le test).
+  Si rien n'est trouvé, le marque-page journalise dans la console uniquement des NOMS et des TAILLES
+  (clés volumineuses : nom, longueur, noms des champs JSON ou du JSON décodé en base64 ; noms des
+  cookies) — jamais de valeur — pour diagnostiquer sans exposer de secret.
+  v1.78.3 (constat réel : stockage TimeMoto = `0-Cloud`, 7158 caractères de texte non-JSON) : en plus,
+  recherche d'un JWT (`eyJ…`) noyé dans n'importe quel texte, décodage base64/base64url des valeurs
+  volumineuses, puis — si rien n'est trouvé — **capture au vol** : le favori enveloppe `fetch` et
+  `XMLHttpRequest.setRequestHeader` de la page et copie l'en-tête `Authorization: Bearer …` de la
+  PROCHAINE requête de TimeMoto (l'utilisateur clique un menu). Équivalent automatique de la lecture de
+  l'onglet Réseau des DevTools : c'est le jeton que le navigateur envoie déjà, rien n'est contourné ni
+  transmis (presse-papier local, ou `prompt()` de repli). Le hook vit jusqu'au rechargement de la page.
+  Ne lit que le jeton que le navigateur de la personne détient déjà — aucun contournement. Bouton
+  « Copier le marque-page » en repli si le glisser-déposer ne marche pas. Écrit sans `<` (illisible en
+  attribut `href`), `&` encodé `&amp;` à l'affichage puis re-décodé par le navigateur.
+- **Le jeton n'est JAMAIS stocké** (ni `state`, ni base, ni sauvegardes, ni logs) : posté pour la
+  seule requête d'import, le champ de saisie est vidé aussitôt. Route `POST /api/presence/timemoto/sync`
+  (admin) exige `token` ; `since` (reprise d'historique ≤ 400 j) et `dryRun` (aperçu) optionnels.
+  `GET /api/presence/timemoto/status` (superviseurs) ne renvoie que `lastOkAt`/`lastImportTo`/`users`.
+- Lecture : `POST /api/clocking/reporting/gettimereportdailyview` paginé (100), période = derniers
+  `joursSynchro` jours (7 par défaut) ou `since` → aujourd'hui. `config.presence.timemoto`
+  (`actif` = suivi affiché + rappel sur la page Présence, `joursSynchro`, `userMap` { id TimeMoto →
+  id Planning }, migrés — plus d'`intervalleMin`).
+- Paires → pointages (`desiredPunches`) : 1re entrée = arrivée, sortie suivie d'une entrée = pause,
+  dernière sortie = départ — ou pause si c'est aujourd'hui et que la fin d'horaire de la personne
+  n'est pas passée (`expectedEndFor`), reclassée en départ ensuite. `isAutoClockOut` ignoré (journée
+  « départ non pointé »), double entrée / sortie sans entrée ignorées. Heure de la pointeuse
+  (`fullClockTime`) ; si différente d'`originalFullClockTime`, commentaire « Heure modifiée dans TimeMoto ».
+- Réconciliation par (salarié TimeMoto, jour) (`reconcileDay`, table `timemoto_punch_refs`) : ajoute ce
+  qui manque, **annule** (ligne `cancel`, auteur `timemoto`) ce qui a changé ou disparu, ne réimporte
+  jamais un pointage annulé à la main par un superviseur. Journée disparue de TimeMoto annulée
+  seulement après une lecture complète et non vide. Salarié non associé : non importé. Relancer un
+  import ne crée jamais de doublon.
+- Interface (v1.81.0) : **l'import vit sur la page Présence**, bouton « ⏱ TimeMoto » de l'en-tête
+  (administrateurs uniquement, comme la route) qui déplie `renderTimemotoImportPanel` (`presenceTmOpen`,
+  transitoire, aussi bien en vue Jour qu'en vue Semaine) : case d'activation, marque-page, champ jeton +
+  Aperçu/Importer, reprise d'historique, résultat, association des salariés (suggestions par le nom).
+  Paramètres → Pointage présentiel garde seulement `renderTimemotoSettings` (case d'activation + bouton
+  « Ouvrir la page Présence », `presence-tm-goto`) : un seul endroit pour importer, pas deux. Le rappel
+  « import à faire » (> 24 h) de la page Présence porte un bouton « Ouvrir l'import ». Auteur
+  `timemoto` affiché « Synchro TimeMoto ».
+- **Reste possible plus tard** (non fait) : import du fichier exporté par TimeMoto Cloud (Excel/CSV),
+  ou passage à la formule Plus pour des webhooks officiels et un vrai 24h/24.
+- **Non testé automatiquement** : pas de faux serveur TimeMoto (génération bloquée). La lecture par
+  jeton collé a été validée en réel par l'utilisateur (liste des salariés + pointages remontés) ; la
+  connexion serveur, elle, était impossible (reCAPTCHA) et a été retirée.
 
 ## Onglet « Pointages »
 
@@ -1964,6 +2199,14 @@ il fallait descendre les ascenseurs à la main pour la retrouver.
     surlignage ne "répare" rien tant que le vrai problème est l'absence de tri/filtre par
     commande, pas une histoire de fenêtre de récence ou de limite d'affichage (qui n'étaient sans
     doute même pas la cause réelle sur l'installation qui a signalé le bug).
+  - **Exception depuis v1.87.4 : le filtre « Postes affichés » n'est PLUS neutralisé pendant un isolement/une
+    recherche.** Bug réel signalé (capture à l'appui, « Postes affichés (1/10) » sur Jet d'eau mais tous les autres
+    postes visibles) : un isolement de commande resté actif (`selectedCommandeId`) neutralisait en silence ce
+    filtre, choix explicite et visible de la personne. `renderKanbanView` l'applique donc toujours ; pour ne pas
+    masquer en silence un résultat trouvé/isolé, `machinesMasqueesParFiltre` compte les tâches écartées par ce seul
+    filtre et un bandeau « ⚠ N tâche(s) … masquée(s) par le filtre « Postes affichés » » + bouton « Tout afficher »
+    (`kanban-machines-all`) s'affiche pendant une recherche/un isolement. `doneCutoff`/`kanbanDoneLimit` restent
+    neutralisés comme avant.
   - **Cause racine, repérée en comparant au comportement de `renderCommandes`** : les panneaux
     « Tâches en cours »/« Tâches terminées » n'ont, eux, jamais fonctionné en surlignage pour
     l'isolement — ils **restreignent** la liste à la seule commande isolée
@@ -2265,6 +2508,51 @@ existante (`backup.js`), mais pour du contenu plutôt qu'un export complet des d
   `buildReportText` sans erreur.
 
 ## Navigation (menu « Plus ▾ », ordre configurable)
+
+> **v1.82.0 — ce système (menu unique « Plus ▾ » + ordre + épingles) est REMPLACÉ par la disposition
+> personnalisable décrite juste ci-dessous.** Le reste de cette section reste le journal des
+> décisions et des pièges qui y ont mené (police du déclencheur, boutons peu visibles, `toggle` qui
+> doit partir de la valeur par défaut...) ; `state.userPageMenuOrder`/`userPinnedMenuPages` ne sont plus
+> écrits, seulement LUS une fois pour migrer la disposition de qui les avait réglés.
+
+### Disposition personnalisable du menu : thèmes déroulants + pages directes (v1.82.0)
+
+Demande utilisateur : « un menu avec un thème qui permet d'ouvrir les pages concernées », vraiment
+personnalisable. Trois propositions faites (thèmes prédéfinis réglables / thèmes entièrement
+personnalisables / barre latérale) — **option retenue : thèmes entièrement personnalisables**.
+
+- **`state.userMenuLayout[userId]`** = `{ items: [ { type:'page', key } | { type:'theme', id, nom, icone,
+  pages:[key] } ] }` (`migrateState` → `{}`) : la liste ORDONNÉE de ce qui s'affiche après « Planning »
+  (seule page toujours en accès direct) — un `page` est un bouton direct, un `theme` un
+  `<details class="dd-menu">` (`data-dd-key="theme-<id>"`, état dans `openMiniDropdowns`) qui ouvre ses
+  pages. Propre à la PERSONNE (`currentUser`), synchronisé par `commit()`, comme `userPageMenuOrder`.
+  Bureau seulement : le bandeau mobile (`mobileHeader`) est inchangé.
+- **Défaut** (`defaultMenuLayout`) : Congés direct, thème « 🏭 Atelier » (Zones, Risques, Vue d'ensemble,
+  Historique) et « ⏱ Temps & présence » (Temps de production, Pointages, Présence, Mon pointage, Fiche
+  salarié, Borne). `legacyMenuLayout(uid)` migre en silence qui avait réglé l'ancien ordre/les anciennes
+  épingles (épingles → boutons directs dans leur ordre, le reste dans les thèmes par défaut ; Congés
+  dépinglé → thème « Équipe »).
+- **`normalizeMenuLayout`** — appliquée à CHAQUE lecture (`getUserMenuLayout`) : la disposition stockée
+  est COMPLÈTE (toutes les pages, visibles ou non pour le rôle — la visibilité, `isPageMenuKeyVisible`,
+  n'est qu'un filtre d'affichage, jamais de stockage, pour qu'un superviseur rétrogradé retrouve sa
+  disposition s'il redevient superviseur) ; clés inconnues/doublons ignorés ; identifiants de thème
+  nettoyés (`[A-Za-z0-9_-]` — l'id finit dans l'attribut inline `ontoggle`, jamais d'injection) ; une page
+  absente (ajoutée par une version ultérieure) est rangée dans son thème par défaut s'il existe encore,
+  sinon dans le dernier thème, sinon en page directe — jamais perdue, jamais de réinitialisation.
+- **Affichage** (`renderHeader`) : un thème sans aucune page visible n'apparaît pas (jamais un menu vide) ;
+  les pastilles de comptage (Congés à valider, Risques, demandes de correction de Présence) s'additionnent
+  sur le déclencheur du thème qui les contient (`pageBadgeN`). Le déclencheur porte `.page-switch-btn`
+  (piège de la police, voir plus bas).
+- **Édition** (Paramètres → Mon compte, `renderMenuLayoutEditor`) : une ligne par élément dans l'ordre de la
+  barre ; chaque page a un sélecteur « Emplacement » (accès direct ou un thème) et ▲/▼ ; un thème a icône
+  (liste fermée `MENU_THEME_ICONS`), nom, ▲/▼ et 🗑 ; « ＋ Nouveau thème », « ↺ Rétablir par défaut »
+  (`confirm()`, efface aussi les anciennes préférences). Chaque action = UNE mutation + UN `commit()`
+  (`editMenuLayout`). ▲/▼ échangent avec le voisin VISIBLE (`swapAmongVisible`) — même réflexe que
+  l'ancien `moveUserPageMenuItem` (un échange avec une page masquée n'aurait aucun effet visible).
+  Supprimer un thème ne supprime aucune page : elles deviennent des boutons directs à sa place.
+- Test (scratchpad `menu_test.js`, 16 assertions : défaut, migration, opérations, employé, id piégé,
+  disposition corrompue, réinitialisation) et parcours réel serveur + navigateur (`menu_ui.js` : barre,
+  ouverture d'un thème, éditeur, nouveau thème, sauvegarde serveur, mobile inchangé à 390 px).
 
 Retour utilisateur réel, capture d'écran à l'appui : la barre de pages de l'en-tête (Planning,
 Congés, Temps de production, Zones de stockage, Risques de retard, Pointages, Historique, Vue
@@ -2794,12 +3082,12 @@ disponibilité des postes »), seuils et horizon demandés réglables.
 - `computeMachineAvailability(st, schedule, now, horizon)` — par poste (hors Sous-traitance,
   `machineNameLooksLikeSousTraitance`, sans capacité propre) : tâches non terminées du planning
   calculé (lot fusionné une fois), charge et capacité (`workingHoursBetween`, `configForMachineId`,
-  jour bloqué = capacité 0) par jour ouvré sur `max(10, horizon)` jours, **prochain créneau libre**
+  jour bloqué = capacité 0) par jour ouvré sur exactement `horizon` jours (v1.87.2 ; avant : `max(10, horizon)` avec les derniers jours estompés — l'utilisateur croyait son réglage ignoré), **prochain créneau libre**
   = premier trou d'au moins `DISPO_CRENEAU_MIN_H` (1 h) ramené à un instant ouvré, **heures libres**
   = capacité − charge sur `horizon` jours. Trié du plus tôt disponible au plus chargé.
 - `renderMachineAvailabilitySection` — une carte par poste : « Libre · Maintenant » en vert,
   prochain créneau (« Aujourd'hui 15h28 », « Jeu. 1/10 · 9h58 ») en rouge si moins de 15 % de la
-  capacité reste libre, heures libres, barres de charge par jour (estompées au-delà de l'horizon,
+  capacité reste libre, heures libres, barres de charge par jour (une par jour de l'horizon,
   hachurées si poste indisponible).
 
 ### Vue d'ensemble personnalisable (choix et ordre des blocs et des tuiles)
@@ -3114,6 +3402,64 @@ pas démarrer avant l'arrivée d'une matière première, connue au moment de pr�
 - `<input type="date">` bénéficie automatiquement du redessin différé jusqu'au `focusout`
   (`isDeferredTimeField`, voir Pièges) — aucun code supplémentaire nécessaire, le mécanisme est
   générique à tout champ `type="date"`/`"time"` porteur d'un `data-action`.
+
+### Phase automatique et phase corrigeable à l'aperçu (import personnalisé, v1.83.0)
+
+Retour utilisateur réel : « comment réorganiser mes phases de production à l'import personnalisé ? » —
+jusque-là, seule une colonne « Phase » du fichier les fixait ; sans elle, tout arrivait en phase 1 (aucun
+ordre imposé par le moteur, voir « Dépendances de phase ») et il fallait tout corriger ligne par ligne
+après coup. Quatre pistes proposées, **retenue : la numérotation automatique + la correction à l'aperçu**.
+
+- `map.phaseAuto` (bool) — case « Numéroter automatiquement selon l'ordre des lignes », sous le champ
+  « Phase » de l'étape de correspondance. **Cochée par défaut pour un nouvel import**, mais un profil
+  enregistré avant ce champ retombe sur `false` (`applyImportProfile`) : jamais activée à l'insu de qui
+  avait un comportement existant. **Une colonne Phase associée prime toujours** (case désactivée, note
+  explicite) — la numérotation ne sert qu'à défaut de colonne.
+- `autoNumberPhasesByFileOrder(groups)` (appelée par `proceedFromPostes`, sur les groupes déjà construits —
+  donc seulement les lignes retenues, jamais les lignes ignorées — dans l'ordre du fichier) : pour une MÊME
+  pièce d'une même commande/campagne (nom insensible à la casse, comme les dépendances de phase), la phase
+  vaut 1 à la première ligne, **augmente à chaque changement d'étape par rapport à la ligne précédente de
+  cette pièce**, reste identique si l'étape est la même. Étape = libellé d'étape, sinon le poste. Règle
+  « changement par rapport à la ligne d'avant » et non « n-ième ligne » : deux lots de la même étape (numéros
+  de ligne différents, voir « Numéro de ligne ») restent en parallèle au lieu d'être chaînés à tort ; un retour
+  sur une étape déjà vue (Laser → Pliage → Laser) compte bien une nouvelle phase. Une même pièce dans deux
+  commandes repart à 1 dans chacune. Fusion dans une commande existante : le décalage `existingMaxPhase` de
+  `commitImportGroups` s'applique comme avant.
+- **Colonne « Phase » éditable dans l'aperçu** (`updateImportPreviewPhase(oid, value)`, `data-action=
+  "update-import-preview-phase"`, entier ≥ 1, valeur invalide → 1) : comme poste/opérateur/départ possible,
+  un champ de PIÈCE retrouvé par `oid` dans `cs.preview.groups`. « Début au mieux »/« Fin au mieux » et la
+  livraison au plus tôt se recalculent au rendu suivant (`simulateImportStarts` lit déjà les phases). Une
+  correction ne renumérote **jamais** les autres lignes — elle reste ponctuelle. La ligne de titre de
+  commande passe à `colspan="8"` avec la colonne ajoutée.
+- **Retirer une opération de l'import avant de confirmer (v1.88.0).** Retour : « ajouter la possibilité de
+  supprimer une opération avant l'import ». Colonne « Retirer » (🗑, `data-action="remove-import-preview-piece"`,
+  clic) dans l'aperçu : `removeImportPreviewPiece(oid)` retire la seule pièce de `cs.preview.groups[...].pieces`
+  (jamais les autres lignes, **aucune renumérotation** des phases), recalcule `nbNouvelles`/`nbFusions`/`nbPieces`
+  (figés à la construction de l'aperçu) et incrémente `nbRetirees` (« N opération(s) retirée(s) de l'import » dans le
+  bandeau). Un groupe vidé disparaît de l'aperçu et n'est jamais créé (`commitImportGroups` ignore déjà un groupe
+  sans pièce) ; « Confirmer l'import » est désactivé si plus aucune pièce. Les lignes retirées ne sont pas des
+  « lignes ignorées » (pas de motif d'erreur). Pas d'annulation unitaire : « Recommencer la correspondance »
+  reconstruit tout l'aperçu. Le « Début au mieux »/livraison se recalculent au rendu suivant (simulation sur les
+  pièces restantes). Ligne de titre de commande à `colspan="9"`.
+- **Suivre le numéro de ligne (v1.84.0)** — retour : « si un numéro de ligne existe, il lit bien ce numéro ? »
+  (réponse initiale : non, il ne servait qu'à l'information et aux doublons). `map.phaseParNumeroLigne`
+  (case imbriquée sous la précédente, cochée par défaut pour un nouvel import, `false` pour un profil
+  antérieur ; désactivée si une colonne Phase est associée ou si la numérotation automatique est décochée) :
+  `autoNumberPhasesByFileOrder(groups, parNumeroLigne)` trie alors les lignes d'une pièce par `numeroLigne`
+  (`localeCompare` numérique : « 2 » < « 10 », « 001 » < « 002 » ; stable : à numéro égal, ordre du fichier)
+  **avant** de numéroter, avec la même règle « même étape = même phase ». Garde-fou : si UNE seule ligne de la
+  pièce n'a pas de numéro, toute la pièce retombe sur l'ordre du fichier (pas de tri partiel). Le numéro de
+  ligne n'existe à l'import personnalisé que via « Découper sur le dernier "/" » de la référence.
+- **Ordre d'affichage de l'aperçu (v1.84.0)** : lignes de chaque commande regroupées par pièce (ordre de
+  première apparition au fichier), puis par phase croissante, puis ordre du fichier — calculé à l'affichage
+  seulement (`g.pieces` garde l'ordre du fichier, rien n'est réordonné dans les données), donc une phase
+  corrigée dans l'aperçu fait remonter/descendre la ligne au rendu suivant.
+- Réflexe : la numérotation suppose que l'ordre du fichier (ou le numéro de ligne) suit la gamme de
+  fabrication ; si ce n'est pas le cas, décocher la case (tout en phase 1) ou corriger à l'aperçu.
+- Test (scratchpad `phase_test.js`, 12 assertions dont n° de ligne : étapes successives, lots parallèles, repli sur le poste,
+  retour sur une étape, repart à 1 par commande, correction/bornes) et parcours réel navigateur
+  (`phase_ui.js` : case cochée/désactivée selon la colonne Phase, aperçu 1,2,3 / 1,2, correction à 2,
+  phases transmises dans `preview.groups`).
 
 ### Urgence par défaut à l'import personnalisé
 
@@ -3670,6 +4016,104 @@ au-dessus.
   cohérent avec l'existant plutôt qu'un traitement différent entre les deux tableaux d'une même
   section ; à revoir si la liste devient trop longue sur une installation avec beaucoup d'historique.
 
+**Lot fusionné compté une seule fois, dérive des démarrages à venir, recherche (v1.87.0).** Retour
+utilisateur réel, export à l'appui : « le retard cumulé est de 23,7 j au Laser ? ces retards proviennent d'un
+regroupement » et « je ne vois aucun retard pour Mazak, Priminer, Tour alors que je constate une dérive tous les
+jours ».
+- **Dédoublonnage par `fusionGroupId`** dans `computeRetardDemarrageParPoste`, `computeRetardDemarrageDetail`
+  (donc aussi le graphique Historique et la tuile « tâches démarrées en retard » de la Vue d'ensemble) et
+  `reportEmail.tachesDemarreesEnRetard` : un lot démarre d'un seul geste (mêmes horodatages sur chaque membre) =
+  UNE tâche en retard. Sur l'export réel : Laser 33 tâches / 23,7 j cumulés → 5 tâches / 4,0 j ; le détail
+  affiche « (+N pièce(s) du même lot) » (`nbPieces`). Même famille de bug que la somme de durées d'un lot (voir
+  « Temps de production vs présence théorique »).
+- **Pourquoi Mazak/Priminer/Tour n'affichaient rien — deux causes.** (1) Le retard « constaté » ne regarde que les
+  tâches DÉJÀ démarrées ET créées depuis l'introduction du suivi : sur l'export, 5 pièces Mazak démarrées sur
+  ~72 ont une prévision (toutes démarrées EN AVANCE de 1 à 11 j sur la file prévue à la création), 1 pour Tour,
+  0 pour Priminer (les 6 pièces démarrées sont antérieures au suivi). (2) La dérive que l'atelier voit au
+  quotidien est surtout celle de tâches qui n'ont **pas encore démarré** et dont le début projeté glisse de jour
+  en jour — invisible tant qu'elles n'ont pas commencé.
+- **`computeDeriveDemarrageAVenir(st, schedule)`** : pour chaque pièce encore `a_faire` (hors sous-traitance/
+  hors planning/poste « sous-traitance »), écart entre son début PROJETÉ aujourd'hui (`o.start` du planning calculé)
+  et la prévision figée à la création (`previsionAuDemarrage.debut`) — même référence que le retard constaté.
+  Seuil 0,5 j, lot compté une fois, instantané recalculé à chaque rendu (rien de stocké). Renvoie `{ parPoste
+  (nb, moyenne, MAX — pas de cumul : sommer des dérives de tâches indépendantes n'a pas de sens), detail }`. Sur
+  l'export : Priminer et Tour +7 j, Chaudronnerie +7 j, Laser +8,6 j max, Mazak +1,3 j. Rendu dans la section
+  renommée « 🕓 Retards et dérives de démarrage » (même clé de repli `retardsDemarrage`), au-dessus des retards
+  constatés ; la section s'affiche dès que l'une des deux listes est non vide.
+- **Recherche de la page Risques** (`risquesSearchQuery`, `#risques-search-input`, `risques-search-clear`,
+  transitoire, même mécanisme de saisie « live » que les Pointages) : filtre les cartes de commandes à risque
+  (nom, réf. client, pièce, étape) et les tableaux DÉTAILLÉS (pauses, retards, dérive : commande, pièce, étape,
+  poste, n° de ligne). **Le tableau de bord du haut et les résumés par poste restent globaux** (`atRiskAll`) —
+  un chiffre par poste qui changerait à la frappe serait trompeur ; le compteur de l'en-tête affiche « N sur M ».
+- Vérifié (Playwright, export réel) : recherche « priminer » = 0 carte, 15 lignes ; focus conservé en tapant ;
+  « Effacer » rétablit 16 cartes ; aucune erreur.
+
+**Alignement des tableaux de retards/dérives et libellé d'étape de repli (v1.87.1).** Retour : « aligner,
+c'est moche » — le tableau « par poste » et le tableau de détail de chaque bloc étaient deux
+`<table>` indépendants (largeurs recalculées selon le contenu, nom de commande en `<button>` qui
+retombait à la ligne). Les quatre tables portent `.rd-table` (`table-layout:fixed`, texte à gauche,
+`vertical-align:top`, bouton de commande en `display:inline; font:inherit`) et un `<colgroup>` commun
+(`rdColgroup`, 16/24/21/14/14/11 %) ; les tableaux « par poste » ont 3 colonnes de contenu puis une
+dernière en `colspan="3"` pour que Poste, colonne 2 et colonne 3 tombent pile sur celles du détail
+(vérifié Playwright : bords gauches identiques). **Étape sans libellé** : beaucoup de pièces n'ont que
+un poste, la chaîne affichait « — » et « — bloque la suite ». `risqueStepName(o)` = étape, sinon nom du
+poste, sinon « Étape » (pastille, note de blocage, tableau détaillé, e-mail « Avertir chef d'atelier ») ;
+chaque pastille affiche aussi son poste (si l'étape a un libellé distinct) et son statut.
+
+### Pop-up « 🧭 Parcours » d'une commande (v1.89.0)
+
+Demande : obtenir vite les étapes d'une affaire/commande avec les dates théoriques de production, dans
+la même représentation que la chaîne en pastilles de la page Risques — pour **toute** commande, pas
+seulement celles à risque. Pop-up retenue (pas de page dédiée), **sans impression ni export**.
+
+- `parcoursModal` (`{ cid, search } | null`, transitoire, jamais dans `state`) / `openParcours(cid)` /
+  `closeParcours()` / `pickParcours(cid)`. `renderParcoursModal()` — **purement de la composition** :
+  relit `getSchedule()` (donc les commandes ACTIVES seulement ; une archivée → message « introuvable »),
+  `pieceChainsForCommande` et `risqueRowDateInfo`/`risqueStepName`/`risqueStepPosteNom` (réutilisés
+  tels quels, aucun nouveau calcul de planification).
+- **Une frise par pièce** (`.rc-track.pc-track`, `parcoursStepHtml`) : pastille colorée par STATUT réel
+  (vert terminée ✓, bleu en cours ▶, ambre en pause ⏸, grise à faire ●) — différent de la chaîne des Risques
+  (là le rouge « bloquant » signale un problème ; ici une commande saine ne doit rien montrer de rouge) ;
+  l'anneau (`pc-current`) marque la première étape pas encore terminée (`chain.blockingId`). Sous chaque
+  pastille : libellé, poste, statut, **Début/Fin en gras si réalisés, en italique si prévus** (`debutReel`/
+  `finReel` sinon `o.start`/`o.end`), durée prévue et opérateur assigné. Étape sous-traitée/hors planning
+  sans dates : « Sous-traitance · retour {date} »/« Hors planning ». Titre de frise : « n/N étape(s)
+  terminée(s) · fin prévue … ».
+- **En-tête** : numéro, réf. client, échéance, urgence, **livraison théorique** (`c.finEstimee`) + verdict
+  `deliveryVerdictHtml` (le même que le formulaire de saisie et l'aperçu d'import).
+- **Recherche** (`#parcours-search-input`, même mécanisme de saisie « live » que les autres : `render()` puis
+  refocus) : numéro, réf. client, nom de pièce ou d'étape, 8 résultats max, un clic bascule
+  (`parcours-pick`) sans fermer la pop-up.
+- **Points d'entrée** : bouton « 🧭 Parcours » de l'en-tête de chaque carte commande (`renderCommandeCard`),
+  entrée « 🧭 Parcours de la commande » du menu contextuel (clic droit Kanban/Gantt/Liste, `ctx-parcours`),
+  bouton « 🧭 Parcours » des cartes de la page Risques. Composée dans `render()` pour la page Planning et la
+  page Risques seulement (les deux seules où ces boutons existent). Fermeture : ✕, Fermer, Échap, clic sur le
+  fond (`parcoursModal=null` ajouté à la liste de réinitialisation du clic sur `.modal-overlay`).
+- Vérifié (Playwright, export réel) : 16 frises/37 étapes pour C026-0693, recherche + bascule, focus conservé,
+  ouverture depuis la carte, le menu contextuel et la page Risques, aucune erreur.
+- **Filtre sur la pièce saisie (v1.89.1).** Retour : « si je mets un numéro de pièce, que seule la pièce demandée
+  soit affichée ». `parcoursModal.pieceFilter` (transitoire) + `parcoursPieceMatches(c, needle)` (le texte tapé
+  recoupe le nom d'au moins une pièce de la commande affichée, insensible à la casse). **Deux voies** :
+  (1) *en tapant* — si le texte recoupe une pièce de la commande ouverte, seules les frises correspondantes
+  restent affichées au fil de la frappe ; (2) *au clic sur un résultat* (`pickParcours`) — le texte tapé est
+  conservé comme `pieceFilter` si cette pièce existe dans la commande choisie (la recherche par numéro de pièce
+  mène donc directement à SA frise). Une barre bleue (`.pc-filter-bar`) rappelle le filtre avec le bouton
+  « Afficher toutes les pièces » (`parcours-clear-piece`). Les résultats de recherche indiquent « 🔎 pièce : … »
+  quand la saisie correspond à une pièce. **Jamais de parcours vide** : sans pièce correspondante (saisie = numéro
+  de commande seul, filtre périmé), toutes les frises s'affichent. `openParcours` repart sans filtre.
+- Vérifié (Playwright, commande synthétique 3 pièces) : 3 frises → 1 en tapant la pièce, 3 en tapant le seul
+  numéro de commande, 1 après clic sur un résultat, 3 après « Afficher toutes les pièces », focus conservé.
+- **Bouton déplacé dans la barre de recherche (v1.89.2).** Retour (capture, flèche à droite de « ✕ Effacer ») :
+  le bouton « 🧭 Parcours » n'est plus dans l'en-tête de chaque carte commande mais dans `.search-bar` (toujours
+  visible, avec ou sans saisie), `data-action="open-parcours-search"` → `openParcoursFromSearch()` : saisie vide →
+  la commande isolée (`selectedCommandeId`) sinon pop-up vide invitant à chercher ; saisie → la 1re commande
+  active correspondante (`parcoursSearchResults`), parcours restreint à la pièce tapée si c'en est une
+  (`pieceFilter`) ; **plusieurs correspondances** → la saisie est reportée dans la recherche de la pop-up pour
+  choisir ; aucune → message « Aucune commande active ne correspond ». Les autres points d'entrée restent (menu
+  contextuel `ctx-parcours`, bouton des cartes de la page Risques). Vérifié (Playwright) : bouton absent des
+  cartes, présent dans la barre ; pièce tapée → 1 frise + barre de filtre ; numéro de commande → 3 frises ;
+  « zzzz » et saisie vide → messages attendus, aucune erreur.
+
 ### Pauses de production à risque
 
 Complète « Retard de démarrage » ci-dessus sur un axe différent : celui-ci mesure un retard **avant**
@@ -4094,6 +4538,54 @@ sont regroupées/exposées.
   quelle par les autres grandes pop-up — import, regroupement, édition de congé — qui n'ont pas ce
   besoin). `.settings-modal-body` (hauteur du corps à deux volets, indépendante du `max-height` du
   `.modal-box` englobant) suit : `height:min(780px, 84vh)` (était `min(620px, 74vh)`).
+  - **Plein écran (v1.85.0).** Retour utilisateur réel, capture à l'appui : les icônes d'une
+    extension de navigateur (gestionnaire de mots de passe, accrochées aux champs e-mail des cartes
+    Utilisateurs) débordaient au-dessus/en dessous du volet de contenu quand on le faisait défiler —
+    l'extension les positionne par rapport à la fenêtre, pas au volet `.settings-content-pane` qui
+    défile en interne. Deux correctifs ensemble : (1) la pop-up occupe tout l'écran
+    (`.modal-overlay.settings-fullscreen` + `.modal-box.settings-fullscreen-box`, 100vw×100vh, sans
+    arrondi, en-tête fixe, `.settings-modal-body` en `flex:1`) — le volet va jusqu'au bas de la
+    fenêtre, plus aucune zone voisine sur laquelle une icône flottante puisse déborder ;
+    (2) `hardenSettingsInputs()` (appelée au début de `restoreModalScroll`, donc après chaque
+    `render()`) pose sur tout `input`/`textarea`/`select` du volet `autocomplete="off"` (sans écraser
+    un `autocomplete` déjà explicite, ex. `new-password`), `data-lpignore`, `data-1p-ignore`,
+    `data-bwignore` et `data-form-type="other"` : les gestionnaires de mots de passe ne doivent pas
+    traiter ces champs comme des identifiants. Rien n'est garanti côté extension (chacune fait comme
+    elle veut) : si une icône persiste, c'est un réglage de l'extension (« ne pas proposer sur ce
+    site »). `.modal-box-xl` reste défini mais n'est plus utilisé seul par une autre pop-up.
+- **Paramètres : rubriques et infobulles (v1.86.0).** Retour utilisateur réel, captures à l'appui : « la
+  marge avant échéance concerne la planification, pas les horaires de travail » et « les heures libres des
+  postes ne sont pas dans une section cohérente » → revue d'ensemble (point de vue web designer +
+  administrateur), **option A retenue** (rubriques avec titres) et codée directement.
+  - **`SETTINGS_GROUPS`** (5 rubriques fixes, dans l'ordre de lecture) : *Général* (`moncompte`, `affichage`,
+    `utilisateurs`), *Atelier & planification* (`horaires`, `planification`, `machines`, `storageZones`),
+    *Suivi & alertes* (`alertes`, `presence`, `conges`), *Échanges & données* (`importProfiles`, `emails`,
+    `donnees`), *Système* (`systeme`). `SETTINGS_SECTION_KEYS` en est dérivée (aplatie). Le volet de gauche
+    affiche un titre de rubrique (`.settings-nav-group-title`) puis ses catégories visibles ; ▲/▼
+    (`move-settings-section`) n'échangent qu'avec le voisin **de la même rubrique et visible pour le rôle**.
+    `settingsSectionOrder` reste une liste plate en `localStorage` (ordre relatif conservé, nouvelles clés
+    ajoutées en fin).
+  - **Fusions/déplacements** : `pause` → `horaires` (« Horaires & pauses », deux sous-titres) ; **nouvelle
+    `planification`** = marge avant échéance (`margeEcheanceJours`) + horizon des heures libres
+    (`dispoHorizonJours`, venu de « Pointage & disponibilité ») + regroupement matière/épaisseur
+    (`matiereFusionActive`, venu de « Postes ») ; `risquesRetard` + `suiviPointage` → `alertes` (« Alertes &
+    seuils ») ; `backup` + `emailReport` → `emails` (un seul avertissement SMTP commun) ; `maintenance` →
+    `donnees` (export/import .json, archivage) + `systeme` (synchronisation, « zone dangereuse » de
+    réinitialisation). **Aucun `data-action`/`data-field` n'a changé** : seuls l'emplacement et le
+    regroupement bougent, donc aucune migration de `state`. `SETTINGS_LEGACY_SECTION_KEYS` redirige une
+    ancienne « dernière catégorie consultée » (`pause`, `backup`, `maintenance`…) vers la catégorie qui a repris
+    son contenu.
+  - **Infobulles ⓘ** : `SETTINGS_HELP` (un seul dictionnaire de textes — ce que fait le réglage, où on le
+    voit, valeur par défaut, exemple) + `helpTip(clé)` → `<span class="help-tip" data-tip="…">ⓘ</span>`
+    (clé inconnue = rien). La bulle est **un seul `<div id="help-tip-bubble">` en `position:fixed` ajouté au
+    `<body>`** par un petit gestionnaire global (survol, focus clavier, clic/tap, Échap, masquée au défilement) :
+    elle n'est jamais reconstruite par `render()` ni rognée par le défilement du volet. Le clic sur ⓘ est
+    intercepté en phase de capture (`preventDefault` + `stopPropagation`) : ⓘ placé dans un `<label>` ne
+    coche jamais la case voisine (vérifié) et n'atteint pas le dispatcher de clics. Réflexe : tout nouveau
+    réglage reçoit sa clé dans `SETTINGS_HELP`.
+  - Mobile (≤ 720 px) : la navigation passe au-dessus du contenu (`max-height:32vh`) au lieu de 220 px à gauche.
+  - Vérifié (Playwright sur serveur réel, 1500 et 390 px) : 14 catégories rendues sans erreur, modification de
+    la marge persistée, bulle visible dans l'écran, ⓘ sans effet de bord, réordonnancement intra-rubrique.
 - **`openMiniDropdowns` — état ouvert/fermé des petits menus `<details class="dd-menu">`.** Un
   `render()` complet reconstruit tout le DOM à chaque action (voir le piège "mutation du planning
   sans invalider le cache" plus bas pour le principe général) : un `<details>` sans suivi d'état
@@ -4364,6 +4856,17 @@ tâche en cours, tâche figée) après toute modification de `computeSchedule`.
   reprises). Un rendu du type "Jour : {jour du début}" fait croire à tort que tout s'est joué ce
   jour-là (bug réel : une tâche commencée un vendredi et terminée le lundi suivant affichait
   seulement "vendredi"). Toujours comparer les deux dates et afficher la plage si elles diffèrent.
+- **Pop-up Paramètres qui remonte en haut à chaque redessin (bug réel, v1.84.1).** Depuis le passage de la
+  pop-up Paramètres en deux volets, ce n'est plus `.modal-box` qui défile mais `.settings-content-pane`
+  (contenu) et `.settings-nav` (catégories, `overflow-y:auto`) — or `render()` ne mémorisait/restaurait que
+  `.modal-box.scrollTop` (`modalScrollTop`/`restoreModalScroll`, écrit pour l'ancien accordéon à défilement
+  unique). Tout `render()` déclenché depuis la pop-up (« + Ajouter une pause » dans Utilisateurs, cocher une
+  case...) renvoyait donc le contenu tout en haut. Corrigé : `render()` mémorise aussi le défilement des deux
+  volets (`pendingSettingsScroll`) avec la catégorie affichée (`data-section` du volet), restauré par
+  `restoreModalScroll` **seulement si la catégorie est restée la même** (changer de catégorie repart bien
+  en haut). Réflexe : tout nouveau conteneur à défilement interne d'une pop-up doit être ajouté à ce
+  capture-avant/restaure-après, `.modal-box` n'étant plus le seul à défiler. Vérifié en navigateur
+  (`scroll_ui.js`) : 209 → 0 avant correctif, 209 → 209 après ; changement de catégorie → 0.
 - **Ascenseur d'une colonne remonté en haut par un `render()` intégral.** Chaque colonne du Kanban
   (`.kanban-col-body`) a son propre défilement indépendant. Cliquer une carte pour isoler sa commande
   (`card-isolate` → `toggleIsolateCommande` → `render()`) reconstruit tout `#app`, donc tous les

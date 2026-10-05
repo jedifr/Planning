@@ -28,6 +28,10 @@ services:
       # enregistrée en base — un redémarrage du conteneur n'écrase jamais une licence
       # déjà installée (essai prolongé, licence définitive achetée entre-temps).
       INITIAL_LICENSE_KEY: ""
+      # Pointeuse TimeMoto TM-616 (Paramètres → Pointage présentiel) : aucun identifiant à configurer
+      # ici. L'import se fait à la main avec un jeton que l'utilisateur récupère lui-même dans sa
+      # session TimeMoto (la page de connexion TimeMoto est protégée par un reCAPTCHA, franchi par un
+      # humain). Le jeton n'est jamais stocké côté serveur.
     restart: unless-stopped
 
 volumes:

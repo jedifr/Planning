@@ -25,6 +25,7 @@ const previsionHistory = require('./previsionHistory');
 const autoPauseResume = require('./autoPauseResume');
 const reportEmail = require('./reportEmail');
 const presence = require('./presence');
+const timemoto = require('./timemotoSync');
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'planning.db');
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -92,6 +93,7 @@ license.bootstrapInitialLicense(db);
 sessionHistory.initSessionHistoryTable(db);
 previsionHistory.initPrevisionHistoryTable(db);
 presence.initPresenceTables(db);
+timemoto.initTimemotoTables(db);
 
 const app = express();
 app.set('trust proxy', 1); // nécessaire pour que les cookies "secure" fonctionnent derrière un reverse proxy (Synology, etc.)
@@ -362,6 +364,13 @@ app.get('/api/session-history/:cid/:oid', requireAuth, requireLicense, (req, res
 // expose déjà à chacun les séances en cours de toute l'équipe, et un poste partagé peut cibler
 // « Mon temps de production » sur une autre identité que le compte connecté (activeIdentityId) —
 // la restriction « un employé ne voit que sa propre fiche » est appliquée par l'interface.
+// Temps de production : séances archivées de toute l'équipe sur [from, to[ (même niveau d'accès).
+app.get('/api/session-history-range', requireAuth, requireLicense, (req, res) => {
+  const re = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
+  const { from, to } = req.query || {};
+  if(!re.test(String(from||'')) || !re.test(String(to||''))) return res.status(400).json({ error: 'Paramètres "from" et "to" (AAAA-MM-JJTHH:mm) requis.' });
+  res.json({ entries: sessionHistory.getSessionHistoryRange(db, from, to) });
+});
 app.get('/api/session-history-user/:uid', requireAuth, requireLicense, (req, res) => {
   const re = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
   const { from, to } = req.query || {};
@@ -443,7 +452,8 @@ app.get('/api/presence/day', requireAuth, requireLicense, requirePresence, (req,
     lastByUser, openDays, pending,
     pinUserIds: presence.usersWithPin(db),
     clientIp: presence.normIp(req.ip),
-    selfPunchError: selfPunchCheck(req)
+    selfPunchError: selfPunchCheck(req),
+    timemoto: sup ? timemotoSummary() : null
   });
 });
 // Période [from, to] (jours inclus) : un superviseur peut viser n'importe qui (ou tout le monde),
@@ -514,6 +524,23 @@ app.post('/api/presence/correction', requireAuth, requireLicense, requirePresenc
   });
   res.json({ ok: true, punch });
 });
+// Corrections en lot (superviseur) : changements de type, annulations et ajouts appliqués ensemble,
+// en une transaction (voir presence.applyCorrections) — motif et commentaire communs.
+const PUNCH_TYPE_LABELS_FR = { in: 'Arrivée', pause_start: 'Début de pause', pause_end: 'Fin de pause', out: 'Départ' };
+app.post('/api/presence/correction/batch', requireAuth, requireLicense, requirePresence, (req, res) => {
+  if(!isSupervisorReq(req)) return res.status(403).json({ error: 'Réservé aux superviseurs.' });
+  const body = req.body || {};
+  const motif = String(body.motif || '').trim();
+  if(!motif) return res.status(400).json({ error: 'Le motif est obligatoire.' });
+  const target = String(body.userId || '');
+  if(!db.prepare('SELECT id FROM users WHERE id = ?').get(Number(target))) return res.status(404).json({ error: 'Salarié introuvable.' });
+  const r = presence.applyCorrections(db, {
+    userId: target, ops: body.ops, motif, commentaire: String(body.commentaire || '').slice(0, 300),
+    createdBy: String(req.session.userId), ip: presence.normIp(req.ip), typeLabels: PUNCH_TYPE_LABELS_FR
+  });
+  if(!r.ok) return res.status(400).json({ error: r.error });
+  res.json(r);
+});
 app.post('/api/presence/decide', requireAuth, requireLicense, requirePresence, (req, res) => {
   if(!isSupervisorReq(req)) return res.status(403).json({ error: 'Réservé aux superviseurs.' });
   const { id, decision } = req.body || {};
@@ -533,6 +560,37 @@ app.post('/api/presence/pin/clear', requireAuth, requireLicense, (req, res) => {
   presence.clearPin(db, target);
   res.json({ ok: true });
 });
+// ---------- Pointeuse TimeMoto TM-616 (voir timemotoSync.js et CLAUDE.md) ----------
+function readStateFull(){
+  try{ return JSON.parse(db.prepare('SELECT data FROM app_state WHERE id = 1').get().data) || {}; }
+  catch(e){ return {}; }
+}
+// Résumé pour la page Présence (superviseurs) : uniquement l'état du dernier import.
+function timemotoSummary(){
+  const tm = presenceConfig().timemoto || {};
+  if(!tm.actif) return { actif: false };
+  const s = timemoto.status(db);
+  return { actif: true, lastOkAt: s.lastOkAt, lastImportTo: s.lastImportTo };
+}
+app.get('/api/presence/timemoto/status', requireAuth, requireLicense, requirePresence, (req, res) => {
+  if(!isSupervisorReq(req)) return res.status(403).json({ error: 'Réservé aux superviseurs.' });
+  res.json(timemoto.status(db));
+});
+// Import déclenché par l'administrateur (pas d'automatisme : la connexion à TimeMoto passe par un
+// reCAPTCHA que seul un humain franchit — voir timemotoSync.js). `token` est OBLIGATOIRE : le jeton
+// que l'utilisateur a récupéré dans sa propre session TimeMoto, utilisé pour cette seule requête,
+// jamais conservé ni journalisé. `dryRun` : aperçu sans rien enregistrer.
+app.post('/api/presence/timemoto/sync', requireAdmin, requireLicense, requirePresence, async (req, res) => {
+  const b = req.body || {};
+  const token = typeof b.token === 'string' && b.token.trim() ? b.token : null;
+  if(!token) return res.status(400).json({ error: 'Aucun jeton TimeMoto fourni. Récupérez-le depuis votre session TimeMoto (marque-page) et collez-le.' });
+  if(token.length > 10000) return res.status(400).json({ error: 'Jeton invalide.' });
+  if(b.since != null && b.since !== '' && !presence.DATE_RE.test(String(b.since))) return res.status(400).json({ error: 'Date de reprise invalide.' });
+  const r = await timemoto.runSync(db, readStateFull(), { since: b.since || null, token, dryRun: !!b.dryRun });
+  if(!r.ok) return res.status(502).json({ error: r.error, status: timemoto.status(db) });
+  res.json({ ok: true, result: r.result, status: timemoto.status(db) });
+});
+
 // Sortie du mode borne : mot de passe du compte connecté sur la tablette.
 app.post('/api/presence/verify-password', requireAuth, requireLicense, (req, res) => {
   const ip = req.ip || 'unknown';
@@ -717,6 +775,10 @@ function checkPresencePurge(){
 }
 setInterval(checkPresencePurge, 3600 * 1000);
 checkPresencePurge();
+
+// Pas d'import TimeMoto automatique : la connexion au site passe par un reCAPTCHA que seul un humain
+// franchit (voir timemotoSync.js). L'import est déclenché à la main par l'administrateur, avec un
+// jeton qu'il récupère lui-même dans sa session TimeMoto — jamais un job de fond.
 
 checkAutoPauseResume(); // vérifie aussi tout de suite au démarrage (redémarrage du conteneur), sans attendre 60s
 

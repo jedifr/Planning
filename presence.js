@@ -113,6 +113,71 @@ function insertPunch(db, p){
   return getPunch(db, info.lastInsertRowid);
 }
 
+// Corrections d'un superviseur EN LOT (pop-up « Corriger un pointage » : les changements s'empilent
+// dans une liste en attente, un seul « Enregistrer » les applique). Trois sortes d'opérations :
+//  - 'retype'  : changer le type (et/ou l'heure) d'un pointage existant — JAMAIS une modification :
+//                une annulation de l'original + un remplaçant (source 'manuel', même heure, secondes
+//                comprises, sauf heure explicitement modifiée) ;
+//  - 'cancel'  : annuler un pointage ;
+//  - 'add'     : ajouter un pointage.
+// Tout est validé AVANT d'écrire quoi que ce soit, puis écrit dans UNE transaction : un lot est
+// appliqué en entier ou pas du tout (jamais un original annulé sans remplaçant). Motif et commentaire
+// communs au lot. Validées d'office (le route est réservée aux superviseurs).
+function applyCorrections(db, o){
+  const ops = Array.isArray(o.ops) ? o.ops : [];
+  if(!ops.length) return { ok: false, error: 'Aucune modification à enregistrer.' };
+  if(ops.length > 30) return { ok: false, error: 'Trop de modifications à la fois (30 maximum).' };
+  const userId = String(o.userId || '');
+  const L = t => (o.typeLabels && o.typeLabels[t]) || t;
+  const note = extra => (extra + (o.commentaire ? ' — ' + o.commentaire : '')).slice(0, 500);
+  const nowTs = localTs(new Date());
+  const seen = new Set();
+  const plan = [];
+  for(const op of ops){
+    const kind = String(op.kind || '');
+    if(kind === 'add'){
+      if(!PUNCH_TYPES.includes(op.type)) return { ok: false, error: 'Type de pointage inconnu.' };
+      if(!TS_RE.test(String(op.ts || ''))) return { ok: false, error: 'Heure invalide.' };
+      const ts = normTs(String(op.ts));
+      if(ts > nowTs) return { ok: false, error: "Impossible d'ajouter un pointage dans le futur." };
+      plan.push({ kind, type: op.type, ts, commentaire: o.commentaire ? String(o.commentaire).slice(0, 500) : null });
+      continue;
+    }
+    if(kind !== 'retype' && kind !== 'cancel') return { ok: false, error: 'Opération inconnue.' };
+    const orig = getPunch(db, op.id);
+    if(!orig || orig.type === 'cancel' || orig.userId !== userId) return { ok: false, error: 'Pointage à modifier introuvable.' };
+    if(seen.has(orig.id)) return { ok: false, error: `Le pointage de ${orig.ts.slice(11, 16)} est visé par deux modifications.` };
+    seen.add(orig.id);
+    const label = `${L(orig.type)} ${orig.ts.slice(11, 16)}`;
+    if(orig.status !== 'valide') return { ok: false, error: `« ${label} » : seul un pointage validé peut être modifié.` };
+    if(db.prepare("SELECT 1 FROM presence_punches WHERE type = 'cancel' AND cancels_id = ? AND status IN ('valide','a_valider')").get(orig.id))
+      return { ok: false, error: `« ${label} » est déjà annulé (ou une annulation est en attente).` };
+    if(kind === 'cancel'){ plan.push({ kind, orig, commentaire: o.commentaire ? String(o.commentaire).slice(0, 500) : null }); continue; }
+    if(!PUNCH_TYPES.includes(op.type)) return { ok: false, error: 'Type de pointage inconnu.' };
+    let ts = orig.ts;
+    if(op.ts){
+      if(!TS_RE.test(String(op.ts))) return { ok: false, error: 'Heure invalide.' };
+      ts = normTs(String(op.ts));
+      if(ts.slice(0, 10) !== orig.ts.slice(0, 10)) return { ok: false, error: `« ${label} » doit rester sur le même jour.` };
+      if(ts !== orig.ts && ts > nowTs) return { ok: false, error: 'Impossible de placer un pointage dans le futur.' };
+    }
+    if(op.type === orig.type && ts === orig.ts) return { ok: false, error: `« ${label} » : aucun changement (choisissez un autre type ou une autre heure).` };
+    plan.push({ kind, orig, type: op.type, ts, commentaire: note(`Changement : ${label} → ${L(op.type)} ${ts.slice(11, 16)}`) });
+  }
+  const written = [];
+  db.transaction(() => {
+    const base = { userId, source: 'manuel', createdBy: o.createdBy, status: 'valide', motif: o.motif, ip: o.ip };
+    plan.forEach(x => {
+      if(x.kind === 'add') written.push(insertPunch(db, { ...base, type: x.type, ts: x.ts, commentaire: x.commentaire }));
+      else {
+        written.push(insertPunch(db, { ...base, type: 'cancel', ts: x.orig.ts, cancelsId: x.orig.id, commentaire: x.commentaire }));
+        if(x.kind === 'retype') written.push(insertPunch(db, { ...base, type: x.type, ts: x.ts, commentaire: x.commentaire }));
+      }
+    });
+  })();
+  return { ok: true, count: plan.length, punches: written };
+}
+
 function decidePunch(db, id, decision, byUserId){
   if(decision !== 'valide' && decision !== 'refuse') return { ok: false, error: 'Décision invalide.' };
   const p = getPunch(db, id);
@@ -174,6 +239,6 @@ function ipAllowed(ip, reseaux){
 
 module.exports = {
   PUNCH_TYPES, TS_RE, DATE_RE, initPresenceTables, localTs, normTs, effectivePunches, getPunchesBetween,
-  getPunch, dayEffective, checkTransition, insertPunch, decidePunch, purgeOlderThan, getAllPunches,
+  getPunch, dayEffective, checkTransition, insertPunch, applyCorrections, decidePunch, purgeOlderThan, getAllPunches,
   setPin, clearPin, usersWithPin, verifyPin, normIp, ipAllowed
 };
