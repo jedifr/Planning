@@ -1753,7 +1753,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.94.1';
+const APP_VERSION = '1.95.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1892,6 +1892,9 @@ const SETTINGS_HELP = {
   monThuHours: "Nombre d'heures réellement travaillées du lundi au jeudi (pause déjeuner déjà déduite si elle est activée). Détermine l'heure de fin de journée et la capacité d'un poste. Exemple : 8,75 h.",
   friHours: "Heures travaillées le vendredi, souvent plus courtes. Mettez la même valeur que lun.–jeu. si l'atelier ne raccourcit pas le vendredi, ou 0 s'il est fermé.",
   pauseActive: "Si coché, la pause déjeuner est retirée des créneaux disponibles : aucune tâche n'est planifiée dessus, et une tâche en cours est mise en pause automatiquement à l'heure de la pause. Chaque personne peut avoir sa propre pause (Utilisateurs).",
+  autoPauseDejeuner: "Si coché (par défaut), une tâche en cours est mise en pause toute seule à l'heure de la pause déjeuner de la personne ou de l'atelier. Décoché : aucune mise en pause à midi, les tâches restent en cours — à vous de les mettre en pause. N'a d'effet que si la pause déjeuner est intégrée au planning.",
+  autoPauseHorsHoraires: "Si coché (par défaut), une tâche restée en cours le soir, la nuit ou le week-end (ou sur un poste indisponible) est mise en pause par le serveur, sans reprise automatique. Décoché : une tâche oubliée reste « en cours » et continue de compter du temps tant que personne ne la met en pause. Les exceptions « Je travaille maintenant » / « Je travaille pendant la pause » restent possibles.",
+  pauseRappelRetour: "Si coché (par défaut), une grande pop-up demande à l'opérateur de confirmer la reprise de ses tâches au retour théorique de la pause déjeuner. Il n'y a jamais de reprise automatique sans clic : décoché, la tâche reste simplement en pause jusqu'à ce que quelqu'un la relance.",
   pauseHeures: "Début et fin de la pause commune à tout l'atelier. La journée se prolonge d'autant pour que la durée travaillée reste celle indiquée ci-dessus.",
   marge: "Nombre de jours d'avance exigés sur la date de besoin. Avec 2 jours, une commande à livrer le 20 est signalée « en retard » si sa fin estimée dépasse le 18. 0 = aucune marge. Visible dans : badge « Retard estimé », page Risques de retard, rapports e-mail. Par défaut : 0.",
   dispoHorizon: "Nombre de jours ouvrés regardés pour calculer les « heures libres » de chaque poste sur la Vue d'ensemble (bloc Disponibilité des postes). Plus il est grand, plus l'estimation porte loin. De 1 à 20, par défaut 5.",
@@ -2727,6 +2730,12 @@ function migrateState(st){
   if(st.config.pointageSeuilSansPointageMin === undefined) st.config.pointageSeuilSansPointageMin = 15;
   if(st.config.pointagePauseSeuilMin === undefined) st.config.pointagePauseSeuilMin = 30;
   if(st.config.pointageRappelOperateur === undefined) st.config.pointageRappelOperateur = true;
+  // Mises en pause automatiques et rappel de retour (voir CLAUDE.md, « Pauses automatiques paramétrables ») —
+  // actifs par défaut : comportement inchangé pour qui n'y touche pas. `=== undefined`, jamais `!x` : un `false`
+  // choisi doit survivre.
+  if(st.config.autoPauseDejeuner === undefined) st.config.autoPauseDejeuner = true;
+  if(st.config.autoPauseHorsHoraires === undefined) st.config.autoPauseHorsHoraires = true;
+  if(st.config.pauseRappelRetour === undefined) st.config.pauseRappelRetour = true;
   if(st.config.dispoHorizonJours === undefined) st.config.dispoHorizonJours = 5;
   if(st.config.retardDemarragePopupActive === undefined) st.config.retardDemarragePopupActive = false; // désactivée par défaut, comportement inchangé pour qui ne l'active pas
   if(!st.config.emailReport) st.config.emailReport = { actif:false, destinataires:'', frequence:'quotidien', jourSemaine:1, heure:'18:00', dernierEnvoi:null }; // rapports par e-mail (voir CLAUDE.md « Alertes e-mail ») — désactivé par défaut
@@ -4590,7 +4599,7 @@ function updateConfig(field, value){
     state.config.archiveAutoActive = !!value;
   } else if(field==='retardDemarragePopupActive'){
     state.config.retardDemarragePopupActive = !!value;
-  } else if(field==='pointageAlerteActive' || field==='pointageRappelOperateur'){
+  } else if(field==='pointageAlerteActive' || field==='pointageRappelOperateur' || field==='autoPauseDejeuner' || field==='autoPauseHorsHoraires' || field==='pauseRappelRetour'){
     state.config[field] = !!value;
   } else if(field==='dispoHorizonJours'){
     const v = Math.round(Number(value));
@@ -6666,6 +6675,9 @@ function isInPauseWindow(op, now, st){
 // seulement par ce nouveau rappel.
 function applyAutoPauseResume(st){
   let changed = false;
+  // Option « Mettre en pause automatiquement à l'heure de la pause déjeuner » (Paramètres → Horaires & pauses) :
+  // décochée, rien n'est mis en pause ici — la même option est lue côté serveur (autoPauseResume.js).
+  if(st.config && st.config.autoPauseDejeuner === false) return false;
   const now = new Date();
   st.commandes.forEach(c => {
     c.pieces.forEach(o => {
@@ -6708,6 +6720,9 @@ function applyAutoPauseResume(st){
 // « Temps de production vs présence théorique ») : resumeFromPauseReminder propage de toute façon la
 // reprise à tous les membres du groupe.
 function pendingPauseReminders(){
+  // Option « Pop-up de retour de pause déjeuner » décochée : aucun rappel (une pause déjà posée reste en pause,
+  // à reprendre à la main comme une pause manuelle).
+  if(state.config && state.config.pauseRappelRetour === false) return [];
   const aid = activeIdentityId();
   if(!aid) return [];
   const now = new Date();
@@ -14045,7 +14060,21 @@ function renderSettingsModal(){
         <div><label class="field">Début de la pause ${helpTip('pauseHeures')}</label><input type="time" value="${cfg.pauseDebut}" data-action="update-config" data-field="pauseDebut" ${cfg.pauseActive?'':'disabled'}></div>
         <div><label class="field">Fin de la pause</label><input type="time" value="${cfg.pauseFin}" data-action="update-config" data-field="pauseFin" ${cfg.pauseActive?'':'disabled'}></div>
       </div>
-      <div class="footer-note" style="text-align:left; padding-top:10px;">La pause est automatiquement exclue des créneaux disponibles — la journée se prolonge d'autant pour que la durée travaillée reste bien celle indiquée ci-dessus.</div>` },
+      <div class="footer-note" style="text-align:left; padding-top:10px;">La pause est automatiquement exclue des créneaux disponibles — la journée se prolonge d'autant pour que la durée travaillée reste bien celle indiquée ci-dessus.</div>
+      <div class="modal-section-title" style="margin-top:20px;">Pauses automatiques des tâches en cours</div>
+      <label class="statut-chip" style="margin-bottom:8px;">
+        <input type="checkbox" ${cfg.autoPauseDejeuner!==false?'checked':''} data-action="update-config" data-field="autoPauseDejeuner">
+        Mettre en pause automatiquement à l'heure de la pause déjeuner ${helpTip('autoPauseDejeuner')}
+      </label>
+      <label class="statut-chip" style="margin-bottom:8px; margin-left:0;">
+        <input type="checkbox" ${cfg.pauseRappelRetour!==false?'checked':''} data-action="update-config" data-field="pauseRappelRetour" ${cfg.autoPauseDejeuner!==false?'':'disabled'}>
+        Proposer une pop-up de retour (confirmation de reprise) à la fin de la pause ${helpTip('pauseRappelRetour')}
+      </label>
+      <label class="statut-chip" style="margin-bottom:8px; margin-left:0;">
+        <input type="checkbox" ${cfg.autoPauseHorsHoraires!==false?'checked':''} data-action="update-config" data-field="autoPauseHorsHoraires">
+        Mettre en pause automatiquement hors horaires (soir, nuit, week-end) ${helpTip('autoPauseHorsHoraires')}
+      </label>
+      <div class="footer-note" style="text-align:left; padding-top:6px;">La reprise n'est jamais automatique : chaque opérateur relance lui-même sa tâche (ou confirme son retour dans la pop-up). Les mises en pause automatiques sont contrôlées toutes les minutes par le serveur, même sans onglet ouvert.</div>` },
     planification: { title: 'Planification', body: `
       <div class="footer-note" style="text-align:left; padding-bottom:12px;">Réglages qui influencent la façon dont le moteur place les tâches et signale les retards.</div>
       <div class="machines-grid">

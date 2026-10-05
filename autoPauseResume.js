@@ -154,6 +154,12 @@ function dayIntervals(date, cfg){
 // basculerait à tort en pause déjeuner — avec reprise automatique à 13h alors que c'est le week-end
 // tout entier qui aurait dû la mettre en pause, sans reprise, dès la sortie du vendredi.
 function pauseKindForRunningTask(op, now, st){
+  // Options Paramètres → Horaires & pauses (voir CLAUDE.md, « Pauses automatiques paramétrables ») : l'état
+  // lu ici n'est pas passé par migrateState (client) — un champ absent (`undefined`) vaut « activé », seul un
+  // `false` explicite désactive.
+  const sc = (st && st.config) || {};
+  const lunchOn = sc.autoPauseDejeuner !== false;
+  const outOfHoursOn = sc.autoPauseHorsHoraires !== false;
   const cfg = configForPiece(op, st);
   const dow = now.getDay();
   const isWorkDay = dow !== 0 && dow !== 6 && !isDateBlocked(now, cfg);
@@ -166,7 +172,9 @@ function pauseKindForRunningTask(op, now, st){
     // contrairement à cette dernière, la pause déjeuner a un mirroir CLIENT (applyAutoPauseResume,
     // public/index.html) qui doit vérifier ce même champ, sous peine de divergence (voir CLAUDE.md).
     if(op.lunchExceptionUntil && now < new Date(op.lunchExceptionUntil)) return null;
-    return 'lunch';
+    // Pause auto désactivée : la tâche reste en cours, sans basculer non plus en « hors horaires » (on est
+    // bien dans un jour ouvré, simplement dans la pause).
+    return lunchOn ? 'lunch' : null;
   }
   const withinSegment = isWorkDay && dayIntervals(now, cfg).some(([s,e]) => now >= s && now < e);
   if(withinSegment) return null;
@@ -177,7 +185,7 @@ function pauseKindForRunningTask(op, now, st){
   // laquelle ce garde-fou redevient inactif de lui-même, sans qu'aucun code n'ait besoin de le
   // réinitialiser explicitement.
   if(op.workHoursExceptionUntil && now < new Date(op.workHoursExceptionUntil)) return null;
-  return 'outOfHours';
+  return outOfHoursOn ? 'outOfHours' : null;
 }
 
 // Identique à applyAutoPauseResume (public/index.html) — voir là-bas pour le détail des choix déjà

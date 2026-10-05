@@ -418,6 +418,32 @@ juste au-dessus) — et remplacée par une confirmation explicite de l'opérateu
   tout chevauchement avec la pop-up le jour même : une pause déjeuner du jour reste seulement dans
   `pendingPauseReminders`, jamais aussi dans cette bannière tant que minuit n'est pas passé.
 
+#### Pauses automatiques paramétrables (v1.95.0)
+
+Demande : « mettre les pauses et la reprise automatique en option paramétrable ». Précision donnée à
+l'utilisateur : il n'existe plus de reprise AUTOMATIQUE (retirée après le cas des sessions dupliquées) — ce
+qu'on appelle « reprise » est la pop-up de confirmation de retour de pause. Les trois mécanismes ont donc
+chacun leur case, dans Paramètres → Horaires & pauses → « Pauses automatiques des tâches en cours ».
+
+- `config.autoPauseDejeuner` (mise en pause à l'heure de la pause déjeuner), `config.autoPauseHorsHoraires`
+  (mise en pause le soir/nuit/week-end/poste indisponible), `config.pauseRappelRetour` (pop-up de retour) :
+  **`true` par défaut** (`migrateState`, test `=== undefined` — un `false` choisi survit), comportement inchangé
+  pour qui n'y touche pas. `updateConfig` a son branchement booléen explicite (sinon conversion en nombre).
+- **Client** : `applyAutoPauseResume(st)` retourne tout de suite si `autoPauseDejeuner===false` ;
+  `pendingPauseReminders()` renvoie `[]` si `pauseRappelRetour===false` (une pause déjà posée reste alors en
+  pause, à relancer à la main). La case « pop-up de retour » est grisée quand la pause déjeuner automatique
+  est décochée (sans objet).
+- **Serveur** (`autoPauseResume.js`, `pauseKindForRunningTask`) : **l'état lu par `checkAutoPauseResume` n'est
+  jamais passé par `migrateState`** → champ absent = activé, seul `=== false` désactive (`sc.x !== false`).
+  Pause déjeuner désactivée : la tâche reste `en_cours` pendant la pause (on est un jour ouvré, elle ne bascule
+  donc PAS en « hors horaires » pour autant). Hors horaires désactivé : une tâche oubliée reste `en_cours` et
+  continue de compter du temps — avertissement dans l'infobulle ⓘ.
+- Les exceptions « 🕐 Je travaille maintenant »/« 🍽 Je travaille pendant la pause » restent possibles et sans
+  objet quand l'option correspondante est décochée.
+- Test (scratchpad `opt_test.js`, 10 assertions sur le module serveur : défaut, option off, croisements midi/
+  soir/samedi, `applyAutoPauseResume`) + Playwright (migration, `false` conservé, rappel et pause client coupés,
+  cases réelles, grisage).
+
 #### Mise en pause automatique « hors horaires » (soir, nuit, week-end) — sans reprise automatique
 
 Retour utilisateur réel : une tâche `en_cours` restait affichée telle quelle tout un week-end si
