@@ -1204,6 +1204,38 @@ habituels et ne retrouvait plus son propre pointage rapide).
   "toggle-kanban-machine"` que les postes (aucun nouveau cas de dispatch nécessaire, `machineId` y
   est traité comme une clé opaque) : « 📋 Sans poste (moi) » et « 📋 Sans poste (tout) ».
 
+### Disponibilité des pièces dans le Kanban (pastille « En attente de… », filtre « Pièces disponibles seulement », v1.91.0)
+
+Demande utilisateur (exemple C026-0775 ISYCOD : des pièces en fraisage attendent le jet d'eau) : savoir, sur
+une carte « À faire », si la pièce est réellement disponible, ou ce qu'elle attend. Cadrage proposé puis
+validé avant codage : pastille de couleur + texte, « À faire » pour une pièce sans étape précédente, et un filtre.
+
+- **Aucun nouveau calcul de planification** : `kanbanWaitInfoMap(schedule)` réutilise `resolveEffectiveDeps`
+  (même règle que le moteur : même pièce, phases inférieures, lot fusionné compris — une pièce qui attend un
+  lot fusionné attend le lot entier) et les dates déjà posées par `computeSchedule` (`o.end` de l'étape
+  précédente, `finReel` si terminée). Calculée sur le planning COMPLET, avant les filtres de recherche/poste
+  (un filtre ne doit jamais faire croire qu'une étape précédente n'existe pas). Seules les pièces `a_faire`
+  sont concernées ; En cours / En pause / Terminée inchangées.
+- États (`kanbanWaitInfoFor`) : `free` (aucune étape précédente → pastille verte « ● À faire »), `ready`
+  (toutes terminées → verte « ● Disponible · {poste} terminé le … »), `wip` (l'étape bloquante est en
+  cours/en pause → ambre « ● En attente : {poste} (en cours) · fin prévue … »), `waiting` (pas commencée →
+  rouge « ● En attente : {poste} (à faire) · fin prévue … »). Étape bloquante = celle des étapes précédentes non
+  terminées dont la fin prévue est la plus tardive (les autres, comptées dans l'infobulle « (+N autres
+  étapes précédentes) ») ; le texte nomme le POSTE (« Jet d'eau »), l'infobulle donne pièce/étape complètes.
+- **Vue groupée** (`kanbanGroupedView`) : une carte fusionnée prend l'état du membre le plus contraint
+  (`kanbanWaitInfoForGroup` : en attente > en cours > disponible > première phase, à égalité la fin la plus
+  tardive).
+- **Filtre « 🟢 Pièces disponibles seulement »** (`kanbanOnlyAvailable`, préférence de navigateur
+  `KANBAN_ONLY_AVAILABLE_KEY`, comme la vue groupée) : masque dans « À faire » les cartes `wip`/`waiting`, avant
+  la limite d'affichage (« Limiter À faire et Terminée à… » s'applique donc aux seules pièces disponibles) ; la
+  barre indique « N en attente masquées ». **Neutralisé pendant une recherche ou un isolement de commande**
+  (`highlightActive()`, note « suspendu… ») : même principe que la fenêtre de récence — rien ne doit masquer un
+  résultat trouvé.
+- Vérifié (Playwright, export réel du 05/10) : C026-0775 → les 3 « JET EAU » et les 3 pièces sans précédent
+  (USINAGE ×2, FRAISAGE 2040) en vert « À faire », les 3 « FRAISAGE » en rouge « En attente : Jet d'eau (à
+  faire) · fin prévue mar 06 oct., 08:56 » ; filtre actif sur tout le Kanban : 83 cartes disponibles,
+  35 masquées ; vue groupée cohérente ; aucune erreur.
+
 ### Déclarer terminée une tâche jamais démarrée (oubli de démarrage)
 
 Demande utilisateur réelle : classer « Terminée » une tâche du Kanban « À faire » qu'on a oublié de

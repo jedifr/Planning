@@ -315,6 +315,11 @@
   .kanban-card-time{font-size:10px; color:var(--text-faint); font-family:'IBM Plex Mono',monospace;}
   .kanban-card-planned{font-size:10px; color:var(--text-dim); margin-top:2px;}
   .kanban-card-due{font-size:10px; color:var(--red); font-weight:600; margin-top:2px;}
+  .kanban-avail{font-size:10px; font-weight:600; margin-top:4px; padding:2px 6px; border-radius:8px; display:inline-block; max-width:100%; line-height:1.35;}
+  .kanban-avail.kb-avail-free{background:rgba(53,117,87,0.12); color:var(--green);}
+  .kanban-avail.kb-avail-ready{background:rgba(53,117,87,0.12); color:var(--green);}
+  .kanban-avail.kb-avail-wip{background:var(--amber-dim); color:var(--amber);}
+  .kanban-avail.kb-avail-wait{background:rgba(178,58,48,0.12); color:var(--red);}
   .kanban-card-fusion-list{font-size:10px; color:var(--text-faint); margin-top:2px;}
   .kanban-card-elapsed{font-size:10px; color:var(--accent); font-weight:600; margin-top:2px;}
   .kanban-card-zone{font-size:10px; color:var(--blue); font-weight:600; margin-top:2px;}
@@ -1718,7 +1723,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.90.1';
+const APP_VERSION = '1.91.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -2311,6 +2316,17 @@ let kanbanMobileStatusTab = 'en_cours';
 function loadKanbanGroupedViewPref(){
   try{ kanbanGroupedView = localStorage.getItem(KANBAN_GROUPED_VIEW_KEY) === '1'; }
   catch(e){ /* préférence absente ou indisponible */ }
+  try{ kanbanOnlyAvailable = localStorage.getItem(KANBAN_ONLY_AVAILABLE_KEY) === '1'; }
+  catch(e){ /* préférence absente ou indisponible */ }
+}
+// Filtre « Pièces disponibles seulement » du Kanban (colonne « À faire ») : masque les cartes dont
+// l'étape précédente n'est pas terminée. Préférence de navigateur, comme la vue groupée.
+const KANBAN_ONLY_AVAILABLE_KEY = 'planning-atelier-kanban-only-available';
+let kanbanOnlyAvailable = false;
+function toggleKanbanOnlyAvailable(checked){
+  kanbanOnlyAvailable = !!checked;
+  try{ localStorage.setItem(KANBAN_ONLY_AVAILABLE_KEY, kanbanOnlyAvailable ? '1' : '0'); }catch(e){ /* le choix reste valable pour la session */ }
+  render();
 }
 function toggleKanbanGroupedView(checked){
   kanbanGroupedView = !!checked;
@@ -14942,6 +14958,62 @@ function renderPlanningSection(schedule){
   </section>`;
 }
 
+// Disponibilité d'une pièce « À faire » vis-à-vis de ses étapes précédentes (voir CLAUDE.md,
+// « Disponibilité des pièces dans le Kanban »). Réutilise TEL QUEL le calcul de dépendances du moteur
+// (resolveEffectiveDeps : même pièce, phases inférieures, lot fusionné compris) et les dates déjà
+// calculées par computeSchedule — aucun second calcul de planification. États :
+//   'free'    aucune étape précédente (première phase) → disponible d'emblée
+//   'ready'   toutes les étapes précédentes sont terminées → pièce disponible
+//   'wip'     la plus tardive des étapes précédentes non terminées est en cours/en pause
+//   'waiting' elle n'est pas encore commencée
+function kanbanWaitInfoFor(c, deps, byId, o){
+  const preds = (deps[o.id] || []).map(id => byId[id]).filter(Boolean);
+  if(!preds.length) return { state:'free' };
+  const open = preds.filter(x => x.statut !== 'termine');
+  if(!open.length){
+    const last = preds.slice().sort((a,b) => (b.finReel ? new Date(b.finReel).getTime() : 0) - (a.finReel ? new Date(a.finReel).getTime() : 0))[0];
+    return { state:'ready', pred:last, endDate: last.finReel ? new Date(last.finReel) : null };
+  }
+  // Étape qui bloque le plus tard : c'est elle qui décide quand la pièce sera réellement disponible.
+  const blocker = open.slice().sort((a,b) => (b.end ? b.end.getTime() : 0) - (a.end ? a.end.getTime() : 0))[0];
+  return { state: blocker.statut === 'a_faire' ? 'waiting' : 'wip', pred:blocker, endDate: blocker.end || null, others: open.length - 1 };
+}
+function kanbanWaitInfoMap(schedule){
+  const map = {};
+  schedule.forEach(c => {
+    const deps = resolveEffectiveDeps(c.pieces);
+    const byId = {}; c.pieces.forEach(x => byId[x.id] = x);
+    c.pieces.forEach(o => { if(o.statut === 'a_faire') map[o.id] = kanbanWaitInfoFor(c, deps, byId, o); });
+  });
+  return map;
+}
+// Carte fusionnée (vue groupée) : on retient le membre le plus contraint (en attente > en cours >
+// disponible > première phase), à égalité celui dont l'étape bloquante finit le plus tard.
+function kanbanWaitInfoForGroup(members, waitMap){
+  const rank = { waiting:3, wip:2, ready:1, free:0 };
+  let best = null;
+  members.forEach(mb => {
+    const w = waitMap[mb.id]; if(!w) return;
+    if(!best || rank[w.state] > rank[best.state] ||
+       (rank[w.state] === rank[best.state] && (w.endDate ? w.endDate.getTime() : 0) > (best.endDate ? best.endDate.getTime() : 0))) best = w;
+  });
+  return best;
+}
+function kanbanWaitPillHtml(w){
+  if(!w) return '';
+  if(w.state === 'free') return `<div class="kanban-avail kb-avail-free" title="Aucune étape précédente : la pièce est disponible">● À faire</div>`;
+  const m = state.machines.find(mm => mm.id === w.pred.machineId);
+  const posteNom = m ? m.nom : (w.pred.etape || 'étape précédente');
+  const etapeNom = [w.pred.piece, w.pred.etape].filter(Boolean).join(' / ');
+  const dateTxt = w.endDate ? formatDT(w.endDate) : '';
+  const autres = w.others > 0 ? ` (+${w.others} autre${w.others>1?'s':''} étape${w.others>1?'s':''} précédente${w.others>1?'s':''})` : '';
+  if(w.state === 'ready'){
+    return `<div class="kanban-avail kb-avail-ready" title="${escapeHtml(`Étape précédente terminée : ${etapeNom} — ${posteNom}${dateTxt ? ' — le ' + dateTxt : ''}`)}">● Disponible · ${escapeHtml(posteNom)} terminé${dateTxt ? ' le ' + escapeHtml(dateTxt) : ''}</div>`;
+  }
+  const cls = w.state === 'wip' ? 'kb-avail-wip' : 'kb-avail-wait';
+  const statutTxt = opStatutLabel(w.pred.statut).toLowerCase();
+  return `<div class="kanban-avail ${cls}" title="${escapeHtml(`En attente de l'étape précédente : ${etapeNom} — ${posteNom} (${statutTxt})${dateTxt ? ' — fin prévue ' + dateTxt : ''}${autres}`)}">● En attente : ${escapeHtml(posteNom)} (${escapeHtml(statutTxt)})${dateTxt ? ' · fin prévue ' + escapeHtml(dateTxt) : ''}</div>`;
+}
 function renderKanbanView(schedule){
   const cols = [
     { key:'a_faire', label:'À faire' },
@@ -14955,6 +15027,10 @@ function renderKanbanView(schedule){
     allOps.push({ ...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin, zoneStockage:c.zoneStockage });
   }));
   allOps = allOps.filter(o => matchesSearch({ nom:o.commandeNom, pieces:[o] }, searchQuery));
+  // Disponibilité vis-à-vis des étapes précédentes (calculée sur le planning complet : un filtre de
+  // recherche ou de poste ne doit jamais faire croire qu'une étape précédente n'existe pas).
+  const waitMap = kanbanWaitInfoMap(schedule);
+  allOps.forEach(o => { if(o.statut === 'a_faire') o._wait = waitMap[o.id] || null; });
   // Isoler une commande (selectedCommandeId — clic sur un occupant de casier "Zones de stockage",
   // une commande liée depuis "Risques de retard"/"Temps de production"...) doit RESTREINDRE le
   // Kanban à cette seule commande, exactement comme `renderCommandes` le fait déjà pour "Tâches en
@@ -15004,6 +15080,7 @@ function renderKanbanView(schedule){
   // compteur) est strictement le même sur mobile et sur ordinateur, seule la MISE EN PAGE change
   // (4 colonnes côte à côte vs un onglet de statut à la fois, voir plus bas) — calculé une seule
   // fois, jamais dupliqué entre les deux présentations.
+  let enAttenteMasquees = 0;
   const colObjs = cols.map(col => {
     let ops = allOps.filter(o => o.statut===col.key);
     if(kanbanGroupedView) ops = mergeFusedOpsForDisplay(ops); // une seule carte par groupe fusionné, comptée comme telle dans les limites/compteurs ci-dessous
@@ -15018,6 +15095,14 @@ function renderKanbanView(schedule){
       });
       ops = ops.slice(0, effectiveKanbanDoneLimit);
     } else if(col.key==='a_faire'){
+      if(kanbanGroupedView) ops.forEach(o => { if(o._fusionMembers) o._wait = kanbanWaitInfoForGroup(o._fusionMembers, waitMap); });
+      // Filtre « Pièces disponibles seulement » : neutralisé pendant une recherche/un isolement
+      // (comme la fenêtre de récence), rien ne doit masquer un résultat trouvé.
+      if(kanbanOnlyAvailable && !highlightActive()){
+        const avant = ops.length;
+        ops = ops.filter(o => !o._wait || o._wait.state === 'free' || o._wait.state === 'ready');
+        enAttenteMasquees = avant - ops.length;
+      }
       ops.sort((a,b) => {
         const ta = a.start ? a.start.getTime() : 0;
         const tb = b.start ? b.start.getTime() : 0;
@@ -15111,6 +15196,7 @@ function renderKanbanView(schedule){
           ${fusionListLineK}
           ${dueLineK}
           ${zoneLineK}
+          ${col.key==='a_faire' ? kanbanWaitPillHtml(o._wait) : ''}
         </div>
         <div class="kanban-card-times">
           <div class="kanban-card-time">${escapeHtml(timeInfo)}</div>
@@ -15185,6 +15271,11 @@ function renderKanbanView(schedule){
         <input type="checkbox" ${kanbanGroupedView?'checked':''} data-action="toggle-kanban-grouped-view">
         🔗 Vue groupée des pièces fusionnées
       </label>
+      <label class="statut-chip" style="margin-left:14px;" title="Dans « À faire », masque les pièces dont l'étape précédente n'est pas terminée">
+        <input type="checkbox" ${kanbanOnlyAvailable?'checked':''} data-action="toggle-kanban-only-available">
+        🟢 Pièces disponibles seulement
+      </label>
+      ${(kanbanOnlyAvailable && highlightActive()) ? `<span class="footer-note" style="margin:0 0 0 6px;">suspendu pendant la recherche/l'isolement</span>` : ((kanbanOnlyAvailable && enAttenteMasquees>0) ? `<span class="footer-note" style="margin:0 0 0 6px;">${enAttenteMasquees} en attente masquée${enAttenteMasquees>1?'s':''}</span>` : '')}
       <button class="small" style="margin-left:14px;" data-action="open-quick-pointage" title="Démarrer tout de suite une tâche qui n'était pas planifiée">➕ Pointage rapide</button>
     </div>
     ${boardHtml}
@@ -18123,6 +18214,7 @@ function dispatchChangeAction(el, action){
     case 'set-kanban-machine-filter': kanbanMachineFilter = el.value; render(); break;
     case 'toggle-kanban-machine': toggleKanbanMachineFilter(el.dataset.id, el.checked); break;
     case 'toggle-kanban-grouped-view': toggleKanbanGroupedView(el.checked); break;
+    case 'toggle-kanban-only-available': toggleKanbanOnlyAvailable(el.checked); break;
     case 'set-manual-start': setManualStartValue(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'op-phase': updateOpPhase(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'op-date-debut-possible': updateOpDateDebutPossible(el.dataset.cid, el.dataset.oid, el.value); break;
