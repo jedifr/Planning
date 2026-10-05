@@ -1236,6 +1236,46 @@ validé avant codage : pastille de couleur + texte, « À faire » pour une piè
   faire) · fin prévue mar 06 oct., 08:56 » ; filtre actif sur tout le Kanban : 83 cartes disponibles,
   35 masquées ; vue groupée cohérente ; aucune erreur.
 
+### Cartes Kanban à 4 lignes, séparateurs par jour et mode Compact (v1.92.0)
+
+Demande utilisateur (capture du Kanban) : meilleur affichage des tâches. Proposition validée avant codage
+(artefact de maquette) puis retenue **en entier, options comprises**. Kanban uniquement : Gantt/Liste/Parcours
+inchangés.
+
+- **Carte = 4 lignes fixes**, toujours au même endroit : (1) `.kc-r1` commande en police fixe, client tronqué
+  (nom complet en infobulle), casier en pastille colorée ; (2) `.kc-r2` **l'étape en gras** (ce que fait
+  l'opérateur), puis pièce et n° de ligne en gris (repli : poste, puis pièce, si l'étape est vide) ; (3) `.kc-r3`
+  poste, opérateur(s) en avatars (`avatarColorFor`/`initialsForName` — mêmes que Temps de production) et durée
+  prévue ; (4) `.kc-r4` quand + échéance. Puis, selon la colonne : pastille de disponibilité (À faire), barre
+  « Passé X sur Y · N % » (En cours/En pause, `renderPrevuPasseBar`, mêmes seuils vert/ambre/rouge que Temps de
+  production), « ✓ jour · heure » et « X sur Y prévues » (Terminée, ambre/rouge au-delà de +5 %/+50 %).
+  Les anciennes classes `kanban-card-main/title/meta/times/time/planned/due/elapsed/zone/fusion-list` sont
+  supprimées. **Conservés tels quels** : `data-action="card-isolate"`, `data-cid/oid/fusion-group`, `hlClsK`
+  (spotlight/dimmed), bordure gauche d'urgence, infobulle (liste des pièces d'un lot fusionné ajoutée).
+- **Dates courtes** (`fmtDayK`/`fmtHourK`) : « Mer 7/10 · 07:54 → 11:16 » ; le jour n'est répété que si la tâche
+  chevauche deux jours, et omis quand le séparateur de jour est actif. En pause : « En pause depuis … » (début de
+  la pause en cours, `pieceCurrentPauseGap`, repli sur la fin de la dernière session). Sous-traitée/hors planning :
+  libellés d'origine.
+- **Échéance en pastille** (`.kc-due`) : rouge si dépassée (« · dépassée ») ou si la fin prévue dépasse l'échéance
+  effective (`effectiveDueDate`, marge comprise), grise sinon ; absente en Terminée (info sans objet).
+- **Pastille de disponibilité** (`kanbanWaitPillHtml`) : date en forme courte à droite (« fin mer 7/10 07:54 »),
+  forme complète en infobulle ; le texte passe à la ligne plutôt que d'être tronqué.
+- **Colonnes égales** : `repeat(4, minmax(0,1fr))` (et `.kanban-col{min-width:0}`) — une colonne vide ne rétrécit
+  plus et un contenu long n'élargit plus une colonne. Vérifié : 344 px × 4 à 1500 px.
+- **Séparateurs par jour** (`kanbanDaySeparators`, `KANBAN_DAY_SEP_KEY`, **activé par défaut**, case « 📅
+  Séparateurs par jour ») : dans « À faire » seulement, une ligne « Lundi 5 octobre » (`.kanban-day`) par journée de
+  début prévu (liste déjà triée) ; tâches sans début prévu regroupées sous « Sans date prévue » en fin de colonne.
+- **Mode Compact** (`kanbanCompact`, `KANBAN_COMPACT_KEY`, **désactivé par défaut**, case « Compact ») : classe
+  `.kanban-compact` sur le plateau (et sur le conteneur mobile) — lignes 1, 2 et pastille seulement (r3/r4, barre
+  et badges masqués en CSS, rien n'est recalculé). Les deux options sont des préférences de navigateur
+  (`localStorage`, chargées par `loadKanbanGroupedViewPref`), comme la vue groupée.
+- **Tri de « À faire » corrigé au passage** : une tâche sans début prévu (sous-traitée, hors planning) avait un début
+  « 0 » et passait en TÊTE, occupant seule le haut de la colonne et la limite d'affichage ; elle passe désormais
+  après les tâches planifiées.
+- Vue groupée : titre « 🔗 N pièces » + étapes distinctes (« LASER 2D + EBAVURAGE ») ; commande ou « N commandes ».
+- Vérifié (Playwright, export réel du 05/10) : 4 colonnes égales, séparateurs Lundi/Mardi, Compact masque r3,
+  séparateurs désactivables, vue groupée, mobile 390 px sans débordement (onglets de statut conservés), aucune erreur.
+
 ### Déclarer terminée une tâche jamais démarrée (oubli de démarrage)
 
 Demande utilisateur réelle : classer « Terminée » une tâche du Kanban « À faire » qu'on a oublié de

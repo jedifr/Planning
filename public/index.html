@@ -289,8 +289,8 @@
   }
   .gantt-empty{padding:24px 16px; color:var(--text-faint); font-size:12.5px;}
 
-  .kanban-board{display:grid; grid-template-columns:repeat(4, 1fr); gap:12px;}
-  .kanban-col{background:var(--bg); border:1px solid var(--line-soft); border-radius:2px; display:flex; flex-direction:column; min-height:120px;}
+  .kanban-board{display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px;}
+  .kanban-col{min-width:0; background:var(--bg); border:1px solid var(--line-soft); border-radius:2px; display:flex; flex-direction:column; min-height:120px;}
   .kanban-col-head{
     font-family:'Oswald',sans-serif; font-size:11px; font-weight:600; letter-spacing:0.7px; text-transform:uppercase;
     color:var(--text-dim); padding:9px 10px; border-bottom:1px solid var(--line-soft); background:var(--panel-2);
@@ -304,25 +304,50 @@
   .dd-panel-check .machine-dot{width:8px; height:8px; border-radius:2px; display:inline-block;}
   .kanban-col-body{padding:8px; display:flex; flex-direction:column; gap:7px; flex:1; overflow-y:auto; max-height:520px;}
   .kanban-card{
-    background:var(--panel); border:1px solid var(--line-soft); border-radius:2px; padding:7px 9px; cursor:pointer;
-    transition:border-color .12s; display:flex; justify-content:space-between; align-items:flex-start; gap:8px;
+    background:var(--panel); border:1px solid var(--line-soft); border-radius:3px; padding:8px 10px 9px; cursor:pointer;
+    transition:border-color .12s; display:flex; flex-direction:column; gap:5px; min-width:0;
   }
   .kanban-card:hover{border-color:var(--text-faint);}
-  .kanban-card-main{flex:1; min-width:0;}
-  .kanban-card-title{font-size:12px; color:var(--text); margin-bottom:4px; line-height:1.3;}
-  .kanban-card-meta{display:flex; align-items:center; gap:6px; font-size:10.5px; color:var(--text-dim); margin-bottom:3px;}
-  .kanban-card-times{flex-shrink:0; text-align:right; white-space:nowrap;}
-  .kanban-card-time{font-size:10px; color:var(--text-faint); font-family:'IBM Plex Mono',monospace;}
-  .kanban-card-planned{font-size:10px; color:var(--text-dim); margin-top:2px;}
-  .kanban-card-due{font-size:10px; color:var(--red); font-weight:600; margin-top:2px;}
-  .kanban-avail{font-size:10px; font-weight:600; margin-top:4px; padding:2px 6px; border-radius:8px; display:inline-block; max-width:100%; line-height:1.35;}
+  /* Carte à 4 lignes fixes (v1.92.0) : 1 commande/client/casier — 2 étape (gras) + pièce — 3 poste,
+     opérateur, durée prévue — 4 quand + échéance ; puis pastille de disponibilité (À faire) ou barre
+     de temps (En cours/En pause). Toujours au même endroit d'une carte à l'autre. */
+  .kc-r1{display:flex; align-items:baseline; gap:8px; min-width:0;}
+  .kc-cmd{font-family:'IBM Plex Mono',monospace; font-weight:500; font-size:11.5px; white-space:nowrap; color:var(--text);}
+  .kc-cli{font-size:11px; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1;}
+  .kc-zone{font-family:'IBM Plex Mono',monospace; font-size:10.5px; font-weight:600; padding:1px 7px; border-radius:9px; background:rgba(47,127,209,0.12); color:var(--blue); white-space:nowrap; margin-left:auto;}
+  .kc-r2{font-size:13px; font-weight:600; line-height:1.3; color:var(--text); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere;}
+  .kc-r2 span{font-weight:400; color:var(--text-dim);}
+  .kc-r3{display:flex; flex-wrap:wrap; align-items:center; gap:4px 11px; font-size:11.5px; color:var(--text-dim);}
+  .kc-poste{display:inline-flex; align-items:center; gap:6px; color:var(--text);}
+  .kc-poste .machine-swatch{display:inline-block; width:9px; height:9px; border-radius:2px;}
+  .kc-pers{display:inline-flex; align-items:center; gap:4px;}
+  .kc-av{display:inline-grid; place-items:center; width:18px; height:18px; border-radius:50%; color:#fff; font-size:9px; font-weight:600; font-style:normal;}
+  .kc-dur{font-variant-numeric:tabular-nums;}
+  .kc-r4{display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; font-size:11.5px;}
+  .kc-when{font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--text-dim);}
+  .kc-due{font-size:10.5px; font-weight:500; color:var(--text-dim); white-space:nowrap;}
+  .kc-due.kc-due-red{font-weight:600; padding:1px 7px; border-radius:9px; background:rgba(178,58,48,0.12); color:var(--red);}
+  .kc-done{color:var(--green); font-weight:600; font-size:11px;}
+  .kc-real{font-size:10.5px; color:var(--text-dim); font-variant-numeric:tabular-nums;}
+  .kc-barl{display:flex; justify-content:space-between; font-size:11px; color:var(--text-dim); font-variant-numeric:tabular-nums;}
+  .kc-barl strong{color:var(--text); font-weight:600;}
+  .kanban-card .kc-bar{height:5px; margin:0;}
+  .kc-extras{display:flex; flex-wrap:wrap; gap:4px;}
+  .kanban-avail{font-size:11px; font-weight:600; padding:3px 8px; border-radius:6px; display:flex; gap:6px; align-items:baseline; min-width:0; line-height:1.35;}
+  .kanban-avail i{font-style:normal; font-size:8px;}
+  .kanban-avail .kb-txt{min-width:0; overflow-wrap:anywhere;}
+  .kanban-avail small{font-weight:400; opacity:.85; margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:10px; white-space:nowrap;}
   .kanban-avail.kb-avail-free{background:rgba(53,117,87,0.12); color:var(--green);}
   .kanban-avail.kb-avail-ready{background:rgba(53,117,87,0.12); color:var(--green);}
   .kanban-avail.kb-avail-wip{background:var(--amber-dim); color:var(--amber);}
   .kanban-avail.kb-avail-wait{background:rgba(178,58,48,0.12); color:var(--red);}
-  .kanban-card-fusion-list{font-size:10px; color:var(--text-faint); margin-top:2px;}
-  .kanban-card-elapsed{font-size:10px; color:var(--accent); font-weight:600; margin-top:2px;}
-  .kanban-card-zone{font-size:10px; color:var(--blue); font-weight:600; margin-top:2px;}
+  /* Séparateur de jour (option) dans « À faire » */
+  .kanban-day{font-size:10.5px; font-weight:600; color:var(--text-dim); letter-spacing:.3px; padding:4px 2px 0; display:flex; align-items:center; gap:8px;}
+  .kanban-day::after{content:""; flex:1; height:1px; background:var(--line-soft);}
+  /* Mode compact (option) : lignes 1, 2 et pastille seulement */
+  .kanban-compact .kanban-card{gap:3px; padding:6px 9px;}
+  .kanban-compact .kc-r3, .kanban-compact .kc-r4, .kanban-compact .kc-barl, .kanban-compact .kc-bar, .kanban-compact .kc-extras{display:none;}
+  .kanban-compact .kc-r2{font-size:12px; -webkit-line-clamp:1;}
   .kanban-empty{padding:14px 6px; text-align:center; font-size:11px; color:var(--text-faint);}
 
   .liste-table td{font-size:12px;}
@@ -333,7 +358,7 @@
   .print-header{display:none;}
 
   @media screen and (max-width:900px){
-    .kanban-board{grid-template-columns:repeat(2, 1fr);}
+    .kanban-board{grid-template-columns:repeat(2, minmax(0, 1fr));}
   }
   /* Kanban mobile (voir CLAUDE.md, "Kanban mobile") : un onglet de statut à la fois plutôt que les
      4 colonnes côte à côte de .kanban-board (jamais affiché ensemble avec .kanban-mobile-tabs — les
@@ -1723,7 +1748,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.91.0';
+const APP_VERSION = '1.92.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -2318,6 +2343,26 @@ function loadKanbanGroupedViewPref(){
   catch(e){ /* préférence absente ou indisponible */ }
   try{ kanbanOnlyAvailable = localStorage.getItem(KANBAN_ONLY_AVAILABLE_KEY) === '1'; }
   catch(e){ /* préférence absente ou indisponible */ }
+  try{ kanbanDaySeparators = localStorage.getItem(KANBAN_DAY_SEP_KEY) !== '0'; } // activé par défaut
+  catch(e){ /* préférence absente ou indisponible */ }
+  try{ kanbanCompact = localStorage.getItem(KANBAN_COMPACT_KEY) === '1'; }
+  catch(e){ /* préférence absente ou indisponible */ }
+}
+// Séparateurs par jour dans « À faire » (activés par défaut) et mode Compact des cartes (désactivé
+// par défaut) — préférences de navigateur, comme la vue groupée (v1.92.0).
+const KANBAN_DAY_SEP_KEY = 'planning-atelier-kanban-day-sep';
+const KANBAN_COMPACT_KEY = 'planning-atelier-kanban-compact';
+let kanbanDaySeparators = true;
+let kanbanCompact = false;
+function toggleKanbanDaySeparators(checked){
+  kanbanDaySeparators = !!checked;
+  try{ localStorage.setItem(KANBAN_DAY_SEP_KEY, kanbanDaySeparators ? '1' : '0'); }catch(e){ /* le choix reste valable pour la session */ }
+  render();
+}
+function toggleKanbanCompact(checked){
+  kanbanCompact = !!checked;
+  try{ localStorage.setItem(KANBAN_COMPACT_KEY, kanbanCompact ? '1' : '0'); }catch(e){ /* le choix reste valable pour la session */ }
+  render();
 }
 // Filtre « Pièces disponibles seulement » du Kanban (colonne « À faire ») : masque les cartes dont
 // l'étape précédente n'est pas terminée. Préférence de navigateur, comme la vue groupée.
@@ -15001,18 +15046,21 @@ function kanbanWaitInfoForGroup(members, waitMap){
 }
 function kanbanWaitPillHtml(w){
   if(!w) return '';
-  if(w.state === 'free') return `<div class="kanban-avail kb-avail-free" title="Aucune étape précédente : la pièce est disponible">● À faire</div>`;
+  const dot = '<i>●</i>';
+  if(w.state === 'free') return `<div class="kanban-avail kb-avail-free" title="Aucune étape précédente : la pièce est disponible">${dot}À faire</div>`;
   const m = state.machines.find(mm => mm.id === w.pred.machineId);
   const posteNom = m ? m.nom : (w.pred.etape || 'étape précédente');
   const etapeNom = [w.pred.piece, w.pred.etape].filter(Boolean).join(' / ');
   const dateTxt = w.endDate ? formatDT(w.endDate) : '';
+  // Date courte (« mer 7/10 07:54 ») dans la pastille, la forme complète reste en infobulle.
+  const dateCourte = w.endDate ? `${w.endDate.toLocaleDateString('fr-FR',{weekday:'short'}).replace('.','')} ${w.endDate.getDate()}/${w.endDate.getMonth()+1} ${w.endDate.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}` : '';
   const autres = w.others > 0 ? ` (+${w.others} autre${w.others>1?'s':''} étape${w.others>1?'s':''} précédente${w.others>1?'s':''})` : '';
   if(w.state === 'ready'){
-    return `<div class="kanban-avail kb-avail-ready" title="${escapeHtml(`Étape précédente terminée : ${etapeNom} — ${posteNom}${dateTxt ? ' — le ' + dateTxt : ''}`)}">● Disponible · ${escapeHtml(posteNom)} terminé${dateTxt ? ' le ' + escapeHtml(dateTxt) : ''}</div>`;
+    return `<div class="kanban-avail kb-avail-ready" title="${escapeHtml(`Étape précédente terminée : ${etapeNom} — ${posteNom}${dateTxt ? ' — le ' + dateTxt : ''}`)}">${dot}<span class="kb-txt">Disponible · ${escapeHtml(posteNom)} terminé</span>${dateCourte ? `<small>${escapeHtml(dateCourte)}</small>` : ''}</div>`;
   }
   const cls = w.state === 'wip' ? 'kb-avail-wip' : 'kb-avail-wait';
   const statutTxt = opStatutLabel(w.pred.statut).toLowerCase();
-  return `<div class="kanban-avail ${cls}" title="${escapeHtml(`En attente de l'étape précédente : ${etapeNom} — ${posteNom} (${statutTxt})${dateTxt ? ' — fin prévue ' + dateTxt : ''}${autres}`)}">● En attente : ${escapeHtml(posteNom)} (${escapeHtml(statutTxt)})${dateTxt ? ' · fin prévue ' + escapeHtml(dateTxt) : ''}</div>`;
+  return `<div class="kanban-avail ${cls}" title="${escapeHtml(`En attente de l'étape précédente : ${etapeNom} — ${posteNom} (${statutTxt})${dateTxt ? ' — fin prévue ' + dateTxt : ''}${autres}`)}">${dot}<span class="kb-txt">En attente : ${escapeHtml(posteNom)} (${escapeHtml(statutTxt)})</span>${dateCourte ? `<small>fin ${escapeHtml(dateCourte)}</small>` : ''}</div>`;
 }
 function renderKanbanView(schedule){
   const cols = [
@@ -15103,10 +15151,12 @@ function renderKanbanView(schedule){
         ops = ops.filter(o => !o._wait || o._wait.state === 'free' || o._wait.state === 'ready');
         enAttenteMasquees = avant - ops.length;
       }
+      // Les tâches sans début prévu (sous-traitées/hors planning) passent APRÈS les tâches planifiées :
+      // sinon (début « 0 ») elles occupaient seules le haut de la colonne et la limite d'affichage.
       ops.sort((a,b) => {
-        const ta = a.start ? a.start.getTime() : 0;
-        const tb = b.start ? b.start.getTime() : 0;
-        return ta - tb;
+        const ta = a.start ? a.start.getTime() : Infinity;
+        const tb = b.start ? b.start.getTime() : Infinity;
+        return ta === tb ? 0 : (ta < tb ? -1 : 1);
       });
       totalAvantLimite = ops.length;
       ops = ops.slice(0, effectiveKanbanDoneLimit); // les plus proches dans le temps restent visibles en priorité
@@ -15117,95 +15167,152 @@ function renderKanbanView(schedule){
         return ta - tb;
       });
     }
-    const cards = ops.map(o => {
+    const cardItems = ops.map(o => {
       const mi = state.machines.findIndex(m=>m.id===o.machineId);
       const m = mi>=0 ? state.machines[mi] : null;
       const color = machineColor(m, mi<0?0:mi);
       const urgBorder = urgencyBorderColor(o.urgence);
-      const timeInfo = o.sousTraitance
-        ? (col.key==='termine' ? (o.finReel ? `🏭 Revenue le ${formatDT(new Date(o.finReel))}` : '🏭 Revenue') : '🏭 Sous-traitée — non planifiée')
-        : o.horsPlanning
-        ? (col.key==='termine' ? (o.finReel ? `📋 Terminée le ${formatDT(new Date(o.finReel))}` : '📋 Réalisée') : (o.debutReel ? `📋 Hors planning — depuis ${formatDT(new Date(o.debutReel))}` : '📋 Hors planning'))
-        : col.key==='termine'
-        ? (o.finReel ? `Terminée le ${formatDT(new Date(o.finReel))}` : 'Réalisée')
-        : (o.start ? `${formatDT(o.start)} → ${formatDT(o.end)}` : 'Non planifiée');
       // Distinctes commandes du groupe — une seule fusion PARTAGE la même zoneStockage (attribut de
       // commande, voir modèle de données) : dans ce cas (une seule commande, plusieurs pièces
       // fusionnées entre elles), afficher la zone n'a rien de trompeur, contrairement à une fusion
       // multi-commandes où o.zoneStockage ne porterait que celle du premier membre du groupe.
       const distinctCmdK = o._fusionMembers ? Array.from(new Set(o._fusionMembers.map(mb=>mb.commandeNom))) : null;
-      const label = o._fusionMembers
-        ? (() => {
-            const refLabel = distinctCmdK.length===1 ? distinctCmdK[0] : `${distinctCmdK.length} commandes`;
-            return `🔗 ${o._fusionMembers.length} pièces — ${refLabel}`;
-          })()
-        : [o.commandeNom, o.piece, o.etape].filter(Boolean).join(' · ') + (o.numeroLigne ? ` (n°${o.numeroLigne})` : '');
-      const fusionListLineK = o._fusionMembers
-        ? `<div class="kanban-card-fusion-list">${o._fusionMembers.map(mb=>escapeHtml([mb.piece,mb.etape].filter(Boolean).join(' / ')||'—')).join(', ')}</div>` : '';
       const hlOnK = highlightActive();
       const hlK = isFusionAwareHighlighted(o);
       const hlClsK = hlOnK ? (hlK ? 'spotlight' : 'dimmed') : '';
+      // --- Ligne 1 : commande, client, casier ---
+      const cmdTxtK = o._fusionMembers ? (distinctCmdK.length===1 ? distinctCmdK[0] : `${distinctCmdK.length} commandes`) : (o.commandeNom || '—');
+      const clientTxtK = (!o._fusionMembers || distinctCmdK.length===1) ? (o.refClient || '') : '';
+      const zoneAlleeK = o.zoneStockage ? zonesInfoK.byCode[o.zoneStockage] : null;
+      // Affichée sauf sur une carte fusionnée MULTI-COMMANDES (voir plus haut) — bug réel passé : le
+      // casier disparaissait à tort sur une fusion mono-commande.
+      const zoneChipK = ((!distinctCmdK || distinctCmdK.length===1) && o.zoneStockage)
+        ? `<span class="kc-zone" style="${zoneAlleeK?`color:${readableZoneTextColor(zoneAlleeK.couleur)}; background:${hexToRgba(zoneAlleeK.couleur,0.16)};`:''}" title="Zone de stockage">📍 ${escapeHtml(o.zoneStockage)}</span>` : '';
+      // --- Ligne 2 : l'étape (ce que fait l'opérateur) en gras, puis la pièce ---
+      const etapeTxtK = o.etape || (m ? m.nom : '') || o.piece || '—';
+      const l2sub = [o.etape ? o.piece : '', o.numeroLigne ? `n°${o.numeroLigne}` : ''].filter(Boolean).join(' · ');
+      const titreK = o._fusionMembers ? `🔗 ${o._fusionMembers.length} pièces` : etapeTxtK;
+      const fusionTitleK = o._fusionMembers ? '\n' + o._fusionMembers.map(mb=>[mb.piece,mb.etape].filter(Boolean).join(' / ')||'—').join('\n') : '';
+      const subK = o._fusionMembers ? Array.from(new Set(o._fusionMembers.map(mb => mb.etape || '').filter(Boolean))).join(' + ') : l2sub;
+      // --- Ligne 3 : poste, opérateur(s), durée prévue ---
       const operateurK = o.operatorUserId ? usersList.find(u=>String(u.id)===String(o.operatorUserId)) : null;
+      const avK = (u) => `<i class="kc-av" style="background:${avatarColorFor(u.username)};" title="${escapeHtml(u.username)}">${escapeHtml(initialsForName(u.username))}</i>`;
+      const persK = (u) => `<span class="kc-pers">${avK(u)}${escapeHtml(u.username)}</span>`;
       // Qui réalise/a réalisé RÉELLEMENT la tâche (dernière session ouverte ou close) — peut
       // diverger de l'opérateur assigné sur un poste partagé (voir activeIdentityId). Non
-      // disponible une fois les sessions archivées/purgées (tâche terminée depuis un moment) :
-      // l'assigné reste alors la seule info affichable.
+      // disponible une fois les sessions archivées/purgées : l'assigné reste alors la seule info.
       const openSessionsK = (o.sessions||[]).filter(s => !s.fin);
-      let operateurMetaK;
+      let operateurHtmlK = '';
       if(openSessionsK.length > 1){
-        // Plusieurs opérateurs travaillent en parallèle sur cette même pièce (voir joinOpSession) :
-        // on les liste tous plutôt qu'un seul "réalise", sinon la carte ferait croire à tort qu'une
-        // seule personne y travaille alors que leurs heures s'additionnent.
-        const nomsK = Array.from(new Set(openSessionsK.map(s => {
+        // Plusieurs opérateurs en parallèle (voir joinOpSession) : on les liste tous, leurs heures s'additionnent.
+        const usersParK = [];
+        openSessionsK.forEach(s => {
           const u = s.operatorUserId ? usersList.find(uu=>String(uu.id)===String(s.operatorUserId)) : null;
-          return u ? u.username : null;
-        }).filter(Boolean)));
-        operateurMetaK = nomsK.length ? ` · 👤 ${nomsK.map(escapeHtml).join(' + ')} (en parallèle)` : '';
+          if(u && !usersParK.some(x=>String(x.id)===String(u.id))) usersParK.push(u);
+        });
+        operateurHtmlK = usersParK.length ? `<span class="kc-pers" title="En parallèle">${usersParK.map(avK).join('')}${usersParK.map(u=>escapeHtml(u.username)).join(' + ')}</span>` : '';
       } else {
         const lastSessionK = (o.sessions && o.sessions.length) ? o.sessions[o.sessions.length-1] : null;
         const producteurUidK = lastSessionK ? (lastSessionK.operatorUserId || o.operatorUserId) : null;
         const producteurK = producteurUidK ? usersList.find(u=>String(u.id)===String(producteurUidK)) : null;
-        operateurMetaK = (producteurK && operateurK && String(producteurK.id)!==String(operateurK.id))
-          ? ` · 👤 ${escapeHtml(operateurK.username)} (assigné) → ${escapeHtml(producteurK.username)} (réalise)`
-          : ((producteurK||operateurK) ? ` · 👤 ${escapeHtml((producteurK||operateurK).username)}` : '');
+        operateurHtmlK = (producteurK && operateurK && String(producteurK.id)!==String(operateurK.id))
+          ? `<span class="kc-pers" title="${escapeHtml(operateurK.username)} (assigné) → ${escapeHtml(producteurK.username)} (réalise)">${avK(operateurK)}${escapeHtml(operateurK.username)} → ${avK(producteurK)}${escapeHtml(producteurK.username)}</span>`
+          : ((producteurK||operateurK) ? persK(producteurK||operateurK) : '');
       }
-      const dueLineK = o.dateBesoin ? `<div class="kanban-card-due">Échéance : ${escapeHtml(new Date(o.dateBesoin+'T00:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'}))}</div>` : '';
-      // Affichée sauf sur une carte fusionnée MULTI-COMMANDES (distinctCmdK.length > 1) : dans ce cas
-      // seulement, o.zoneStockage ne porterait que la zone de la première commande du groupe, ce qui
-      // serait trompeur pour les autres membres. Une fusion à l'intérieur d'une seule commande
-      // (distinctCmdK.length === 1, ou pas de fusion du tout) partage forcément la même zone —
-      // aucune ambiguïté, l'afficher est donc sûr (bug réel signalé : le casier disparaissait à tort
-      // sur une pièce fusionnée pourtant seule concernée).
-      const zoneAlleeK = o.zoneStockage ? zonesInfoK.byCode[o.zoneStockage] : null;
-      const zoneLineK = ((!distinctCmdK || distinctCmdK.length===1) && o.zoneStockage) ? `<div class="kanban-card-zone" style="${zoneAlleeK?`color:${readableZoneTextColor(zoneAlleeK.couleur)};`:''}">📍 ${escapeHtml(o.zoneStockage)}</div>` : '';
       const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (Number(o.tempsUnitaire)*Number(o.quantite))/60;
-      const plannedLineK = `<div class="kanban-card-planned">Prévu : ${durationLabel(dureeH)}</div>`;
-      const elapsedLineK = (col.key==='en_cours'||col.key==='en_pause'||col.key==='termine') ? (() => {
-        const elapsedH = dureePasseeH(o, state);
-        if(!elapsedH || elapsedH <= 0) return '';
-        const label2 = col.key==='termine' ? 'Passé' : 'Passé jusqu\'ici';
-        return `<div class="kanban-card-elapsed">${label2} : ${durationLabel(elapsedH)}</div>`;
-      })() : '';
-      // Même badge que le tableau des tâches (workHoursExceptionBadgeHtml) — uniquement sur À
-      // faire/En cours (statuts où l'exception a un effet réel), jamais sur En pause/Terminée.
-      const workExceptionLineK = (col.key==='a_faire'||col.key==='en_cours'||col.key==='en_pause') ? (workHoursExceptionBadgeHtml(o) + lunchExceptionBadgeHtml(o)) : (col.key==='termine' ? declarationBadgeHtml(o) : '');
-      return `<div class="kanban-card ${hlClsK}" data-action="card-isolate" data-cid="${o.cid}" data-oid="${o.id}" data-fusion-group="${o._fusionMembers ? o.fusionGroupId : ''}" style="border-left:3px solid ${urgBorder};" title="Clic : isoler la commande — clic droit : menu de statut">
-        <div class="kanban-card-main">
-          <div class="kanban-card-title">${escapeHtml(label)}</div>
-          <div class="kanban-card-meta"><span class="machine-swatch" style="background:${color}"></span>${m?escapeHtml(m.nom):'—'}${operateurMetaK}</div>
-          ${fusionListLineK}
-          ${dueLineK}
-          ${zoneLineK}
-          ${col.key==='a_faire' ? kanbanWaitPillHtml(o._wait) : ''}
-        </div>
-        <div class="kanban-card-times">
-          <div class="kanban-card-time">${escapeHtml(timeInfo)}</div>
-          ${plannedLineK}
-          ${elapsedLineK}
-          ${workExceptionLineK}
-        </div>
+      const dureeTxtK = (dureeH > 0) ? durationLabel(dureeH) : '';
+      // --- Ligne 4 : quand + échéance ---
+      const statutHorsK = o.sousTraitance ? 'sous' : (o.horsPlanning ? 'hors' : '');
+      const fmtDayK = (d) => { const w = d.toLocaleDateString('fr-FR',{weekday:'short'}).replace('.',''); return `${w.charAt(0).toUpperCase()+w.slice(1)} ${d.getDate()}/${d.getMonth()+1}`; };
+      const fmtHourK = (d) => d.toLocaleTimeString('fr-FR',{hour:'2-digit', minute:'2-digit'});
+      const dayKeyK = (o.start && !o.sousTraitance && !o.horsPlanning) ? toDateInputValue(o.start) : '';
+      const hideDayK = (col.key==='a_faire' && kanbanDaySeparators && dayKeyK);
+      let whenK;
+      if(col.key==='termine'){
+        const fr = o.finReel ? new Date(o.finReel) : null;
+        whenK = o.sousTraitance ? (fr ? `🏭 Revenue ${fmtDayK(fr)} ${fmtHourK(fr)}` : '🏭 Revenue')
+          : o.horsPlanning ? (fr ? `📋 ${fmtDayK(fr)} ${fmtHourK(fr)}` : '📋 Réalisée')
+          : (fr ? `${fmtDayK(fr)} · ${fmtHourK(fr)}` : 'Réalisée');
+      } else if(o.sousTraitance){
+        whenK = '🏭 Sous-traitée — non planifiée';
+      } else if(o.horsPlanning){
+        whenK = o.debutReel ? `📋 Hors planning — depuis ${fmtDayK(new Date(o.debutReel))} ${fmtHourK(new Date(o.debutReel))}` : '📋 Hors planning';
+      } else if(col.key==='en_pause'){
+        const gapK = pieceCurrentPauseGap(o, new Date());
+        const dFin = gapK && gapK.debut ? new Date(gapK.debut) : (o.sessions && o.sessions.length && o.sessions[o.sessions.length-1].fin ? new Date(o.sessions[o.sessions.length-1].fin) : null);
+        whenK = dFin && !isNaN(dFin) ? `En pause depuis ${fmtDayK(dFin)} ${fmtHourK(dFin)}` : 'En pause';
+      } else if(o.start && o.end){
+        const sameDayK = toDateInputValue(o.start) === toDateInputValue(o.end);
+        whenK = sameDayK
+          ? `${hideDayK ? '' : fmtDayK(o.start) + ' · '}${fmtHourK(o.start)} → ${fmtHourK(o.end)}`
+          : `${fmtDayK(o.start)} ${fmtHourK(o.start)} → ${fmtDayK(o.end)} ${fmtHourK(o.end)}`;
+      } else {
+        whenK = 'Non planifiée';
+      }
+      let dueK = '';
+      if(o.dateBesoin && col.key!=='termine'){
+        const dd = new Date(o.dateBesoin+'T00:00:00');
+        const sameYearK = dd.getFullYear() === new Date().getFullYear();
+        const ddTxt = sameYearK ? `${dd.getDate()}/${dd.getMonth()+1}` : `${dd.getDate()}/${dd.getMonth()+1}/${dd.getFullYear()}`;
+        const depasseK = dd.getTime() < new Date(new Date().toDateString()).getTime();
+        const menaceK = !depasseK && o.end && !o.sousTraitance && !o.horsPlanning && o.end > effectiveDueDate(o.dateBesoin);
+        dueK = (depasseK || menaceK)
+          ? `<span class="kc-due kc-due-red" title="${depasseK ? 'Échéance dépassée' : 'Fin prévue après l\'échéance'}">Éch. ${ddTxt}${depasseK ? ' · dépassée' : ''}</span>`
+          : `<span class="kc-due" title="Échéance">Éch. ${ddTxt}</span>`;
+      }
+      // --- Barre de temps (En cours / En pause) et réel vs prévu (Terminée) ---
+      const elapsedH = (col.key==='en_cours'||col.key==='en_pause'||col.key==='termine') ? dureePasseeH(o, state) : null;
+      let barK = '', doneLineK = '';
+      if((col.key==='en_cours'||col.key==='en_pause') && dureeH > 0){
+        const passe = elapsedH && elapsedH > 0 ? elapsedH : 0;
+        const pct = Math.round(passe / dureeH * 100);
+        barK = `<div class="kc-barl"><span>Passé <strong>${durationLabel(passe)}</strong> sur ${durationLabel(dureeH)}</span><span>${pct} %</span></div>${renderPrevuPasseBar(dureeH, passe).replace('tp-bar-track','tp-bar-track kc-bar')}`;
+      } else if(col.key==='termine' && elapsedH && elapsedH > 0){
+        const ratio = dureeH > 0 ? elapsedH / dureeH : 0;
+        const coul = ratio > 1.5 ? 'var(--red)' : (ratio > 1.05 ? 'var(--amber)' : 'var(--text-dim)');
+        doneLineK = dureeH > 0
+          ? `<span class="kc-real" style="color:${coul};" title="Temps réellement passé / temps prévu">${durationLabel(elapsedH)} sur ${durationLabel(dureeH)} prévues</span>`
+          : `<span class="kc-real" title="Temps réellement passé">${durationLabel(elapsedH)} passées</span>`;
+      }
+      // Même badges que le tableau des tâches — uniquement sur À faire/En cours/En pause (statuts où
+      // l'exception a un effet réel) ; déclaration (temps déclaré) sur Terminée.
+      const extrasK = (col.key==='a_faire'||col.key==='en_cours'||col.key==='en_pause') ? (workHoursExceptionBadgeHtml(o) + lunchExceptionBadgeHtml(o)) : (col.key==='termine' ? declarationBadgeHtml(o) : '');
+      const titleAttrK = `Clic : isoler la commande — clic droit : menu de statut${o._fusionMembers ? '\nPièces du lot :' + fusionTitleK : ''}`;
+      const r4K = (col.key==='termine')
+        ? `<div class="kc-r4"><span class="kc-done">✓ ${escapeHtml(whenK)}</span>${doneLineK}</div>`
+        : `<div class="kc-r4"><span class="kc-when">${escapeHtml(whenK)}</span>${dueK}</div>`;
+      const html = `<div class="kanban-card ${hlClsK}" data-action="card-isolate" data-cid="${o.cid}" data-oid="${o.id}" data-fusion-group="${o._fusionMembers ? o.fusionGroupId : ''}" style="border-left:3px solid ${urgBorder};" title="${escapeHtml(titleAttrK)}">
+        <div class="kc-r1"><span class="kc-cmd">${escapeHtml(cmdTxtK)}</span><span class="kc-cli" title="${escapeHtml(clientTxtK)}">${escapeHtml(clientTxtK)}</span>${zoneChipK}</div>
+        <div class="kc-r2">${escapeHtml(titreK)}${subK ? ` <span>· ${escapeHtml(subK)}</span>` : ''}</div>
+        <div class="kc-r3"><span class="kc-poste"><i class="machine-swatch" style="background:${color}"></i>${m?escapeHtml(m.nom):'—'}</span>${operateurHtmlK}${dureeTxtK ? `<span class="kc-dur">${dureeTxtK}</span>` : ''}</div>
+        ${barK}
+        ${r4K}
+        ${col.key==='a_faire' ? kanbanWaitPillHtml(o._wait) : ''}
+        ${extrasK ? `<div class="kc-extras">${extrasK}</div>` : ''}
       </div>`;
-    }).join('');
+      return { html, dayKey: dayKeyK, start: o.start };
+    });
+    // Séparateurs par jour dans « À faire » (option) : une ligne « Mer 7 octobre » par journée de début
+    // prévu — la liste est déjà triée par début. Tâches sans date prévue regroupées à part, en fin.
+    let cards;
+    if(col.key==='a_faire' && kanbanDaySeparators){
+      let last = null; const parts = [];
+      const sansDate = [];
+      cardItems.forEach(it => {
+        if(!it.dayKey){ sansDate.push(it.html); return; }
+        if(it.dayKey !== last){
+          last = it.dayKey;
+          const d = new Date(it.dayKey+'T00:00:00');
+          const lbl = d.toLocaleDateString('fr-FR',{weekday:'long', day:'numeric', month:'long'});
+          parts.push(`<div class="kanban-day">${escapeHtml(lbl.charAt(0).toUpperCase()+lbl.slice(1))}</div>`);
+        }
+        parts.push(it.html);
+      });
+      if(sansDate.length){ parts.push(`<div class="kanban-day">Sans date prévue</div>`); sansDate.forEach(h => parts.push(h)); }
+      cards = parts.join('');
+    } else {
+      cards = cardItems.map(it => it.html).join('');
+    }
     const limited = (col.key==='a_faire' || col.key==='termine');
     const countLabel = (limited && totalAvantLimite>ops.length)
       ? `(${ops.length} sur ${totalAvantLimite})` : `(${ops.length})`;
@@ -15222,10 +15329,10 @@ function renderKanbanView(schedule){
     const activeKey = colObjs.some(c=>c.key===kanbanMobileStatusTab) ? kanbanMobileStatusTab : colObjs[0].key;
     const tabsHtml = colObjs.map(c => `<button class="${activeKey===c.key?'active':''}" data-action="kanban-mobile-tab" data-tab="${c.key}">${c.label}<span class="kanban-mobile-tab-count">${c.count}</span></button>`).join('');
     const active = colObjs.find(c => c.key===activeKey);
-    boardHtml = `<div class="kanban-mobile-tabs">${tabsHtml}</div>
-      <div class="kanban-col-body kanban-mobile-body" data-col-key="${active.key}">${active.cardsHtml}</div>`;
+    boardHtml = `<div class="${kanbanCompact?'kanban-compact':''}"><div class="kanban-mobile-tabs">${tabsHtml}</div>
+      <div class="kanban-col-body kanban-mobile-body" data-col-key="${active.key}">${active.cardsHtml}</div></div>`;
   } else {
-    boardHtml = `<div class="kanban-board">${colObjs.map(c => `<div class="kanban-col">
+    boardHtml = `<div class="kanban-board ${kanbanCompact?'kanban-compact':''}">${colObjs.map(c => `<div class="kanban-col">
       <div class="kanban-col-head">${c.label} <span class="collapse-count">${c.countLabel}</span></div>
       <div class="kanban-col-body" data-col-key="${c.key}">${c.cardsHtml}</div>
     </div>`).join('')}</div>`;
@@ -15274,6 +15381,14 @@ function renderKanbanView(schedule){
       <label class="statut-chip" style="margin-left:14px;" title="Dans « À faire », masque les pièces dont l'étape précédente n'est pas terminée">
         <input type="checkbox" ${kanbanOnlyAvailable?'checked':''} data-action="toggle-kanban-only-available">
         🟢 Pièces disponibles seulement
+      </label>
+      <label class="statut-chip" style="margin-left:14px;" title="Dans « À faire », une ligne par journée de début prévu">
+        <input type="checkbox" ${kanbanDaySeparators?'checked':''} data-action="toggle-kanban-day-sep">
+        📅 Séparateurs par jour
+      </label>
+      <label class="statut-chip" style="margin-left:14px;" title="Cartes réduites : commande, étape et disponibilité seulement">
+        <input type="checkbox" ${kanbanCompact?'checked':''} data-action="toggle-kanban-compact">
+        Compact
       </label>
       ${(kanbanOnlyAvailable && highlightActive()) ? `<span class="footer-note" style="margin:0 0 0 6px;">suspendu pendant la recherche/l'isolement</span>` : ((kanbanOnlyAvailable && enAttenteMasquees>0) ? `<span class="footer-note" style="margin:0 0 0 6px;">${enAttenteMasquees} en attente masquée${enAttenteMasquees>1?'s':''}</span>` : '')}
       <button class="small" style="margin-left:14px;" data-action="open-quick-pointage" title="Démarrer tout de suite une tâche qui n'était pas planifiée">➕ Pointage rapide</button>
@@ -18214,6 +18329,8 @@ function dispatchChangeAction(el, action){
     case 'set-kanban-machine-filter': kanbanMachineFilter = el.value; render(); break;
     case 'toggle-kanban-machine': toggleKanbanMachineFilter(el.dataset.id, el.checked); break;
     case 'toggle-kanban-grouped-view': toggleKanbanGroupedView(el.checked); break;
+    case 'toggle-kanban-day-sep': toggleKanbanDaySeparators(el.checked); break;
+    case 'toggle-kanban-compact': toggleKanbanCompact(el.checked); break;
     case 'toggle-kanban-only-available': toggleKanbanOnlyAvailable(el.checked); break;
     case 'set-manual-start': setManualStartValue(el.dataset.cid, el.dataset.oid, el.value); break;
     case 'op-phase': updateOpPhase(el.dataset.cid, el.dataset.oid, el.value); break;
