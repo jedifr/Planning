@@ -1748,7 +1748,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.93.0';
+const APP_VERSION = '1.94.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -9954,6 +9954,25 @@ function openCorrectSessions(cid, oid){
   render();
 }
 function closeCorrectSessions(){ correctSessionsDraft = null; render(); }
+// Ajoute une ligne vide (fermée) pour rattraper un pointage oublié (v1.94.0) : jusque-là cet écran ne
+// savait qu'éditer/supprimer des sessions DÉJÀ enregistrées, rien ne permettait d'en créer une pour un
+// travail jamais démarré dans l'appli. Préremplie sur l'heure d'ouverture de la session en cours
+// (sinon maintenant) moins une heure : l'utilisateur n'a plus qu'à ajuster début/fin. Reste dans le
+// brouillon, rien n'est enregistré avant « Enregistrer ».
+function addCorrectSessionRow(){
+  if(!correctSessionsDraft) return;
+  const found = findPieceAnywhere(correctSessionsDraft.cid, correctSessionsDraft.oid); if(!found) return;
+  const { o } = found;
+  const openS = correctSessionsDraft.sessions.find(x => x.open);
+  const endD = openS && openS.debut ? new Date(openS.debut) : new Date();
+  const startD = new Date(endD.getTime() - 60*60*1000);
+  correctSessionsDraft.sessions.push({
+    orig: null, debut: toInputValue(startD), fin: toInputValue(endD),
+    operatorUserId: o.operatorUserId || activeIdentityId() || '',
+    open: false, added: true,
+  });
+  render();
+}
 function updateCorrectSessionField(idx, field, value){
   if(!correctSessionsDraft) return;
   const s = correctSessionsDraft.sessions[idx]; if(!s) return;
@@ -9972,7 +9991,7 @@ function removeCorrectSessionRow(idx){
   if(!correctSessionsDraft) return;
   const s = correctSessionsDraft.sessions[idx]; if(!s) return;
   if(s.open){ alert('Une session actuellement ouverte ne peut pas être supprimée depuis cet écran.'); return; }
-  if(!confirm('Supprimer définitivement cette session ? Cette action ne peut pas être annulée.')) return;
+  if(!s.added && !confirm('Supprimer définitivement cette session ? Cette action ne peut pas être annulée.')) return;
   correctSessionsDraft.sessions.splice(idx, 1);
   render();
 }
@@ -9989,8 +10008,23 @@ function submitCorrectSessions(){
     // lignes fautives sont de toute façon déjà surlignées en rouge dans le tableau (voir
     // renderCorrectSessionsModal), ce message ne fait que pointer précisément vers l'une d'elles.
     if(!s.debut){ alert(`La session n°${i+1} doit avoir un début renseigné.`); return; }
+    if(s.added && !s.fin){ alert(`La session ajoutée commençant le ${formatDT(new Date(s.debut))} doit avoir une fin renseignée.`); return; }
+    if(s.added && !s.operatorUserId){ alert('Choisis l\'opérateur de la session ajoutée.'); return; }
+    if(s.added && new Date(s.fin) > new Date()){ alert('La fin d\'une session ajoutée ne peut pas être dans le futur.'); return; }
     if(s.fin && s.fin < s.debut){ alert(`La session commençant le ${formatDT(new Date(s.debut))} a une fin (${formatDT(new Date(s.fin))}) antérieure à son début — corrige-la ou utilise le bouton "⇄" pour inverser début et fin.`); return; }
   }
+  // Une session ajoutée qui chevauche une autre session DE LA MÊME PERSONNE ferait compter son temps
+  // deux fois (voir « Travail à plusieurs » : les sessions s'additionnent) — avertissement, pas blocage.
+  const addedOverlaps = [];
+  d.sessions.forEach((s, i) => {
+    if(!s.added) return;
+    d.sessions.forEach((t, j) => {
+      if(i === j || String(t.operatorUserId||'') !== String(s.operatorUserId||'')) return;
+      const tFin = t.fin || toInputValue(new Date());
+      if(s.debut < tFin && t.debut < s.fin) addedOverlaps.push(`${formatDT(new Date(s.debut))} → ${formatDT(new Date(s.fin))}`);
+    });
+  });
+  if(addedOverlaps.length && !confirm(`Attention : la session ajoutée (${addedOverlaps[0]}) chevauche une autre session de la même personne — son temps serait compté deux fois. Enregistrer quand même ?`)) return;
   if(!confirm('Enregistrer ces corrections de sessions ? Cette action ne peut pas être annulée.')) return;
   // Session ouverte : on garde la MÊME référence (jamais un clone — le décompte en direct la lit) et on
   // n'y change que l'opérateur ; début/fin ne sont jamais touchés.
@@ -9998,6 +10032,15 @@ function submitCorrectSessions(){
     if(s.open){ s.orig.operatorUserId = s.operatorUserId || null; return s.orig; }
     return { debut: s.debut, fin: s.fin || null, operatorUserId: s.operatorUserId || null };
   });
+  // Rangées par début (comme les trous de pause, `pauseGapsForPiece`, et « qui réalise » = dernière
+  // session) : une session ajoutée après coup ne doit pas se retrouver en fin de tableau.
+  if(d.sessions.some(s => s.added)){
+    o.sessions.sort((x, y) => (x.debut < y.debut ? -1 : x.debut > y.debut ? 1 : 0));
+    // Début réel de la tâche : jamais postérieur à sa première session (l'ancrage du planning, lui,
+    // reste `manualStart` — non touché).
+    const first = o.sessions[0] && o.sessions[0].debut;
+    if(first && o.debutReel && first < o.debutReel) o.debutReel = first;
+  }
   correctSessionsDraft = null;
   commit();
   showToast('Sessions corrigées.');
@@ -10094,7 +10137,7 @@ function renderCorrectSessionsModal(){
     const swapBtn = invalid
       ? `<button class="ghost icon-btn" data-action="swap-correct-session-row" data-idx="${idx}" title="Inverser début et fin">⇄</button>` : '';
     return `<tr${invalid ? ' class="correct-session-invalid-row"' : ''}>
-      <td><input type="datetime-local" value="${s.debut}" data-action="correct-session-field" data-idx="${idx}" data-field="debut"></td>
+      <td>${s.added ? '<span class="badge" style="margin-right:4px;">nouvelle</span>' : ''}<input type="datetime-local" value="${s.debut}" data-action="correct-session-field" data-idx="${idx}" data-field="debut"></td>
       <td><input type="datetime-local" value="${s.fin}" data-action="correct-session-field" data-idx="${idx}" data-field="fin">${invalid ? ' <span class="badge red" style="margin-left:4px;">⚠ fin < début</span>' : ''}</td>
       <td><select data-action="correct-session-field" data-idx="${idx}" data-field="operatorUserId">
         <option value="">—</option>${operatorOptions}
@@ -10112,13 +10155,14 @@ function renderCorrectSessionsModal(){
       <div class="modal-body">
         <div class="footer-note" style="text-align:left; margin-bottom:10px;">${escapeHtml(c.nom)} — ${escapeHtml(label)} (${pointageStatutBadge(o.statut)}) — ${d.sessions.length} session${d.sessions.length>1?'s':''}</div>
         <div class="toolbar-mini" style="margin-bottom:10px;">
+          <button class="small" data-action="add-correct-session-row" title="Ajouter une période de travail oubliée (pointage manquant)">➕ Ajouter une session manquante</button>
           <button class="ghost small" data-action="merge-correct-sessions">🧩 Fusionner les sessions qui se chevauchent</button>
         </div>
         <table class="ops-table">
           <thead><tr><th>Début</th><th>Fin</th><th>Opérateur</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
-        <div class="footer-note" style="text-align:left; padding-top:10px;">Corrige directement le détail Démarrer/Pause/Reprendre de cette tâche encore active — utile pour rattraper une session aux horodatages faux (ex. le bug de fuseau horaire serveur). "Fusionner" regroupe, par opérateur, les sessions qui se chevauchent ou se touchent en une seule (sans quoi leur temps se cumule à tort — voir "Travail à plusieurs" dans CLAUDE.md). La session actuellement ouverte n'est jamais supprimable ni fusionnée, et ses horaires restent intacts : seul son opérateur peut être changé (le temps déjà écoulé est alors crédité à la nouvelle personne). Sans effet sur une pièce déjà terminée : voir plutôt "✎ Corriger" pour celle-ci.</div>
+        <div class="footer-note" style="text-align:left; padding-top:10px;">Corrige directement le détail Démarrer/Pause/Reprendre de cette tâche encore active — « ➕ Ajouter une session manquante » rattrape un pointage oublié ; utile aussi pour rattraper une session aux horodatages faux (ex. le bug de fuseau horaire serveur). "Fusionner" regroupe, par opérateur, les sessions qui se chevauchent ou se touchent en une seule (sans quoi leur temps se cumule à tort — voir "Travail à plusieurs" dans CLAUDE.md). La session actuellement ouverte n'est jamais supprimable ni fusionnée, et ses horaires restent intacts : seul son opérateur peut être changé (le temps déjà écoulé est alors crédité à la nouvelle personne). Sans effet sur une pièce déjà terminée : voir plutôt "✎ Corriger" pour celle-ci.</div>
         <div class="form-actions" style="margin-top:16px;">
           <button class="ghost" data-action="close-correct-sessions">Annuler</button>
           <button class="primary" data-action="submit-correct-sessions">✓ Enregistrer</button>
@@ -18048,6 +18092,7 @@ function dispatchClickAction(action, el){
     case 'submit-correct-sessions': submitCorrectSessions(); break;
     case 'remove-correct-session-row': removeCorrectSessionRow(Number(el.dataset.idx)); break;
     case 'merge-correct-sessions': mergeOverlappingCorrectSessions(); break;
+    case 'add-correct-session-row': addCorrectSessionRow(); break;
     case 'swap-correct-session-row': swapCorrectSessionRow(Number(el.dataset.idx)); break;
     case 'conges-tab': congesTab = el.dataset.tab; render(); break;
     case 'temps-prod-mode': tempsProdPeriodMode = el.dataset.mode; render(); break;

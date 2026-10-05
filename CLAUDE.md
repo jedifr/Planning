@@ -1784,6 +1784,21 @@ aucun effet visible. Il faut donc un second outil qui édite `sessions[]` **elle
   `sessions[]` (jamais un clone) : `submitCorrectSessions()` reconstruit `o.sessions` entièrement à
   partir du draft plutôt que de raccorder par indice à l'ancien tableau, pour rester correct même
   après une suppression (qui décale les indices suivants).
+- **« ➕ Ajouter une session manquante » (v1.94.0).** Retour : un salarié (Romain, pièce R045883634) a oublié de pointer
+  un travail. Jusque-là la pop-up « Corriger les sessions » ne savait qu'éditer/supprimer des sessions DÉJÀ
+  enregistrées : aucun moyen de créer une période jamais démarrée dans l'appli. `addCorrectSessionRow()` ajoute une
+  ligne `{ orig:null, added:true, open:false }` au brouillon (début = heure d'ouverture de la session en cours, sinon
+  maintenant, moins 1 h ; fin = cette heure ; opérateur = assigné, sinon identité active), badge « nouvelle ».
+  `submitCorrectSessions` : début et **fin obligatoires** pour une ligne ajoutée (jamais une session ouverte créée à la
+  main), opérateur obligatoire, fin pas dans le futur ; **avertit** (`confirm`, sans bloquer) si elle chevauche une autre
+  session de la même personne (les sessions s'additionnent, voir « Travail à plusieurs »). À l'enregistrement,
+  `o.sessions` est trié par début (« qui réalise » = dernière session, les trous de pause se calculent par début) et
+  `debutReel` recule au début de la première session si celle-ci est antérieure (l'ancrage du planning, `manualStart`,
+  n'est pas touché). Les heures hors horaire/déjeuner ne sont pas comptées (`countedHoursBetween`) : une session
+  ajoutée de 13h40 à 15h39 ne compte pas la pause de midi. Supprimer une ligne ajoutée ne demande pas de confirmation.
+  Toujours limité aux pièces `en_cours`/`en_pause` sans lot fusionné (voir `isSessionsCorrectable`) ; pour une pièce
+  `termine`, « ✎ Corriger » (début/fin/durée) reste l'outil. Vérifié (Playwright, export réel) : ligne ajoutée
+  13:40→15:39 pour R045883634 (Tour), tri, `debutReel` reculé, session ouverte intacte, aucune erreur.
 - **Opérateur d'une session ouverte modifiable (v1.93.0).** Retour : un salarié a pointé sur le compte d'un
   collègue (oubli de changement d'identité) et il fallait d'abord mettre la tâche en pause pour corriger. Dans la
   pop-up « Corriger les sessions », la ligne de la session ouverte affiche désormais « ouverte depuis … » et un
