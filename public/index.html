@@ -1748,7 +1748,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.92.0';
+const APP_VERSION = '1.93.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -9956,7 +9956,10 @@ function openCorrectSessions(cid, oid){
 function closeCorrectSessions(){ correctSessionsDraft = null; render(); }
 function updateCorrectSessionField(idx, field, value){
   if(!correctSessionsDraft) return;
-  const s = correctSessionsDraft.sessions[idx]; if(!s || s.open) return; // une session ouverte n'est pas éditable ici
+  const s = correctSessionsDraft.sessions[idx]; if(!s) return;
+  // Une session ouverte n'est pas éditable ici, SAUF son opérateur (v1.93.0) : horodatages intacts,
+  // seul « qui travaille » peut être rectifié (oubli de changement d'identité au démarrage).
+  if(s.open && field !== 'operatorUserId') return;
   s[field] = value;
   render();
 }
@@ -9989,7 +9992,12 @@ function submitCorrectSessions(){
     if(s.fin && s.fin < s.debut){ alert(`La session commençant le ${formatDT(new Date(s.debut))} a une fin (${formatDT(new Date(s.fin))}) antérieure à son début — corrige-la ou utilise le bouton "⇄" pour inverser début et fin.`); return; }
   }
   if(!confirm('Enregistrer ces corrections de sessions ? Cette action ne peut pas être annulée.')) return;
-  o.sessions = d.sessions.map(s => s.open ? s.orig : { debut: s.debut, fin: s.fin || null, operatorUserId: s.operatorUserId || null });
+  // Session ouverte : on garde la MÊME référence (jamais un clone — le décompte en direct la lit) et on
+  // n'y change que l'opérateur ; début/fin ne sont jamais touchés.
+  o.sessions = d.sessions.map(s => {
+    if(s.open){ s.orig.operatorUserId = s.operatorUserId || null; return s.orig; }
+    return { debut: s.debut, fin: s.fin || null, operatorUserId: s.operatorUserId || null };
+  });
   correctSessionsDraft = null;
   commit();
   showToast('Sessions corrigées.');
@@ -10069,10 +10077,12 @@ function renderCorrectSessionsModal(){
   const label = [o.piece, o.etape].filter(Boolean).join(' / ') || '(sans nom)';
   const rows = d.sessions.map((s, idx) => {
     if(s.open){
-      const opUser = usersList.find(u=>String(u.id)===String(s.operatorUserId));
+      const openOpOptions = usersList.map(u=>`<option value="${u.id}" ${String(s.operatorUserId)===String(u.id)?'selected':''}>${escapeHtml(u.username)}</option>`).join('');
       return `<tr>
-        <td colspan="2" class="footer-note" style="text-align:left;">▶ Session actuellement ouverte (en cours) — non modifiable ici</td>
-        <td>${opUser ? escapeHtml(opUser.username) : '—'}</td>
+        <td colspan="2" class="footer-note" style="text-align:left;">▶ Session actuellement ouverte depuis ${s.debut ? escapeHtml(formatDT(new Date(s.debut))) : '—'} — horaires non modifiables, seul l'opérateur peut être changé</td>
+        <td><select data-action="correct-session-field" data-idx="${idx}" data-field="operatorUserId">
+          <option value="">—</option>${openOpOptions}
+        </select></td>
         <td></td>
       </tr>`;
     }
@@ -10108,7 +10118,7 @@ function renderCorrectSessionsModal(){
           <thead><tr><th>Début</th><th>Fin</th><th>Opérateur</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
-        <div class="footer-note" style="text-align:left; padding-top:10px;">Corrige directement le détail Démarrer/Pause/Reprendre de cette tâche encore active — utile pour rattraper une session aux horodatages faux (ex. le bug de fuseau horaire serveur). "Fusionner" regroupe, par opérateur, les sessions qui se chevauchent ou se touchent en une seule (sans quoi leur temps se cumule à tort — voir "Travail à plusieurs" dans CLAUDE.md). La session actuellement ouverte n'est jamais modifiable, supprimable ni fusionnée ici. Sans effet sur une pièce déjà terminée : voir plutôt "✎ Corriger" pour celle-ci.</div>
+        <div class="footer-note" style="text-align:left; padding-top:10px;">Corrige directement le détail Démarrer/Pause/Reprendre de cette tâche encore active — utile pour rattraper une session aux horodatages faux (ex. le bug de fuseau horaire serveur). "Fusionner" regroupe, par opérateur, les sessions qui se chevauchent ou se touchent en une seule (sans quoi leur temps se cumule à tort — voir "Travail à plusieurs" dans CLAUDE.md). La session actuellement ouverte n'est jamais supprimable ni fusionnée, et ses horaires restent intacts : seul son opérateur peut être changé (le temps déjà écoulé est alors crédité à la nouvelle personne). Sans effet sur une pièce déjà terminée : voir plutôt "✎ Corriger" pour celle-ci.</div>
         <div class="form-actions" style="margin-top:16px;">
           <button class="ghost" data-action="close-correct-sessions">Annuler</button>
           <button class="primary" data-action="submit-correct-sessions">✓ Enregistrer</button>

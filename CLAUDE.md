@@ -1784,6 +1784,15 @@ aucun effet visible. Il faut donc un second outil qui édite `sessions[]` **elle
   `sessions[]` (jamais un clone) : `submitCorrectSessions()` reconstruit `o.sessions` entièrement à
   partir du draft plutôt que de raccorder par indice à l'ancien tableau, pour rester correct même
   après une suppression (qui décale les indices suivants).
+- **Opérateur d'une session ouverte modifiable (v1.93.0).** Retour : un salarié a pointé sur le compte d'un
+  collègue (oubli de changement d'identité) et il fallait d'abord mettre la tâche en pause pour corriger. Dans la
+  pop-up « Corriger les sessions », la ligne de la session ouverte affiche désormais « ouverte depuis … » et un
+  **sélecteur d'opérateur** ; ses horaires restent intacts. `updateCorrectSessionField` n'accepte pour une session
+  `open` que le champ `operatorUserId` ; `submitCorrectSessions` écrit l'opérateur sur la **même référence**
+  (`s.orig`, jamais un clone : le décompte en direct la lit) — le temps déjà écoulé est crédité à la nouvelle
+  personne par `computeProductionTimeByUser`. L'opérateur ASSIGNÉ de la pièce (`o.operatorUserId`) n'est pas touché.
+  Toujours supprimable/fusionnable : non (inchangé). Pièce fusionnée : toujours exclue (voir plus haut).
+  Vérifié (Playwright) : changement enregistré, horaires et référence identiques, aucune erreur.
 - **Session actuellement ouverte (`fin: null`) : jamais éditable, jamais supprimable.**
   `updateCorrectSessionField`/`removeCorrectSessionRow` refusent tout net (silencieusement pour
   l'édition — le champ est simplement absent du formulaire pour cette ligne ; avec une alerte
