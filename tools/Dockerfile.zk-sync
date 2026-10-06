@@ -1,0 +1,7 @@
+# Conteneur annexe : lecture automatique de la pointeuse TimeMoto TM-616 (voir docker-compose.yml).
+FROM python:3.11-slim
+ENV TZ=Europe/Paris PYTHONUNBUFFERED=1
+RUN pip install --no-cache-dir pyzk==0.9
+WORKDIR /app
+COPY tm616_sync.py ./
+CMD ["python", "tm616_sync.py"]

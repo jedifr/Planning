@@ -322,9 +322,74 @@ function runDeviceImport(db, st, csvText, opts){
   }
 }
 
+// ---------- Lecture automatique (conteneur annexe tools/tm616_sync.py) ----------
+// L'agent lit la pointeuse en réseau local toutes les N minutes et envoie les événements des derniers
+// jours, en JSON, à POST /api/presence/device-sync (clé machine DEVICE_SYNC_KEY, voir server.js). Même
+// moteur que l'import CSV (syncDeviceRows) : réconciliation par (salarié, jour), idempotent, annulation
+// humaine respectée. Un événement daté du futur (horloge de la pointeuse déréglée) est écarté.
+const FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
+function parseAgentEvents(payload){
+  const out = { events: [], names: new Map(), noUser: 0, otherAction: 0, badDate: 0, future: 0, lines: 0 };
+  const limit = Date.now() + FUTURE_TOLERANCE_MS;
+  (Array.isArray(payload.users) ? payload.users : []).slice(0, 500).forEach(u => {
+    const id = String((u && u.uid) == null ? '' : u.uid).trim();
+    const nm = String((u && u.name) || '').trim().slice(0, 80);
+    if(id && nm && noAccent(nm) !== 'inconnu') out.names.set(id, nm);
+  });
+  (Array.isArray(payload.events) ? payload.events : []).slice(0, 20000).forEach(ev => {
+    out.lines++;
+    const uid = String((ev && ev.uid) == null ? '' : ev.uid).trim();
+    if(!uid || uid === '0'){ out.noUser++; return; }
+    const kind = ev.kind === 'in' ? 'in' : ev.kind === 'out' ? 'out' : null;
+    if(!kind){ out.otherAction++; return; }
+    const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(String(ev.ts || ''));
+    if(!m){ out.badDate++; return; }
+    const ts = `${m[1]}T${m[2]}:${m[3]}:${m[4] || '00'}`;
+    if(new Date(ts).getTime() > limit){ out.future++; return; }
+    out.events.push({ uid, day: m[1], ts, kind });
+  });
+  return out;
+}
+function runDeviceEvents(db, st, payload, opts){
+  const now = new Date().toISOString();
+  const agent = readMeta(db, 'agent', {}) || {};
+  agent.lastSeenAt = now;
+  agent.host = String((payload && payload.host) || '').slice(0, 60);
+  agent.deviceRecords = Number(payload && payload.deviceRecords) || agent.deviceRecords || 0;
+  const hb = !Array.isArray(payload.events) && !payload.deviceError;
+  if(payload && payload.deviceError){
+    agent.lastError = String(payload.deviceError).slice(0, 200);
+    agent.lastErrorAt = now;
+    writeMeta(db, 'agent', agent);
+    return { ok: true, heartbeat: true };
+  }
+  if(hb){ writeMeta(db, 'agent', agent); return { ok: true, heartbeat: true }; }
+  if(runtime.running) return { ok: false, busy: true, error: 'Un import TimeMoto est déjà en cours.' };
+  runtime.running = true;
+  try{
+    const parsed = parseAgentEvents(payload);
+    const r = syncDeviceRows(db, st, parsed, { dryRun: false, since: opts && opts.since });
+    r.future = parsed.future;
+    agent.lastError = null; agent.lastSyncAt = now;
+    agent.lastResult = { added: r.added, cancelled: r.cancelled, unmapped: r.unmapped, rows: r.rows, future: parsed.future };
+    writeMeta(db, 'agent', agent);
+    const s = readMeta(db, 'status', {}) || {};
+    Object.assign(s, { lastOkAt: now, lastResult: publicResult(r), lastImportTo: r.to });
+    writeMeta(db, 'status', s);
+    if(r.added || r.cancelled) console.log(`Pointeuse (auto) : ${r.added} pointage(s) importé(s), ${r.cancelled} annulé(s) (${r.from} → ${r.to}).`);
+    return { ok: true, result: publicResult(r) };
+  }catch(err){
+    agent.lastError = String(err && err.message || err).slice(0, 200); agent.lastErrorAt = now;
+    writeMeta(db, 'agent', agent);
+    return { ok: false, error: agent.lastError };
+  }finally{
+    runtime.running = false;
+  }
+}
+
 function status(db){
   const s = readMeta(db, 'status', {}) || {};
-  return { lastOkAt: s.lastOkAt || null, lastResult: s.lastResult || null, lastImportTo: s.lastImportTo || null, users: readMeta(db, 'users', []) || [] };
+  return { lastOkAt: s.lastOkAt || null, lastResult: s.lastResult || null, lastImportTo: s.lastImportTo || null, users: readMeta(db, 'users', []) || [], agent: readMeta(db, 'agent', null) };
 }
 function publicResult(r){ const { byUser, tmUsers, ...rest } = r; return rest; }
 async function runSync(db, st, opts){
@@ -348,5 +413,5 @@ async function runSync(db, st, opts){
 }
 
 module.exports = {
-  initTimemotoTables, runSync, runDeviceImport, parseDeviceCsv, syncDeviceRows, status, syncOnce, desiredPunches, reconcileDay, expectedEndFor, SYSTEM_USER
+  initTimemotoTables, runSync, runDeviceImport, runDeviceEvents, parseAgentEvents, parseDeviceCsv, syncDeviceRows, status, syncOnce, desiredPunches, reconcileDay, expectedEndFor, SYSTEM_USER
 };

@@ -1745,8 +1745,42 @@ par l'utilisateur (script `test_tm616.py` → CSV de 9 420 pointages, 03/10/2024
   05/10/2026 d'un salarié = `in 07:49 · 3 pauses · out 16:29`, relance = 0 ajout, annulation humaine respectée, historique complet
   (2 827 pointages pour 2 salariés associés, 9 incohérences ignorées), fichier invalide refusé ; Playwright (`zk_ui.js`) : boutons
   désactivés sans fichier, aperçu, liste des 10 salariés.
-- **Étape suivante possible (non faite)** : automatiser (conteneur annexe Python qui lit la pointeuse chaque minute et envoie les
-  pointages à Planning avec une clé d'API dédiée) — demande une nouvelle voie d'authentification machine, à décider avant.
+#### Lecture automatique de la pointeuse — conteneur annexe `zk-sync` (v1.97.0)
+
+Demande : « mets en place la lecture automatique » (suite de l'import CSV ci-dessus ; la nouvelle voie d'authentification
+machine a été validée par l'utilisateur). Même moteur que l'import CSV (`syncDeviceRows` : réconciliation par (salarié, jour),
+idempotent, annulation humaine respectée) — seul le **transport** change.
+
+- **`tools/tm616_sync.py`** (+ `tools/Dockerfile.zk-sync`, `pyzk==0.9` — la 0.9.1 n'existe pas sur PyPI) : boucle toutes les
+  `SYNC_INTERVAL` s (300, minimum 60) ; lit la pointeuse (`get_users`, `get_attendance`), garde les `SYNC_DAYS` derniers jours
+  (3, **journées entières** : la réconciliation annule ce qui a disparu d'une journée, il ne faut donc jamais envoyer une journée
+  partielle), envoie un JSON `{host, deviceRecords, users[], events[{uid, ts, kind in|out|other}]}`. **Lecture seule, jamais
+  `disable_device`** (une pointeuse désactivée refuserait les pointages pendant la lecture). Pointeuse injoignable → envoie
+  `{deviceError}` (voyant rouge côté Planning) ; Planning injoignable → réessaie au passage suivant. Aucun « saut de lecture si
+  rien n'a changé » : la dernière sortie du jour est classée pause tant que l'horaire n'est pas fini, puis départ — ce
+  reclassement se fait **sans nouveau pointage**, un envoi systématique est donc nécessaire. Sans `ZK_IP`/`DEVICE_SYNC_KEY`, le
+  conteneur le dit une fois puis dort (pas de boucle de redémarrage de `restart: unless-stopped`).
+- **`POST /api/presence/device-sync`** (`server.js`) : authentification **machine**, pas de session — en-tête `X-Device-Key` comparé
+  en temps constant (empreintes SHA-256, `crypto.timingSafeEqual`) à `DEVICE_SYNC_KEY` (variable d'environnement, **≥ 16
+  caractères sinon la route répond 503** — désactivée par défaut). 10 clés fausses depuis une adresse → blocage 5 min (en mémoire,
+  même pendant ce temps la bonne clé est refusée). Exige licence valide, module Pointage présentiel **et** suivi TimeMoto actif
+  (`config.presence.timemoto.actif`). `timemoto.runDeviceEvents` : événement daté de plus de 5 min dans le futur (horloge
+  de la pointeuse déréglée) **écarté** (`future`), uid vide/`0` = `noUser`, `kind:'other'` = `otherAction`, 20 000 événements max ;
+  corps sans `events` = simple battement de cœur. Partage le verrou `runtime.running` avec les imports manuels (409 si occupé).
+- **Statut** : `timemoto_meta.agent` (`lastSeenAt`, `lastSyncAt`, `lastError`, `lastResult`, `deviceRecords`) exposé dans
+  `GET /api/presence/timemoto/status` ; `timemotoAgentHtml` affiche en tête du panneau « ⏱ TimeMoto » de la page Présence un
+  voyant : vert (< 15 min), ambre (> 15 min), rouge (pointeuse injoignable ou aucun signe de vie). Un envoi réussi met aussi à
+  jour `lastOkAt` (le rappel « import à faire » de la page Présence ne se déclenche donc que si l'agent s'arrête > 24 h).
+- **Mise en route (NAS)** : `openssl rand -hex 24` ; créer `.env` à côté de `docker-compose.yml` (modèle `.env.example`, `.env`
+  est ignoré par git) avec `DEVICE_SYNC_KEY=` et `ZK_IP=192.168.1.37` ; `bash deploy.sh` (construit aussi `zk-sync`) ; dans la page
+  Présence → « ⏱ TimeMoto » : activer le suivi et **associer les salariés de la pointeuse** (sinon leurs journées sont comptées
+  « sans salarié associé », jamais importées). Le conteneur doit pouvoir joindre la pointeuse (port 4370) : réseau bridge Docker
+  par défaut, NAT vers le LAN — à vérifier dans `docker logs planning-zk-sync`.
+- Tests (scratchpad) : API sur serveur réel (sans clé/mauvaise clé 401, battement de cœur, envoi, renvoi idempotent, événements du
+  futur écartés, blocage 429, 503 sans clé) ; agent Python avec faux module `zk` (envoi, relance sans doublon, mauvaise clé,
+  pointeuse/Planning injoignables, filtrage des jours, config invalide) ; régression `zk_test.js` (11 assertions) ; rendu du voyant
+  (Playwright, 4 états). **Non testé sur la vraie pointeuse** (inaccessible depuis le cloud) : seule la lecture `pyzk` du script
+  `tm616_export.py` a été validée en réel par l'utilisateur, `tm616_sync.py` en réutilise les appels à l'identique.
 
 ## Onglet « Pointages »
 

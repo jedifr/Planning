@@ -28,10 +28,36 @@ services:
       # enregistrée en base — un redémarrage du conteneur n'écrase jamais une licence
       # déjà installée (essai prolongé, licence définitive achetée entre-temps).
       INITIAL_LICENSE_KEY: ""
+      # Lecture automatique de la pointeuse (service zk-sync ci-dessous) : clé partagée entre Planning
+      # et ce service, à définir dans le fichier `.env` (jamais dans ce fichier versionné).
+      # Générez-la une fois : openssl rand -hex 24   puis   DEVICE_SYNC_KEY=<valeur>   dans .env
+      # Vide ou de moins de 16 caractères : la route d'envoi reste désactivée.
+      DEVICE_SYNC_KEY: "${DEVICE_SYNC_KEY:-}"
       # Pointeuse TimeMoto TM-616 (Paramètres → Pointage présentiel) : aucun identifiant à configurer
       # ici. L'import se fait à la main avec un jeton que l'utilisateur récupère lui-même dans sa
       # session TimeMoto (la page de connexion TimeMoto est protégée par un reCAPTCHA, franchi par un
       # humain). Le jeton n'est jamais stocké côté serveur.
+    restart: unless-stopped
+
+  # Lecture automatique de la pointeuse TimeMoto TM-616 en réseau local (protocole ZK, lecture seule).
+  # Inactif tant que ZK_IP et DEVICE_SYNC_KEY ne sont pas dans `.env` (il attend sans rien faire).
+  # Voir CLAUDE.md « Lecture automatique de la pointeuse ».
+  zk-sync:
+    build:
+      context: ./tools
+      dockerfile: Dockerfile.zk-sync
+    container_name: planning-zk-sync
+    environment:
+      TZ: "Europe/Paris"
+      ZK_IP: "${ZK_IP:-}"
+      ZK_PORT: "${ZK_PORT:-4370}"
+      ZK_COMMKEY: "${ZK_COMMKEY:-0}"
+      PLANNING_URL: "http://planning-atelier:3000"
+      DEVICE_SYNC_KEY: "${DEVICE_SYNC_KEY:-}"
+      SYNC_INTERVAL: "${SYNC_INTERVAL:-300}"
+      SYNC_DAYS: "${SYNC_DAYS:-3}"
+    depends_on:
+      - planning-atelier
     restart: unless-stopped
 
 volumes:

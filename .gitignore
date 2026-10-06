@@ -10,3 +10,4 @@ node_modules/
 
 # Secrets du conteneur (identifiants TimeMoto...) — jamais versionnés.
 .env
+__pycache__/

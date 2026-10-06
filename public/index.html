@@ -1753,7 +1753,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.96.0';
+const APP_VERSION = '1.97.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -16487,7 +16487,7 @@ function renderPresencePage(){
   const tmStale = tmS && tmS.actif && (!tmS.lastOkAt || (Date.now() - new Date(tmS.lastOkAt).getTime()) > 24 * 3600 * 1000);
   const tmHtml = tmStale ? `
     <div class="pr-alerts"><div class="pr-alerts-title">⏱ Pointeuse TimeMoto : import à faire</div>
-      <div>${tmS.lastOkAt ? `Dernier import : ${escapeHtml(new Date(tmS.lastOkAt).toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }))}.` : 'Aucun import effectué pour l’instant.'} Les pointages de la TM-616 s'importent à la main (jeton copié depuis votre session TimeMoto).${isAdmin() ? ' <button class="pr-link" data-action="presence-tm-toggle">Ouvrir l’import</button>' : ' Demandez à un administrateur de le faire.'}</div>
+      <div>${tmS.lastOkAt ? `Dernier import : ${escapeHtml(new Date(tmS.lastOkAt).toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }))}.` : 'Aucun import effectué pour l’instant.'} Vérifiez le conteneur de lecture automatique (zk-sync) ou importez à la main (fichier CSV, ou jeton copié depuis votre session TimeMoto).${isAdmin() ? ' <button class="pr-link" data-action="presence-tm-toggle">Ouvrir l’import</button>' : ' Demandez à un administrateur de le faire.'}</div>
     </div>` : '';
   const alertsHtml = alerts.length ? `<div class="pr-alerts"><div class="pr-alerts-title">⚠ ${alerts.length} point${alerts.length>1?'s':''} à vérifier</div><ul>${alerts.join('')}</ul></div>` : '';
   const pendingHtml = pending.length ? `
@@ -17509,6 +17509,25 @@ function timemotoResultHtml(r){
 // copie dans le presse-papier. Ne contourne aucune protection : c'est le jeton que le navigateur de
 // la personne détient déjà. Aucun `<` (illisible dans un attribut href) ; le `&` est encodé à l'affichage.
 const TIMEMOTO_BOOKMARKLET = "javascript:(function(){try{var out=null,info=[],n=0,A='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_=';function b64ok(x){if(!x){return false;}for(var q=0;q!==x.length;q++){if(A.indexOf(x.charAt(q))===-1){return false;}}return true;}function pay(t){try{var p=t.split('.');if(p.length!==3||!b64ok(p[0])||!b64ok(p[1])||!b64ok(p[2])){return null;}var b=p[1].split('-').join('+').split('_').join('/');b+='===='.slice(0,(4-(b.length&3))&3);return JSON.parse(atob(b));}catch(e){return null;}}function ok(t){if(typeof t!=='string'||t.length>8000||t.length===0){return false;}var o=pay(t);if(!o){return false;}return JSON.stringify([o.aud,o.scope]).indexOf('public-api')>-1&&(!o.exp||o.exp*1000>Date.now());}function scan(s){var i=s.indexOf('eyJ');while(i>-1&&!out){var j=i;while(j!==s.length&&(A.indexOf(s.charAt(j))>-1||s.charAt(j)==='.')){j++;}if(ok(s.slice(i,j))){out=s.slice(i,j);}i=s.indexOf('eyJ',j);}}function walk(v,d){if(out||d>5){return;}if(typeof v==='string'){if(ok(v)){out=v;}else{scan(v);}return;}if(v&&typeof v==='object'){for(var k in v){walk(v[k],d+1);}}}function give(t){try{navigator.clipboard.writeText(t).then(function(){alert('Jeton TimeMoto copie. Collez-le dans Planning (Parametres, Pointage presentiel).');},function(){window.prompt('Copiez ce jeton (Ctrl+C) :',t);});}catch(e){window.prompt('Copiez ce jeton (Ctrl+C) :',t);}}[sessionStorage,localStorage].forEach(function(S){for(var i=S.length;i--;){var k=S.key(i),v=S.getItem(k),j=null,d2=null,kind=',texte';n++;walk(v,0);try{j=JSON.parse(v);walk(j,0);if(j&&typeof j==='object'){kind=',json:'+Object.keys(j).slice(0,8).join('/');}}catch(e){}if(!j&&v&&v.length>200&&100000>v.length){try{d2=atob(v.split('-').join('+').split('_').join('/'));}catch(e){}if(d2){kind=',b64texte';scan(d2);try{var j2=JSON.parse(d2);walk(j2,1);kind=',b64json:'+Object.keys(j2).slice(0,8).join('/');}catch(e){}}}if(v&&v.length>200){info.push(k+'['+v.length+kind+']');}}});document.cookie.split(';').forEach(function(c){var p=c.indexOf('=');if(p>0){walk(c.slice(p+1).trim(),0);info.push('cookie:'+c.slice(0,p).trim());}});if(out){give(out);return;}console.log('TimeMoto - cles : '+info.join(' | '));function chk(h){if(typeof h==='string'&&h.slice(0,7).toLowerCase()==='bearer '){var t=h.slice(7).trim();if(ok(t)||t.length>100){give(t);}}}var f=window.fetch;window.fetch=function(u,o){try{var h=o&&o.headers;if(h){if(typeof h.get==='function'){chk(h.get('Authorization'));}else{for(var k in h){if(String(k).toLowerCase()==='authorization'){chk(h[k]);}}}}if(u&&u.headers&&typeof u.headers.get==='function'){chk(u.headers.get('Authorization'));}}catch(e){}return f.apply(this,arguments);};var sh=XMLHttpRequest.prototype.setRequestHeader;XMLHttpRequest.prototype.setRequestHeader=function(k,v){try{if(String(k).toLowerCase()==='authorization'){chk(v);}}catch(e){}return sh.apply(this,arguments);};alert('Jeton absent du stockage. Capture activee : cliquez maintenant sur un menu de TimeMoto (ex. Rapports), le jeton sera copie automatiquement.');}catch(e){alert('Erreur : '+e.message);}})();";
+// Lecture automatique (conteneur annexe zk-sync) : voyant selon le dernier signe de vie de l'agent.
+function timemotoAgentHtml(agent){
+  const a = agent || null;
+  const age = a && a.lastSeenAt ? (Date.now() - new Date(a.lastSeenAt).getTime()) / 60000 : null;
+  let tone = 'red', label = 'Aucun signe de vie du conteneur zk-sync';
+  if(a && age != null){
+    if(a.lastError && a.lastErrorAt && (!a.lastSyncAt || a.lastErrorAt >= a.lastSyncAt)){ tone = 'red'; label = 'Pointeuse injoignable : ' + a.lastError; }
+    else if(age > 15){ tone = 'amber'; label = 'Dernier signe de vie il y a ' + Math.round(age) + ' min'; }
+    else { tone = 'green'; label = 'Actif — dernier passage il y a ' + (age < 1 ? 'moins d’une minute' : Math.round(age) + ' min'); }
+  }
+  const dot = { green: '#2e7d4f', amber: '#c98a1a', red: '#b23a30' }[tone];
+  const last = a && a.lastResult ? `Dernier envoi : ${a.lastResult.added || 0} pointage(s) ajouté(s), ${a.lastResult.cancelled || 0} annulé(s)${a.lastResult.unmapped ? `, ${a.lastResult.unmapped} journée(s) sans salarié associé (voir « Association des salariés » plus bas)` : ''}.` : '';
+  return `
+      <div class="modal-section-title">⚡ Lecture automatique <span class="footer-note">(conteneur zk-sync — recommandé)</span></div>
+      <div style="display:flex; align-items:center; gap:8px; padding:4px 0;"><span style="width:10px;height:10px;border-radius:50%;background:${dot};display:inline-block;flex:none;"></span><b>${escapeHtml(label)}</b></div>
+      ${last ? `<div class="footer-note" style="text-align:left;">${escapeHtml(last)}</div>` : ''}
+      <div class="footer-note" style="text-align:left; padding-bottom:6px;">Le service <span class="pr-mono">zk-sync</span> de <span class="pr-mono">docker-compose.yml</span> lit la TM-616 en réseau local (lecture seule) toutes les 5 minutes et envoie les derniers jours à Planning. Activation : renseigner <span class="pr-mono">DEVICE_SYNC_KEY</span> et <span class="pr-mono">ZK_IP</span> dans le fichier <span class="pr-mono">.env</span> puis <span class="pr-mono">bash deploy.sh</span> (voir <span class="pr-mono">.env.example</span>). Associez d’abord vos salariés ci-dessous : une journée dont le salarié n’est pas associé n’est pas importée.</div>
+`;
+}
 function renderTimemotoImportPanel(){
   const tm = presenceTmCfg();
   if(!timemotoStatusCache) loadTimemotoStatus();
@@ -17528,9 +17547,11 @@ function renderTimemotoImportPanel(){
         <input type="checkbox" ${tm.actif ? 'checked' : ''} data-action="tm-config" data-field="actif">
         Suivre les pointages de la TM-616 (rappel d’import affiché sur cette page)
       </label>
-      <div class="footer-note" style="text-align:left; padding-bottom:8px;">Import déclenché à la main, deux voies au choix : <b>A</b> le fichier CSV lu directement sur la pointeuse (réseau local), ou <b>B</b> TimeMoto Cloud (sa page de connexion est protégée par un reCAPTCHA : vous récupérez vous-même votre jeton d'un clic et le collez ici). Dans les deux cas, chaque entrée/sortie devient un pointage (1re entrée = arrivée, sortie suivie d'une entrée = pause, dernière sortie = départ, heure de la pointeuse). Une modification faite dans TimeMoto annule et remplace le pointage importé (tout reste tracé) ; une correction faite ici par un superviseur n'est jamais écrasée. Le jeton n'est jamais enregistré.</div>
+      <div class="footer-note" style="text-align:left; padding-bottom:8px;">Lecture <b>automatique</b> par le conteneur zk-sync (ci-dessous) ; à défaut, import déclenché à la main, deux voies au choix : <b>A</b> le fichier CSV lu directement sur la pointeuse (réseau local), ou <b>B</b> TimeMoto Cloud (sa page de connexion est protégée par un reCAPTCHA : vous récupérez vous-même votre jeton d'un clic et le collez ici). Dans les deux cas, chaque entrée/sortie devient un pointage (1re entrée = arrivée, sortie suivie d'une entrée = pause, dernière sortie = départ, heure de la pointeuse). Une modification faite dans TimeMoto annule et remplace le pointage importé (tout reste tracé) ; une correction faite ici par un superviseur n'est jamais écrasée. Le jeton n'est jamais enregistré.</div>
 
-      <div class="modal-section-title">A. Fichier CSV de la pointeuse <span class="footer-note">(lecture directe en réseau local — recommandé)</span></div>
+      ${timemotoAgentHtml(st && st.agent)}
+
+      <div class="modal-section-title">A. Fichier CSV de la pointeuse <span class="footer-note">(import manuel — dépannage, reprise d’historique)</span></div>
       <div class="footer-note" style="text-align:left; padding-bottom:6px;">Lancez <span class="pr-mono">tools/tm616_export.py</span> sur un PC du réseau de l'atelier (il lit la TM-616 directement, sans TimeMoto Cloud ni jeton), puis choisissez ici le fichier <span class="pr-mono">pointages_tm616.csv</span> obtenu. Seule la période choisie ci-dessous est importée (par défaut les derniers jours) ; relancer ne crée jamais de doublon.</div>
       <div class="tm-actions">
         <input type="file" accept=".csv,text/csv" data-action="tm-csv-file" style="flex:1; min-width:220px;">

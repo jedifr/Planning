@@ -602,6 +602,36 @@ app.post('/api/presence/timemoto/device-import', requireAdmin, requireLicense, r
   res.json({ ok: true, result: r.result, status: timemoto.status(db) });
 });
 
+// Lecture automatique de la pointeuse : le conteneur annexe `zk-sync` (tools/tm616_sync.py) envoie les
+// événements lus en réseau local. Authentification MACHINE par clé partagée (DEVICE_SYNC_KEY, en-tête
+// X-Device-Key) — aucune session. Désactivée tant que la variable est absente ou trop courte (< 16
+// caractères). Comparaison en temps constant, blocage 5 min par adresse après 10 clés fausses.
+const DEVICE_KEY = String(process.env.DEVICE_SYNC_KEY || '').trim();
+const deviceKeyHash = DEVICE_KEY.length >= 16 ? crypto.createHash('sha256').update(DEVICE_KEY).digest() : null;
+const deviceKeyFailures = new Map();
+function deviceKeyOk(req){
+  if(!deviceKeyHash) return false;
+  const got = crypto.createHash('sha256').update(String(req.get('x-device-key') || '')).digest();
+  return crypto.timingSafeEqual(got, deviceKeyHash);
+}
+app.post('/api/presence/device-sync', requireLicense, requirePresence, (req, res) => {
+  const ip = req.ip || 'unknown';
+  if(!deviceKeyHash) return res.status(503).json({ error: 'Lecture automatique non configurée (variable DEVICE_SYNC_KEY absente ou de moins de 16 caractères).' });
+  const f = deviceKeyFailures.get(ip);
+  if(f && f.until > Date.now()) return res.status(429).json({ error: 'Trop de tentatives — réessayez dans quelques minutes.' });
+  if(!deviceKeyOk(req)){
+    const n = ((f && f.n) || 0) + 1;
+    deviceKeyFailures.set(ip, { n, until: n >= 10 ? Date.now() + 5 * 60 * 1000 : 0 });
+    return res.status(401).json({ error: 'Clé invalide.' });
+  }
+  deviceKeyFailures.delete(ip);
+  const tm = presenceConfig().timemoto || {};
+  if(!tm.actif) return res.status(403).json({ error: 'Le suivi TimeMoto est désactivé (page Présence → TimeMoto → case d\'activation).' });
+  const r = timemoto.runDeviceEvents(db, readStateFull(), req.body || {}, {});
+  if(!r.ok) return res.status(r.busy ? 409 : 400).json({ error: r.error });
+  res.json(r);
+});
+
 // Sortie du mode borne : mot de passe du compte connecté sur la tablette.
 app.post('/api/presence/verify-password', requireAuth, requireLicense, (req, res) => {
   const ip = req.ip || 'unknown';
