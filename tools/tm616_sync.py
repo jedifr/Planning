@@ -6,6 +6,10 @@ SYNC_INTERVAL secondes, lit la pointeuse, ne garde que les SYNC_DAYS derniers jo
 entières) et envoie les événements à Planning (POST /api/presence/device-sync, clé DEVICE_SYNC_KEY).
 Planning réconcilie par (salarié, jour) : renvoyer les mêmes événements ne crée jamais de doublon.
 
+Récupération à la demande : si un administrateur demande une période depuis la page Présence, la réponse de Planning à un
+contact (battement de cœur compris) la porte (`recover`) ; l'agent relit alors la pointeuse et renvoie les journées
+entières de cette période avec `recoverId` (aperçu, puis confirmation dans Planning).
+
 LECTURE SEULE : ne vide jamais la mémoire de la pointeuse, ne la désactive jamais (pas de
 disable_device : une pointeuse « désactivée » refuserait les pointages des salariés pendant la lecture).
 
@@ -21,6 +25,7 @@ Variables d'environnement :
 """
 import json
 import os
+import re
 import socket
 import sys
 import time
@@ -43,14 +48,22 @@ def kind_of(punch):
     return "other"
 
 
-def build_payload(users, attendances, days, now=None):
-    """Événements des `days` derniers jours (journées entières) + liste des salariés."""
+def build_payload(users, attendances, days, now=None, since_date=None, until_date=None):
+    """Événements des `days` derniers jours (journées entières) + liste des salariés.
+
+    `since_date`/`until_date` ("AAAA-MM-JJ", inclus) remplacent les `days` derniers jours : utilisé pour une
+    récupération de période demandée depuis Planning (toujours des JOURNÉES ENTIÈRES)."""
     now = now or datetime.now()
-    since = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    if since_date:
+        since = datetime.strptime(since_date, "%Y-%m-%d")
+        until = datetime.strptime(until_date or since_date, "%Y-%m-%d") + timedelta(days=1)
+    else:
+        since = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        until = None
     events = []
     for a in attendances:
         ts = a.timestamp
-        if ts < since or not str(a.user_id).strip():
+        if ts < since or (until is not None and ts >= until) or not str(a.user_id).strip():
             continue
         events.append({
             "uid": str(a.user_id).strip(),
@@ -115,14 +128,55 @@ def adopt_interval(cfg, body, log=print):
     return True
 
 
-def heartbeat(cfg, log=print):
-    """Signe de vie sans lecture de la pointeuse : met à jour le voyant et récupère l'intervalle choisi."""
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def recover_period(ZK, cfg, rec, log=print):
+    """Récupération à la demande : Planning a mis en attente une demande (page Présence → TimeMoto), reçue dans la
+    réponse d'un contact. On relit la pointeuse (lecture seule) et on renvoie les journées ENTIÈRES de la période,
+    avec l'identifiant de la demande ; Planning en fait un aperçu que l'administrateur confirme ensuite."""
+    rid = str((rec or {}).get("id") or "")
+    d1, d2 = str((rec or {}).get("from") or ""), str((rec or {}).get("to") or "")
+    if not rid or not DATE_RE.match(d1) or not DATE_RE.match(d2) or d1 > d2:
+        log(f"Demande de récupération invalide ignorée : {rec}")
+        return False
+    log(f"Récupération demandée par Planning : {d1} -> {d2}.")
+    try:
+        users, atts = read_device(ZK, cfg["ip"], cfg["port"], cfg["commkey"])
+    except Exception as e:
+        msg = f"Pointeuse injoignable ({cfg['ip']}:{cfg['port']}) : {e}"
+        log(msg)
+        try:
+            post(cfg["url"], cfg["key"], {"host": socket.gethostname(), "deviceError": msg, "interval": cfg["interval"], "recoverId": rid})
+        except Exception:
+            pass
+        return False
+    payload = build_payload(users, atts, 1, since_date=d1, until_date=d2)
+    payload["interval"] = cfg["interval"]
+    payload["recoverId"] = rid
+    try:
+        status, body = post(cfg["url"], cfg["key"], payload)
+    except Exception as e:
+        log(f"Planning injoignable ({cfg['url']}) : {e}")
+        return False
+    if status == 200:
+        log(f"Récupération : {len(payload['events'])} événement(s) envoyé(s) pour {d1} -> {d2} (aperçu à confirmer dans Planning).")
+        return True
+    log(f"Récupération refusée par Planning (HTTP {status}) : {body.get('error', '?')}")
+    return False
+
+
+def heartbeat(cfg, log=print, ZK=None):
+    """Signe de vie sans lecture de la pointeuse : met à jour le voyant, récupère l'intervalle choisi et
+    découvre une éventuelle demande de récupération de période."""
     try:
         status, body = post(cfg["url"], cfg["key"], {"host": socket.gethostname(), "interval": cfg["interval"]})
     except Exception:
         return False
     if status == 200:
         adopt_interval(cfg, body, log)
+        if ZK is not None and body.get("recover"):
+            recover_period(ZK, cfg, body["recover"], log)
         return True
     return False
 
@@ -153,6 +207,8 @@ def cycle(ZK, cfg, log=print):
         r = body.get("result") or {}
         log(f"OK : {len(payload['events'])} événement(s) envoyé(s), {r.get('added', 0)} ajouté(s), "
             f"{r.get('cancelled', 0)} annulé(s), {r.get('unmapped', 0)} journée(s) sans salarié associé.")
+        if body.get("recover"):
+            recover_period(ZK, cfg, body["recover"], log)
         return True
     log(f"Refusé par Planning (HTTP {status}) : {body.get('error', '?')}")
     return False
@@ -199,7 +255,7 @@ def main():
             cycle(ZK, cfg, log=log)
             last_sync = last_beat = time.monotonic()
         elif now - last_beat >= HEARTBEAT_S:
-            heartbeat(cfg, log=log)
+            heartbeat(cfg, log=log, ZK=ZK)
             last_beat = now
         time.sleep(TICK_S)
 

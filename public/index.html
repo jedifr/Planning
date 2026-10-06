@@ -1775,7 +1775,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.101.1';
+const APP_VERSION = '1.102.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -16986,11 +16986,12 @@ function renderPresencePage(){
       </div>
       <div class="pr-head-actions">
         ${isAdmin() ? `<button class="small ${presenceTmOpen?'primary':''}" data-action="presence-tm-toggle" title="Importer les pointages de la pointeuse TimeMoto TM-616">⏱ TimeMoto</button>` : ''}
+        <button class="small ${presenceDupOpen?'primary':''}" data-action="presence-dup-toggle" title="Rechercher les pointages en double sur une période (à la demande)">🔎 Doublons</button>
         <button class="small" data-action="goto-borne" title="Ouvrir la borne de pointage sur ce poste (tablette de l'atelier)">📟 Borne</button>
         <button class="small primary" data-action="presence-export">⬇ Exporter (.xlsx)</button>
       </div>
     </div>`;
-  const head = headBar + (isAdmin() && presenceTmOpen ? renderTimemotoImportPanel() : '');
+  const head = headBar + (isAdmin() && presenceTmOpen ? renderTimemotoImportPanel() : '') + (presenceDupOpen ? renderPresenceDupPanel() : '') + renderTmFlagsHtml(data);
   if(presenceView === 'semaine') return `<section class="panel"><div class="panel-body">${head}${renderPresenceWeek()}</div></section>`;
   if(!data){
     const msg = cache && cache.status === 'error' ? escapeHtml(cache.error) : 'Chargement des pointages…';
@@ -18106,9 +18107,215 @@ function timemotoAgentHtml(agent){
       <div class="footer-note" style="text-align:left; padding-bottom:6px;">Le service <span class="pr-mono">zk-sync</span> de <span class="pr-mono">docker-compose.yml</span> lit la TM-616 en réseau local (lecture seule) à la fréquence choisie ci-dessus et envoie les derniers jours à Planning. Activation : renseigner <span class="pr-mono">DEVICE_SYNC_KEY</span> et <span class="pr-mono">ZK_IP</span> dans le fichier <span class="pr-mono">TM616.env</span> puis <span class="pr-mono">bash deploy.sh</span> (voir <span class="pr-mono">TM616.env.example</span>). Associez d’abord vos salariés ci-dessous : une journée dont le salarié n’est pas associé n’est pas importée.</div>
 `;
 }
+// ---------- v1.102.0 : récupération d'une période, journées décalées, doublons ----------
+// Récupération À LA DEMANDE d'une période par le conteneur zk-sync (administrateur) : demande → l'agent relit
+// la pointeuse au contact suivant (≤ 1 min) → aperçu → confirmation. État côté serveur (timemotoStatusCache
+// .data.recovery) ; ici seulement le formulaire (transitoire) et le rafraîchissement tant que la demande attend.
+let tmRecoverForm = null;       // { from, to } — dates saisies (transitoire)
+let tmRecoverPollTimer = null;
+function tmRecoverDefaults(){
+  const to = new Date(); to.setDate(to.getDate() - 1);
+  const from = new Date(); from.setDate(from.getDate() - 14);
+  return { from: toDateInputValue(from), to: toDateInputValue(to) };
+}
+function tmRecoverFormGet(){ if(!tmRecoverForm) tmRecoverForm = tmRecoverDefaults(); return tmRecoverForm; }
+function tmRecoverSchedulePoll(){
+  const rec = timemotoStatusCache && timemotoStatusCache.data && timemotoStatusCache.data.recovery;
+  const waiting = rec && rec.state === 'pending';
+  if(!waiting){ if(tmRecoverPollTimer){ clearTimeout(tmRecoverPollTimer); tmRecoverPollTimer = null; } return; }
+  if(tmRecoverPollTimer) return;
+  tmRecoverPollTimer = setTimeout(async () => { tmRecoverPollTimer = null; await loadTimemotoStatus(); }, 4000);
+}
+async function tmRecoverCall(body){
+  try{
+    const res = await fetch('/api/presence/timemoto/recover', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const json = await res.json().catch(() => ({}));
+    if(json.status) timemotoStatusCache = { status: 'ok', data: json.status };
+    if(!res.ok){ showToast(json.error || `Erreur HTTP ${res.status}.`); }
+    else if(body.action === 'apply'){ invalidatePresenceCaches(); loadPresenceDay(toDateInputValue(new Date()), { force: true, noRender: true }); showToast('Période récupérée.'); }
+  }catch(e){ showToast('Serveur injoignable.'); }
+  render();
+}
+function tmRecoverRequest(){
+  const f = tmRecoverFormGet();
+  if(!f.from || !f.to){ showToast('Choisissez les deux dates.'); return; }
+  tmRecoverCall({ action: 'request', from: f.from, to: f.to });
+}
+function tmRecoverApply(){
+  const rec = timemotoStatusCache && timemotoStatusCache.data && timemotoStatusCache.data.recovery;
+  if(!rec || rec.state !== 'received') return;
+  const p = rec.preview || {};
+  if(!confirm(`Appliquer la récupération du ${tmFrDay(rec.from)} au ${tmFrDay(rec.to)} ?\n\n${p.added || 0} pointage(s) seront ajoutés, ${p.cancelled || 0} annulé(s) (traçable, rien n'est supprimé).`)) return;
+  tmRecoverCall({ action: 'apply' });
+}
+function tmFrDay(d){ return d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}` : ''; }
+function tmRecoverResultLine(p){
+  if(!p) return '';
+  const parts = [`<b>${p.added || 0}</b> pointage(s) à ajouter`, `<b>${p.cancelled || 0}</b> à annuler`];
+  if(p.respected) parts.push(`${p.respected} annulation(s) manuelle(s) respectée(s)`);
+  if(p.unmapped) parts.push(`${p.unmapped} journée(s) sans salarié associé (non importées)`);
+  if(p.ignored) parts.push(`${p.ignored} événement(s) incohérent(s) ignoré(s)`);
+  const fl = (p.flagged || []).length;
+  return parts.join(' · ') + (fl ? ` · <b style="color:#b3571a;">${fl} journée(s) à premier pointage « sortie »</b> (à vérifier après application)` : '');
+}
+function renderTmRecoverHtml(st){
+  const f = tmRecoverFormGet();
+  const rec = st && st.recovery;
+  const agentOk = st && st.agent && st.agent.lastSeenAt && (Date.now() - new Date(st.agent.lastSeenAt).getTime()) < 15 * 60000;
+  let status = '';
+  if(rec && rec.state === 'pending'){
+    status = `<div class="tm-box" style="margin-top:8px;">⏳ <b>Demande envoyée</b> (${tmFrDay(rec.from)} → ${tmFrDay(rec.to)}) — en attente de l’agent zk-sync (moins d’une minute en général). <button class="small" data-action="tm-recover-cancel">Annuler la demande</button></div>`;
+  } else if(rec && rec.state === 'received'){
+    status = `<div class="tm-box" style="margin-top:8px;"><div>🔍 <b>Aperçu prêt</b> pour ${tmFrDay(rec.from)} → ${tmFrDay(rec.to)} (${rec.deviceEvents || 0} événement(s) lus sur la pointeuse) : ${tmRecoverResultLine(rec.preview)}.</div>
+      <div class="tm-actions" style="margin-top:6px;"><button class="small primary" data-action="tm-recover-apply">✓ Appliquer</button><button class="small" data-action="tm-recover-cancel">Annuler</button></div></div>`;
+  } else if(rec && rec.state === 'applied'){
+    status = `<div class="footer-note" style="text-align:left; margin-top:8px;">✓ Dernière récupération appliquée (${tmFrDay(rec.from)} → ${tmFrDay(rec.to)}) : ${tmRecoverResultLine(rec.result)}.</div>`;
+  } else if(rec && rec.state === 'error'){
+    status = `<div class="tm-err-txt" style="margin-top:8px;">✗ ${escapeHtml(rec.error || 'Échec de la récupération.')}</div>`;
+  }
+  const pending = rec && rec.state === 'pending';
+  return `
+      <div class="modal-section-title">🕓 Récupérer une période <span class="footer-note">(à la demande, via zk-sync)</span></div>
+      <div class="footer-note" style="text-align:left; padding-bottom:6px;">Relit la pointeuse sur les dates choisies (la lecture automatique ne remonte que les derniers jours) : l’agent répond en moins d’une minute, un <b>aperçu</b> s’affiche, puis vous confirmez. Rien n’est supprimé ni dupliqué : les pointages déjà importés sont reconnus, une annulation faite à la main reste respectée.${agentOk ? '' : ' <b style="color:#b3571a;">L’agent n’a pas donné signe de vie ces 15 dernières minutes : la demande restera sans réponse tant qu’il est arrêté.</b>'}</div>
+      <div class="tm-actions">
+        <label class="footer-note" style="margin:0;">Du</label><input type="date" value="${escapeHtml(f.from)}" data-action="tm-recover-field" data-field="from" style="max-width:160px;">
+        <label class="footer-note" style="margin:0;">au</label><input type="date" value="${escapeHtml(f.to)}" data-action="tm-recover-field" data-field="to" style="max-width:160px;">
+        <button class="small" data-action="tm-recover-request" ${pending ? 'disabled' : ''}>🔍 Lire la pointeuse (aperçu)</button>
+      </div>
+      ${status}
+`;
+}
+
+// Journées dont le premier pointage de la pointeuse est une SORTIE (pointeuse décalée) : signalement + correction
+// proposée (inverser entrées/sorties de la journée), jamais appliquée seule — voir timemotoSync.js.
+let tmFlagsSyncedN = null;
+function ensureTmFlags(n){
+  if(n && n !== tmFlagsSyncedN){ tmFlagsSyncedN = n; loadTimemotoStatus(); }
+  else if(!n) tmFlagsSyncedN = null;
+}
+function tmFlagDayLabel(day){ return new Date(day + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }); }
+function renderTmFlagsHtml(data){
+  const n = data && data.timemoto && data.timemoto.nFlagged || 0;
+  ensureTmFlags(n);
+  if(!n) return '';
+  const flags = timemotoStatusCache && timemotoStatusCache.data && timemotoStatusCache.data.flags;
+  const list = flags ? (flags.flagged || []) : [];
+  if(!list.length) return `<div class="pr-alerts"><div class="pr-alerts-title">🔀 ${n} journée(s) à vérifier (premier pointage de la pointeuse = sortie)</div><div class="footer-note" style="text-align:left;">Chargement…</div></div>`;
+  return `<div class="pr-alerts"><div class="pr-alerts-title">🔀 ${list.length} journée${list.length > 1 ? 's' : ''} à vérifier : le premier pointage de la pointeuse est une « sortie »</div>
+    <div class="footer-note" style="text-align:left; padding-bottom:6px;">La pointeuse a probablement perdu le fil (un pointage de la veille mal passé) : elle enregistre alors « Sortie » le matin, un pointage que l’import ignore — l’arrivée est comptée trop tard. <b>Correction proposée :</b> inverser les entrées et les sorties de cette journée. Rien n’est supprimé : les pointages mal classés sont annulés (traçable) puis remplacés. Si un pointage a déjà été ajouté à la main pour cette journée, vérifiez les doublons ensuite.</div>
+    ${list.map(e => `<div class="tm-box" style="margin:6px 0;">
+      <div><b>${escapeHtml(presenceUserName(e.uid))}</b> — ${escapeHtml(tmFlagDayLabel(e.day))}</div>
+      <div class="footer-note" style="text-align:left;">Pointeuse : ${e.raw.map(escapeHtml).join(' · ')}</div>
+      <div class="footer-note" style="text-align:left;">Actuellement retenu : ${e.current.length ? e.current.map(escapeHtml).join(' · ') : '—'}</div>
+      <div style="font-size:12.5px;">Après correction : <b>${e.proposed.length ? e.proposed.map(escapeHtml).join(' · ') : '—'}</b></div>
+      <div class="tm-actions" style="margin-top:6px;"><button class="small primary" data-action="tm-flag" data-act="flip" data-key="${escapeHtml(e.key)}">✓ Appliquer la correction</button><button class="small" data-action="tm-flag" data-act="ignore" data-key="${escapeHtml(e.key)}" title="Laisser la journée telle quelle et ne plus la signaler">Ignorer</button></div>
+    </div>`).join('')}</div>`;
+}
+async function tmFlagAction(key, act){
+  const flags = timemotoStatusCache && timemotoStatusCache.data && timemotoStatusCache.data.flags;
+  const e = flags && ([...(flags.flagged || []), ...(flags.flips || [])].find(x => x.key === key));
+  if(act === 'flip' && e && !confirm(`Inverser entrées et sorties pour ${presenceUserName(e.uid)} le ${tmFrDay(e.day)} ?\n\nAprès correction : ${e.proposed.join(' · ')}`)) return;
+  if(act === 'unflip' && !confirm('Annuler la correction de cette journée ? Les pointages reviennent à l’état lu sur la pointeuse.')) return;
+  try{
+    const res = await fetch('/api/presence/timemoto/flag', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, action: act }) });
+    const json = await res.json().catch(() => ({}));
+    if(!res.ok){ showToast(json.error || `Erreur HTTP ${res.status}.`); }
+    else {
+      if(json.status) timemotoStatusCache = { status: 'ok', data: json.status };
+      invalidatePresenceCaches();
+      loadPresenceDay(toDateInputValue(new Date()), { force: true, noRender: true });
+      const r = json.result || {};
+      showToast(act === 'ignore' ? 'Journée ignorée.' : `Journée ${act === 'flip' ? 'corrigée' : 'rétablie'} : ${r.added || 0} pointage(s) ajouté(s), ${r.cancelled || 0} annulé(s).`);
+    }
+  }catch(err){ showToast('Serveur injoignable.'); }
+  tmFlagsSyncedN = null;
+  render();
+}
+// Liste des journées corrigées (panneau d'import, administrateur) avec annulation possible.
+function renderTmFlipsHtml(st){
+  const list = st && st.flags ? (st.flags.flips || []) : [];
+  if(!list.length) return '';
+  return `
+      <div class="modal-section-title">🔀 Journées corrigées par inversion <span class="footer-note">(${list.length})</span></div>
+      ${list.map(e => `<div class="tm-box" style="margin:4px 0;">
+        <b>${escapeHtml(presenceUserName(e.uid))}</b> — ${escapeHtml(tmFlagDayLabel(e.day))} : ${e.proposed.map(escapeHtml).join(' · ')}
+        <button class="small" data-action="tm-flag" data-act="unflip" data-key="${escapeHtml(e.key)}" style="margin-left:8px;">Annuler la correction</button></div>`).join('')}
+`;
+}
+
+// Contrôle des doublons, À LA DEMANDE (superviseurs) : deux pointages de même type, même salarié, même jour,
+// proches (doublon probable) ou enchaînés de façon incohérente. Lecture seule ; le traitement passe par une
+// annulation (le pointage d'origine reste lisible, barré).
+let presenceDupOpen = false;
+let presenceDup = { from: null, to: null, minutes: 5, status: 'idle', list: [], error: '' };
+function presenceDupInit(){
+  if(presenceDup.from) return;
+  const d = tmRecoverDefaults();
+  presenceDup.from = d.from; presenceDup.to = toDateInputValue(new Date());
+}
+async function presenceDupSearch(){
+  presenceDupInit();
+  const d = presenceDup;
+  if(!d.from || !d.to){ showToast('Choisissez la période.'); return; }
+  d.status = 'loading'; render();
+  try{
+    const res = await fetch(`/api/presence/duplicates?from=${encodeURIComponent(d.from)}&to=${encodeURIComponent(d.to)}&minutes=${encodeURIComponent(d.minutes)}`, { credentials: 'include' });
+    const json = await res.json().catch(() => ({}));
+    if(!res.ok){ d.status = 'error'; d.error = json.error || `Erreur HTTP ${res.status}.`; }
+    else { d.status = 'ok'; d.list = json.duplicates || []; }
+  }catch(e){ d.status = 'error'; d.error = 'Serveur injoignable.'; }
+  render();
+}
+async function presenceDupCancel(userId, id){
+  const item = presenceDup.list.find(x => String(x.userId) === String(userId) && (x.a.id === Number(id) || x.b.id === Number(id)));
+  const p = item && (item.a.id === Number(id) ? item.a : item.b);
+  if(!confirm(`Annuler le pointage ${p ? PRESENCE_TYPE_LABELS[item.type] + ' de ' + p.ts.slice(11, 16) : ''} (${presenceUserName(userId)}, ${item ? tmFrDay(item.day) : ''}) ?\n\nIl reste visible, barré, dans le journal des corrections.`)) return;
+  try{
+    const res = await fetch('/api/presence/correction/batch', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: String(userId), ops: [{ kind: 'cancel', id: Number(id) }], motif: 'Doublon', commentaire: 'Contrôle des doublons' }) });
+    const json = await res.json().catch(() => ({}));
+    if(!res.ok){ showToast(json.error || `Erreur HTTP ${res.status}.`); return; }
+    showToast('Pointage annulé.');
+    invalidatePresenceCaches();
+    loadPresenceDay(toDateInputValue(new Date()), { force: true, noRender: true });
+  }catch(e){ showToast('Serveur injoignable.'); return; }
+  presenceDupSearch();
+}
+function renderPresenceDupPanel(){
+  presenceDupInit();
+  const d = presenceDup;
+  const srcLbl = p => PRESENCE_SOURCE_LABELS[p.source] || p.source;
+  const cell = (p, item) => `<div class="pr-mono">${escapeHtml(p.ts.slice(11, 19))}</div><div class="footer-note" style="margin:0;">${escapeHtml(srcLbl(p))}${p.createdBy && p.createdBy !== 'timemoto' && p.source === 'manuel' ? ' · ' + escapeHtml(presenceUserName(p.createdBy)) : ''}</div>
+      <button class="small" data-action="dup-cancel" data-user="${escapeHtml(String(item.userId))}" data-id="${p.id}">Annuler celui-ci</button>`;
+  let body = '';
+  if(d.status === 'loading') body = '<div class="footer-note">Recherche…</div>';
+  else if(d.status === 'error') body = `<div class="tm-err-txt">${escapeHtml(d.error)}</div>`;
+  else if(d.status === 'ok'){
+    body = d.list.length ? `<div style="overflow-x:auto;"><table class="ops-table pr-table"><thead><tr><th>Salarié</th><th>Jour</th><th>Type</th><th>Constat</th><th>Premier pointage</th><th>Second pointage</th></tr></thead><tbody>
+      ${d.list.map(x => `<tr>
+        <td><b>${escapeHtml(presenceUserName(x.userId))}</b></td><td>${escapeHtml(tmFrDay(x.day))}</td><td>${escapeHtml(PRESENCE_TYPE_LABELS[x.type] || x.type)}</td>
+        <td>${x.kind === 'doublon' ? `<span class="badge red">Doublon probable</span> à ${x.gapMin} min` : `<span class="badge">Enchaînement incohérent</span> ${x.gapMin >= 60 ? Math.floor(x.gapMin / 60) + ' h ' + String(x.gapMin % 60).padStart(2, '0') : x.gapMin + ' min'} d’écart`}</td>
+        <td>${cell(x.a, x)}</td><td>${cell(x.b, x)}</td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="footer-note" style="text-align:left; padding-top:6px;">« Enchaînement incohérent » = deux pointages de même type de suite (deux arrivées, deux départs…) plus espacés que le seuil : souvent un pointage manquant entre les deux, à corriger avec « Corriger » plutôt qu’en annulant.</div>`
+      : '<div class="pr-empty">✓ Aucun doublon ni enchaînement incohérent sur cette période.</div>';
+  }
+  return `
+    <div class="tm-box pr-tm-panel">
+      <div class="tm-panel-head"><div class="tm-title">🔎 Contrôle des doublons <span class="footer-note">(à la demande — lecture seule)</span></div>
+        <button class="small" data-action="presence-dup-toggle" aria-label="Fermer">✕ Fermer</button></div>
+      <div class="tm-actions">
+        <label class="footer-note" style="margin:0;">Du</label><input type="date" value="${escapeHtml(d.from)}" data-action="dup-field" data-field="from" style="max-width:160px;">
+        <label class="footer-note" style="margin:0;">au</label><input type="date" value="${escapeHtml(d.to)}" data-action="dup-field" data-field="to" style="max-width:160px;">
+        <label class="footer-note" style="margin:0;">Doublon si écart ≤</label><input type="number" min="1" max="120" step="1" value="${escapeHtml(String(d.minutes))}" data-action="dup-field" data-field="minutes" style="max-width:70px;"><span class="footer-note" style="margin:0;">min</span>
+        <button class="small primary" data-action="dup-search" ${d.status === 'loading' ? 'disabled' : ''}>🔎 Rechercher</button>
+      </div>
+      ${body}
+    </div>`;
+}
 function renderTimemotoImportPanel(){
   const tm = presenceTmCfg();
   if(!timemotoStatusCache) loadTimemotoStatus();
+  tmRecoverSchedulePoll();
   const st = (timemotoStatusCache && timemotoStatusCache.data) || null;
   const tmUsers = st ? (st.users || []) : [];
   const mappedIds = Object.keys(tm.userMap);
@@ -18128,6 +18335,8 @@ function renderTimemotoImportPanel(){
       <div class="footer-note" style="text-align:left; padding-bottom:8px;">Lecture <b>automatique</b> par le conteneur zk-sync (ci-dessous) ; à défaut, import déclenché à la main, deux voies au choix : <b>A</b> le fichier CSV lu directement sur la pointeuse (réseau local), ou <b>B</b> TimeMoto Cloud (sa page de connexion est protégée par un reCAPTCHA : vous récupérez vous-même votre jeton d'un clic et le collez ici). Dans les deux cas, chaque entrée/sortie devient un pointage (1re entrée = arrivée, sortie suivie d'une entrée = pause, dernière sortie = départ, heure de la pointeuse). Une modification faite dans TimeMoto annule et remplace le pointage importé (tout reste tracé) ; une correction faite ici par un superviseur n'est jamais écrasée. Le jeton n'est jamais enregistré.</div>
 
       ${timemotoAgentHtml(st && st.agent)}
+      ${renderTmRecoverHtml(st)}
+      ${renderTmFlipsHtml(st)}
 
       <div class="modal-section-title">A. Fichier CSV de la pointeuse <span class="footer-note">(import manuel — dépannage, reprise d’historique)</span></div>
       <div class="footer-note" style="text-align:left; padding-bottom:6px;">Lancez <span class="pr-mono">tools/tm616_export.py</span> sur un PC du réseau de l'atelier (il lit la TM-616 directement, sans TimeMoto Cloud ni jeton), puis choisissez ici le fichier <span class="pr-mono">pointages_tm616.csv</span> obtenu. Seule la période choisie ci-dessous est importée (par défaut les derniers jours) ; relancer ne crée jamais de doublon.</div>
@@ -18795,6 +19004,13 @@ function dispatchClickAction(action, el){
     case 'presence-tm-goto': closeSettingsModal(); currentPage = 'presence'; presenceTmOpen = true; invalidatePresenceCaches(); render(); break;
     case 'tm-sync': runTimemotoSync(el.dataset.mode); break;
     case 'tm-csv-sync': runTimemotoCsvImport(el.dataset.mode); break;
+    case 'tm-recover-request': tmRecoverRequest(); break;
+    case 'tm-recover-apply': tmRecoverApply(); break;
+    case 'tm-recover-cancel': tmRecoverCall({ action: 'cancel' }); break;
+    case 'tm-flag': tmFlagAction(el.dataset.key, el.dataset.act); break;
+    case 'presence-dup-toggle': presenceDupOpen = !presenceDupOpen; render(); break;
+    case 'dup-search': presenceDupSearch(); break;
+    case 'dup-cancel': presenceDupCancel(el.dataset.user, el.dataset.id); break;
     case 'tm-apply-suggestions': applyTimemotoSuggestions(); break;
     case 'tm-copy-bookmarklet': { const t = TIMEMOTO_BOOKMARKLET; const done = () => showToast('Marque-page copié — créez un favori et collez-le dans son adresse.'); try{ navigator.clipboard.writeText(t).then(done, () => { window.prompt('Copiez ce texte dans l’adresse d’un favori :', t); }); }catch(e){ window.prompt('Copiez ce texte dans l’adresse d’un favori :', t); } break; }
     case 'presence-my-export': exportMyPresenceMonth(); break;
@@ -19068,6 +19284,8 @@ function dispatchChangeAction(el, action){
     case 'tm-config': updateTimemotoConfig(el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
     case 'tm-user-map': setTimemotoUserMap(el.dataset.tmId, el.value); break;
     case 'tm-csv-file': loadTimemotoCsvFile(el.files && el.files[0]); break;
+    case 'tm-recover-field': tmRecoverFormGet()[el.dataset.field] = el.value; break;
+    case 'dup-field': presenceDupInit(); presenceDup[el.dataset.field] = el.dataset.field === 'minutes' ? (Number(el.value) || 5) : el.value; break;
     case 'mon-pointage-date-input': setMonPointageDay(el.value); break;
     case 'presence-date-input': if(/^\d{4}-\d{2}-\d{2}$/.test(el.value)){ presenceDate = el.value === toDateInputValue(new Date()) ? null : el.value; render(); } break;
     // Formulaire de correction : mémorisé sans redessin (un clic sur « Enregistrer » juste après la

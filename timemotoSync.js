@@ -89,7 +89,7 @@ function expectedEndFor(st, uid, dayKey){
 // sortie = départ (ou pause si la fin d'horaire du jour n'est pas encore passée). Sortie automatique
 // de TimeMoto ignorée (la journée reste « départ non pointé »), doubles entrées et sortie sans
 // entrée ignorées (comptées dans les anomalies).
-function desiredPunches(row, uid, st, now){
+function desiredPunches(row, uid, st, now, flip){
   const events = [];
   (Array.isArray(row.clockData) ? row.clockData : []).forEach(pair => {
     ['in', 'out'].forEach(k => {
@@ -101,7 +101,21 @@ function desiredPunches(row, uid, st, now){
     });
   });
   events.sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : (a.kind === 'in' ? -1 : 1));
-  const anomalies = { autoOut: 0, ignored: 0 };
+  // Événements bruts (avant toute inversion), conservés pour signaler/corriger une journée décalée.
+  const rawEvents = events.map(e => ({ kind: e.kind, ts: e.ts, auto: !!e.auto }));
+  // Journée « décalée » : le premier événement (hors sortie automatique) est une SORTIE — la pointeuse a
+  // perdu le fil (un pointage de la veille mal passé). L'import l'ignore (une sortie ne vaut qu'après une
+  // entrée). `flip` (choix explicite d'un superviseur, voir applyFlagAction) inverse alors entrées et
+  // sorties de cette journée ; sans effet si le premier événement n'est plus une sortie.
+  const firstEv = events.find(e => !e.auto);
+  const startsWithOut = !!firstEv && firstEv.kind === 'out';
+  let flipped = false;
+  if(flip && startsWithOut){
+    events.forEach(e => { if(!e.auto) e.kind = e.kind === 'in' ? 'out' : 'in'; });
+    events.sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : (a.kind === 'in' ? -1 : 1));
+    flipped = true;
+  }
+  const anomalies = { autoOut: 0, ignored: 0, startsWithOut, flipped };
   const out = [];
   let stt = 'none';
   events.forEach((ev, i) => {
@@ -123,7 +137,7 @@ function desiredPunches(row, uid, st, now){
     const end = expectedEndFor(st, uid, dayKey);
     if(end && now < end) last.type = 'pause_start';
   }
-  return { punches: out.map(p => ({ type: p.type, ts: p.ts, orig: p.orig })), anomalies };
+  return { punches: out.map(p => ({ type: p.type, ts: p.ts, orig: p.orig })), anomalies, events: rawEvents };
 }
 
 // Pointages déjà importés pour (salarié TimeMoto, jour), avec leur état d'annulation.
@@ -162,6 +176,108 @@ function reconcileDay(db, tmUserId, day, uid, desired, dryRun){
   return { added, cancelled, respected };
 }
 
+
+// ---------- Journées « décalées » : signalement et correction proposée (v1.102.0) ----------
+// Quand le premier événement d'une journée est une SORTIE, la pointeuse a perdu le fil (le plus souvent
+// un pointage de la veille mal passé : elle alterne Entrée/Sortie à partir du dernier). L'import ignore
+// ce pointage (sortie sans entrée) : la journée apparaît incomplète ou en retard. On se contente de la
+// SIGNALER (meta `flagged`) ; un superviseur peut alors accepter la correction proposée = inverser
+// entrées et sorties de CETTE journée (meta `flips`, appliquée à chaque lecture suivante par
+// desiredPunches) ou l'ignorer (meta `flagIgnored`). Jamais automatique : l'hypothèse « la pointeuse
+// alterne strictement » n'est pas garantie. Tout reste tracé (annulations + nouveaux pointages).
+function loadFlags(db){
+  return { flagged: readMeta(db, 'flagged', {}) || {}, flips: readMeta(db, 'flips', {}) || {}, ignored: new Set(readMeta(db, 'flagIgnored', []) || []), dirty: false };
+}
+function saveFlags(db, f){
+  if(!f.dirty) return;
+  const cut = presence.localTs(new Date(Date.now() - 400 * 86400000)).slice(0, 10);
+  const prune = o => { Object.keys(o).forEach(k => { if((o[k].day || '') < cut) delete o[k]; }); return o; };
+  writeMeta(db, 'flagged', prune(f.flagged));
+  writeMeta(db, 'flips', prune(f.flips));
+  writeMeta(db, 'flagIgnored', [...f.ignored].slice(-1000));
+  f.dirty = false;
+}
+// Tient à jour l'état des journées après le calcul de `d` (résultat de desiredPunches) ; `res.flagged`
+// reçoit les journées signalées par CETTE lecture (visible aussi en aperçu, sans rien écrire).
+function noteDayFlags(f, tmId, uid, day, d, res){
+  const key = `${tmId}|${day}`;
+  const raw = d.events || [];
+  if(d.anomalies.startsWithOut){
+    if(f.flips[key]){ f.flips[key] = { ...f.flips[key], events: raw }; f.dirty = true; delete f.flagged[key]; return; }
+    if(f.ignored.has(key)) return;
+    const prev = f.flagged[key];
+    f.flagged[key] = { tmId, uid, day, events: raw, firstSeen: prev ? prev.firstSeen : new Date().toISOString() };
+    f.dirty = true;
+    if(res) (res.flagged = res.flagged || []).push({ uid, day });
+  } else {
+    if(f.flagged[key]){ delete f.flagged[key]; f.dirty = true; }
+    if(f.flips[key]){ delete f.flips[key]; f.dirty = true; }
+  }
+}
+function rowFromEvents(day, events){
+  return { date: day, clockData: (events || []).map(ev => ev.kind === 'in'
+    ? { in: { fullClockTime: ev.ts, clockingActionTypeId: 0 } }
+    : { out: { fullClockTime: ev.ts, clockingActionTypeId: 1, isAutoClockOut: !!ev.auto } }) };
+}
+const KIND_FR = { in: 'Entrée', out: 'Sortie' };
+const TYPE_FR = { in: 'Arrivée', pause_start: 'Début de pause', pause_end: 'Fin de pause', out: 'Départ' };
+// Description lisible pour l'interface : séquence brute de la pointeuse et pointages obtenus si l'on
+// inverse la journée (calculée à la lecture à partir des événements bruts conservés).
+function describeFlag(entry, st, flipped){
+  const now = new Date();
+  const asIs = desiredPunches(rowFromEvents(entry.day, entry.events), entry.uid, st, now, false);
+  const fixed = desiredPunches(rowFromEvents(entry.day, entry.events), entry.uid, st, now, true);
+  return {
+    key: `${entry.tmId}|${entry.day}`, uid: entry.uid, tmId: entry.tmId, day: entry.day, firstSeen: entry.firstSeen || null, at: entry.at || null,
+    raw: (entry.events || []).map(e => `${KIND_FR[e.kind] || e.kind} ${e.ts.slice(11, 16)}`),
+    current: asIs.punches.map(p => `${TYPE_FR[p.type] || p.type} ${p.ts.slice(11, 16)}`),
+    proposed: fixed.punches.map(p => `${TYPE_FR[p.type] || p.type} ${p.ts.slice(11, 16)}`)
+  };
+}
+function flagInfo(db, st){
+  const f = loadFlags(db);
+  const byDayDesc = (a, b) => a.day < b.day ? 1 : a.day > b.day ? -1 : 0;
+  return {
+    flagged: Object.values(f.flagged).sort(byDayDesc).slice(0, 60).map(e => describeFlag(e, st)),
+    flips: Object.values(f.flips).sort(byDayDesc).slice(0, 30).map(e => describeFlag(e, st))
+  };
+}
+// Actions d'un superviseur sur une journée signalée. `flip` : applique l'inversion et réconcilie tout de
+// suite cette journée (annule les pointages mal classés, ajoute les bons — rien n'est supprimé).
+function applyFlagAction(db, st, key, action){
+  const f = loadFlags(db);
+  const now = new Date();
+  const redo = (entry, flip) => {
+    const d = desiredPunches(rowFromEvents(entry.day, entry.events), entry.uid, st, now, flip);
+    return reconcileDay(db, entry.tmId, entry.day, entry.uid, d.punches, false);
+  };
+  let out = null;
+  db.transaction(() => {
+    if(action === 'flip'){
+      const e = f.flagged[key];
+      if(!e) throw new Error('Journée introuvable (déjà traitée ?).');
+      f.flips[key] = { ...e, at: new Date().toISOString() };
+      delete f.flagged[key];
+      out = redo(e, true);
+    } else if(action === 'ignore'){
+      if(!f.flagged[key]) throw new Error('Journée introuvable (déjà traitée ?).');
+      f.ignored.add(key);
+      delete f.flagged[key];
+      out = { added: 0, cancelled: 0 };
+    } else if(action === 'unflip'){
+      const e = f.flips[key];
+      if(!e) throw new Error('Cette journée n’est pas corrigée.');
+      delete f.flips[key];
+      f.ignored.delete(key);
+      f.flagged[key] = { tmId: e.tmId, uid: e.uid, day: e.day, events: e.events, firstSeen: e.firstSeen || new Date().toISOString() };
+      out = redo(e, false);
+    } else throw new Error('Action inconnue.');
+    f.dirty = true;
+    saveFlags(db, f);
+  })();
+  return out;
+}
+
 function tmName(row){ return [row.firstName, row.lastName].filter(Boolean).join(' ').trim() || String(row.userId || ''); }
 function addDays(key, n){ const d = new Date(key + 'T12:00:00'); d.setDate(d.getDate() + n); return presence.localTs(d).slice(0, 10); }
 
@@ -183,6 +299,7 @@ async function syncOnce(db, st, opts){
   const tmUsers = new Map();
   const seen = new Set();
   const res = { from, to: today, rows: fetched.rows.length, complete: fetched.complete, added: 0, cancelled: 0, respected: 0, autoOut: 0, ignored: 0, unmapped: 0, dryRun: !!o.dryRun, byUser: {} };
+  const flags = loadFlags(db);
   const apply = () => {
     fetched.rows.forEach(row => {
       const tmId = String(row.userId || '');
@@ -193,8 +310,9 @@ async function syncOnce(db, st, opts){
       const hasClock = Array.isArray(row.clockData) && row.clockData.length > 0;
       if(!uid){ if(hasClock) res.unmapped++; return; }
       seen.add(`${tmId}|${day}`);
-      const d = desiredPunches(row, uid, st, now);
+      const d = desiredPunches(row, uid, st, now, !!flags.flips[`${tmId}|${day}`]);
       res.autoOut += d.anomalies.autoOut; res.ignored += d.anomalies.ignored;
+      noteDayFlags(flags, tmId, uid, day, d, res);
       const r = reconcileDay(db, tmId, day, uid, d.punches, o.dryRun);
       res.added += r.added; res.cancelled += r.cancelled; res.respected += r.respected;
       const bu = res.byUser[uid] || (res.byUser[uid] = { added: 0, cancelled: 0, jours: 0 });
@@ -210,7 +328,7 @@ async function syncOnce(db, st, opts){
       });
     }
   };
-  if(o.dryRun) apply(); else db.transaction(apply)();
+  if(o.dryRun) apply(); else { db.transaction(apply)(); saveFlags(db, flags); }
   res.tmUsers = [...tmUsers].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   // Liste des salariés TimeMoto conservée (pour l'association dans Paramètres), fusionnée avec la
   // précédente pour ne pas perdre quelqu'un d'absent sur la période lue.
@@ -269,32 +387,33 @@ function syncDeviceRows(db, st, parsed, opts){
   const jours = Math.max(1, Math.min(31, Number(tmCfg.joursSynchro) || 7));
   let from = presence.DATE_RE.test(String(o.since || '')) ? o.since : addDays(today, -(jours - 1));
   if(from > today) from = today;
+  const until = presence.DATE_RE.test(String(o.until || '')) ? o.until : null;
   const byDay = new Map();
   parsed.events.forEach(ev => {
-    if(ev.day < from) return;
+    if(ev.day < from || (until && ev.day > until)) return;
     const k = `${ev.uid}|${ev.day}`;
     if(!byDay.has(k)) byDay.set(k, { uid: ev.uid, day: ev.day, events: [] });
     byDay.get(k).events.push(ev);
   });
-  const res = { device: true, from, to: today, rows: byDay.size, complete: true, added: 0, cancelled: 0, respected: 0, autoOut: 0, ignored: 0, unmapped: 0, noUser: parsed.noUser, otherAction: parsed.otherAction, badDate: parsed.badDate, dryRun: !!o.dryRun, byUser: {} };
+  const res = { device: true, from, to: until || today, rows: byDay.size, complete: true, added: 0, cancelled: 0, respected: 0, autoOut: 0, ignored: 0, unmapped: 0, noUser: parsed.noUser, otherAction: parsed.otherAction, badDate: parsed.badDate, dryRun: !!o.dryRun, byUser: {} };
+  const flags = loadFlags(db);
   const apply = () => {
     byDay.forEach(g => {
       const tmId = ZK_PREFIX + g.uid;
       const uid = userMap[tmId] ? String(userMap[tmId]) : '';
       if(!uid){ res.unmapped++; return; }
       // Même forme que la réponse TimeMoto Cloud : un « pair » par événement (entrée ou sortie seule).
-      const row = { date: g.day, clockData: g.events.map(ev => ev.kind === 'in'
-        ? { in: { fullClockTime: ev.ts, clockingActionTypeId: 0 } }
-        : { out: { fullClockTime: ev.ts, clockingActionTypeId: 1 } }) };
-      const d = desiredPunches(row, uid, st, now);
+      const row = rowFromEvents(g.day, g.events);
+      const d = desiredPunches(row, uid, st, now, !!flags.flips[`${tmId}|${g.day}`]);
       res.autoOut += d.anomalies.autoOut; res.ignored += d.anomalies.ignored;
+      noteDayFlags(flags, tmId, uid, g.day, d, res);
       const r = reconcileDay(db, tmId, g.day, uid, d.punches, o.dryRun);
       res.added += r.added; res.cancelled += r.cancelled; res.respected += r.respected;
       const bu = res.byUser[uid] || (res.byUser[uid] = { added: 0, cancelled: 0, jours: 0 });
       bu.added += r.added; bu.cancelled += r.cancelled; if(d.punches.length) bu.jours++;
     });
   };
-  if(o.dryRun) apply(); else db.transaction(apply)();
+  if(o.dryRun) apply(); else { db.transaction(apply)(); saveFlags(db, flags); }
   // Liste des salariés de la pointeuse (association dans Paramètres), fusionnée avec la précédente.
   const ids = new Set(parsed.events.map(e => e.uid));
   const known = new Map((readMeta(db, 'users', []) || []).map(u => [u.id, u.name]));
@@ -357,6 +476,95 @@ function agentIntervalSec(st){
   const n = Math.round(Number(tm.intervalleMin));
   return (tm.intervalleMin == null || tm.intervalleMin === '' || !(n >= 1)) ? null : Math.min(60, n) * 60;
 }
+
+// ---------- Récupération d'une période, À LA DEMANDE (v1.102.0) ----------
+// La lecture automatique ne renvoie que les derniers jours (SYNC_DAYS). Pour rattraper une période plus
+// ancienne (agent arrêté, salarié mal associé…), un administrateur demande une « récupération » depuis la
+// page Présence : la demande est mise en attente (meta `recovery`) et l'agent zk-sync, qui contacte
+// Planning chaque minute, la découvre dans la réponse (`recover`), relit la pointeuse sur ces dates et
+// renvoie les événements avec `recoverId`. Planning les range d'abord en APERÇU (rien n'est écrit,
+// événements gardés en meta `recoveryEvents`), puis l'administrateur confirme : même moteur que la lecture
+// automatique (réconciliation par salarié et par jour, idempotent, annulation humaine respectée).
+const RECOVERY_WAIT_MS = 10 * 60 * 1000;     // au-delà, l'agent est considéré absent ou trop ancien
+const RECOVERY_KEEP_MS = 60 * 60 * 1000;     // un aperçu non confirmé est oublié après 1 h
+const RECOVERY_MAX_DAYS = 400;
+const RECOVERY_MAX_EVENTS = 20000;
+function recoveryRecord(db){
+  const r = readMeta(db, 'recovery', null);
+  if(!r) return null;
+  const age = Date.now() - new Date(r.requestedAt).getTime();
+  if(r.state === 'pending' && age > RECOVERY_WAIT_MS){
+    r.state = 'error';
+    r.error = "L'agent de lecture n'a pas répondu (conteneur zk-sync arrêté, ou version à mettre à jour avec « bash deploy.sh »).";
+    writeMeta(db, 'recovery', r);
+  } else if(r.state === 'received' && Date.now() - new Date(r.receivedAt).getTime() > RECOVERY_KEEP_MS){
+    r.state = 'error'; r.error = 'Aperçu expiré (plus d’une heure) : relancez la demande.';
+    writeMeta(db, 'recovery', r); writeMeta(db, 'recoveryEvents', null);
+  }
+  return r;
+}
+function requestRecovery(db, o){
+  const from = String(o.from || ''), to = String(o.to || '');
+  if(!presence.DATE_RE.test(from) || !presence.DATE_RE.test(to)) return { ok: false, error: 'Dates invalides.' };
+  const today = presence.localTs(new Date()).slice(0, 10);
+  if(from > to) return { ok: false, error: 'La date de début doit précéder la date de fin.' };
+  if(to > today) return { ok: false, error: 'La date de fin ne peut pas être dans le futur.' };
+  if(from < addDays(today, -RECOVERY_MAX_DAYS)) return { ok: false, error: `Période trop ancienne (${RECOVERY_MAX_DAYS} jours maximum).` };
+  const cur = recoveryRecord(db);
+  if(cur && cur.state === 'pending') return { ok: false, error: 'Une demande est déjà en attente de l’agent.' };
+  const rec = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), from, to, state: 'pending', requestedAt: new Date().toISOString(), requestedBy: String(o.by || '') };
+  writeMeta(db, 'recovery', rec);
+  writeMeta(db, 'recoveryEvents', null);
+  return { ok: true, recovery: rec };
+}
+function pendingRecover(db){
+  const r = recoveryRecord(db);
+  return r && r.state === 'pending' ? { id: r.id, from: r.from, to: r.to } : null;
+}
+// Événements reçus de l'agent pour la demande en cours : aperçu uniquement (dryRun), jamais appliqué ici.
+function receiveRecovery(db, st, payload){
+  const r = recoveryRecord(db);
+  if(!r || r.state !== 'pending' || r.id !== payload.recoverId) return { ok: true, ignored: true };
+  if(Array.isArray(payload.events) && payload.events.length > RECOVERY_MAX_EVENTS){
+    r.state = 'error'; r.error = `Trop d'événements (${payload.events.length}) : choisissez une période plus courte.`;
+    writeMeta(db, 'recovery', r); return { ok: true };
+  }
+  const parsed = parseAgentEvents(payload);
+  const res = syncDeviceRows(db, st, parsed, { dryRun: true, since: r.from, until: r.to });
+  res.future = parsed.future;
+  r.state = 'received'; r.receivedAt = new Date().toISOString(); r.preview = publicResult(res); r.preview.flagged = res.flagged || []; r.deviceEvents = parsed.events.length;
+  writeMeta(db, 'recovery', r);
+  writeMeta(db, 'recoveryEvents', { events: parsed.events, names: [...parsed.names] });
+  return { ok: true };
+}
+function applyRecovery(db, st){
+  if(runtime.running) return { ok: false, error: 'Un import TimeMoto est déjà en cours.' };
+  const r = recoveryRecord(db);
+  if(!r || r.state !== 'received') return { ok: false, error: 'Aucun aperçu à appliquer (relancez la demande).' };
+  const stash = readMeta(db, 'recoveryEvents', null);
+  if(!stash || !Array.isArray(stash.events)) return { ok: false, error: 'Aperçu expiré : relancez la demande.' };
+  runtime.running = true;
+  try{
+    const parsed = { events: stash.events, names: new Map(stash.names || []), noUser: 0, otherAction: 0, badDate: 0, lines: stash.events.length };
+    const res = syncDeviceRows(db, st, parsed, { dryRun: false, since: r.from, until: r.to });
+    r.state = 'applied'; r.appliedAt = new Date().toISOString(); r.result = publicResult(res); r.result.flagged = res.flagged || [];
+    writeMeta(db, 'recovery', r);
+    writeMeta(db, 'recoveryEvents', null);
+    if(res.added || res.cancelled) console.log(`Pointeuse (récupération ${r.from} → ${r.to}) : ${res.added} pointage(s) importé(s), ${res.cancelled} annulé(s).`);
+    return { ok: true, recovery: r };
+  }catch(err){
+    return { ok: false, error: String(err && err.message || err).slice(0, 300) };
+  }finally{
+    runtime.running = false;
+  }
+}
+function cancelRecovery(db){
+  const r = readMeta(db, 'recovery', null);
+  if(r && (r.state === 'pending' || r.state === 'received')){ r.state = 'cancelled'; writeMeta(db, 'recovery', r); }
+  writeMeta(db, 'recoveryEvents', null);
+  return { ok: true };
+}
+
 function runDeviceEvents(db, st, payload, opts){
   const now = new Date().toISOString();
   const agent = readMeta(db, 'agent', {}) || {};
@@ -370,9 +578,27 @@ function runDeviceEvents(db, st, payload, opts){
     agent.lastError = String(payload.deviceError).slice(0, 200);
     agent.lastErrorAt = now;
     writeMeta(db, 'agent', agent);
-    return { ok: true, heartbeat: true, intervalSec };
+    const rr = recoveryRecord(db);
+    if(rr && rr.state === 'pending' && payload.recoverId === rr.id){ rr.state = 'error'; rr.error = 'Pointeuse injoignable : ' + agent.lastError; writeMeta(db, 'recovery', rr); }
+    return { ok: true, heartbeat: true, intervalSec, recover: pendingRecover(db) };
   }
-  if(hb){ writeMeta(db, 'agent', agent); return { ok: true, heartbeat: true, intervalSec }; }
+  if(hb){ writeMeta(db, 'agent', agent); return { ok: true, heartbeat: true, intervalSec, recover: pendingRecover(db) }; }
+  if(payload && payload.recoverId){
+    // Réponse à une demande de récupération : aperçu uniquement, jamais traitée comme une lecture normale.
+    if(runtime.running) return { ok: false, busy: true, error: 'Un import TimeMoto est déjà en cours.' };
+    runtime.running = true;
+    try{
+      writeMeta(db, 'agent', agent);
+      receiveRecovery(db, st, payload);
+      return { ok: true, recovered: true, intervalSec, recover: pendingRecover(db) };
+    }catch(err){
+      const rr = readMeta(db, 'recovery', null);
+      if(rr && rr.id === payload.recoverId){ rr.state = 'error'; rr.error = String(err && err.message || err).slice(0, 200); writeMeta(db, 'recovery', rr); }
+      return { ok: false, error: String(err && err.message || err).slice(0, 200) };
+    }finally{
+      runtime.running = false;
+    }
+  }
   if(runtime.running) return { ok: false, busy: true, error: 'Un import TimeMoto est déjà en cours.' };
   runtime.running = true;
   try{
@@ -386,7 +612,7 @@ function runDeviceEvents(db, st, payload, opts){
     Object.assign(s, { lastOkAt: now, lastResult: publicResult(r), lastImportTo: r.to });
     writeMeta(db, 'status', s);
     if(r.added || r.cancelled) console.log(`Pointeuse (auto) : ${r.added} pointage(s) importé(s), ${r.cancelled} annulé(s) (${r.from} → ${r.to}).`);
-    return { ok: true, result: publicResult(r), intervalSec };
+    return { ok: true, result: publicResult(r), intervalSec, recover: pendingRecover(db) };
   }catch(err){
     agent.lastError = String(err && err.message || err).slice(0, 200); agent.lastErrorAt = now;
     writeMeta(db, 'agent', agent);
@@ -396,10 +622,14 @@ function runDeviceEvents(db, st, payload, opts){
   }
 }
 
-function status(db){
+function status(db, st){
   const s = readMeta(db, 'status', {}) || {};
-  return { lastOkAt: s.lastOkAt || null, lastResult: s.lastResult || null, lastImportTo: s.lastImportTo || null, users: readMeta(db, 'users', []) || [], agent: readMeta(db, 'agent', null) };
+  const out = { lastOkAt: s.lastOkAt || null, lastResult: s.lastResult || null, lastImportTo: s.lastImportTo || null, users: readMeta(db, 'users', []) || [], agent: readMeta(db, 'agent', null), recovery: recoveryRecord(db) };
+  if(st) out.flags = flagInfo(db, st);
+  return out;
 }
+// Nombre de journées signalées (résumé léger pour la page Présence, sans calcul de description).
+function flaggedCount(db){ return Object.keys(readMeta(db, 'flagged', {}) || {}).length; }
 function publicResult(r){ const { byUser, tmUsers, ...rest } = r; return rest; }
 async function runSync(db, st, opts){
   if(runtime.running) return { ok: false, error: 'Un import TimeMoto est déjà en cours.' };
@@ -422,5 +652,6 @@ async function runSync(db, st, opts){
 }
 
 module.exports = {
-  initTimemotoTables, runSync, runDeviceImport, runDeviceEvents, parseAgentEvents, parseDeviceCsv, syncDeviceRows, status, syncOnce, desiredPunches, reconcileDay, expectedEndFor, SYSTEM_USER
+  initTimemotoTables, runSync, runDeviceImport, runDeviceEvents, parseAgentEvents, parseDeviceCsv, syncDeviceRows, status, syncOnce, desiredPunches, reconcileDay, expectedEndFor, SYSTEM_USER,
+  requestRecovery, applyRecovery, cancelRecovery, recoveryRecord, applyFlagAction, flaggedCount, flagInfo, rowFromEvents
 };

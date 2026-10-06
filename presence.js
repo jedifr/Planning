@@ -178,6 +178,32 @@ function applyCorrections(db, o){
   return { ok: true, count: plan.length, punches: written };
 }
 
+// Contrôle des doublons (v1.102.0), À LA DEMANDE : parcourt les pointages RETENUS d'une période et
+// signale deux pointages consécutifs du même salarié, le même jour, de même type —
+//  - 'doublon' : à moins de `minutes` minutes l'un de l'autre (double badgeage, pointage manuel ajouté à
+//                côté d'un pointage de la pointeuse...) ;
+//  - 'repete'  : plus espacés mais enchaînement incohérent (deux arrivées de suite, deux départs...).
+// Ne modifie rien : le traitement se fait par annulation (applyCorrections), l'original reste lisible.
+function findDuplicates(db, from, to, minutes){
+  const m = Math.max(1, Math.min(120, Number(minutes) || 5));
+  const end = new Date(to + 'T12:00:00'); end.setDate(end.getDate() + 1);
+  const rows = getPunchesBetween(db, from + 'T00:00:00', localTs(end).slice(0, 10) + 'T00:00:00');
+  const eff = effectivePunches(rows);
+  const groups = new Map();
+  eff.forEach(p => { const k = p.userId + '|' + p.ts.slice(0, 10); if(!groups.has(k)) groups.set(k, []); groups.get(k).push(p); });
+  const short = p => ({ id: p.id, ts: p.ts, source: p.source, createdBy: p.createdBy, motif: p.motif });
+  const out = [];
+  groups.forEach(list => {
+    for(let i = 1; i < list.length; i++){
+      const a = list[i - 1], b = list[i];
+      if(a.type !== b.type) continue;
+      const gapMin = Math.round((new Date(b.ts) - new Date(a.ts)) / 60000);
+      out.push({ userId: a.userId, day: a.ts.slice(0, 10), type: a.type, kind: gapMin <= m ? 'doublon' : 'repete', gapMin, a: short(a), b: short(b) });
+    }
+  });
+  return out.sort((x, y) => x.day < y.day ? 1 : x.day > y.day ? -1 : (x.userId < y.userId ? -1 : 1));
+}
+
 function decidePunch(db, id, decision, byUserId){
   if(decision !== 'valide' && decision !== 'refuse') return { ok: false, error: 'Décision invalide.' };
   const p = getPunch(db, id);
@@ -239,6 +265,6 @@ function ipAllowed(ip, reseaux){
 
 module.exports = {
   PUNCH_TYPES, TS_RE, DATE_RE, initPresenceTables, localTs, normTs, effectivePunches, getPunchesBetween,
-  getPunch, dayEffective, checkTransition, insertPunch, applyCorrections, decidePunch, purgeOlderThan, getAllPunches,
+  getPunch, dayEffective, checkTransition, insertPunch, applyCorrections, findDuplicates, decidePunch, purgeOlderThan, getAllPunches,
   setPin, clearPin, usersWithPin, verifyPin, normIp, ipAllowed
 };

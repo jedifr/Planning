@@ -1969,6 +1969,46 @@ idempotent, annulation humaine respectée) — seul le **transport** change.
   (Playwright, 4 états). **Non testé sur la vraie pointeuse** (inaccessible depuis le cloud) : seule la lecture `pyzk` du script
   `tm616_export.py` a été validée en réel par l'utilisateur, `tm616_sync.py` en réutilise les appels à l'identique.
 
+### Récupération d'une période, journées décalées et contrôle des doublons (v1.102.0)
+
+Demande (06/10) : récupérer les pointages de jours/périodes précédents « sur demande », en contrôlant les doublons ; et
+cas réel de Laurine — un pointage de la veille mal passé fait enregistrer le pointage du matin en « Sortie » : l'import
+l'**ignorait** (une sortie ne vaut qu'après une entrée), l'arrivée était donc comptée à 12:02. Choix : les deux
+fonctions, **signalement simple** des journées décalées avec **correction proposée** (jamais automatique).
+
+- **Récupération à la demande** (page Présence → ⏱ TimeMoto → « 🕓 Récupérer une période », administrateur). Agent **tiré,
+  pas poussé** (comme la fréquence de lecture) : `POST /api/presence/timemoto/recover {from,to}` (`requestRecovery` : dates
+  valides, pas dans le futur, 400 j max, une seule demande à la fois) met la demande en attente (meta `recovery`) ; chaque
+  réponse de `device-sync` (battement de cœur, lecture, erreur) porte `recover:{id,from,to}` tant qu'elle attend ; `tm616_sync.py`
+  (`recover_period`) relit la pointeuse (lecture seule), renvoie les **journées entières** de la période (`build_payload(...,
+  since_date, until_date)`) avec `recoverId`. Le serveur (`receiveRecovery`) fait un **aperçu** (`syncDeviceRows` en `dryRun`, borne
+  `until`) et garde les événements (meta `recoveryEvents`) ; l'administrateur confirme (`action:'apply'` → `applyRecovery`, **sans
+  nouvelle lecture** de la pointeuse) ou annule. Garde-fous : demande sans réponse > 10 min → erreur explicite (agent arrêté **ou
+  ancienne image à reconstruire**) ; aperçu non confirmé oublié après 1 h ; > 20 000 événements refusé (une journée partielle ferait
+  annuler des pointages) ; mauvais `recoverId` ignoré ; pointeuse injoignable → erreur. L'interface rafraîchit l'état toutes les 4 s
+  tant que la demande attend (`tmRecoverSchedulePoll`). Même moteur que la lecture automatique : idempotent, annulation humaine respectée.
+- **Journées décalées** (`timemotoSync.js`) : `desiredPunches` signale `anomalies.startsWithOut` (premier événement hors sortie
+  automatique = Sortie) et renvoie les événements bruts. Mémoire en meta : `flagged` (à vérifier), `flips` (corrigées, avec leurs
+  événements bruts), `flagIgnored`. `noteDayFlags` les met à jour à chaque lecture (un aperçu ne persiste rien) ; une journée dont le
+  premier événement n'est plus une sortie sort de `flagged`/`flips`. **Correction** (`applyFlagAction`, superviseur, `POST
+  /api/presence/timemoto/flag`) : `flip` = inverser entrées/sorties de CETTE journée (règle mémorisée dans `flips`, réappliquée à chaque
+  lecture, donc stable) et réconcilier tout de suite — les pointages mal classés sont **annulés** (ligne `cancel`), les bons ajoutés,
+  rien n'est supprimé ; `ignore` ; `unflip` (rétablit l'état lu sur la pointeuse, la journée est de nouveau signalée). L'hypothèse
+  « la pointeuse alterne strictement » n'est pas garantie : d'où la validation humaine, avec les séquences brute / actuelle / proposée
+  affichées (`describeFlag`). Bannière sur la page Présence pour les superviseurs (`renderTmFlagsHtml`, déclenchée par
+  `data.timemoto.nFlagged`), liste des journées corrigées (avec annulation) dans le panneau d'import. Si un pointage a déjà été ajouté à
+  la main pour la journée, la correction peut créer un doublon : le contrôle ci-dessous le repère.
+- **Contrôle des doublons** (page Présence → « 🔎 Doublons », superviseur, `GET /api/presence/duplicates?from&to&minutes`,
+  `presence.findDuplicates`, lecture seule) : deux pointages **retenus** consécutifs, même salarié, même jour, même type — `doublon`
+  si l'écart ≤ seuil (5 min par défaut, réglable), `repete` sinon (« enchaînement incohérent » : deux arrivées de suite… souvent un
+  pointage manquant, à corriger plutôt qu'à annuler). Chaque pointage a son bouton « Annuler celui-ci » (`correction/batch`, op `cancel`,
+  motif « Doublon ») ; un pointage de la pointeuse annulé à la main n'est jamais réimporté.
+- Mise à jour : `bash deploy.sh` (l'agent doit être **reconstruit** pour comprendre `recover`) ; aucun nouveau fichier serveur.
+- Tests (scratchpad) : `recover_test.js` (37 assertions sur un vrai SQLite : signalement, aperçu sans écriture, correction, stabilité
+  à la relance, annulation de la correction, ignorer, demande/aperçu/application/idempotence, mauvais id, erreur pointeuse, expiration,
+  doublons), `agent_recover_test.py` (plage, battement de cœur → récupération, dates invalides, pointeuse injoignable),
+  `recover_ui.js` (Playwright sur serveur réel : bannière, correction, panneau, récupération, doublons).
+
 ## Onglet « Pointages »
 
 Retour utilisateur réel : jusqu'ici, voir/corriger un pointage demandait de retrouver la bonne
