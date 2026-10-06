@@ -1775,7 +1775,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.105.0';
+const APP_VERSION = '1.106.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -7858,6 +7858,7 @@ function simulateImportStarts(groups){
     };
   });
   commitImportGroups(clonedState, simGroups);
+  if(customImportState && customImportState.crossGroups && customImportState.crossGroups.length) applyCrossGroupsToState(clonedState, simGroups, customImportState.crossGroups);
   const schedule = computeSchedule(clonedState);
   const startByPieceId = {};
   const endByPieceId = {};
@@ -8061,7 +8062,7 @@ function handleCustomImportFile(e){
         map: { reference:'', referenceSplitSlash:true, reference2:'', reference2Sep:' ', refClient:'', dateBesoin:'', urgence:'', poste:'', piece:'', etape:'',
                quantite:'', dureeMode:'unitaire', dureeColonne:'', phase:'', operateur:'', matiere:'', epaisseur:'', dateDebutPossible:'',
                defaultMachineId:'', defaultOperatorByMachine:{}, urgenceDefaut:'normale', urgenceDefautActif:true, phaseAuto:true, phaseParNumeroLigne:true },
-        posteValues: [], posteMapping: {}, groupByValue: {}, sousTraitanceByValue: {}, profileMapSnapshot: null, preview: null
+        posteValues: [], posteMapping: {}, groupByValue: {}, sousTraitanceByValue: {}, crossGroups: [], profileMapSnapshot: null, preview: null
       };
       let lastProfileId = null;
       try{ lastProfileId = localStorage.getItem(LAST_IMPORT_PROFILE_KEY); }catch(e){ /* stockage indisponible : pas de profil par défaut, tant pis */ }
@@ -8101,6 +8102,7 @@ function applyImportProfile(profileId){
   customImportState.posteMapping = renormalize(p.posteMapping);
   customImportState.groupByValue = renormalize(p.groupByValue);
   customImportState.sousTraitanceByValue = renormalize(p.sousTraitanceByValue);
+  customImportState.crossGroups = (p.crossGroups||[]).map(cg => ({ id: cg.id || uid('xg'), machines: [...(cg.machines||[])], scope: ['commande','piece','tout'].includes(cg.scope) ? cg.scope : 'commande' })); // profil antérieur : aucun regroupement entre postes
   customImportState.profileMapSnapshot = JSON.stringify(customImportState.map); // référence pour détecter un changement non enregistré
   render();
 }
@@ -8414,6 +8416,88 @@ function performFusionOnState(targetState, items){
     o.dureeOverrideH = totalDuree;
   });
 }
+// ---- Regroupement ENTRE postes (import personnalisé, v1.106.0) ----
+// Un lot fusionné est planifié comme UN SEUL candidat sur UN SEUL poste (voir computeSchedule,
+// groupBuckets) : fusionner de l'ajustage et de la chaudronnerie impose donc de ramener tous les
+// membres sur un même poste « hôte » — sinon le temps, le coût et le taux d'occupation par poste
+// seraient incohérents avec ce que le moteur réserve. Hôte = poste qui totalise le plus de temps de
+// production parmi les lignes du lot (règle demandée par l'utilisateur, pas un choix manuel).
+// `cs.crossGroups` = [{ id, machines:[machineId], scope:'commande'|'piece'|'tout' }] (transitoire,
+// enregistré dans le profil d'import comme groupByValue).
+function crossGroupPieceHours(o){ return Math.max(0, (Number(o.tempsUnitaire)||0) * (Number(o.quantite)||0) / 60); }
+// Calcul pur sur les lignes de l'aperçu (poste courant de chaque ligne, donc corrections de poste
+// à l'aperçu comprises) : partagé par l'enregistrement, la simulation des dates et l'affichage.
+function computeCrossGroupBuckets(groups, crossGroups){
+  const out = [];
+  const claimed = new Set(); // une ligne n'appartient qu'à un seul regroupement (le premier qui la réclame)
+  (crossGroups||[]).forEach(cg => {
+    const mset = new Set((cg.machines||[]).filter(Boolean));
+    if(mset.size < 2) return;
+    const scope = cg.scope || 'commande';
+    const buckets = {};
+    Object.keys(groups).forEach(ref => {
+      (groups[ref].pieces||[]).forEach(pc => {
+        if(claimed.has(pc.id) || pc.sousTraitance || pc.horsPlanning || !mset.has(pc.machineId)) return;
+        const key = scope === 'tout' ? 'tout' : (scope === 'piece' ? ref + '|' + normPosteKey(pc.piece) : ref);
+        if(!buckets[key]) buckets[key] = { cgId: cg.id, scope, ref: scope === 'tout' ? null : ref, piece: scope === 'piece' ? (pc.piece||'') : null, pieces: [] };
+        buckets[key].pieces.push(pc);
+      });
+    });
+    Object.values(buckets).forEach(b => {
+      if(b.pieces.length < 2) return;
+      const hoursByMachine = {};
+      b.pieces.forEach(pc => { hoursByMachine[pc.machineId] = (hoursByMachine[pc.machineId]||0) + crossGroupPieceHours(pc); });
+      const machineIds = Object.keys(hoursByMachine);
+      if(machineIds.length < 2) return; // tout sur un même poste : rien d'« entre postes » à fusionner
+      let host = machineIds[0];
+      machineIds.forEach(mid => { if(hoursByMachine[mid] > hoursByMachine[host] + 1e-9) host = mid; });
+      b.ids = b.pieces.map(pc => pc.id);
+      b.hostMachineId = host;
+      b.hoursByMachine = hoursByMachine;
+      b.totalH = Object.values(hoursByMachine).reduce((a,v)=>a+v, 0);
+      b.phases = Array.from(new Set(b.pieces.map(pc => Number(pc.phase)||1))).sort((x,y)=>x-y);
+      b.pieces.forEach(pc => claimed.add(pc.id));
+      out.push(b);
+    });
+  });
+  return out;
+}
+// Applique les regroupements entre postes sur un état cible (rejouable : retrouve les pièces par id,
+// n'enregistre rien). À appeler APRÈS commitImportGroups (et après la fusion par étiquette), AVANT
+// capturePrevisionAuDemarrage : une pièce du lot doit être projetée avec la durée du lot entier.
+function applyCrossGroupsToState(targetState, groups, crossGroups){
+  const buckets = computeCrossGroupBuckets(groups, crossGroups);
+  buckets.forEach(b => {
+    const pieces = b.ids.map(id => {
+      const loc = findPieceLocationInState(targetState, id);
+      return loc && targetState.commandes.find(c=>c.id===loc.cid).pieces.find(o=>o.id===loc.oid);
+    }).filter(Boolean);
+    if(pieces.length < 2) return;
+    // Si une ligne était déjà dans un lot (case « Regrouper » d'un même poste), tout son lot suit :
+    // on n'éclate jamais un lot existant.
+    const oldGroups = new Set(pieces.map(o=>o.fusionGroupId).filter(Boolean));
+    const members = new Set(pieces);
+    if(oldGroups.size){
+      targetState.commandes.forEach(c => c.pieces.forEach(o => { if(o.fusionGroupId && oldGroups.has(o.fusionGroupId)) members.add(o); }));
+    }
+    const all = Array.from(members);
+    const rawH = o => Math.max(0, (Number(o.tempsUnitaire)||0) * (Number(o.quantite)||0) / 60);
+    const total = all.reduce((sum,o) => sum + rawH(o), 0); // somme des durées propres : jamais dureeOverrideH, déjà cumulée sur un lot
+    const groupId = uid('fusion');
+    all.forEach(o => {
+      if(o.machineId !== b.hostMachineId){
+        const orig = targetState.machines.find(m=>m.id===o.machineId);
+        if(orig && !(o.etape||'').trim()) o.etape = orig.nom; // garde la trace du poste d'origine
+        o.machineId = b.hostMachineId;
+      }
+      o.fusionGroupId = groupId;
+      o.manualStart = null;
+      o.fusionPinned = false;
+      o.dureeOverrideH = total;
+    });
+  });
+  return buckets;
+}
 function findPieceLocation(pieceId){
   for(const c of state.commandes){
     const o = c.pieces.find(p=>p.id===pieceId);
@@ -8467,10 +8551,12 @@ function confirmCustomImport(){
     // isolée. Rappelé à CHAQUE invocation de applyFn (voir le commentaire de commitImportGroups) —
     // jamais une seule fois après le tout premier appel, puisque commitImportGroups recrée des
     // copies de pièces distinctes à chaque rejeu.
+    // Regroupements entre postes (v1.106.0) : après la fusion par étiquette, pour absorber un lot déjà formé.
+    applyCrossGroupsToState(targetState, cs.preview.groups, cs.crossGroups);
     capturePrevisionAuDemarrage(targetState, result.createdPieceIds);
     // Profil de correspondance, enregistré sur ce même état — survit donc lui aussi à un rejeu.
     if(!targetState.importProfiles) targetState.importProfiles = [];
-    const profileData = { map: { ...cs.map }, posteMapping: { ...cs.posteMapping }, groupByValue: { ...cs.groupByValue }, sousTraitanceByValue: { ...cs.sousTraitanceByValue } };
+    const profileData = { map: { ...cs.map }, posteMapping: { ...cs.posteMapping }, groupByValue: { ...cs.groupByValue }, sousTraitanceByValue: { ...cs.sousTraitanceByValue }, crossGroups: (cs.crossGroups||[]).map(cg => ({ id: cg.id, machines: [...cg.machines], scope: cg.scope })) };
     const existingProfile = targetState.importProfiles.find(p=>p.id===profileId);
     if(existingProfile){ existingProfile.nom = nom; Object.assign(existingProfile, profileData); }
     else { targetState.importProfiles.push({ id: profileId, nom, ...profileData }); }
@@ -13892,6 +13978,32 @@ function renderCustomImportModal(){
         <thead><tr><th>Valeur dans le fichier</th><th>Poste chez vous</th><th>Regrouper</th><th>Sous-traité</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
+      ${(() => {
+        // Regroupements entre postes (v1.106.0) : un lot fusionné se planifie sur UN poste — l'hôte est
+        // le poste qui totalise le plus de temps de production parmi les lignes du lot (calculé à l'aperçu).
+        const candidateMachines = usedMachineIds.map(mid => state.machines.find(mm=>mm.id===mid)).filter(m => m && !machineNameLooksLikeSousTraitance(m.nom));
+        const cgs = cs.crossGroups || [];
+        const cards = cgs.map((cg, i) => `
+          <div class="cross-group-card" style="border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:8px; background:var(--panel);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+              <strong>Regroupement ${i+1}</strong>
+              <button class="ghost small danger-ghost" data-action="remove-import-cross-group" data-id="${cg.id}" title="Supprimer ce regroupement">🗑 Retirer</button>
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:6px 14px; margin:8px 0;">
+              ${candidateMachines.map(m => `<label style="display:inline-flex; align-items:center; gap:5px; font-weight:400;"><input type="checkbox" style="width:auto;" data-action="toggle-import-cross-group-machine" data-id="${cg.id}" data-machine="${m.id}" ${cg.machines.includes(m.id)?'checked':''}> ${escapeHtml(m.nom)}</label>`).join('') || '<span class="footer-note">Associez d\'abord des postes ci-dessus.</span>'}
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center;">
+              <span class="footer-note" style="margin:0;">Un lot par :</span>
+              ${[['commande','commande (recommandé)'],['piece','pièce (dans une commande)'],['tout','tout l\'import']].map(([v,l]) => `<label style="display:inline-flex; align-items:center; gap:5px; font-weight:400;"><input type="radio" style="width:auto;" name="cross-scope-${cg.id}" data-action="set-import-cross-group-scope" data-id="${cg.id}" data-scope="${v}" ${cg.scope===v?'checked':''}> ${l}</label>`).join('')}
+            </div>
+            ${cg.machines.length < 2 ? '<div class="footer-note" style="color:var(--amber); text-align:left; margin-top:6px;">Cochez au moins deux postes pour que ce regroupement ait un effet.</div>' : ''}
+          </div>`).join('');
+        return `
+      <div class="modal-section-title">Regroupements entre postes</div>
+      <div class="footer-note" style="text-align:left; margin-bottom:10px;">Fusionne en un seul lot des lignes de postes différents (ex. Ajustage + Chaudronnerie). Un lot est planifié comme une seule tâche sur un seul poste : toutes les lignes du lot sont donc ramenées sur le <strong>poste qui totalise le plus de temps de production</strong> dans ce lot (calculé à l'aperçu ; le poste d'origine est conservé dans l'étape si elle était vide). L'ordre entre phases n'est plus imposé à l'intérieur d'un lot — pensez à regrouper des lignes de même phase. La case « Regrouper » ci-dessus, elle, ne fusionne que des lignes d'une même valeur.</div>
+      ${cards}
+      <button class="small" data-action="add-import-cross-group" ${candidateMachines.length < 2 ? 'disabled title="Associez au moins deux postes pour pouvoir les regrouper"' : ''}>＋ Ajouter un regroupement</button>`;
+      })()}
       ${usedMachineIds.length ? `
       <div class="modal-section-title">Opérateur par défaut, poste par poste</div>
       <div class="footer-note" style="text-align:left; margin-bottom:10px;">Utilisé pour toute ligne où le fichier ne précise pas d'opérateur — un opérateur déjà indiqué dans le fichier n'est jamais remplacé.</div>
@@ -13910,6 +14022,10 @@ function renderCustomImportModal(){
     // ici : voir simulateImportStarts, purement calculée sur une copie jetable de l'état, sans jamais
     // toucher au vrai planning avant "Confirmer l'import".
     const projectedStarts = simulateImportStarts(p.groups);
+    const crossBuckets = computeCrossGroupBuckets(p.groups, cs.crossGroups);
+    const crossByPiece = {};
+    crossBuckets.forEach(b => b.ids.forEach(id => { crossByPiece[id] = b; }));
+    const machineNomById = id => (state.machines.find(m=>m.id===id)||{}).nom || '?';
     const refRows = Object.keys(p.groups).filter(r=>p.groups[r].pieces.length>0).map(ref => {
       const g = p.groups[ref];
       const projectedEnds = projectedStarts.__ends || {};
@@ -13929,7 +14045,7 @@ function renderCustomImportModal(){
         return `
         <tr>
           <td style="padding-left:20px;">${escapeHtml([pc.piece,pc.etape].filter(Boolean).join(' / ')||'—')}</td>
-          <td><select data-action="update-import-preview-poste" data-oid="${pc.id}">${machineOptions(pc.machineId)}</select></td>
+          <td><select data-action="update-import-preview-poste" data-oid="${pc.id}">${machineOptions(pc.machineId)}</select>${crossByPiece[pc.id] ? `<div class="footer-note" style="margin:2px 0 0; text-align:left; color:var(--accent);" title="Cette ligne est regroupée avec les autres lignes du lot et sera planifiée avec elles sur le poste « ${escapeHtml(machineNomById(crossByPiece[pc.id].hostMachineId))} »">🔗 lot${crossByPiece[pc.id].hostMachineId !== pc.machineId ? ' → ' + escapeHtml(machineNomById(crossByPiece[pc.id].hostMachineId)) : ''}</div>` : ''}</td>
           <td><select data-action="update-import-preview-operateur" data-oid="${pc.id}">${operatorOptions(pc.operatorUserId)}</select></td>
           <td>${durationLabel((pc.tempsUnitaire*pc.quantite)/60)}</td>
           <td><input type="number" min="1" step="1" class="phase-input" style="width:60px;" value="${pc.phase||1}" data-action="update-import-preview-phase" data-oid="${pc.id}" title="Une phase supérieure attend la fin de la phase précédente de la même pièce"></td>
@@ -13962,6 +14078,7 @@ function renderCustomImportModal(){
         <strong>${p.nbNouvelles}</strong> nouvelle(s) commande(s), <strong>${p.nbFusions}</strong> fusion(s) dans une commande existante, <strong>${p.nbPieces}</strong> pièce(s) au total.${p.nbRetirees ? ` <span style="color:var(--amber);">${p.nbRetirees} opération(s) retirée(s) de l'import.</span>` : ''}
       </div>
       <div class="footer-note" style="text-align:left; margin-bottom:6px;">Poste, opérateur, phase et date de début possible peuvent être corrigés ici avant de valider, ligne par ligne, et une opération inutile se retire avec 🗑 (elle n'est alors pas importée) — les colonnes "Début au mieux"/"Fin au mieux" et la livraison au plus tôt de chaque commande se recalculent aussitôt en fonction. L'urgence, elle, se corrige une fois par commande (sélecteur à côté de son nom, ci-dessous) — pas de fusion dans une commande existante, dont l'urgence n'est jamais modifiée par l'import. C'est une simulation sur l'état actuel du planning, pas un engagement figé : la position réelle une fois importée dépendra de ce qui aura changé entre-temps (autres commandes, priorités).</div>
+      ${crossBuckets.length ? `<div class="leave-confirm-banner" style="margin-bottom:8px;"><strong>🔗 ${crossBuckets.length} lot(s) entre postes</strong> seront créés — chaque lot est planifié comme une seule tâche sur le poste qui totalise le plus de temps :<ul style="margin:4px 0 0 18px; padding:0;">${crossBuckets.map(b => `<li>${escapeHtml(b.scope==='tout' ? 'Tout l\'import' : b.ref + (b.piece ? ' · ' + b.piece : ''))} — ${b.ids.length} lignes, ${escapeHtml(durationLabel(b.totalH))} (${Object.keys(b.hoursByMachine).map(mid => escapeHtml(machineNomById(mid)) + ' ' + escapeHtml(durationLabel(b.hoursByMachine[mid]))).join(' + ')}) → poste <strong>${escapeHtml(machineNomById(b.hostMachineId))}</strong>${b.phases.length > 1 ? ` <span style="color:var(--amber);">⚠ phases ${b.phases.join(', ')} mêlées : l'ordre entre elles n'est plus imposé</span>` : ''}</li>`).join('')}</ul></div>` : ''}
       ${refRows ? `<table class="ops-table"><thead><tr><th>Pièce / Étape</th><th>Poste</th><th>Opérateur</th><th>Durée</th><th title="Une phase supérieure attend la fin de la phase précédente de la même pièce">Phase</th><th>Départ possible</th><th>Début au mieux</th><th>Fin au mieux</th><th title="Retirer une opération de l'import">Retirer</th></tr></thead><tbody>${refRows}</tbody></table>` : ''}
       ${(() => {
         // Détail complet (valeurs du fichier), pas juste un résumé texte par ligne — pour retrouver
@@ -19004,6 +19121,16 @@ function dispatchClickAction(action, el){
     case 'trigger-excel-import': triggerExcelImport(); break;
     case 'start-custom-import': startCustomImport(); break;
     case 'cancel-custom-import': cancelCustomImport(); break;
+    case 'add-import-cross-group': if(customImportState){
+      if(!customImportState.crossGroups) customImportState.crossGroups = [];
+      const used = Array.from(new Set(Object.values(customImportState.posteMapping).filter(Boolean))).filter(mid => { const m = state.machines.find(mm=>mm.id===mid); return m && !machineNameLooksLikeSousTraitance(m.nom); });
+      customImportState.crossGroups.push({ id: uid('xg'), machines: used.slice(0,2), scope: 'commande' });
+      render();
+    } break;
+    case 'remove-import-cross-group': if(customImportState){
+      customImportState.crossGroups = (customImportState.crossGroups||[]).filter(cg => cg.id !== el.dataset.id);
+      render();
+    } break;
     case 'custom-import-next-from-mapping': proceedFromMapping(); break;
     case 'custom-import-back-to-mapping': backToMappingStep(); break;
     case 'custom-import-next-from-postes': proceedFromPostes(); break;
@@ -19467,6 +19594,14 @@ function dispatchChangeAction(el, action){
       else delete customImportState.map.defaultOperatorByMachine[el.dataset.machine];
     } break;
     case 'custom-import-poste-map': updateCustomImportPosteMap(el.dataset.value, el.value); break;
+    case 'toggle-import-cross-group-machine': if(customImportState){
+      const cg = (customImportState.crossGroups||[]).find(x => x.id === el.dataset.id);
+      if(cg){ cg.machines = cg.machines.filter(m => m !== el.dataset.machine); if(el.checked) cg.machines.push(el.dataset.machine); render(); }
+    } break;
+    case 'set-import-cross-group-scope': if(customImportState){
+      const cg = (customImportState.crossGroups||[]).find(x => x.id === el.dataset.id);
+      if(cg && ['commande','piece','tout'].includes(el.dataset.scope)){ cg.scope = el.dataset.scope; render(); }
+    } break;
     case 'toggle-import-group-value': if(customImportState) customImportState.groupByValue[el.dataset.value] = el.checked; break;
     case 'toggle-import-sous-traitance-value': if(customImportState) customImportState.sousTraitanceByValue[el.dataset.value] = el.checked; break;
     case 'update-fusion-group-start': updateFusionGroupStart(el.dataset.group, el.value); break;

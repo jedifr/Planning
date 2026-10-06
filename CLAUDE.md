@@ -4187,6 +4187,36 @@ libérer) doit se propager à tout le groupe — voir `propagateFusionGroupField
   « 📌 Figée » — pour une pièce fusionnée, il regarde `fusionPinned`, jamais la simple
   présence de `dureeOverrideH` (toujours posé sur un groupe, figé ou non).
 
+### Regroupement entre postes à l'import personnalisé (v1.106.0)
+
+Demande : fusionner à l'import des tâches de postes **différents** (ex. Ajustage + Chaudronnerie) en un seul lot. Quatrième
+mécanisme produisant un `fusionGroupId`, après les trois ci-dessus ; **import personnalisé uniquement** (pas de pendant dans
+« Nouvelle commande », refusé par l'utilisateur).
+
+- **Pourquoi tous les membres changent de poste.** Un lot non figé est planifié comme UN SEUL candidat sur UN SEUL poste
+  (`groupBuckets` de `computeSchedule`) : laisser des membres sur Ajustage et d'autres sur Chaudronnerie rendrait le temps, le coût
+  et le taux d'occupation par poste incohérents avec la réservation réelle. Les membres sont donc ramenés sur un poste **hôte** =
+  celui qui totalise le **plus de temps de production** (somme `tempsUnitaire × quantité`) parmi les lignes du lot (règle voulue
+  par l'utilisateur, pas un choix manuel ; égalité = premier rencontré). Si `etape` était vide, elle reçoit le nom du poste
+  d'origine (traçabilité) ; opérateurs et `sousTraitance` ne sont pas touchés.
+- `cs.crossGroups` (`[{ id, machines:[machineId], scope:'commande'|'piece'|'tout' }]`, transitoire, **enregistré dans le profil
+  d'import** comme `groupByValue` ; `applyImportProfile` retombe sur `[]` pour un profil antérieur). Portée par défaut « un lot par
+  commande » (`'commande'` = par groupe d'aperçu, donc par campagne ; `'piece'` = par nom de pièce dans une commande ; `'tout'` =
+  tout l'import). UI : bloc « Regroupements entre postes » de l'étape Postes (cases par poste retenu — hors postes de
+  sous-traitance —, radios de portée, « ＋ Ajouter », « 🗑 Retirer »).
+- `computeCrossGroupBuckets(groups, crossGroups)` : calcul **pur** sur les lignes de l'aperçu (poste COURANT de chaque ligne : les
+  corrections de poste faites à l'aperçu sont donc prises en compte). Une ligne n'appartient qu'à un regroupement ; sous-traitée/hors
+  planning exclue ; un lot exige ≥ 2 lignes **et** ≥ 2 postes distincts (deux lignes d'Ajustage seules ne fusionnent pas).
+  `applyCrossGroupsToState(targetState, groups, crossGroups)` l'applique sur un état cible : appelée dans `applyFn` de
+  `confirmCustomImport` (rejouable) après la fusion par étiquette et AVANT `capturePrevisionAuDemarrage`, et dans
+  `simulateImportStarts` (« Début/Fin au mieux » reflètent donc le lot). Si une ligne était déjà dans un lot (case « Regrouper »), tout
+  ce lot est absorbé ; durée du lot = somme des durées PROPRES (jamais `dureeOverrideH`, déjà cumulée : doublerait). Idempotent au rejeu.
+- Aperçu : bandeau « 🔗 N lot(s) entre postes » (lignes, temps par poste, hôte) et pastille « 🔗 lot → Hôte » sous le poste de chaque
+  ligne ; avertissement ambre quand le lot mêle plusieurs **phases** — à l'intérieur d'un lot l'ordre entre phases n'est plus imposé
+  (dépendances internes retirées), d'où le conseil de regrouper des lignes de même phase.
+- Test (scratchpad `cross_test.js`, 26 assertions sur l'export du 06/10 ; `cross_render.js`, 4) : portées, hôte = plus grand temps,
+  < 2 postes, sous-traité exclu, absorption d'un lot existant, rejeu stable, planification sur l'hôte avec début commun, simulation, profil.
+
 ## Recherche/isolement de commande — rien ne doit masquer un résultat trouvé
 
 La barre `#commande-search-input` (au-dessus de "Tâches en cours") filtre à la fois « Tâches en
