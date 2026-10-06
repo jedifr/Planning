@@ -2284,6 +2284,21 @@ référence. Un second mode d'affichage complète (ne remplace pas) la liste.
   - Test (scratchpad `lot_ref_test.js`, 13 assertions) : 3,5 h/3,5 h, prorata 2 h/5 h, coût, rebuts, total conservé, temps nuls,
     même référence deux fois.
 
+### Détail des temps passés depuis le clic droit du planning (v1.105.0)
+
+Demande : depuis le planning visuel, obtenir en un clic droit le détail des temps passés sur une tâche.
+**Aucune nouvelle pop-up** : l'entrée « ⏱ Détail des temps passés » (`ctx-time-detail`, `renderContextMenu`) ouvre la
+pop-up « Détail des horaires » déjà utilisée par Temps de production (`showTempsProdSessions`, séances, pauses, archive
+`session_history` chargée à la demande, prévu vs réalisé) — une seule source. Proposée sur `en_cours`/`en_pause`/`termine`,
+jamais sur `a_faire` (aucun temps à détailler). `renderTempsProdSessionModal()` fait désormais aussi partie de la composition
+de la page Planning (`render()`), pas seulement de Temps de production.
+- **Résumé ajouté en tête de la pop-up** (profite aussi à la page Temps de production) : « Temps compté X sur Y prévus » —
+  `dureeReelleH` figé pour une pièce terminée, sinon `opElapsedHours` en direct ; ventilation par personne quand plusieurs ont
+  travaillé (`dureeReelleParOperateur`, sinon `computeSessionsHoursByOperator`) ; mention « lot fusionné : temps du lot entier ».
+  Rappel affiché : les durées du tableau sont des durées d'horloge, le temps compté ne retient que les heures d'ouverture du
+  poste (et les exceptions déclarées) — d'où un écart possible entre la somme des lignes et le temps compté.
+- Test (scratchpad `timedetail_test.js`, 7 assertions sur l'export du 06/10) : entrée de menu par statut, résumé, tableau, lot.
+
 ## Pauses de production mises en évidence
 
 Demande manager réelle : *« que les pauses de production soient mises en évidence dans les risques
