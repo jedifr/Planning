@@ -1782,6 +1782,13 @@ idempotent, annulation humaine respectée) — seul le **transport** change.
   exister** sinon `docker compose build/up` échoue pour TOUT le projet : `deploy.sh` le crée vide s'il manque (lecture automatique
   alors inactive : route 503, `zk-sync` en attente). Sans `deploy.sh`, `touch TM616.env` avant `docker compose up`. Format :
   `VARIABLE=valeur`, sans guillemets ni espaces ; `.gitignore` l'exclut.
+- **« can't reach device (ping …) » alors que la pointeuse répond (v1.97.2).** Constat réel : le voyant de la page Présence
+  (agent bien vivant, clé acceptée) affichait « Pointeuse injoignable : can't reach device (ping 192.168.1.37) ». Cause : pyzk
+  teste d'abord la machine avec la commande système `ping` (`ZK(..., ommit_ping=False)`, valeur par défaut), absente de l'image
+  `python:3.11-slim` → échec immédiat, avant toute tentative sur le port 4370. `tm616_sync.py` passe `ommit_ping=True` (c'est bien
+  l'orthographe de pyzk) ; une pointeuse réellement éteinte/injoignable échoue de toute façon à `connect()` (délai de 15 s). Réflexe :
+  une erreur « ping » d'une bibliothèque dans un conteneur minimal peut venir de l'absence de l'outil, pas du réseau. `tm616_export.py`
+  (lancé sur un PC) garde le ping, qui y existe.
 - Tests (scratchpad) : API sur serveur réel (sans clé/mauvaise clé 401, battement de cœur, envoi, renvoi idempotent, événements du
   futur écartés, blocage 429, 503 sans clé) ; agent Python avec faux module `zk` (envoi, relance sans doublon, mauvaise clé,
   pointeuse/Planning injoignables, filtrage des jours, config invalide) ; régression `zk_test.js` (11 assertions) ; rendu du voyant

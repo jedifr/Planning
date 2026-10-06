@@ -1753,7 +1753,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.97.1';
+const APP_VERSION = '1.97.2';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -17525,7 +17525,7 @@ function timemotoAgentHtml(agent){
       <div class="modal-section-title">⚡ Lecture automatique <span class="footer-note">(conteneur zk-sync — recommandé)</span></div>
       <div style="display:flex; align-items:center; gap:8px; padding:4px 0;"><span style="width:10px;height:10px;border-radius:50%;background:${dot};display:inline-block;flex:none;"></span><b>${escapeHtml(label)}</b></div>
       ${last ? `<div class="footer-note" style="text-align:left;">${escapeHtml(last)}</div>` : ''}
-      <div class="footer-note" style="text-align:left; padding-bottom:6px;">Le service <span class="pr-mono">zk-sync</span> de <span class="pr-mono">docker-compose.yml</span> lit la TM-616 en réseau local (lecture seule) toutes les 5 minutes et envoie les derniers jours à Planning. Activation : renseigner <span class="pr-mono">DEVICE_SYNC_KEY</span> et <span class="pr-mono">ZK_IP</span> dans le fichier <span class="pr-mono">.env</span> puis <span class="pr-mono">bash deploy.sh</span> (voir <span class="pr-mono">.env.example</span>). Associez d’abord vos salariés ci-dessous : une journée dont le salarié n’est pas associé n’est pas importée.</div>
+      <div class="footer-note" style="text-align:left; padding-bottom:6px;">Le service <span class="pr-mono">zk-sync</span> de <span class="pr-mono">docker-compose.yml</span> lit la TM-616 en réseau local (lecture seule) toutes les 5 minutes et envoie les derniers jours à Planning. Activation : renseigner <span class="pr-mono">DEVICE_SYNC_KEY</span> et <span class="pr-mono">ZK_IP</span> dans le fichier <span class="pr-mono">TM616.env</span> puis <span class="pr-mono">bash deploy.sh</span> (voir <span class="pr-mono">TM616.env.example</span>). Associez d’abord vos salariés ci-dessous : une journée dont le salarié n’est pas associé n’est pas importée.</div>
 `;
 }
 function renderTimemotoImportPanel(){

@@ -61,7 +61,10 @@ def build_payload(users, attendances, days, now=None):
 
 
 def read_device(ZK, ip, port, commkey):
-    zk = ZK(ip, port=port, timeout=15, password=commkey, force_udp=False, ommit_ping=False)
+    # ommit_ping=True (faute de frappe de pyzk, c'est bien son nom) : sans cela pyzk lance la commande
+    # système `ping`, absente de l'image python:slim -> « can't reach device (ping ...) » même quand la
+    # pointeuse répond. Si elle est réellement injoignable, connect() échoue de toute façon (délai dépassé).
+    zk = ZK(ip, port=port, timeout=15, password=commkey, force_udp=False, ommit_ping=True)
     conn = None
     try:
         conn = zk.connect()
