@@ -10,4 +10,5 @@ node_modules/
 
 # Secrets du conteneur (identifiants TimeMoto...) — jamais versionnés.
 .env
+TM616.env
 __pycache__/

@@ -1771,11 +1771,17 @@ idempotent, annulation humaine respectée) — seul le **transport** change.
   `GET /api/presence/timemoto/status` ; `timemotoAgentHtml` affiche en tête du panneau « ⏱ TimeMoto » de la page Présence un
   voyant : vert (< 15 min), ambre (> 15 min), rouge (pointeuse injoignable ou aucun signe de vie). Un envoi réussi met aussi à
   jour `lastOkAt` (le rappel « import à faire » de la page Présence ne se déclenche donc que si l'agent s'arrête > 24 h).
-- **Mise en route (NAS)** : `openssl rand -hex 24` ; créer `.env` à côté de `docker-compose.yml` (modèle `.env.example`, `.env`
+- **Mise en route (NAS)** : `openssl rand -hex 24` ; créer `TM616.env` à côté de `docker-compose.yml` (modèle `TM616.env.example`, `TM616.env`
   est ignoré par git) avec `DEVICE_SYNC_KEY=` et `ZK_IP=192.168.1.37` ; `bash deploy.sh` (construit aussi `zk-sync`) ; dans la page
   Présence → « ⏱ TimeMoto » : activer le suivi et **associer les salariés de la pointeuse** (sinon leurs journées sont comptées
   « sans salarié associé », jamais importées). Le conteneur doit pouvoir joindre la pointeuse (port 4370) : réseau bridge Docker
   par défaut, NAT vers le LAN — à vérifier dans `docker logs planning-zk-sync`.
+- **Fichier `TM616.env` et non `.env` (v1.97.1).** Choix de l'utilisateur. Docker Compose ne lit automatiquement que `.env`
+  (substitution `${VAR}`) : un fichier d'un autre nom est ignoré sauf à le déclarer. Les deux services le chargent donc par
+  `env_file: [TM616.env]` (variables injectées dans le conteneur, plus de `${...}` dans `docker-compose.yml`). **Le fichier doit
+  exister** sinon `docker compose build/up` échoue pour TOUT le projet : `deploy.sh` le crée vide s'il manque (lecture automatique
+  alors inactive : route 503, `zk-sync` en attente). Sans `deploy.sh`, `touch TM616.env` avant `docker compose up`. Format :
+  `VARIABLE=valeur`, sans guillemets ni espaces ; `.gitignore` l'exclut.
 - Tests (scratchpad) : API sur serveur réel (sans clé/mauvaise clé 401, battement de cœur, envoi, renvoi idempotent, événements du
   futur écartés, blocage 429, 503 sans clé) ; agent Python avec faux module `zk` (envoi, relance sans doublon, mauvaise clé,
   pointeuse/Planning injoignables, filtrage des jours, config invalide) ; régression `zk_test.js` (11 assertions) ; rendu du voyant

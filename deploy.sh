@@ -42,6 +42,14 @@ if [ "$STASHED" -eq 1 ]; then
   fi
 fi
 
+# TM616.env (clé et adresse de la lecture automatique de la pointeuse, jamais versionné) est
+# référencé par docker-compose.yml : s'il manque, docker compose refuse de démarrer. On le crée vide
+# (lecture automatique alors inactive) plutôt que de bloquer le déploiement de tout le reste.
+if [ ! -f TM616.env ]; then
+  echo "TM616.env absent : création d'un fichier vide (lecture automatique de la pointeuse inactive)."
+  touch TM616.env
+fi
+
 echo
 echo "Reconstruction de l'image Docker..."
 if ! sudo docker compose build; then
