@@ -1795,7 +1795,7 @@ machine a été validée par l'utilisateur). Même moteur que l'import CSV (`syn
 idempotent, annulation humaine respectée) — seul le **transport** change.
 
 - **`tools/tm616_sync.py`** (+ `tools/Dockerfile.zk-sync`, `pyzk==0.9` — la 0.9.1 n'existe pas sur PyPI) : boucle toutes les
-  `SYNC_INTERVAL` s (300, minimum 60) ; lit la pointeuse (`get_users`, `get_attendance`), garde les `SYNC_DAYS` derniers jours
+  `SYNC_INTERVAL` s (300, minimum 60 ; remplacé par le réglage de l'interface dès le premier contact, voir plus bas) ; lit la pointeuse (`get_users`, `get_attendance`), garde les `SYNC_DAYS` derniers jours
   (3, **journées entières** : la réconciliation annule ce qui a disparu d'une journée, il ne faut donc jamais envoyer une journée
   partielle), envoie un JSON `{host, deviceRecords, users[], events[{uid, ts, kind in|out|other}]}`. **Lecture seule, jamais
   `disable_device`** (une pointeuse désactivée refuserait les pointages pendant la lecture). Pointeuse injoignable → envoie
@@ -1832,6 +1832,25 @@ idempotent, annulation humaine respectée) — seul le **transport** change.
   l'orthographe de pyzk) ; une pointeuse réellement éteinte/injoignable échoue de toute façon à `connect()` (délai de 15 s). Réflexe :
   une erreur « ping » d'une bibliothèque dans un conteneur minimal peut venir de l'absence de l'outil, pas du réseau. `tm616_export.py`
   (lancé sur un PC) garde le ping, qui y existe.
+- **Fréquence de lecture réglable dans l'interface (v1.99.0).** Demande : « peut-on ajouter ce paramètre dans l'interface ? »
+  (`SYNC_INTERVAL` exigeait de modifier `TM616.env` puis de relancer le conteneur). `config.presence.timemoto.intervalleMin`
+  (minutes entières 1–60, `null` = pas de réglage) se choisit dans la page Présence → « ⏱ TimeMoto » → « Fréquence de lecture »
+  (1, 2, 5, 10, 15, 30 min, 1 h, ou « Par défaut »). **L'agent est tiré, pas poussé** : aucune connexion du serveur vers
+  `zk-sync`. Chaque réponse de `POST /api/presence/device-sync` (lecture, battement de cœur, erreur de pointeuse) porte
+  `intervalSec` (`agentIntervalSec` dans `timemotoSync.js`, `null` sans réglage) ; `adopt_interval` (`tm616_sync.py`) le reprend,
+  borné à 60 s – 3600 s, et ne touche à rien si la valeur est absente → `SYNC_INTERVAL` reste la valeur de départ et le repli.
+  - **Prise en compte en moins d'une minute.** La boucle ne dort plus un intervalle entier : elle ticke toutes les 5 s
+    (`TICK_S`), relit la pointeuse quand l'intervalle est écoulé, et sinon envoie un **battement de cœur** par minute
+    (`HEARTBEAT_S`, `{host, interval}` sans `events`, déjà géré par le serveur : met à jour le voyant sans réconcilier). Sans cela,
+    passer de 30 min à 1 min aurait demandé d'attendre la fin des 30 min en cours. Un intervalle réduit s'applique donc même à
+    mi-attente (l'échéance se compare à la dernière lecture, pas à une date fixée à l'avance).
+  - L'agent annonce l'intervalle qu'il applique (`interval` dans ses envois → `agent.intervalSec`), affiché sous le voyant
+    (« intervalle appliqué par l'agent : 5 min ») — permet de voir tout de suite si un réglage n'a pas été repris (agent
+    arrêté, ancienne image non reconstruite). **Le voyant parle maintenant de « dernier contact »** (le battement de cœur met
+    `lastSeenAt` à jour chaque minute) et une ligne distincte donne « Dernière lecture de la pointeuse : il y a N min »
+    (`lastSyncAt`). Seuil ambre du voyant inchangé (15 min sans contact).
+  - Piège : l'agent doit être **reconstruit** (`bash deploy.sh`) une fois pour embarquer ce comportement ; sans cela l'ancienne
+    version ignore `intervalSec` et reste sur `SYNC_INTERVAL`.
 - Tests (scratchpad) : API sur serveur réel (sans clé/mauvaise clé 401, battement de cœur, envoi, renvoi idempotent, événements du
   futur écartés, blocage 429, 503 sans clé) ; agent Python avec faux module `zk` (envoi, relance sans doublon, mauvaise clé,
   pointeuse/Planning injoignables, filtrage des jours, config invalide) ; régression `zk_test.js` (11 assertions) ; rendu du voyant

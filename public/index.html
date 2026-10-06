@@ -1766,7 +1766,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.98.0';
+const APP_VERSION = '1.99.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1947,6 +1947,7 @@ const SETTINGS_HELP = {
   presenceLier: "Si coché, un pointage de pause ou de départ propose de mettre en pause les tâches en cours de la personne, et la fin de pause de les reprendre. Toujours au choix de la personne, jamais automatique.",
   presenceArrondi: "Règle appliquée à la lecture pour calculer l'heure RETENUE d'un pointage (présence, retard, fiche salarié, exports). Les pointages enregistrés ne sont jamais modifiés : l'heure réelle reste visible à côté. Sans effet pour les salariés au forfait.",
   presenceArrondiEffet: "Les jours avant cette date gardent leurs heures réelles : changer la règle ne réécrit jamais l'historique déjà consulté ou exporté.",
+  tmFrequence: "Fréquence à laquelle le conteneur zk-sync relit la pointeuse. Le réglage est repris par l'agent en moins d'une minute, sans redémarrage. « Par défaut » = valeur SYNC_INTERVAL du fichier TM616.env (300 s à défaut). Minimum 1 minute.",
   userForfait: "Pas de « non arrivé », de retard ni de départ non pointé signalés pour cette personne. Si elle pointe, sa présence compte normalement."
 };
 function helpTip(key){
@@ -17515,7 +17516,9 @@ let timemotoBusy = false;
 let timemotoCsv = null;           // { name, text } : CSV de la pointeuse choisi (transitoire, jamais enregistré)
 function presenceTmCfg(st){
   const t = (((st || state).config || {}).presence || {}).timemoto || {};
-  return { actif: !!t.actif, joursSynchro: Number(t.joursSynchro) || 7, userMap: t.userMap || {} };
+  const im = Math.round(Number(t.intervalleMin));
+  // intervalleMin : fréquence de lecture de la pointeuse par le conteneur zk-sync (minutes, 1–60) ; null = valeur du fichier TM616.env.
+  return { actif: !!t.actif, joursSynchro: Number(t.joursSynchro) || 7, userMap: t.userMap || {}, intervalleMin: (t.intervalleMin == null || t.intervalleMin === '' || !(im >= 1)) ? null : Math.min(60, im) };
 }
 async function loadTimemotoStatus(){
   if(timemotoStatusCache && timemotoStatusCache.status === 'loading') return;
@@ -17534,6 +17537,7 @@ function updateTimemotoConfig(field, value){
   const t = state.config.presence.timemoto || (state.config.presence.timemoto = { userMap: {} });
   if(field === 'actif') t.actif = !!value;
   else if(field === 'joursSynchro'){ const n = Math.round(Number(value)); t.joursSynchro = isNaN(n) ? 7 : Math.max(1, Math.min(31, n)); }
+  else if(field === 'intervalleMin'){ const n = Math.round(Number(value)); t.intervalleMin = (value === '' || value == null || !(n >= 1)) ? null : Math.min(60, n); }
   commit();
 }
 function setTimemotoUserMap(tmId, uid){
@@ -17670,15 +17674,27 @@ function timemotoAgentHtml(agent){
   if(a && age != null){
     if(a.lastError && a.lastErrorAt && (!a.lastSyncAt || a.lastErrorAt >= a.lastSyncAt)){ tone = 'red'; label = 'Pointeuse injoignable : ' + a.lastError; }
     else if(age > 15){ tone = 'amber'; label = 'Dernier signe de vie il y a ' + Math.round(age) + ' min'; }
-    else { tone = 'green'; label = 'Actif — dernier passage il y a ' + (age < 1 ? 'moins d’une minute' : Math.round(age) + ' min'); }
+    else { tone = 'green'; label = 'Actif — dernier contact il y a ' + (age < 1 ? 'moins d’une minute' : Math.round(age) + ' min'); }
   }
+  const tmc = presenceTmCfg();
+  const syncAge = a && a.lastSyncAt ? Math.round((Date.now() - new Date(a.lastSyncAt).getTime()) / 60000) : null;
+  const optLbl = m => m === 1 ? 'Toutes les minutes' : m === 60 ? 'Toutes les heures' : `Toutes les ${m} minutes`;
+  const freqOpts = [1, 2, 5, 10, 15, 30, 60].map(m => `<option value="${m}" ${tmc.intervalleMin === m ? 'selected' : ''}>${optLbl(m)}</option>`).join('');
+  const applied = a && a.intervalSec ? (a.intervalSec % 60 === 0 ? `${a.intervalSec / 60} min` : `${a.intervalSec} s`) : null;
   const dot = { green: '#2e7d4f', amber: '#c98a1a', red: '#b23a30' }[tone];
   const last = a && a.lastResult ? `Dernier envoi : ${a.lastResult.added || 0} pointage(s) ajouté(s), ${a.lastResult.cancelled || 0} annulé(s)${a.lastResult.unmapped ? `, ${a.lastResult.unmapped} journée(s) sans salarié associé (voir « Association des salariés » plus bas)` : ''}.` : '';
   return `
       <div class="modal-section-title">⚡ Lecture automatique <span class="footer-note">(conteneur zk-sync — recommandé)</span></div>
       <div style="display:flex; align-items:center; gap:8px; padding:4px 0;"><span style="width:10px;height:10px;border-radius:50%;background:${dot};display:inline-block;flex:none;"></span><b>${escapeHtml(label)}</b></div>
+      ${syncAge != null ? `<div class="footer-note" style="text-align:left;">Dernière lecture de la pointeuse : il y a ${syncAge < 1 ? 'moins d’une minute' : syncAge + ' min'}${applied ? ` · intervalle appliqué par l’agent : ${escapeHtml(applied)}` : ''}.</div>` : ''}
       ${last ? `<div class="footer-note" style="text-align:left;">${escapeHtml(last)}</div>` : ''}
-      <div class="footer-note" style="text-align:left; padding-bottom:6px;">Le service <span class="pr-mono">zk-sync</span> de <span class="pr-mono">docker-compose.yml</span> lit la TM-616 en réseau local (lecture seule) toutes les 5 minutes et envoie les derniers jours à Planning. Activation : renseigner <span class="pr-mono">DEVICE_SYNC_KEY</span> et <span class="pr-mono">ZK_IP</span> dans le fichier <span class="pr-mono">TM616.env</span> puis <span class="pr-mono">bash deploy.sh</span> (voir <span class="pr-mono">TM616.env.example</span>). Associez d’abord vos salariés ci-dessous : une journée dont le salarié n’est pas associé n’est pas importée.</div>
+      <label class="field" style="max-width:340px; margin:8px 0 4px;">Fréquence de lecture ${helpTip('tmFrequence')}
+        <select data-action="tm-config" data-field="intervalleMin">
+          <option value="" ${tmc.intervalleMin == null ? 'selected' : ''}>Par défaut (fichier TM616.env, sinon 5 min)</option>
+          ${freqOpts}
+        </select>
+      </label>
+      <div class="footer-note" style="text-align:left; padding-bottom:6px;">Le service <span class="pr-mono">zk-sync</span> de <span class="pr-mono">docker-compose.yml</span> lit la TM-616 en réseau local (lecture seule) à la fréquence choisie ci-dessus et envoie les derniers jours à Planning. Activation : renseigner <span class="pr-mono">DEVICE_SYNC_KEY</span> et <span class="pr-mono">ZK_IP</span> dans le fichier <span class="pr-mono">TM616.env</span> puis <span class="pr-mono">bash deploy.sh</span> (voir <span class="pr-mono">TM616.env.example</span>). Associez d’abord vos salariés ci-dessous : une journée dont le salarié n’est pas associé n’est pas importée.</div>
 `;
 }
 function renderTimemotoImportPanel(){

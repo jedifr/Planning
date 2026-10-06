@@ -15,7 +15,8 @@ Variables d'environnement :
   ZK_COMMKEY            0   (mot de passe de communication de la pointeuse)
   PLANNING_URL          http://planning-atelier:3000
   DEVICE_SYNC_KEY       clé partagée avec Planning (obligatoire, >= 16 caractères)
-  SYNC_INTERVAL         300 (secondes, minimum 60)
+  SYNC_INTERVAL         300 (secondes, minimum 60) — valeur de départ : dès que Planning répond, l'intervalle
+                        choisi dans l'interface (page Présence → TimeMoto → « Fréquence de lecture ») la remplace.
   SYNC_DAYS             3   (journées relues à chaque passage, 1 à 31)
 """
 import json
@@ -26,6 +27,11 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
+
+
+INTERVAL_MIN_S, INTERVAL_MAX_S = 60, 3600
+HEARTBEAT_S = 60   # entre deux lectures, un signe de vie par minute : c'est lui qui rapporte le réglage de l'interface
+TICK_S = 5
 
 
 def kind_of(punch):
@@ -95,6 +101,32 @@ def post(url, key, payload):
         return e.code, body
 
 
+def adopt_interval(cfg, body, log=print):
+    """Reprend l'intervalle (secondes) renvoyé par Planning, borné à 60 s – 1 h. Absent = on garde le courant."""
+    try:
+        sec = int((body or {}).get("intervalSec"))
+    except (TypeError, ValueError):
+        return False
+    sec = max(INTERVAL_MIN_S, min(INTERVAL_MAX_S, sec))
+    if sec == cfg["interval"]:
+        return False
+    log(f"Intervalle de lecture réglé par Planning : {cfg['interval']} s -> {sec} s.")
+    cfg["interval"] = sec
+    return True
+
+
+def heartbeat(cfg, log=print):
+    """Signe de vie sans lecture de la pointeuse : met à jour le voyant et récupère l'intervalle choisi."""
+    try:
+        status, body = post(cfg["url"], cfg["key"], {"host": socket.gethostname(), "interval": cfg["interval"]})
+    except Exception:
+        return False
+    if status == 200:
+        adopt_interval(cfg, body, log)
+        return True
+    return False
+
+
 def cycle(ZK, cfg, log=print):
     """Un passage : lecture + envoi. Renvoie True si Planning a bien reçu les événements."""
     try:
@@ -103,17 +135,21 @@ def cycle(ZK, cfg, log=print):
         msg = f"Pointeuse injoignable ({cfg['ip']}:{cfg['port']}) : {e}"
         log(msg)
         try:
-            post(cfg["url"], cfg["key"], {"host": socket.gethostname(), "deviceError": msg})
+            status, body = post(cfg["url"], cfg["key"], {"host": socket.gethostname(), "deviceError": msg, "interval": cfg["interval"]})
+            if status == 200:
+                adopt_interval(cfg, body, log)
         except Exception:
             pass
         return False
     payload = build_payload(users, atts, cfg["days"])
+    payload["interval"] = cfg["interval"]
     try:
         status, body = post(cfg["url"], cfg["key"], payload)
     except Exception as e:
         log(f"Planning injoignable ({cfg['url']}) : {e}")
         return False
     if status == 200:
+        adopt_interval(cfg, body, log)
         r = body.get("result") or {}
         log(f"OK : {len(payload['events'])} événement(s) envoyé(s), {r.get('added', 0)} ajouté(s), "
             f"{r.get('cancelled', 0)} annulé(s), {r.get('unmapped', 0)} journée(s) sans salarié associé.")
@@ -154,10 +190,18 @@ def main():
         while True:
             time.sleep(3600)
     print(f"Lecture automatique de {cfg['ip']}:{cfg['port']} toutes les {cfg['interval']} s "
-          f"({cfg['days']} derniers jours) -> {cfg['url']}", flush=True)
+          f"({cfg['days']} derniers jours) -> {cfg['url']} (intervalle ajustable dans Planning)", flush=True)
+    log = lambda m: print(time.strftime("%Y-%m-%d %H:%M:%S"), m, flush=True)
+    last_sync = last_beat = None
     while True:
-        cycle(ZK, cfg, log=lambda m: print(time.strftime("%Y-%m-%d %H:%M:%S"), m, flush=True))
-        time.sleep(cfg["interval"])
+        now = time.monotonic()
+        if last_sync is None or now - last_sync >= cfg["interval"]:
+            cycle(ZK, cfg, log=log)
+            last_sync = last_beat = time.monotonic()
+        elif now - last_beat >= HEARTBEAT_S:
+            heartbeat(cfg, log=log)
+            last_beat = now
+        time.sleep(TICK_S)
 
 
 if __name__ == "__main__":

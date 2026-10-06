@@ -350,20 +350,29 @@ function parseAgentEvents(payload){
   });
   return out;
 }
+// Intervalle de lecture choisi dans l'interface (`config.presence.timemoto.intervalleMin`, minutes, 1–60),
+// renvoyé à l'agent zk-sync à chaque contact. `null` = pas de réglage : l'agent garde SYNC_INTERVAL.
+function agentIntervalSec(st){
+  const tm = (((st || {}).config || {}).presence || {}).timemoto || {};
+  const n = Math.round(Number(tm.intervalleMin));
+  return (tm.intervalleMin == null || tm.intervalleMin === '' || !(n >= 1)) ? null : Math.min(60, n) * 60;
+}
 function runDeviceEvents(db, st, payload, opts){
   const now = new Date().toISOString();
   const agent = readMeta(db, 'agent', {}) || {};
   agent.lastSeenAt = now;
   agent.host = String((payload && payload.host) || '').slice(0, 60);
   agent.deviceRecords = Number(payload && payload.deviceRecords) || agent.deviceRecords || 0;
+  agent.intervalSec = Number(payload && payload.interval) > 0 ? Math.round(Number(payload.interval)) : (agent.intervalSec || null);
+  const intervalSec = agentIntervalSec(st);
   const hb = !Array.isArray(payload.events) && !payload.deviceError;
   if(payload && payload.deviceError){
     agent.lastError = String(payload.deviceError).slice(0, 200);
     agent.lastErrorAt = now;
     writeMeta(db, 'agent', agent);
-    return { ok: true, heartbeat: true };
+    return { ok: true, heartbeat: true, intervalSec };
   }
-  if(hb){ writeMeta(db, 'agent', agent); return { ok: true, heartbeat: true }; }
+  if(hb){ writeMeta(db, 'agent', agent); return { ok: true, heartbeat: true, intervalSec }; }
   if(runtime.running) return { ok: false, busy: true, error: 'Un import TimeMoto est déjà en cours.' };
   runtime.running = true;
   try{
@@ -377,7 +386,7 @@ function runDeviceEvents(db, st, payload, opts){
     Object.assign(s, { lastOkAt: now, lastResult: publicResult(r), lastImportTo: r.to });
     writeMeta(db, 'status', s);
     if(r.added || r.cancelled) console.log(`Pointeuse (auto) : ${r.added} pointage(s) importé(s), ${r.cancelled} annulé(s) (${r.from} → ${r.to}).`);
-    return { ok: true, result: publicResult(r) };
+    return { ok: true, result: publicResult(r), intervalSec };
   }catch(err){
     agent.lastError = String(err && err.message || err).slice(0, 200); agent.lastErrorAt = now;
     writeMeta(db, 'agent', agent);
