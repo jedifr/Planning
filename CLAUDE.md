@@ -2264,6 +2264,26 @@ référence. Un second mode d'affichage complète (ne remplace pas) la liste.
   d'état vide s'adaptent au mode actif, `countNote` calculé une seule fois plutôt que dupliqué aux
   deux endroits qui l'utilisent.
 
+- **Lot fusionné ventilé entre ses références (v1.104.0).** Constat réel (C026-0727, lot de 2 pièces à 3,5 h, 7 h au total) :
+  `computeAllPointages` émet UNE ligne par lot (celle du membre représentant) avec le temps du LOT entier, et la vue « Par
+  référence » groupe par nom de pièce — les 7 h tombaient donc sur 5789170-A, 5789171-A n'avait rien. Les totaux par salarié/poste/
+  commande étaient justes (lot compté une fois), seule la ventilation par référence était fausse.
+  - La ligne porte `membres` (`null` hors lot) : par membre `piece`, `theoH` (T.U. × quantité / 60 PROPRE au membre — jamais
+    `dureeOverrideH`, somme du lot) et `rebutQty` propre. `rebutQty`/`rebutDetails` de la ligne = somme sur tout le lot (avant,
+    seuls les rebuts du représentant comptaient dans la liste, l'historique et le camembert).
+  - `computePointagesByReference` ventile prévu, réel, pause et coût réel du lot **en une seule étape** :
+    `part_i = total_lot × theoH_i / Σ theoH` (temps théoriques tous nuls : parts égales). Le total du lot est exactement conservé
+    (testé : somme des références = somme des lignes). Pas de « diviser par le nombre de pièces puis prorata » : deux étapes ne
+    sommeraient pas au total dès que les temps théoriques diffèrent (2 h et 5 h → 2/7 et 5/7, pas 3,5 h chacune). Les rebuts, déclarés
+    par pièce, sont attribués tels quels. Un pointage compte pour 1 sur chaque référence membre (une seule fois si deux membres
+    portent la même référence). Pièce non fusionnée : inchangé (part de 100 %).
+  - Pastille ⚖ à côté du prévu/réel d'une référence qui inclut une part de lot (`lotShare`), infobulle explicative. La recherche de
+    la vue Liste retrouve aussi un lot par la référence de ses autres membres (le clic sur une référence mène donc à sa ligne).
+  - **Le temps réel du lot reste celui saisi/mesuré** : un lot clos avec le temps prévu accepté tel quel (7 h non mesurées) ventile
+    ces 7 h ; le corriger passe par ✎ Corriger (propagé au lot) — voir v1.103.0 pour les clôtures futures.
+  - Test (scratchpad `lot_ref_test.js`, 13 assertions) : 3,5 h/3,5 h, prorata 2 h/5 h, coût, rebuts, total conservé, temps nuls,
+    même référence deux fois.
+
 ## Pauses de production mises en évidence
 
 Demande manager réelle : *« que les pauses de production soient mises en évidence dans les risques

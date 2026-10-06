@@ -1775,7 +1775,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.103.0';
+const APP_VERSION = '1.104.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -9398,9 +9398,13 @@ function computeAllPointages(st){
   const rows = [];
   const fusionCounts = {};
   const allPieces = [];
+  const lotMembers = {};
   [st.commandes||[], st.commandesArchivees||[]].forEach(list => list.forEach(c => c.pieces.forEach(o => {
     allPieces.push({ c, o });
-    if(o.fusionGroupId) fusionCounts[o.fusionGroupId] = (fusionCounts[o.fusionGroupId]||0) + 1;
+    if(o.fusionGroupId){
+      fusionCounts[o.fusionGroupId] = (fusionCounts[o.fusionGroupId]||0) + 1;
+      (lotMembers[o.fusionGroupId] = lotMembers[o.fusionGroupId] || []).push(o);
+    }
   })));
   const seenFusionGroups = new Set();
   const now = new Date();
@@ -9421,8 +9425,21 @@ function computeAllPointages(st){
     const operatorIds = (o.dureeReelleParOperateur && Object.keys(o.dureeReelleParOperateur).length)
       ? Object.keys(o.dureeReelleParOperateur)
       : (o.operatorUserId ? [o.operatorUserId] : []);
+    // Lot fusionné : la ligne représente tout le lot (temps total posé à l'identique sur chaque
+    // membre), mais chaque membre a SA référence de pièce. `membres` garde, par membre, son temps
+    // théorique propre (T.U. × quantité, jamais dureeOverrideH qui est la somme du lot) et ses rebuts
+    // propres : computePointagesByReference s'en sert pour ventiler le temps du lot au prorata
+    // plutôt que de tout attribuer à la référence du membre représentant (v1.104.0).
+    const lot = o.fusionGroupId ? (lotMembers[o.fusionGroupId] || [o]) : [o];
+    const membres = lot.length > 1 ? lot.map(mo => ({
+      piece: mo.piece,
+      theoH: Math.max(0, ((Number(mo.tempsUnitaire)||0) * (Number(mo.quantite)||0)) / 60),
+      rebutQty: (mo.rebuts||[]).reduce((s,r)=>s+(Number(r.quantite)||0), 0)
+    })) : null;
+    const rebutsLot = lot.reduce((a,mo) => a.concat(mo.rebuts||[]), []);
     rows.push({
       cid: c.id, oid: o.id, commandeNom: c.nom,
+      membres,
       piece: o.piece, etape: o.etape, fusionCount: o.fusionGroupId ? (fusionCounts[o.fusionGroupId]||1) : 1,
       machineId: o.machineId, machineNom: m ? m.nom : '',
       statut: o.statut, operatorIds,
@@ -9435,8 +9452,8 @@ function computeAllPointages(st){
       // Non-conformités déclarées sur cette pièce (voir CLAUDE.md, "Non-conformités / rebuts") —
       // rebutQty = somme des quantités (0 si aucune, jamais null : contrairement à sessions[], un
       // rebut n'est jamais "perdu à l'archivage", il vit directement sur pieces[].rebuts).
-      rebutQty: (o.rebuts||[]).reduce((s,r)=>s+(Number(r.quantite)||0), 0),
-      rebutDetails: o.rebuts||[],
+      rebutQty: rebutsLot.reduce((s,r)=>s+(Number(r.quantite)||0), 0),
+      rebutDetails: rebutsLot,
       // Coût de revient approximatif (voir CLAUDE.md) — null si le poste n'a pas de taux horaire
       // configuré, jamais 0€ (voir pieceCoutEstime/pieceCoutReel).
       coutEstime: pieceCoutEstime(o, st), coutReel: pieceCoutReel(o, st),
@@ -9456,24 +9473,41 @@ function computeAllPointages(st){
 function computePointagesByReference(list){
   const byKey = {};
   list.forEach(r => {
-    const label = (r.piece||'').trim();
-    if(!label) return; // pas de référence exploitable (pointage sans nom de pièce) — rien à grouper
-    const key = label.toLowerCase();
-    if(!byKey[key]) byKey[key] = { key, label, count:0, dureePrevueH:0, dureeReelleH:0, pauseH:0, rebutQty:0, coutReel:0, hasCout:false, lastDate:null };
-    const g = byKey[key];
-    g.count++;
-    g.dureePrevueH += r.dureePrevueH || 0;
-    g.dureeReelleH += r.dureeReelleH || 0;
-    // Best-effort : une pièce dont sessions[] est déjà archivée (pauseH null) contribue 0 au cumul,
-    // comme dureePrevueH/dureeReelleH le font déjà pour leurs propres cas limites — pas de distinction
-    // "partiellement inconnu" ici, cohérent avec le reste de l'agrégation.
-    g.pauseH += r.pauseH || 0;
-    g.rebutQty += r.rebutQty || 0;
-    // hasCout : au moins UNE pièce de cette référence a un poste avec un taux configuré — sinon
-    // coutReel resterait à 0, indiscernable d'un coût réellement nul (voir pieceCoutReel/CLAUDE.md).
-    if(r.coutReel != null){ g.coutReel += r.coutReel; g.hasCout = true; }
-    const refDate = r.finReel || r.debutReel;
-    if(refDate && (!g.lastDate || refDate > g.lastDate)) g.lastDate = refDate;
+    // Lot fusionné (v1.104.0) : le temps total du lot (prévu, réel, pause, coût) est ventilé entre les
+    // références de ses membres au prorata de leur temps théorique propre (T.U. × quantité) — une
+    // seule étape, le total du lot reste exactement conservé. Temps théoriques tous nuls : parts
+    // égales. Les rebuts, eux, sont physiquement déclarés par pièce : attribués tels quels.
+    // Pièce non fusionnée : une seule part de 100 %, comportement strictement inchangé.
+    const membres = (r.membres && r.membres.length > 1) ? r.membres : null;
+    const parts = membres
+      ? (() => {
+          const sum = membres.reduce((s,m)=>s+m.theoH, 0);
+          return membres.map(m => ({ piece: m.piece, w: sum > 0 ? m.theoH/sum : 1/membres.length, rebut: m.rebutQty }));
+        })()
+      : [{ piece: r.piece, w: 1, rebut: r.rebutQty || 0 }];
+    const seen = new Set();
+    parts.forEach(p => {
+      const label = (p.piece||'').trim();
+      if(!label) return; // pas de référence exploitable (pointage sans nom de pièce) — rien à grouper
+      const key = label.toLowerCase();
+      if(!byKey[key]) byKey[key] = { key, label, count:0, dureePrevueH:0, dureeReelleH:0, pauseH:0, rebutQty:0, coutReel:0, hasCout:false, lastDate:null, lotShare:false };
+      const g = byKey[key];
+      // Deux membres d'un même lot portant la même référence : un seul pointage compté pour elle.
+      if(!seen.has(key)){ g.count++; seen.add(key); }
+      if(membres) g.lotShare = true;
+      g.dureePrevueH += (r.dureePrevueH || 0) * p.w;
+      g.dureeReelleH += (r.dureeReelleH || 0) * p.w;
+      // Best-effort : une pièce dont sessions[] est déjà archivée (pauseH null) contribue 0 au cumul,
+      // comme dureePrevueH/dureeReelleH le font déjà pour leurs propres cas limites — pas de distinction
+      // "partiellement inconnu" ici, cohérent avec le reste de l'agrégation.
+      g.pauseH += (r.pauseH || 0) * p.w;
+      g.rebutQty += p.rebut || 0;
+      // hasCout : au moins UNE pièce de cette référence a un poste avec un taux configuré — sinon
+      // coutReel resterait à 0, indiscernable d'un coût réellement nul (voir pieceCoutReel/CLAUDE.md).
+      if(r.coutReel != null){ g.coutReel += r.coutReel * p.w; g.hasCout = true; }
+      const refDate = r.finReel || r.debutReel;
+      if(refDate && (!g.lastDate || refDate > g.lastDate)) g.lastDate = refDate;
+    });
   });
   // Plus récente activité en tête — même convention que la liste à plat (finReel/debutReel).
   return Object.values(byKey).sort((a,b) => (b.lastDate||'').localeCompare(a.lastDate||''));
@@ -9628,7 +9662,8 @@ function renderPointagesPage(){
       }
     }
     if(searchQ){
-      const hay = `${r.commandeNom} ${r.piece||''} ${r.etape||''}`.toLowerCase();
+      // Un lot fusionné se retrouve aussi par la référence de ses autres membres (v1.104.0).
+      const hay = `${r.commandeNom} ${r.piece||''} ${r.etape||''} ${(r.membres||[]).map(m=>m.piece||'').join(' ')}`.toLowerCase();
       if(!hay.includes(searchQ)) return false;
     }
     return true;
@@ -9685,8 +9720,8 @@ function renderPointagesPage(){
     return `<tr>
       <td><button class="pointages-ref-link" data-action="pointages-view-reference" data-piece="${escapeHtml(g.label)}">${escapeHtml(g.label)}</button></td>
       <td>${g.count}</td>
-      <td>${durationLabel(g.dureePrevueH)}</td>
-      <td>${durationLabel(g.dureeReelleH)}</td>
+      <td>${durationLabel(g.dureePrevueH)}${g.lotShare ? ' <span title="Inclut une part de lot fusionné, ventilée au prorata du temps théorique de chaque pièce" style="color:var(--text-dim); cursor:help;">⚖</span>' : ''}</td>
+      <td>${durationLabel(g.dureeReelleH)}${g.lotShare ? ' <span title="Inclut une part de lot fusionné, ventilée au prorata du temps théorique de chaque pièce" style="color:var(--text-dim); cursor:help;">⚖</span>' : ''}</td>
       <td>${formatEcart(ecart)}</td>
       <td>${pauseTimeCellHtml(g.pauseH)}</td>
       <td>${g.rebutQty > 0 ? `<span style="color:var(--red); font-weight:600;">${g.rebutQty}</span>` : '—'}</td>
