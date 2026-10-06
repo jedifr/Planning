@@ -109,8 +109,8 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
   `fusionGroupId`, `fusionPinned`, `sousTraitance`, `dateDebutPossible`,
   `autoPausedOperators`, `autoPausedUntil`, `pauseReminderSnoozeUntil`, `numeroLigne`,
-  `previsionAvantCloture`, `horsPlanning`, `dureeReelleH`, `dureeReelleParOperateur`, `posteLibere` (voir sections
-  dédiées plus bas)
+  `previsionAvantCloture`, `horsPlanning`, `dureeReelleH`, `dureeReelleParOperateur`, `posteLibere`, `tempsAnterieurH`,
+  `tempsAnterieurParOp`, `reouvertures[]` (voir sections dédiées plus bas)
   - `sousTraitance` se coche **automatiquement** (jamais décoché automatiquement) dès que le poste
     choisi pour la ligne a un nom contenant "sous-traitance"/"sous traitance"
     (`machineNameLooksLikeSousTraitance`) — dans `updateOpField` (ligne d'une commande existante) et
@@ -211,7 +211,7 @@ Démarrer/Reprendre (import déjà terminé, temps saisi à la main), ou clôtur
 ce champ. `backfillDureeReelle` (rattrapage de pièces déjà terminées avec `sessions[]` encore
 peuplé, legacy) fige la même répartition en même temps que `dureeReelleH`. Remis à `null` en même
 temps que `dureeReelleH` à la réouverture (`↺ Rouvrir`) — la répartition, comme le total, sera
-reconstituée à la prochaine clôture. **Ne recouvre pas rétroactivement les pièces déjà closes avant
+reconstituée à la prochaine clôture (depuis la v1.109.0 le temps déjà passé est conservé dans `tempsAnterieurH`, voir « Réouverture d'une tâche »). **Ne recouvre pas rétroactivement les pièces déjà closes avant
 ce correctif** : leur `sessions[]` étant déjà vide, l'opérateur réel n'y est plus récupérable — seuls
 les temps de production comptés à partir de ce correctif sont concernés.
 
@@ -2332,6 +2332,58 @@ détailler) ouvre la pop-up « Détail des horaires » déjà utilisée par Temp
   l'historique.
 - Test (scratchpad `ev_test.js`, 11 assertions) : simple/en pause/séance ouverte/à plusieurs/repli, pop-up sur l'export du 06/10,
   bouton sur chaque ligne de Pointages.
+
+### Réouverture d'une tâche : temps antérieur conservé et historique retrouvé (v1.109.0)
+
+Constat réel (C026-0666, chaudronnerie, 25,68 h, terminée le 01/10 puis remise « À faire » le 06/10 parce qu'elle n'était pas
+finie) : `applySingleStatusChange` (branche `a_faire`) vidait `debutReel`/`finReel`/`sessions[]`/`dureeReelleH`/
+`dureeReelleParOperateur` — le « Terminé » disparaissait, la ligne quittait la page Pointages (qui ignore les tâches `a_faire`), le
+détail des temps n'était plus proposé sur une tâche « À faire », et surtout les 25,68 h ne comptaient plus nulle part (tâche, coût,
+temps de production de septembre). Les séances restaient bien archivées dans `session_history`, mais la pop-up ne les chargeait que si
+`sessions[]` était vide localement : dès la première nouvelle séance, elles n'étaient plus affichées. Demande : implémenter les deux
+correctifs proposés.
+
+- **1. Temps antérieur conservé.** Nouveaux champs de pièce (`migrateState`) : `tempsAnterieurH` (0), `tempsAnterieurParOp`
+  (`{ [uid]: h } | null`), `reouvertures[]` (`{ le, statut, debut, fin, h, sessions[], recupere? }`, une entrée par réouverture, avec les
+  séances de la passe qui se termine : la trace ne dépend donc pas de l'archive serveur). À la réouverture, depuis `termine` :
+  `tempsAnterieurH = dureeReelleH` (qui inclut déjà un éventuel antérieur précédent — jamais de double comptage) ; depuis
+  `en_cours`/`en_pause` : séances + antérieur existant. Sous 0,001 h rien n'est conservé. **Une tâche portant une `declaration`
+  garde l'ancien comportement** (temps déclaratif non conservé : « ne survit pas à la réouverture »).
+  - `pieceTempsPasseH(o, st)` = `dureeReelleH` si terminée (il inclut l'antérieur), sinon `opElapsedHours` + antérieur. Utilisé par
+    Pointages (`computeAllPointages`, qui liste maintenant aussi une tâche `a_faire` ayant un temps antérieur, badge « ↺ Rouverte (À
+    faire) », tri `triDate`), le coût (`pieceCoutReel`), la note « écoulé » du tableau des tâches et la pop-up. `dureePasseeH` et
+    `backfillDureeReelle` en tiennent compte, `hasNoRecordedTime` aussi (une tâche rouverte avec du temps antérieur se clôture
+    directement, sans pop-up de temps déclaré).
+  - **À la clôture** : `dureeReelleH = séances + antérieur`, `dureeReelleParOperateur` = fusion de la répartition des séances et de
+    `anterieurParOp(o)` (répartition figée, sinon opérateur assigné) — la somme par opérateur égale toujours le total.
+  - **`opElapsedHours` n'a volontairement PAS changé** : le moteur de planification (reste à faire = durée − `opElapsedHours`, lignes 4156/
+    4225/4307) ignore le temps antérieur. Une tâche rouverte puis relancée est donc replanifiée sur sa durée entière, pas sur
+    « durée − déjà passé » (qui, ici, 20 h − 25,7 h = 0, l'aurait fait finir « maintenant » alors qu'elle n'est pas finie). À reconsidérer si on
+    veut un « reste à faire » réel.
+  - **Temps de production / poste** (`computeProductionTimeByUser`/`ByMachine`) : `anterieurHoursInPeriod` ajoute la part antérieure
+    tant que le total n'est pas porté par `dureeReelleH` (tâche non terminée, ou terminée avec séances encore locales) — répartie jour par
+    jour au prorata des séances d'AVANT (archive chargée par `ensureArchivedSessions`, sinon `reouvertures[].sessions`, via
+    `archivedPieceHoursInPeriod` appelée avec un clone portant `tempsAnterieur*`), sinon en bloc à la date de la dernière passe. Une
+    tâche reclôturée sans séance locale retombe sur le chemin habituel (`dureeReelleH` réparti sur TOUTES les séances archivées, anciennes
+    et nouvelles).
+- **2. Historique retrouvé.** Pop-up « Détail des horaires » (`renderTempsProdSessionModal`) : séances = archive serveur + passes
+  conservées dans `reouvertures[]` + séances actuelles, **dédoublonnées** (`sessionKey` = début|fin|opérateur) ; l'archive est chargée
+  pour toute tâche non terminée ou rouverte (plus seulement quand `sessions[]` est vide). Ligne « ↺ Rouvert le … — X h déjà passées
+  conservées » **à la place** du trou de pause (`renderSessionRowsHtml`, paramètre `markers`) ; résumé « Temps compté … (dont X h passées
+  avant réouverture) ». Le menu contextuel propose le détail sur **toute** tâche, « À faire » comprise (« ⏱ Historique des temps passés
+  (avant réouverture) »). `buildPointageEvents` : fin de passe clôturée = « ✔ Terminé », puis « ↺ Rouvert (remis À faire) », puis « Reprise ».
+- **Réouvertures faites AVANT la v1.109.0** (temps antérieur jamais conservé, séances seulement dans l'archive) : la pop-up propose, aux
+  superviseurs et si l'archive contient des séances absentes de l'état, « ↺ Reprendre ces X h comme temps antérieur »
+  (`recoverTempsAnterieur`) — recalcule le temps avec les règles de clôture (`computeRecoverableFromHistory` : heures d'ouverture + exceptions),
+  `confirm()`, un seul `commit()`, appliqué aussi aux autres membres d'un lot fusionné, **idempotent** (plus proposé une fois
+  `tempsAnterieurH` posé). Entrée `reouvertures` avec `recupere:true` et `le:null` (date inconnue, marqueur « date non enregistrée »).
+- **Piège de l'outillage rencontré** : un script de modification qui calculait une sous-chaîne `s[s.index(a):s.index(b)]` avec `b` situé AVANT `a`
+  obtenait une chaîne vide, et `str.replace('', x)` l'a insérée entre chaque caractère (fichier de 1,2 Go). Toujours vérifier `j > i` et que
+  l'ancre est non vide avant un `replace` de bloc ; `git checkout` a permis de repartir proprement.
+- Tests (scratchpad `reopen_test.js`, 36 assertions sur l'export du 06/10 : migration, réouverture depuis terminé/en cours, déclaration,
+  0 h, Pointages, temps de production avec/sans archive, clôture = antérieur + séances, somme par opérateur, 2e réouverture sans double
+  comptage, pop-up, marqueurs, chronologie, reprise manuelle et idempotence) ; `timedetail_test.js` mis à jour (détail aussi sur « À
+  faire ») ; rendu vérifié (Playwright, avant/après reprise).
 
 ## Pauses de production mises en évidence
 

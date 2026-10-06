@@ -1776,7 +1776,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.108.0';
+const APP_VERSION = '1.109.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -2976,6 +2976,12 @@ function migrateState(st){
       if(o.numeroLigne === undefined) o.numeroLigne = null;
       if(!Array.isArray(o.rebuts)) o.rebuts = []; // voir CLAUDE.md, "Non-conformités / rebuts" — { quantite, motif, date }[]
       if(o.previsionAvantCloture === undefined) o.previsionAvantCloture = null;
+      // Temps déjà passé AVANT une réouverture (↺ Rouvrir / retour « À faire »), conservé au lieu d'être
+      // effacé — voir CLAUDE.md « Réouverture d'une tâche : temps antérieur conservé ». `reouvertures` =
+      // une entrée par réouverture { le, statut, debut, fin, h, sessions[] } (traçabilité + détail).
+      if(o.tempsAnterieurH === undefined) o.tempsAnterieurH = 0;
+      if(o.tempsAnterieurParOp === undefined) o.tempsAnterieurParOp = null;
+      if(!Array.isArray(o.reouvertures)) o.reouvertures = [];
       if(o.previsionAuDemarrage === undefined) o.previsionAuDemarrage = null; // voir capturePrevisionAuDemarrage/CLAUDE.md, section "Retard de démarrage"
       if(o.fusionGroupId === undefined) o.fusionGroupId = null;
       if(o.fusionPinned === undefined){
@@ -6604,6 +6610,32 @@ function recordExceptionWindow(o, debut, fin, type){
     t.exceptionWindows.push({ debut, fin, type });
   });
 }
+// --- Temps antérieur à une réouverture (v1.109.0) ---------------------------------------------
+// Quand une tâche (terminée, en cours ou en pause) est remise « À faire », ses séances sont vidées :
+// sans précaution, tout le temps déjà passé disparaissait (tâche, coût, temps de production). Il est
+// désormais conservé dans tempsAnterieurH / tempsAnterieurParOp, et la trace de chaque réouverture
+// (dont ses séances) dans reouvertures[]. opElapsedHours reste volontairement SEULEMENT le temps des
+// séances en cours (le moteur de planification ne change pas) : le total se lit via pieceTempsPasseH.
+function tempsAnterieurH(o){ return Number(o && o.tempsAnterieurH) || 0; }
+// Qui a passé le temps antérieur : la répartition figée, sinon l'opérateur assigné (comme partout ailleurs).
+function anterieurParOp(o){
+  const h = tempsAnterieurH(o);
+  if(h <= 1e-6) return null;
+  if(o.tempsAnterieurParOp && Object.keys(o.tempsAnterieurParOp).length) return o.tempsAnterieurParOp;
+  return o.operatorUserId ? { [o.operatorUserId]: h } : null;
+}
+function mergeHoursByOp(a, b){
+  const out = {};
+  [a, b].forEach(x => { if(x) Object.keys(x).forEach(k => { out[k] = (out[k]||0) + (Number(x[k])||0); }); });
+  return Object.keys(out).length ? out : null;
+}
+// Temps total réellement passé : figé à la clôture (il INCLUT déjà le temps antérieur) pour une pièce
+// terminée ; sinon séances en cours + temps antérieur.
+function pieceTempsPasseH(o, st){
+  if(o.statut === 'termine') return o.dureeReelleH || 0;
+  return opElapsedHours(o, st) + tempsAnterieurH(o);
+}
+function hasReouvertureHistory(o){ return (o.reouvertures||[]).length > 0 || tempsAnterieurH(o) > 1e-6; }
 function opElapsedHours(o, st){
   if(!o.sessions || o.sessions.length===0) return 0;
   const cfg = configForPiece(o, st);
@@ -6692,7 +6724,9 @@ function computeSessionsHoursByOperator(o, st){
 // à la clôture (o.dureeReelleH — cas d'une tâche jamais passée par Démarrer/Reprendre, ex. import déjà
 // terminé). Renvoie null si le temps passé n'a jamais été mesuré ni saisi.
 function dureePasseeH(o, st){
-  const elapsedH = opElapsedHours(o, st);
+  // Pièce rouverte puis reclôturée : dureeReelleH (figé) inclut le temps antérieur, pas les séances seules.
+  if(o.statut === 'termine' && tempsAnterieurH(o) > 1e-6 && o.dureeReelleH > 0) return o.dureeReelleH;
+  const elapsedH = opElapsedHours(o, st) + (o.statut === 'termine' ? 0 : tempsAnterieurH(o));
   if(elapsedH > 1e-6) return elapsedH;
   return (o.dureeReelleH!=null && o.dureeReelleH>0) ? o.dureeReelleH : null;
 }
@@ -6707,8 +6741,8 @@ function backfillDureeReelle(st){
       if(o.statut === 'termine' && o.sessions && o.sessions.length > 0 && o.dureeReelleH == null){
         const elapsedH = opElapsedHours(o, st);
         if(elapsedH > 1e-6){
-          o.dureeReelleH = elapsedH;
-          o.dureeReelleParOperateur = computeSessionsHoursByOperator(o, st);
+          o.dureeReelleH = elapsedH + tempsAnterieurH(o);
+          o.dureeReelleParOperateur = mergeHoursByOp(computeSessionsHoursByOperator(o, st), anterieurParOp(o));
           changed = true;
         }
       }
@@ -7167,7 +7201,8 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
     // est enregistré à part (voir dureePasseeH), pour que "prévu" et "passé" restent deux valeurs
     // distinctes même une fois la tâche terminée.
     const elapsedH = opElapsedHours(o, state);
-    if(elapsedH <= 1e-6){
+    const antH = tempsAnterieurH(o); // temps passé avant une réouverture : s'ajoute aux séances de cette reprise
+    if(elapsedH + antH <= 1e-6){
       // jamais démarrée via Démarrer/Reprendre (ex. import déjà terminé, sans session) : on demande
       // la saisie manuelle du temps réellement passé, faute de pouvoir le déduire des sessions.
       const plannedTotal = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH*60 : (o.tempsUnitaire*o.quantite);
@@ -7186,8 +7221,8 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
       // l'opérateur assigné à créditer et lui attribuerait à tort tout le temps réellement passé par
       // quelqu'un d'autre (bug réel corrigé : sur un poste partagé, la personne qui réalise vraiment
       // la tâche voyait son temps décompté sur la personne assignée).
-      o.dureeReelleH = elapsedH;
-      o.dureeReelleParOperateur = computeSessionsHoursByOperator(o, state);
+      o.dureeReelleH = elapsedH + antH;
+      o.dureeReelleParOperateur = mergeHoursByOp(computeSessionsHoursByOperator(o, state), anterieurParOp(o));
       // sessions[] n'est PAS vidé ici (piège corrigé, voir CLAUDE.md « Archivage des sessions
       // déclenché dès la clôture ») : archiveOldSessions() s'en charge, et ne le vide qu'une fois le
       // détail confirmé enregistré côté serveur (session_history) — setOpStatut la déclenche juste
@@ -7221,6 +7256,32 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
       if(diffH > 0.05) return diffH; // au moins quelques minutes d'avance — remonté à l'appelant pour le toast
     }
   } else if(newStatut === 'a_faire'){
+    // Temps déjà passé : conservé (jamais effacé) — voir CLAUDE.md « Réouverture d'une tâche ». Une
+    // tâche déclarée (temps déclaratif, voir declaration) garde son ancien comportement : un temps
+    // déclaré « terminée sans démarrage » ne survit pas à la réouverture.
+    if(prev !== 'a_faire' && !o.declaration){
+      const prevAnt = tempsAnterieurH(o);
+      let totalH, passH, parOp;
+      if(prev === 'termine'){
+        totalH = o.dureeReelleH || 0;                       // inclut déjà un éventuel temps antérieur précédent
+        passH = Math.max(0, totalH - prevAnt);
+        parOp = o.dureeReelleParOperateur ? { ...o.dureeReelleParOperateur } : null;
+      } else {
+        passH = opElapsedHours(o, state);
+        totalH = passH + prevAnt;
+        parOp = mergeHoursByOp(computeSessionsHoursByOperator(o, state), anterieurParOp(o));
+      }
+      if(totalH > 1e-6){
+        o.tempsAnterieurH = totalH;
+        o.tempsAnterieurParOp = parOp;
+        if(!Array.isArray(o.reouvertures)) o.reouvertures = [];
+        o.reouvertures.push({
+          le: nowStr, statut: prev, debut: o.debutReel || null, fin: prev === 'termine' ? (o.finReel || null) : null, h: passH,
+          // séances de la passe qui se termine (une éventuelle séance ouverte est fermée à l'instant de la réouverture)
+          sessions: (o.sessions||[]).map(s => ({ debut: s.debut, fin: s.fin || nowStr, operatorUserId: s.operatorUserId || null }))
+        });
+      }
+    }
     o.statut = 'a_faire';
     o.debutReel = null;
     o.finReel = null;
@@ -9496,7 +9557,8 @@ function computeAllPointages(st){
   const seenFusionGroups = new Set();
   const now = new Date();
   allPieces.forEach(({ c, o }) => {
-    if(o.statut === 'a_faire') return;
+    // Une tâche remise « À faire » après avoir été travaillée reste listée (temps antérieur conservé, v1.109.0).
+    if(o.statut === 'a_faire' && tempsAnterieurH(o) <= 1e-6) return;
     if(o.fusionGroupId){
       if(seenFusionGroups.has(o.fusionGroupId)) return;
       seenFusionGroups.add(o.fusionGroupId);
@@ -9506,7 +9568,7 @@ function computeAllPointages(st){
     // renseigné à la clôture, voir applySingleStatusChange) — rien d'utile à montrer/corriger ici.
     // Exception : une tâche déclarée terminée (oubli de démarrage) reste listée même avec un temps
     // refusé remis à 0 — elle doit pouvoir être retrouvée et ressaisie (voir « Déclarer terminée »).
-    const hasData = isDone ? ((o.dureeReelleH != null && o.dureeReelleH > 0) || !!o.declaration) : ((o.sessions||[]).length > 0);
+    const hasData = isDone ? ((o.dureeReelleH != null && o.dureeReelleH > 0) || !!o.declaration) : ((o.sessions||[]).length > 0 || tempsAnterieurH(o) > 1e-6);
     if(!hasData) return;
     const m = st.machines.find(mm=>mm.id===o.machineId);
     const operatorIds = (o.dureeReelleParOperateur && Object.keys(o.dureeReelleParOperateur).length)
@@ -9531,7 +9593,10 @@ function computeAllPointages(st){
       machineId: o.machineId, machineNom: m ? m.nom : '',
       statut: o.statut, operatorIds,
       debutReel: o.debutReel, finReel: o.finReel,
-      dureePrevueH: dureePrevueH(o), dureeReelleH: isDone ? o.dureeReelleH : opElapsedHours(o, st),
+      dureePrevueH: dureePrevueH(o), dureeReelleH: isDone ? o.dureeReelleH : pieceTempsPasseH(o, st),
+      // Date de tri : dernière activité connue (fin/début réels, sinon la dernière réouverture d'une tâche « À faire »).
+      triDate: o.finReel || o.debutReel || (((o.reouvertures||[]).slice(-1)[0] || {}).le) || '',
+      nbReouvertures: (o.reouvertures||[]).length, tempsAnterieurH: tempsAnterieurH(o),
       // Temps cumulé en pause (voir pieceCumulPauseHours) — `null` si sessions[] déjà archivée,
       // jamais 0 (qui laisserait croire à tort "aucune pause"), voir CLAUDE.md « Pauses de
       // production mises en évidence ».
@@ -9728,6 +9793,7 @@ function pointageStatutBadge(statut){
   if(statut === 'termine') return `<span class="badge done">Terminée</span>`;
   if(statut === 'en_cours') return `<span class="badge green">▶ En cours</span>`;
   if(statut === 'en_pause') return `<span class="badge neutral">⏸ En pause</span>`;
+  if(statut === 'a_faire') return `<span class="badge neutral" title="Tâche rouverte : le temps déjà passé est conservé">↺ Rouverte (À faire)</span>`;
   return `<span class="badge neutral">${escapeHtml(statut)}</span>`;
 }
 function renderPointagesPage(){
@@ -9758,7 +9824,7 @@ function renderPointagesPage(){
   // Le plus récent en premier — fin réelle si connue (tâche terminée), sinon début réel (tâche
   // encore active) : ce qui s'est terminé/a démarré le plus récemment remonte en tête, comme pour
   // la liste "Tâches terminées" du planning.
-  list.sort((a,b) => (b.finReel||b.debutReel||'').localeCompare(a.finReel||a.debutReel||''));
+  list.sort((a,b) => (b.triDate||'').localeCompare(a.triDate||''));
 
   const rows = list.map(r => {
     const pieceLabel = [r.piece, r.etape].filter(Boolean).join(' / ') || '(sans nom)';
@@ -9985,7 +10051,7 @@ function declaredIntervalHours(debutStr, finStr, cfg){
 // Aucun temps enregistré sur la pièce ni sur son lot fusionné (séances absentes ou de 0 min).
 function hasNoRecordedTime(o){
   const members = declareDoneGroup(o) || [{ oo: o }];
-  return members.every(({ oo }) => opElapsedHours(oo, state) <= 1e-6);
+  return members.every(({ oo }) => opElapsedHours(oo, state) + tempsAnterieurH(oo) <= 1e-6);
 }
 function declareDoneGroup(o){
   const group = [];
@@ -12261,7 +12327,7 @@ function pieceCoutEstime(o, st){
 function pieceCoutReel(o, st){
   const taux = machineTauxHoraire(o.machineId, st);
   if(taux <= 0) return null;
-  const h = o.statut === 'termine' ? (o.dureeReelleH || 0) : opElapsedHours(o, st);
+  const h = pieceTempsPasseH(o, st);
   return h * taux;
 }
 // Somme une durée (prévue ou réellement passée) sur une liste de pièces, sans compter plusieurs fois
@@ -12337,6 +12403,52 @@ function archivedPieceHoursInPeriod(o, sessions, cfg, periodStart, periodEnd){
     byOp[op] = (target != null && full[op] > 1e-9) ? target * inP[op] / full[op] : inP[op];
   });
   return { byOp, first, last };
+}
+// Séances d'une pièce rouverte AVANT sa réouverture : celles archivées côté serveur (si chargées) et
+// celles conservées dans reouvertures[].sessions, dédoublonnées par début|fin|opérateur.
+function sessionKey(e){ return (e.debut||'') + '|' + (e.fin||'') + '|' + String(e.operatorUserId||''); }
+function priorSessionsOf(o, archived){
+  const seen = new Set(), out = [];
+  const add = (e) => { if(!e || !e.debut) return; const k = sessionKey(e); if(seen.has(k)) return; seen.add(k); out.push(e); };
+  (o.reouvertures||[]).forEach(r => (r.sessions||[]).forEach(add));
+  (archived||[]).forEach(add);
+  return out;
+}
+// Part du temps antérieur à une réouverture qui tombe dans [periodStart, periodEnd[ — répartie jour par
+// jour au prorata des séances d'avant (archivées/conservées) quand on les a, sinon en bloc à la date de la
+// dernière passe (comme une tâche close dont le détail est perdu). Même forme que archivedPieceHoursInPeriod.
+function anterieurHoursInPeriod(o, cfg, periodStart, periodEnd){
+  const antH = tempsAnterieurH(o), par = anterieurParOp(o);
+  if(antH <= 1e-6 || !par) return { byOp:{}, first:{}, last:{} };
+  const prior = priorSessionsOf(o, archivedSessionsFor(o, periodStart, periodEnd));
+  if(prior.length){
+    return archivedPieceHoursInPeriod({ ...o, dureeReelleH: antH, dureeReelleParOperateur: par }, prior, cfg, periodStart, periodEnd);
+  }
+  const lastR = (o.reouvertures||[]).slice(-1)[0] || {};
+  const refStr = lastR.fin || lastR.debut || lastR.le;
+  const out = { byOp:{}, first:{}, last:{} };
+  if(!refStr) return out;
+  const refDate = new Date(refStr);
+  if(refDate >= periodStart && refDate < periodEnd){
+    Object.keys(par).forEach(op => { out.byOp[String(op)] = Number(par[op])||0; out.first[String(op)] = refDate; out.last[String(op)] = refDate; });
+  }
+  return out;
+}
+// Heures (comptées) et opérateurs des séances archivées qu'une tâche rouverte n'a plus (v1.109.0) —
+// sert à « Reprendre comme temps antérieur » pour une réouverture faite avant cette version.
+function computeRecoverableFromHistory(o, entries){
+  const cfg = configForPiece(o, state), wins = exceptionWindowsFor(o);
+  const byOp = {}; let totalH = 0;
+  entries.forEach(e => {
+    if(!e.fin) return;
+    const a = new Date(e.debut), b = new Date(e.fin);
+    if(!(b > a)) return;
+    const h = countedHoursBetween(a, b, cfg, wins);
+    const op = String(e.operatorUserId || o.operatorUserId || '');
+    totalH += h;
+    if(op) byOp[op] = (byOp[op]||0) + h;
+  });
+  return { totalH, byOp: Object.keys(byOp).length ? byOp : null };
 }
 function archivedSessionsFor(o, periodStart, periodEnd){
   if(archivedSessionsCache.status !== 'ok' || archivedSessionsCache.key !== archivedSessionsKey(periodStart, periodEnd)) return null;
@@ -12427,6 +12539,16 @@ function computeProductionTimeByUser(st, periodStart, periodEnd){
         }
       }
     }
+    // Temps passé avant une réouverture (v1.109.0) : seulement quand le total n'est pas déjà porté par
+    // dureeReelleH (pièce terminée sans séance locale) — sinon il y est déjà inclus.
+    if(tempsAnterieurH(o) > 1e-6 && (o.statut !== 'termine' || (o.sessions && o.sessions.length))){
+      const ra = anterieurHoursInPeriod(o, cfg, periodStart, periodEnd);
+      Object.keys(ra.byOp).forEach(op => {
+        hByOperator[op] = (hByOperator[op]||0) + ra.byOp[op];
+        if(ra.last[op] && (!dateByOperator[op] || ra.last[op] > dateByOperator[op])) dateByOperator[op] = ra.last[op];
+        if(ra.first[op] && (!firstDateByOperator[op] || ra.first[op] < firstDateByOperator[op])) firstDateByOperator[op] = ra.first[op];
+      });
+    }
     Object.keys(hByOperator).forEach(opUid => {
       const h = hByOperator[opUid];
       if(h > 1e-6){
@@ -12475,6 +12597,10 @@ function computeProductionTimeByMachine(st, periodStart, periodEnd){
         const refDate = new Date(refStr);
         if(refDate >= periodStart && refDate < periodEnd) h = o.dureeReelleH;
       }
+    }
+    if(tempsAnterieurH(o) > 1e-6 && (o.statut !== 'termine' || (o.sessions && o.sessions.length))){
+      const ra = anterieurHoursInPeriod(o, cfg, periodStart, periodEnd);
+      h += Object.keys(ra.byOp).reduce((t, op) => t + ra.byOp[op], 0);
     }
     if(h > 1e-6) byMachine[o.machineId] = (byMachine[o.machineId]||0) + h;
   };
@@ -12752,7 +12878,9 @@ function showTempsProdSessions(cid, oid){
   const o = c ? c.pieces.find(oo=>oo.id===oid) : null;
   const key = cid+'|'+oid;
   // Pas la peine d'interroger le serveur si les sessions sont encore là localement, ou si on les a déjà.
-  if(o && (!o.sessions || !o.sessions.length) && tempsProdHistoryCache[key] === undefined){
+  // Archive serveur : nécessaire quand les séances ne sont plus là, mais aussi pour une pièce rouverte ou
+  // pas encore terminée (ses séances d'AVANT la réouverture ne sont plus dans l'état — v1.109.0).
+  if(o && (!o.sessions || !o.sessions.length || o.statut !== 'termine' || hasReouvertureHistory(o)) && tempsProdHistoryCache[key] === undefined){
     loadTempsProdHistory(cid, oid);
   }
   // Idem pour le prévu/réalisé : uniquement pertinent pour une pièce Terminée, et seulement si sa
@@ -12763,6 +12891,37 @@ function showTempsProdSessions(cid, oid){
   }
 }
 function closeTempsProdSessions(){ tempsProdSessionModal = null; render(); }
+// « Reprendre comme temps antérieur » (v1.109.0, superviseur) : pour une tâche rouverte AVANT que le temps
+// antérieur ne soit conservé — ses séances archivées (serveur) sont encore là, mais plus comptées. Le temps
+// est recalculé avec les mêmes règles qu'à la clôture (heures d'ouverture + exceptions déclarées) ; appliqué
+// aussi aux autres membres d'un lot fusionné (mêmes séances), chacun avec sa propre copie. Un seul commit().
+function recoverTempsAnterieur(cid, oid){
+  if(!canSupervise()) return;
+  const c = state.commandes.find(cc => cc.id === cid);
+  const o = c && c.pieces.find(oo => oo.id === oid);
+  const history = tempsProdHistoryCache[cid+'|'+oid];
+  if(!o || !Array.isArray(history) || o.statut === 'termine' || tempsAnterieurH(o) > 1e-6) return;
+  const localKeys = new Set((o.sessions||[]).map(sessionKey));
+  const entries = history.filter(e => e.fin && !localKeys.has(sessionKey(e)));
+  if(!entries.length) return;
+  const rec = computeRecoverableFromHistory(o, entries);
+  if(rec.totalH <= 1e-6){ alert('Aucun temps à reprendre : les séances archivées sont de durée nulle.'); return; }
+  if(!confirm(`Reprendre ${durationLabel(rec.totalH)} (${entries.length} séance${entries.length>1?'s':''} archivée${entries.length>1?'s':''}) comme temps déjà passé sur cette tâche ?\n\nIl sera compté dans le temps de la tâche, son coût et le temps de production, et s'ajoutera aux prochaines séances.`)) return;
+  const sorted = entries.slice().sort((a,b) => a.debut.localeCompare(b.debut));
+  const targets = [o];
+  if(o.fusionGroupId) state.commandes.forEach(cc => cc.pieces.forEach(oo => { if(oo.id !== o.id && oo.fusionGroupId === o.fusionGroupId && oo.statut !== 'termine' && tempsAnterieurH(oo) <= 1e-6) targets.push(oo); }));
+  targets.forEach(t => {
+    t.tempsAnterieurH = rec.totalH;
+    t.tempsAnterieurParOp = rec.byOp ? { ...rec.byOp } : null;
+    if(!Array.isArray(t.reouvertures)) t.reouvertures = [];
+    t.reouvertures.push({
+      le: null, statut: 'termine', debut: sorted[0].debut, fin: sorted[sorted.length-1].fin, h: rec.totalH, recupere: true,
+      sessions: sorted.map(e => ({ debut: e.debut, fin: e.fin, operatorUserId: e.operatorUserId || null }))
+    });
+  });
+  commit();
+  showToast(`${durationLabel(rec.totalH)} reprises comme temps antérieur.`);
+}
 async function loadTempsProdHistory(cid, oid){
   const key = cid+'|'+oid;
   tempsProdHistoryCache[key] = null; // en cours de chargement
@@ -12804,8 +12963,13 @@ function previsionForCurrentClosure(o, cid, oid){
 // suivante. fallbackOperatorUserId (l'opérateur assigné) est utilisé pour les sessions qui n'ont
 // pas encore ce champ (antérieures au suivi par session) ou sans identité active connue au moment
 // du clic — voir computeProductionTimeByUser, même repli.
-function renderSessionRowsHtml(sessions, fmtJour, fmtHeure, fallbackOperatorUserId){
+function renderSessionRowsHtml(sessions, fmtJour, fmtHeure, fallbackOperatorUserId, markers){
   let rows = '';
+  // Marqueurs « ↺ Rouvert le … » : posés entre deux séances à la place du trou de pause (une réouverture
+  // n'est pas une pause), ou en fin de liste si aucune séance ne suit encore.
+  const mk = (markers || []).slice().sort((a,b) => a.ts.localeCompare(b.ts));
+  const usedMk = new Set();
+  const markerRow = (m) => `<tr class="temps-prod-pause-row" style="background:rgba(200,140,40,0.12);"><td colspan="5" style="font-weight:600;">${m.label}</td></tr>`;
   sessions.forEach((s, i) => {
     const debut = new Date(s.debut);
     const fin = s.fin ? new Date(s.fin) : null;
@@ -12820,6 +12984,12 @@ function renderSessionRowsHtml(sessions, fmtJour, fmtHeure, fallbackOperatorUser
       <td>${op ? escapeHtml(op.username) : '—'}</td>
     </tr>`;
     const next = sessions[i+1];
+    const between = mk.filter((m, mi) => !usedMk.has(mi) && m.ts > s.debut && (!next || m.ts <= next.debut));
+    if(between.length){
+      mk.forEach((m, mi) => { if(between.includes(m)) usedMk.add(mi); });
+      between.forEach(m => { rows += markerRow(m); });
+      return; // pas de trou de pause affiché à travers une réouverture
+    }
     if(fin && next){
       const nextDebut = new Date(next.debut);
       const gapH = (nextDebut.getTime() - fin.getTime()) / 3600000;
@@ -12829,6 +12999,7 @@ function renderSessionRowsHtml(sessions, fmtJour, fmtHeure, fallbackOperatorUser
       }
     }
   });
+  mk.forEach((m, mi) => { if(!usedMk.has(mi) && (!sessions.length || m.ts > sessions[sessions.length-1].debut)) rows += markerRow(m); });
   return rows;
 }
 // Chronologie des pointages d'une tâche (v1.108.0) : traduit les séances en événements lisibles —
@@ -12842,10 +13013,24 @@ function buildPointageEvents(o, sessions){
   const events = [];
   const list = (sessions || []).filter(s => s && s.debut).slice().sort((a,b) => a.debut.localeCompare(b.debut));
   const closed = o.statut === 'termine';
+  const reos = o.reouvertures || [];
+  // v1.109.0 : réouvertures — la fin de la passe qui a précédé est un « Terminé », puis « Rouvert ».
+  const closeEnds = new Set();
+  reos.forEach(r => {
+    if(r.statut === 'termine' && r.fin){
+      const cand = list.filter(s => s.fin && s.fin <= r.fin).map(s => s.fin).sort();
+      if(cand.length) closeEnds.add(cand[cand.length-1]);
+    }
+  });
   if(!list.length){
+    reos.forEach(r => {
+      if(r.debut) events.push({ ts:r.debut, type:'debut', uid:null, approx:true });
+      if(r.statut === 'termine' && r.fin) events.push({ ts:r.fin, type:'termine', uid:null, approx:true });
+      if(r.le) events.push({ ts:r.le, type:'rouvert', uid:null });
+    });
     if(o.debutReel) events.push({ ts:o.debutReel, type:'debut', uid:o.operatorUserId||null, approx:true });
     if(closed && o.finReel) events.push({ ts:o.finReel, type:'termine', uid:null, approx:true });
-    return events;
+    return events.sort((a,b) => a.ts.localeCompare(b.ts));
   }
   const lastFin = list.reduce((m,s) => s.fin && s.fin > m ? s.fin : m, '');
   const anyOpen = list.some(s => !s.fin);
@@ -12854,7 +13039,9 @@ function buildPointageEvents(o, sessions){
     // Début de séance : première = Début ; chevauche une autre séance = Rejoint ; sinon Reprise.
     const prevActive = list.slice(0, i).some(t => !t.fin || t.fin > s.debut);
     events.push({ ts:s.debut, type: i === 0 ? 'debut' : (prevActive ? 'rejoint' : 'reprise'), uid:uidS });
-    if(s.fin){
+    if(s.fin && closeEnds.has(s.fin)){
+      events.push({ ts:s.fin, type:'termine', uid:uidS });
+    } else if(s.fin){
       // Fin de séance : d'autres séances encore ouvertes à cet instant = Quitte ; dernière fin
       // d'une tâche terminée = Terminé ; sinon Pause.
       const othersActive = list.some((t, j) => j !== i && t.debut <= s.fin && (!t.fin || t.fin > s.fin));
@@ -12862,7 +13049,8 @@ function buildPointageEvents(o, sessions){
       events.push({ ts:s.fin, type: othersActive ? 'quitte' : (isLast && closed ? 'termine' : 'pause'), uid:uidS });
     }
   });
-  const order = { debut:0, reprise:1, rejoint:1, quitte:2, pause:2, termine:3 };
+  reos.forEach(r => { if(r.le) events.push({ ts:r.le, type:'rouvert', uid:null }); });
+  const order = { debut:0, reprise:1, rejoint:1, quitte:2, pause:2, termine:3, rouvert:4 };
   events.sort((a,b) => a.ts.localeCompare(b.ts) || order[a.type] - order[b.type]);
   return events;
 }
@@ -12872,7 +13060,8 @@ const POINTAGE_EVENT_LABELS = {
   reprise: { icon:'▶', label:'Reprise', color:'var(--accent)' },
   rejoint: { icon:'➕', label:'Rejoint', color:'var(--accent)' },
   quitte:  { icon:'⏹', label:'Quitte',  color:'var(--text-dim)' },
-  termine: { icon:'✔', label:'Terminé', color:'var(--green)' }
+  termine: { icon:'✔', label:'Terminé', color:'var(--green)' },
+  rouvert: { icon:'↺', label:'Rouvert (remis À faire)', color:'var(--amber)' }
 };
 function renderPointageEventsHtml(o, sessions, fmtJourCourt, fmtHeure){
   const events = buildPointageEvents(o, sessions);
@@ -12910,41 +13099,65 @@ function renderTempsProdSessionModal(){
   const fmtJour = (d) => d.toLocaleDateString('fr-FR', { weekday:'long', day:'2-digit', month:'long' });
   const fmtJourCourt = (d) => d.toLocaleDateString('fr-FR', { weekday:'short', day:'2-digit', month:'short' });
   const fmtHeure = (d) => d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' });
+  // Toutes les séances connues (v1.109.0) : archive serveur + passes d'AVANT une réouverture (conservées
+  // dans reouvertures[]) + séances actuelles, dédoublonnées — une tâche rouverte garde ainsi tout son historique.
+  const history = tempsProdHistoryCache[cid+'|'+oid];
+  const histArr = Array.isArray(history) ? history : [];
+  const localSessions = o.sessions || [];
+  const merged = [];
+  { const seen = new Set();
+    [].concat(histArr, (o.reouvertures||[]).reduce((acc, r) => acc.concat(r.sessions||[]), []), localSessions).forEach(e => {
+      if(!e || !e.debut) return; const k = sessionKey(e); if(seen.has(k)) return; seen.add(k); merged.push(e);
+    });
+    merged.sort((a,b) => a.debut.localeCompare(b.debut)); }
+  const markers = (o.reouvertures||[]).map(r => {
+    const ts = r.le || r.fin || r.debut; if(!ts) return null;
+    const dd = r.le ? new Date(r.le) : null;
+    const label = (dd ? `↺ Rouvert le ${fmtJour(dd)} à ${fmtHeure(dd)}` : '↺ Tâche rouverte (date non enregistrée)') + (r.h > 1e-6 ? ` — ${formatHeures(r.h)} déjà passées conservées` : '');
+    return { ts, label };
+  }).filter(Boolean);
   let rows = '';
-  let historyUsed = false;
-  if(o.sessions && o.sessions.length){
-    rows = renderSessionRowsHtml(o.sessions, fmtJour, fmtHeure, o.operatorUserId);
-  } else {
-    const history = tempsProdHistoryCache[cid+'|'+oid];
-    if(Array.isArray(history) && history.length){
-      rows = renderSessionRowsHtml(history, fmtJour, fmtHeure, o.operatorUserId);
-      historyUsed = true;
-    } else if(history === null){
-      rows = `<tr><td colspan="5" style="text-align:center; color:var(--text-faint);">Chargement de l'historique…</td></tr>`;
-    } else if(o.debutReel || o.finReel){
-      // Ni sessions[] locales, ni historique archivé (tâche terminée avant l'introduction de
-      // session_history) : il ne reste qu'un début et une fin globaux, qui peuvent tomber des
-      // jours différents (nuits, week-end, jours de pause entre deux reprises) — un seul jour
-      // affiché ferait croire à tort que tout s'est joué le jour du début (bug déjà rapporté : une
-      // tâche commencée un vendredi et terminée le lundi suivant affichait juste "vendredi").
-      // On ne connaît qu'un seul opérateur ici (celui assigné) : impossible de savoir si quelqu'un
-      // d'autre a réellement fait le travail sans le détail par session, perdu à l'archivage.
-      const dDebut = o.debutReel ? new Date(o.debutReel) : null;
-      const dFin = o.finReel ? new Date(o.finReel) : null;
-      const sameDay = dDebut && dFin && dDebut.toDateString() === dFin.toDateString();
-      const jourCell = (dDebut && dFin && !sameDay) ? `${fmtJourCourt(dDebut)} → ${fmtJourCourt(dFin)}` : fmtJour(dDebut || dFin);
-      rows = `<tr>
-        <td>${jourCell}</td>
-        <td>${dDebut ? fmtHeure(dDebut) : '—'}</td>
-        <td>${dFin ? fmtHeure(dFin) : '—'}</td>
-        <td>${o.dureeReelleH!=null ? formatHeures(o.dureeReelleH) : '—'}</td>
-        <td>${operateur ? escapeHtml(operateur.username) : '—'}</td>
-      </tr>`;
-    }
+  if(merged.length || markers.length){
+    rows = renderSessionRowsHtml(merged, fmtJour, fmtHeure, o.operatorUserId, markers);
+  } else if(history === null){
+    rows = `<tr><td colspan="5" style="text-align:center; color:var(--text-faint);">Chargement de l'historique…</td></tr>`;
+  } else if(o.debutReel || o.finReel){
+    // Ni sessions[] locales, ni historique archivé (tâche terminée avant l'introduction de
+    // session_history) : il ne reste qu'un début et une fin globaux, qui peuvent tomber des
+    // jours différents (nuits, week-end, jours de pause entre deux reprises) — un seul jour
+    // affiché ferait croire à tort que tout s'est joué le jour du début (bug déjà rapporté : une
+    // tâche commencée un vendredi et terminée le lundi suivant affichait juste "vendredi").
+    // On ne connaît qu'un seul opérateur ici (celui assigné) : impossible de savoir si quelqu'un
+    // d'autre a réellement fait le travail sans le détail par session, perdu à l'archivage.
+    const dDebut = o.debutReel ? new Date(o.debutReel) : null;
+    const dFin = o.finReel ? new Date(o.finReel) : null;
+    const sameDay = dDebut && dFin && dDebut.toDateString() === dFin.toDateString();
+    const jourCell = (dDebut && dFin && !sameDay) ? `${fmtJourCourt(dDebut)} → ${fmtJourCourt(dFin)}` : fmtJour(dDebut || dFin);
+    rows = `<tr>
+      <td>${jourCell}</td>
+      <td>${dDebut ? fmtHeure(dDebut) : '—'}</td>
+      <td>${dFin ? fmtHeure(dFin) : '—'}</td>
+      <td>${o.dureeReelleH!=null ? formatHeures(o.dureeReelleH) : '—'}</td>
+      <td>${operateur ? escapeHtml(operateur.username) : '—'}</td>
+    </tr>`;
   }
-  const purgedNote = (!o.sessions || !o.sessions.length) && !historyUsed
+  const purgedNote = (!merged.length && history !== null && (o.debutReel || o.finReel))
     ? `<div class="footer-note" style="text-align:left; margin-top:10px;">Détail des reprises/pauses non disponible pour cette tâche (terminée avant la mise en place de l'historique) : seul le bilan global a été conservé. Le début et la fin peuvent être à plusieurs jours d'écart (nuits, week-end, pauses) — seule la durée indiquée correspond au temps de travail réellement compté.</div>`
     : '';
+  const loadingNote = (history === null && merged.length)
+    ? `<div class="footer-note" style="text-align:left; margin-top:6px;">Chargement des séances archivées…</div>` : '';
+  // Séances archivées d'une tâche rouverte AVANT la v1.109.0 (temps antérieur jamais conservé) : proposées
+  // à la reprise manuelle, par un superviseur seulement.
+  const localKeys = new Set(localSessions.map(sessionKey));
+  const recoverable = (o.statut !== 'termine' && tempsAnterieurH(o) <= 1e-6 && canSupervise())
+    ? histArr.filter(e => e.fin && !localKeys.has(sessionKey(e))) : [];
+  const recoverBlock = recoverable.length ? (() => {
+    const rec = computeRecoverableFromHistory(o, recoverable);
+    return `<div class="footer-note" style="text-align:left; margin-top:10px; padding:8px 10px; border:1px solid var(--amber); border-radius:6px;">
+      ↺ <strong>${recoverable.length} séance${recoverable.length>1?'s':''} archivée${recoverable.length>1?'s':''} (${formatHeures(rec.totalH)})</strong> d'avant la réouverture ne comptent plus dans cette tâche (temps, coût, temps de production).
+      <div style="margin-top:6px;"><button class="small" data-action="recover-temps-anterieur" data-cid="${cid}" data-oid="${oid}">↺ Reprendre ces ${formatHeures(rec.totalH)} comme temps antérieur</button></div>
+    </div>`;
+  })() : '';
   // Prévu (dernière estimation du moteur avant clôture) vs réalisé — voir CLAUDE.md,
   // prevision_history. Uniquement pertinent pour une pièce Terminée ; une tâche encore en cours
   // n'a par définition pas encore de "réalisé" à comparer.
@@ -12980,17 +13193,18 @@ function renderTempsProdSessionModal(){
   // Pièce terminée : temps figé à la clôture (dureeReelleH / dureeReelleParOperateur) ; sinon temps
   // écoulé calculé en direct sur sessions[]. Lot fusionné : temps du lot entier (voir CLAUDE.md).
   const isDoneP = o.statut === 'termine';
-  const passeH = isDoneP ? (o.dureeReelleH || 0) : opElapsedHours(o, state);
+  const passeH = pieceTempsPasseH(o, state);
   const prevuH = dureePrevueH(o);
-  let parOp = isDoneP ? (o.dureeReelleParOperateur || null) : (o.sessions && o.sessions.length ? computeSessionsHoursByOperator(o, state) : null);
+  const antH = tempsAnterieurH(o);
+  let parOp = isDoneP ? (o.dureeReelleParOperateur || null)
+    : mergeHoursByOp(o.sessions && o.sessions.length ? computeSessionsHoursByOperator(o, state) : null, anterieurParOp(o));
   const parOpHtml = (parOp && Object.keys(parOp).length > 1)
     ? ' — ' + Object.keys(parOp).map(id => { const u = usersList.find(uu=>String(uu.id)===String(id)); return `${escapeHtml(u ? u.username : id)} ${formatHeures(parOp[id])}`; }).join(', ')
     : '';
   const lotNote = o.fusionGroupId ? ' <span style="opacity:.7;">(lot fusionné : temps du lot entier)</span>' : '';
-  const summaryHtml = `<div class="footer-note" style="text-align:left; margin-bottom:10px;"><strong>Temps compté : ${formatHeures(passeH)}</strong> sur ${formatHeures(prevuH)} prévus${parOpHtml}${lotNote}. <span style="opacity:.7;">Les durées du tableau sont des durées d'horloge ; le temps compté ne retient que les heures d'ouverture du poste (et les exceptions déclarées).</span></div>`;
-  const eventSessions = (o.sessions && o.sessions.length) ? o.sessions
-    : (Array.isArray(tempsProdHistoryCache[cid+'|'+oid]) ? tempsProdHistoryCache[cid+'|'+oid] : []);
-  const eventsBlock = tempsProdHistoryCache[cid+'|'+oid] === null ? '' : renderPointageEventsHtml(o, eventSessions, fmtJourCourt, fmtHeure);
+  const antNote = antH > 1e-6 ? ` <span style="opacity:.85;">(dont ${formatHeures(antH)} passées avant réouverture)</span>` : '';
+  const summaryHtml = `<div class="footer-note" style="text-align:left; margin-bottom:10px;"><strong>Temps compté : ${formatHeures(passeH)}</strong> sur ${formatHeures(prevuH)} prévus${antNote}${parOpHtml}${lotNote}. <span style="opacity:.7;">Les durées du tableau sont des durées d'horloge ; le temps compté ne retient que les heures d'ouverture du poste (et les exceptions déclarées).</span></div>`;
+  const eventsBlock = history === null ? '' : renderPointageEventsHtml(o, merged, fmtJourCourt, fmtHeure);
   return `<div class="modal-overlay">
     <div class="modal-box" role="dialog" aria-modal="true">
       <div class="modal-head">
@@ -13005,6 +13219,8 @@ function renderTempsProdSessionModal(){
           <thead><tr><th>Jour</th><th>Début</th><th>Fin</th><th>Durée</th><th>Opérateur</th></tr></thead>
           <tbody>${rows || `<tr><td colspan="5" style="text-align:center; color:var(--text-faint);">Aucun horaire enregistré</td></tr>`}</tbody>
         </table>
+        ${loadingNote}
+        ${recoverBlock}
         ${eventsBlock}
         ${purgedNote}
         ${previsionBlock}
@@ -14441,7 +14657,7 @@ function renderContextMenu(){
   }
   if(o.statut==='termine') items.push({action:'ctx-reopen', label:'↺ Rouvrir (À faire)'});
   // Une tâche jamais démarrée n'a encore aucun temps passé à détailler.
-  if(o.statut!=='a_faire') items.push({action:'ctx-time-detail', label:'⏱ Détail des temps passés'});
+  items.push({action:'ctx-time-detail', label: o.statut==='a_faire' ? '⏱ Historique des temps passés (avant réouverture)' : '⏱ Détail des temps passés'});
   items.push({action:'ctx-parcours', label:'🧭 Parcours de la commande'});
   const label = [c.nom, o.piece, o.etape].filter(Boolean).join(' · ');
   const left = Math.min(contextMenu.x, window.innerWidth - 220);
@@ -16313,7 +16529,7 @@ function renderOpsRow(o, c){
   const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (o.tempsUnitaire*o.quantite)/60;
   const overridden = isPositionPinned(o);
   const elapsedNote = running
-    ? `<div class="elapsed-note">${durationLabel(opElapsedHours(o, state))} écoulé${o.statut==='en_pause'?(o.autoPaused?' (pause déjeuner)':' (en pause)'):''}</div>${workHoursExceptionBadgeHtml(o)}${lunchExceptionBadgeHtml(o)}${posteLibereBadgeHtml(o)}`
+    ? `<div class="elapsed-note">${durationLabel(pieceTempsPasseH(o, state))} écoulé${tempsAnterieurH(o)>1e-6?` <span title="Dont ${durationLabel(tempsAnterieurH(o))} passées avant une réouverture">(↺ dont ${durationLabel(tempsAnterieurH(o))} avant réouverture)</span>`:''}${o.statut==='en_pause'?(o.autoPaused?' (pause déjeuner)':' (en pause)'):''}</div>${workHoursExceptionBadgeHtml(o)}${lunchExceptionBadgeHtml(o)}${posteLibereBadgeHtml(o)}`
     : (done && dureePasseeH(o, state)
         ? `<div class="elapsed-note">${durationLabel(dureePasseeH(o, state))} réellement passé</div>${declarationBadgeHtml(o)}`
         : (done ? declarationBadgeHtml(o) : ''));
@@ -19391,6 +19607,7 @@ function dispatchClickAction(action, el){
     case 'temps-prod-toggle': tempsProdExpanded[el.dataset.userId] = !tempsProdExpanded[el.dataset.userId]; render(); break;
     case 'show-temps-prod-sessions': showTempsProdSessions(el.dataset.cid, el.dataset.oid); break;
     case 'close-temps-prod-sessions': closeTempsProdSessions(); break;
+    case 'recover-temps-anterieur': recoverTempsAnterieur(el.dataset.cid, el.dataset.oid); break;
     case 'submit-leave-request': {
       const typeEl = document.getElementById('leavereq-type');
       const debutEl = document.getElementById('leavereq-debut');
