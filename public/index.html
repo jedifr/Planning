@@ -1775,7 +1775,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.102.0';
+const APP_VERSION = '1.103.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -7244,6 +7244,10 @@ function setOpStatut(cid, oid, newStatut){
   // À faire → Terminée (clic droit, sélecteur du tableau) : tâche jamais démarrée — déclaration du
   // temps avec dates, personne et validation plutôt que l'ancien prompt() « minutes ».
   if(newStatut === 'termine' && prev === 'a_faire'){ openDeclareDone(cid, oid); return; }
+  // En cours / en pause SANS aucun temps enregistré (séances de 0 min : démarrée puis aussitôt arrêtée) :
+  // même pop-up de temps déclaré, au lieu de l'ancien prompt() prérempli avec le temps PRÉVU — un simple
+  // « OK » y inscrivait le prévu comme « réellement passé » (cas réel C026-0727 : 7 h). Voir CLAUDE.md.
+  if(newStatut === 'termine' && (prev === 'en_cours' || prev === 'en_pause') && hasNoRecordedTime(o)){ openDeclareDone(cid, oid); return; }
 
   // Une pièce fusionnée (découpée en même temps que d'autres, parfois d'autres commandes) change de
   // statut EN MÊME TEMPS que tout son groupe — physiquement, c'est une seule et même opération.
@@ -9830,7 +9834,7 @@ function declarationBadgeHtml(o){
   if(!o || !o.declaration) return '';
   const d = o.declaration;
   const par = (usersList.find(u => String(u.id) === String(d.parUserId)) || {}).username || '';
-  const tip = `Temps déclaré${par ? ` par ${par}` : ''} le ${d.le ? formatDT(new Date(d.le)) : '—'} (tâche jamais démarrée via Démarrer)${d.commentaire ? ` — « ${d.commentaire} »` : ''}`;
+  const tip = `Temps déclaré${par ? ` par ${par}` : ''} le ${d.le ? formatDT(new Date(d.le)) : '—'} (${d.demarree ? 'tâche clôturée sans temps enregistré' : 'tâche jamais démarrée via Démarrer'})${d.commentaire ? ` — « ${d.commentaire} »` : ''}`;
   if(d.statut === 'a_valider') return `<span class="decl-badge pending" title="${escapeHtml(tip)}">⏳ Temps déclaré à valider</span>`;
   if(d.statut === 'refusee') return `<span class="decl-badge refused" title="${escapeHtml(tip + ' — refusé : à ressaisir via ✎ Corriger (Pointages)')}">✗ Temps déclaré refusé — à ressaisir</span>`;
   return `<span class="decl-badge ok" title="${escapeHtml(tip)}">📝 déclaratif</span>`;
@@ -9855,6 +9859,11 @@ function declaredIntervalHours(debutStr, finStr, cfg){
   const w = workingHoursBetween(a, b, cfg);
   return w > 1e-6 ? w : (b - a) / 3600000;
 }
+// Aucun temps enregistré sur la pièce ni sur son lot fusionné (séances absentes ou de 0 min).
+function hasNoRecordedTime(o){
+  const members = declareDoneGroup(o) || [{ oo: o }];
+  return members.every(({ oo }) => opElapsedHours(oo, state) <= 1e-6);
+}
 function declareDoneGroup(o){
   const group = [];
   if(o.fusionGroupId) state.commandes.forEach(cc => cc.pieces.forEach(oo => { if(oo.fusionGroupId === o.fusionGroupId) group.push({ cc, oo }); }));
@@ -9862,11 +9871,15 @@ function declareDoneGroup(o){
 }
 function openDeclareDone(cid, oid){
   const c = state.commandes.find(cc => cc.id === cid); if(!c) return;
-  const o = c.pieces.find(oo => oo.id === oid); if(!o || o.statut !== 'a_faire') return;
+  const o = c.pieces.find(oo => oo.id === oid); if(!o) return;
+  const demarree = o.statut === 'en_cours' || o.statut === 'en_pause';
+  if(o.statut !== 'a_faire' && !(demarree && hasNoRecordedTime(o))) return;
   const cfg = configForPiece(o, state);
   const plannedH = dureePrevueH(o) || 0;
   const now = new Date(); now.setSeconds(0, 0);
-  const debut = declareStartBefore(now, plannedH, cfg);
+  // Tâche démarrée : le vrai début est connu (debutReel) ; le temps passé, lui, n'est PAS prérempli.
+  const debutReel = demarree && o.debutReel && new Date(o.debutReel) < now ? new Date(o.debutReel) : null;
+  const debut = debutReel || declareStartBefore(now, plannedH, cfg);
   // Sous-traitance : le travail est fait ailleurs — la ligne sert au planning (dépendances), pas au
   // temps de production. Aucune personne ni aucun temps imposés : 0 min par défaut, rien de compté.
   const sousTraitance = !!o.sousTraitance;
@@ -9874,8 +9887,8 @@ function openDeclareDone(cid, oid){
     cid, oid, sousTraitance,
     operatorUserId: sousTraitance ? '' : String(activeIdentityId() || o.operatorUserId || ''),
     debut: toInputValue(debut), fin: toInputValue(now),
-    dureeMin: sousTraitance ? '0' : String(Math.round(plannedH * 60)),
-    commentaire: '', debutAjuste: false
+    dureeMin: sousTraitance ? '0' : (demarree ? '' : String(Math.round(plannedH * 60))),
+    commentaire: '', debutAjuste: false, demarree
   };
   render();
 }
@@ -9906,7 +9919,8 @@ function submitDeclareDone(){
   const c = state.commandes.find(cc => cc.id === d.cid);
   const o = c && c.pieces.find(oo => oo.id === d.oid);
   if(!o){ declareDoneDraft = null; render(); return; }
-  if(o.statut !== 'a_faire'){ alert("Cette tâche n'est plus « À faire » — quelqu'un vient de la démarrer ou de la clôturer."); declareDoneDraft = null; render(); return; }
+  if(o.statut === 'termine'){ alert("Cette tâche vient d'être clôturée par quelqu'un d'autre."); declareDoneDraft = null; render(); return; }
+  if(d.demarree ? !hasNoRecordedTime(o) : o.statut !== 'a_faire'){ alert(d.demarree ? "Du temps vient d'être enregistré sur cette tâche : fermez cette fenêtre et terminez-la normalement." : "Cette tâche n'est plus « À faire » — quelqu'un vient de la démarrer ou de la clôturer."); declareDoneDraft = null; render(); return; }
   const dureeMin = Number(String(d.dureeMin || '0').replace(',', '.'));
   const sansTemps = !!d.sousTraitance && (!isNaN(dureeMin) && dureeMin === 0);
   if(!d.operatorUserId && !sansTemps){ alert(d.sousTraitance ? 'Un temps salarié est saisi : merci de choisir la personne qui l’a passé (ou remettez 0 min).' : 'Merci de choisir la personne qui a réalisé la tâche.'); return; }
@@ -9941,6 +9955,7 @@ function submitDeclareDone(){
     oo.manualStart = null;
     oo.sessions = [];
     oo.autoPaused = false; oo.autoPausedOutOfHours = false; oo.posteLibere = false;
+    oo.autoPausedUntil = null; oo.autoPausedOperators = null;
     if(sansTemps){
       // Sous-traitance revenue, aucun temps salarié : rien à compter ni à valider.
       oo.dureeReelleH = 0; oo.dureeReelleParOperateur = null; oo.declaration = null;
@@ -9949,7 +9964,7 @@ function submitDeclareDone(){
     oo.dureeReelleH = dureeH; // lot fusionné : même valeur sur chaque membre, dédupliquée par fusionGroupId partout
     oo.dureeReelleParOperateur = { [d.operatorUserId]: dureeH };
     if(!oo.operatorUserId) oo.operatorUserId = d.operatorUserId;
-    oo.declaration = { ...declaration };
+    oo.declaration = { ...declaration, demarree: !!d.demarree };
   });
   declareDoneDraft = null;
   commit();
@@ -9973,7 +9988,7 @@ function renderDeclareDoneModal(){
   <div class="modal-overlay">
     <div class="modal-box declare-done-box" role="dialog" aria-modal="true">
       <div class="modal-head">
-        <h2>${st ? '✔ Sous-traitance terminée' : '✔ Déclarer terminée (oubli de démarrage)'}</h2>
+        <h2>${st ? '✔ Sous-traitance terminée' : (d.demarree ? '✔ Terminer — aucun temps enregistré' : '✔ Déclarer terminée (oubli de démarrage)')}</h2>
         <button class="ghost icon-btn" data-action="close-declare-done" title="Fermer">✕</button>
       </div>
       <div class="modal-body">
@@ -9981,6 +9996,7 @@ function renderDeclareDoneModal(){
           <div><strong>${escapeHtml(c.nom)}</strong> — ${escapeHtml(label)}</div>
           <div class="footer-note" style="margin:2px 0 0; text-align:left;">${m ? escapeHtml(m.nom) : 'Sans poste'} · Qté ${escapeHtml(String(o.quantite))} · prévu ${durationLabel(plannedH)}${group && group.length > 1 ? ` · lot fusionné de ${group.length} pièces : tout le lot sera déclaré` : ''}</div>
         </div>
+        ${d.demarree && !st ? `<div class="footer-note" style="text-align:left; margin:10px 0 0; color:var(--accent);">⚠ Aucun temps n'a été enregistré sur cette tâche (démarrée puis aussitôt arrêtée). Indiquez le temps <b>réellement passé</b> : le temps prévu (${durationLabel(plannedH)}) n'est pas repris automatiquement.</div>` : ''}
         <div style="margin-top:12px;"><label class="field">${st ? 'Temps salarié passé par' : 'Réalisée par'}</label>
           <select data-action="declare-done-field" data-field="operatorUserId">
             <option value="">${st ? '— Personne (travail du sous-traitant) —' : '— choisir —'}</option>
@@ -9990,7 +10006,7 @@ function renderDeclareDoneModal(){
         <div class="declare-done-grid">
           <div><label class="field">${st ? 'Envoi' : 'Début'}</label><input type="datetime-local" value="${d.debut}" max="${d.fin || ''}" data-action="declare-done-field" data-field="debut"></div>
           <div><label class="field">${st ? 'Retour' : 'Fin'}</label><input type="datetime-local" value="${d.fin}" max="${toInputValue(new Date())}" data-action="declare-done-field" data-field="fin"></div>
-          <div><label class="field">${st ? 'Temps salarié (min)' : 'Temps passé (min)'}</label><input type="number" min="0" step="1" value="${escapeHtml(String(d.dureeMin))}" data-action="declare-done-field" data-field="dureeMin"></div>
+          <div><label class="field">${st ? 'Temps salarié (min)' : 'Temps passé (min)'}</label><input type="number" min="0" step="1" value="${escapeHtml(String(d.dureeMin))}" ${d.demarree && !st ? 'placeholder="à saisir"' : ''} data-action="declare-done-field" data-field="dureeMin"></div>
         </div>
         <div class="declare-done-hint">
           <span>${d.debutAjuste ? `<span class="declare-done-adjusted">↺ ${st ? 'Envoi' : 'Début'} ramené avant ${st ? 'le retour' : 'la fin'}</span>` : ''}</span>
@@ -9999,7 +10015,7 @@ function renderDeclareDoneModal(){
         <div style="margin-top:10px;"><label class="field">Commentaire (facultatif)</label>
           <input type="text" placeholder="ex : oublié de lancer, fait mardi après-midi" value="${escapeHtml(d.commentaire || '')}" data-action="declare-done-field" data-field="commentaire">
         </div>
-        <div class="footer-note" style="text-align:left; padding-top:10px;">${st ? "Tâche sous-traitée : elle figure dans le planning pour ses dépendances, le travail est fait à l'extérieur — aucun temps n'est compté par défaut. Saisissez un temps salarié (et la personne) seulement si quelqu'un de l'atelier y a réellement passé du temps (préparation, contrôle…)." : `Début et fin sont préremplis avec le temps prévu, compté sur les horaires de l'atelier ; changer l'un des deux recalcule le temps passé (toujours modifiable à la main). Le début est toujours ramené avant la fin.`} ${autoValide ? 'Déclaration validée directement (vous êtes superviseur).' : 'Le temps est compté tout de suite, marqué « à valider » jusqu’à ce qu’un superviseur le valide.'}</div>
+        <div class="footer-note" style="text-align:left; padding-top:10px;">${d.demarree && !st ? `Le début est celui du démarrage réel ; la fin est maintenant (modifiables). Le temps est compté tout de suite, marqué « à valider » jusqu'à ce qu'un superviseur le valide (validé directement pour un superviseur).` : ''} ${st ? "Tâche sous-traitée : elle figure dans le planning pour ses dépendances, le travail est fait à l'extérieur — aucun temps n'est compté par défaut. Saisissez un temps salarié (et la personne) seulement si quelqu'un de l'atelier y a réellement passé du temps (préparation, contrôle…)." : (d.demarree ? '' : `Début et fin sont préremplis avec le temps prévu, compté sur les horaires de l'atelier ; changer l'un des deux recalcule le temps passé (toujours modifiable à la main). Le début est toujours ramené avant la fin.`)} ${d.demarree && !st ? '' : (autoValide ? 'Déclaration validée directement (vous êtes superviseur).' : 'Le temps est compté tout de suite, marqué « à valider » jusqu’à ce qu’un superviseur le valide.')}</div>
         <div class="form-actions" style="margin-top:14px;">
           <button class="ghost" data-action="close-declare-done">Annuler</button>
           <button class="primary" data-action="submit-declare-done">${st ? '✔ Marquer terminée' : '✔ Déclarer terminée'}</button>

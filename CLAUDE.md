@@ -1487,6 +1487,21 @@ et l'ancien `prompt()` « minutes » remplacé partout par la même pop-up.
   corrigeable, correction = validation, réouverture, lot fusionné (objets distincts, compté une fois,
   validation propagée), tuile. Rendu vérifié (Playwright).
 
+- **Terminer une tâche démarrée sans aucun temps enregistré (v1.103.0).** Cas réel (C026-0727, lot de 2 lignes en chaudronnerie) :
+  démarrée puis aussitôt arrêtée (séances de 0 min), clôturée le lendemain — l'ancien `prompt()` de `applySingleStatusChange`
+  proposait le temps **prévu** (420 min) comme temps réellement passé : un simple « OK » enregistrait 7 h (`dureeReelleParOperateur` vide
+  → crédité à l'opérateur assigné) alors que rien n'était mesuré. Désormais `setOpStatut(…, 'termine')` sur une pièce `en_cours`/`en_pause`
+  dont **toutes les pièces du lot** ont un temps enregistré nul (`hasNoRecordedTime`, `opElapsedHours ≤ 1e-6`) ouvre la **même pop-up de
+  temps déclaré** (`openDeclareDone`, `declareDoneDraft.demarree:true`) et ne change rien tant qu'elle n'est pas validée. Différences avec
+  l'oubli de démarrage : début = `debutReel` (démarrage réel), fin = maintenant, **temps passé NON prérempli** (champ « à saisir », refus si
+  vide — le prévu n'est jamais repris tout seul), titre « Terminer — aucun temps enregistré » et avertissement. Même circuit ensuite
+  (temps compté tout de suite, « à valider » ou validé d'office pour un superviseur, un seul `commit()`, lot fusionné traité en bloc,
+  `declaration.demarree:true` → infobulle « tâche clôturée sans temps enregistré »). `submitDeclareDone` vérifie que le temps est toujours
+  nul (sinon « Du temps vient d'être enregistré… » et la pop-up se ferme) et remet `autoPausedUntil/autoPausedOperators` à `null`. Une tâche
+  avec du temps mesuré se clôture comme avant ; le `prompt()` n'est plus atteint que si le temps est nul pour la pièce cliquée seulement
+  (autres membres du lot non nuls) — cas marginal. **Ne corrige pas rétroactivement** les clôtures déjà faites (✎ Corriger dans Pointages).
+  Test (scratchpad `declare_run_test.js`, 22 assertions sur l'export du 06/10 ; `declare_ui.js` Playwright).
+
 ## Fiche salarié
 
 Question utilisateur réelle : *« si je souhaite obtenir une synthèse complète d'un salarié (temps de
