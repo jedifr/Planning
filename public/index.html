@@ -1776,7 +1776,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.106.1';
+const APP_VERSION = '1.107.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -13358,18 +13358,18 @@ function ficheJourCourt(d){ return ['DIM.','LUN.','MAR.','MER.','JEU.','VEN.','S
 function ficheJourLong(d){ return d.toLocaleDateString('fr-FR', { weekday:'long' }).replace(/^./, c => c.toUpperCase()); }
 function ficheMinLabel(min){ return min > 0 ? pointageDurLabel(min) : '—'; }
 
-function openFicheSalarie(uid, from, dayKey){
+function openFicheSalarie(uid, from, dayKey, period){
   uid = String(uid);
   // Un employé ne voit que SA fiche (identité active du poste, comme « Mon temps de production »).
   if(!canSupervise() && uid !== String(activeIdentityId())) return;
   const fromTempsProd = from === 'tempsProd';
   ficheSalarie = {
     uid, from: from || currentPage,
-    mode: fromTempsProd ? tempsProdPeriodMode : 'semaine',
+    mode: fromTempsProd ? tempsProdPeriodMode : (period && period.mode ? period.mode : 'semaine'),
     // Depuis la page Présence : la semaine du jour affiché (ou de la semaine affichée), pas forcément la semaine en cours.
     anchor: fromTempsProd ? new Date(tempsProdAnchor.getTime()) : (dayKey ? new Date(dayKey + 'T12:00:00') : new Date()),
-    rangeDebut: fromTempsProd ? tempsProdRangeDebut : null,
-    rangeFin: fromTempsProd ? tempsProdRangeFin : null
+    rangeDebut: fromTempsProd ? tempsProdRangeDebut : (period && period.mode === 'plage' ? period.from : null),
+    rangeFin: fromTempsProd ? tempsProdRangeFin : (period && period.mode === 'plage' ? period.to : null)
   };
   lastFicheUid = uid;
   currentPage = 'ficheSalarie';
@@ -16926,7 +16926,7 @@ function refreshPresenceVisible(force){
   if(currentPage === 'presence'){
     const d = presencePageDay();
     if(d !== today) loadPresenceDay(d, { force: true });
-    if(presenceView === 'semaine'){ const w = presenceWeekBounds(); loadPresenceRange(w.from, w.to, null, { force: !!force }); }
+    if(presenceView !== 'jour'){ const w = presencePeriodBounds(); loadPresenceRange(w.from, w.to, null, { force: !!force }); }
   }
 }
 function presenceDayData(dayKey){
@@ -17109,13 +17109,40 @@ function computePresenceRows(st, data, dayKey, now){
 
 // ---------- Page Présence (superviseur) ----------
 let presenceDate = null;          // null = aujourd'hui
-let presenceView = 'jour';        // 'jour' | 'semaine'
+let presenceView = 'jour';        // 'jour' | 'semaine' | 'mois' | 'plage'
+let presenceRangeFrom = null;     // 'AAAA-MM-JJ', vue « Entre dates » (null = 1er du mois en cours)
+let presenceRangeTo = null;       // 'AAAA-MM-JJ' (null = aujourd'hui)
 let presenceTmOpen = false;       // panneau d'import TimeMoto déplié sur la page Présence (transitoire)
 function presencePageDay(){ return presenceDate || toDateInputValue(new Date()); }
 function presenceWeekBounds(){
   const monday = startOfWeek(new Date(presencePageDay() + 'T12:00:00'));
   const from = toDateInputValue(monday);
   return { from, to: addDaysToKey(from, 6), monday };
+}
+// Période affichée par les vues multi-jours (Semaine, Mois, Entre dates) : un seul calcul de bornes partagé
+// par le chargement, l'affichage et l'export. La route /api/presence/range accepte 400 jours au plus.
+function presencePeriodBounds(){
+  const anchor = new Date(presencePageDay() + 'T12:00:00');
+  let from, to, label;
+  if(presenceView === 'mois'){
+    from = toDateInputValue(new Date(anchor.getFullYear(), anchor.getMonth(), 1));
+    to = toDateInputValue(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0));
+    label = anchor.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }).replace(/^./, c => c.toUpperCase());
+  } else if(presenceView === 'plage'){
+    const today = toDateInputValue(new Date());
+    from = presenceRangeFrom || toDateInputValue(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+    to = presenceRangeTo || today;
+    if(to < from) to = from;
+    const max = addDaysToKey(from, 399);
+    if(to > max) to = max;
+    label = `Du ${new Date(from + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} au ${new Date(to + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}`;
+  } else {
+    const w = presenceWeekBounds();
+    from = w.from; to = w.to;
+    label = `Semaine du ${new Date(from + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} au ${new Date(to + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}`;
+  }
+  const nDays = Math.round((new Date(to + 'T12:00:00') - new Date(from + 'T12:00:00')) / 86400000) + 1;
+  return { from, to, label, nDays };
 }
 function presenceStatusPill(status){
   const m = PRESENCE_STATUS_META[status] || { label: status, cls: '' };
@@ -17161,13 +17188,20 @@ function renderPresencePage(){
       <div class="view-tabs pr-tabs">
         <button class="${presenceView==='jour'?'active':''}" data-action="presence-view" data-view="jour">Jour</button>
         <button class="${presenceView==='semaine'?'active':''}" data-action="presence-view" data-view="semaine">Semaine</button>
+        <button class="${presenceView==='mois'?'active':''}" data-action="presence-view" data-view="mois">Mois</button>
+        <button class="${presenceView==='plage'?'active':''}" data-action="presence-view" data-view="plage">Entre dates</button>
       </div>
       <div class="pr-datenav">
+        ${presenceView === 'plage' ? (() => { const pb = presencePeriodBounds(); return `
+        <label class="footer-note" style="margin:0;">Du</label><input type="date" value="${pb.from}" data-action="presence-range-from" aria-label="Date de début">
+        <label class="footer-note" style="margin:0;">au</label><input type="date" value="${pb.to}" data-action="presence-range-to" aria-label="Date de fin">
+        <span class="footer-note" style="margin:0;">${pb.nDays} jour${pb.nDays > 1 ? 's' : ''}</span>
+        <button class="small" data-action="presence-today" title="Du 1er du mois en cours à aujourd'hui">Mois en cours</button>`; })() : `
         <button class="small" data-action="presence-date-nav" data-dir="-1" aria-label="Précédent">‹</button>
-        <span class="pr-date">${presenceView==='jour' ? escapeHtml(presenceDateLabel(dayKey)) : (() => { const w = presenceWeekBounds(); return `Semaine du ${new Date(w.from+'T12:00:00').toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} au ${new Date(w.to+'T12:00:00').toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}`; })()}</span>
+        <span class="pr-date">${presenceView==='jour' ? escapeHtml(presenceDateLabel(dayKey)) : escapeHtml(presencePeriodBounds().label)}</span>
         <button class="small" data-action="presence-date-nav" data-dir="1" aria-label="Suivant">›</button>
         <input type="date" value="${dayKey}" data-action="presence-date-input" aria-label="Choisir une date">
-        ${isToday ? '' : `<button class="small" data-action="presence-today">Aujourd'hui</button>`}
+        ${presenceView === 'mois' ? (dayKey.slice(0, 7) === toDateInputValue(now).slice(0, 7) ? '' : `<button class="small" data-action="presence-today">Mois en cours</button>`) : (isToday ? '' : `<button class="small" data-action="presence-today">Aujourd'hui</button>`)}`}
       </div>
       <div class="pr-head-actions">
         ${isAdmin() ? `<button class="small ${presenceTmOpen?'primary':''}" data-action="presence-tm-toggle" title="Importer les pointages de la pointeuse TimeMoto TM-616">⏱ TimeMoto</button>` : ''}
@@ -17177,7 +17211,7 @@ function renderPresencePage(){
       </div>
     </div>`;
   const head = headBar + (isAdmin() && presenceTmOpen ? renderTimemotoImportPanel() : '') + (presenceDupOpen ? renderPresenceDupPanel() : '') + renderTmFlagsHtml(data);
-  if(presenceView === 'semaine') return `<section class="panel"><div class="panel-body">${head}${renderPresenceWeek()}</div></section>`;
+  if(presenceView !== 'jour') return `<section class="panel"><div class="panel-body">${head}${renderPresenceWeek()}</div></section>`;
   if(!data){
     const msg = cache && cache.status === 'error' ? escapeHtml(cache.error) : 'Chargement des pointages…';
     return `<section class="panel"><div class="panel-body">${head}<div class="pr-empty">${msg}</div></div></section>`;
@@ -17299,33 +17333,37 @@ function presenceJournalLineHtml(p, allPunches){
   return `<div class="pr-journal-line"><span class="pr-mono pr-dim">${escapeHtml(when)}</span><span><b>${escapeHtml(presenceUserName(p.userId))}</b> — ${escapeHtml(what)} — ${escapeHtml(p.motif || '')}${p.commentaire ? ` <i>(${escapeHtml(p.commentaire)})</i>` : ''} · par ${escapeHtml(author)}${st}</span></div>`;
 }
 // Vue Semaine : présence pointée par jour et par salarié, face à la présence théorique.
-function presenceWeekModel(st, punches, from, now){
-  const days = [0, 1, 2, 3, 4, 5, 6].map(i => addDaysToKey(from, i));
+function presenceWeekModel(st, punches, from, now, nDays){
+  nDays = nDays || 7;
+  const days = Array.from({ length: nDays }, (_, i) => addDaysToKey(from, i));
   const eff = effectivePresencePunches(punches);
   const map = {};
   eff.forEach(p => { const k = p.userId + '|' + p.ts.slice(0, 10); (map[k] = map[k] || []).push(p); });
   const ids = presenceExpectedUserIds(st);
   eff.forEach(p => { if(!ids.includes(p.userId)) ids.push(p.userId); });
   const start = new Date(from + 'T00:00:00');
-  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + nDays);
   const rows = ids.map(uid => {
     const cells = days.map(d => { const s = presenceDaySummary(map[uid + '|' + d] || [], d, now); return { day: d, sum: s, has: !!(map[uid + '|' + d] || []).length }; });
     const totalMin = cells.reduce((s, c) => s + c.sum.workMin, 0);
     const theoH = theoreticalPresenceHoursForUser(uid, st, start, end);
     return { userId: uid, username: presenceUserName(uid), forfait: isForfaitUser(st, uid), cells, totalMin, theoH };
   }).filter(r => r.totalMin > 0 || r.theoH > 0);
-  const showWeekend = rows.some(r => r.cells.slice(5).some(c => c.has));
-  return { days, rows, showWeekend };
+  const isWE = d => { const g = new Date(d + 'T12:00:00').getDay(); return g === 0 || g === 6; };
+  const showWeekend = rows.some(r => r.cells.some(c => c.has && isWE(c.day)));
+  return { days, rows, showWeekend, isWE };
 }
 function renderPresenceWeek(){
-  const w = presenceWeekBounds();
+  const w = presencePeriodBounds();
   const key = presenceRangeKey(w.from, w.to, null);
   const cache = presenceRangeCache[key];
   if(!cache) loadPresenceRange(w.from, w.to, null);
-  if(!cache || cache.status !== 'ok') return `<div class="pr-empty">${cache && cache.status === 'error' ? escapeHtml(cache.error) : 'Chargement des pointages de la semaine…'}</div>`;
+  if(!cache || cache.status !== 'ok') return `<div class="pr-empty">${cache && cache.status === 'error' ? escapeHtml(cache.error) : 'Chargement des pointages de la période…'}</div>`;
   const now = new Date();
-  const m = presenceWeekModel(state, cache.punches, w.from, now);
-  const days = m.showWeekend ? m.days : m.days.slice(0, 5);
+  const m = presenceWeekModel(state, cache.punches, w.from, now, w.nDays);
+  // Week-ends masqués s'il n'y a eu aucun pointage ces jours-là ; au-delà de 62 jours, plus de colonne par jour (synthèse seule).
+  const compact = w.nDays > 62;
+  const days = compact ? [] : (m.showWeekend ? m.days : m.days.filter(d => !m.isWE(d)));
   const today = toDateInputValue(now);
   return `
     <div class="pr-table-wrap">
@@ -17335,17 +17373,17 @@ function renderPresenceWeek(){
         ${m.rows.map(r => {
           const ecartH = r.totalMin / 60 - r.theoH;
           return `<tr>
-            <td><div class="pr-user">${renderAvatar(r.username)}<button class="pt-name-link pr-name-link" data-action="open-fiche-salarie" data-user-id="${escapeHtml(r.userId)}" data-from="presence" data-day="${w.from}" title="Ouvrir la fiche salarié">${escapeHtml(r.username)} <span class="pt-fiche-ico">📋</span></button></div></td>
+            <td><div class="pr-user">${renderAvatar(r.username)}<button class="pt-name-link pr-name-link" data-action="open-fiche-salarie" data-user-id="${escapeHtml(r.userId)}" data-from="presence" data-day="${w.from}" data-fmode="${presenceView}" data-to="${w.to}" title="Ouvrir la fiche salarié (même période)">${escapeHtml(r.username)} <span class="pt-fiche-ico">📋</span></button></div></td>
             ${r.cells.filter(c => days.includes(c.day)).map(c => `<td><button class="pr-weekcell ${c.sum.ouvert && !r.forfait?'pr-weekcell-alert':''}" data-action="presence-goto-day" data-day="${c.day}" title="Voir la journée">${c.has ? presenceMinLabel(c.sum.workMin) : '<span class="footer-note">—</span>'}${c.sum.ouvert && !r.forfait ? ' ⚠' : ''}</button></td>`).join('')}
             <td><b>${presenceMinLabel(r.totalMin)}</b></td>
             <td class="pr-dim">${formatHeures(r.theoH)}</td>
             ${r.forfait ? `<td class="pr-dim" title="Au forfait : non tenu de pointer">forfait</td>` : `<td style="color:${Math.abs(ecartH) < 0.1 ? 'var(--text-dim)' : ecartH < 0 ? 'var(--red)' : 'var(--green)'};">${ecartH > 0 ? '+' : ecartH < 0 ? '−' : ''}${formatHeures(Math.abs(ecartH))}</td>`}
           </tr>`;
-        }).join('') || `<tr><td colspan="${days.length + 4}" class="pr-empty">Aucun pointage cette semaine.</td></tr>`}
+        }).join('') || `<tr><td colspan="${days.length + 4}" class="pr-empty">Aucun pointage sur cette période.</td></tr>`}
         </tbody>
       </table>
     </div>
-    <div class="pr-legend"><span class="pr-legend-note">Présence pointée (pauses déduites) face à la présence théorique (horaire de chacun, jours fériés et congés approuvés retirés). ⚠ = départ non pointé. Cliquez un jour pour le détail.${escapeHtml(presenceArrondiNote())}</span></div>`;
+    <div class="pr-legend"><span class="pr-legend-note">${compact ? 'Période longue : totaux par salarié seulement (colonnes par jour au-delà de 62 jours). ' : ''}Présence pointée (pauses déduites) face à la présence théorique (horaire de chacun, jours fériés et congés approuvés retirés). ⚠ = départ non pointé. Cliquez un jour pour le détail.${escapeHtml(presenceArrondiNote())}</span></div>`;
 }
 // Export Excel : période affichée (jour ou semaine), ou « Mon pointage » (une personne, un mois).
 function exportPresenceExcel(punches, from, to, titre){
@@ -17379,11 +17417,11 @@ function exportPresenceExcel(punches, from, to, titre){
   XLSX.writeFile(wb, `pointage-presence-${from}${from !== to ? '_' + to : ''}.xlsx`);
 }
 function exportPresencePage(){
-  if(presenceView === 'semaine'){
-    const w = presenceWeekBounds();
+  if(presenceView !== 'jour'){
+    const w = presencePeriodBounds();
     const c = presenceRangeCache[presenceRangeKey(w.from, w.to, null)];
-    if(!c || c.status !== 'ok'){ showToast('Pointages de la semaine encore en chargement…'); return; }
-    exportPresenceExcel(c.punches, w.from, w.to, 'Pointage présentiel — semaine');
+    if(!c || c.status !== 'ok'){ showToast('Pointages de la période encore en chargement…'); return; }
+    exportPresenceExcel(c.punches, w.from, w.to, 'Pointage présentiel — ' + ({ semaine: 'semaine', mois: 'mois', plage: 'période' }[presenceView] || 'période'));
   } else {
     const d = presencePageDay();
     const data = presenceDayData(d);
@@ -19161,9 +19199,11 @@ function dispatchClickAction(action, el){
     case 'mon-pointage-today': setMonPointageDay(null); break;
     case 'goto-presence': currentPage = 'presence'; invalidatePresenceCaches(); render(); break;
     case 'goto-borne': gotoBorne(); break;
-    case 'presence-view': presenceView = el.dataset.view === 'semaine' ? 'semaine' : 'jour'; render(); break;
-    case 'presence-date-nav': presenceDate = addDaysToKey(presencePageDay(), (presenceView==='semaine' ? 7 : 1) * Number(el.dataset.dir || 1)); if(presenceDate === toDateInputValue(new Date())) presenceDate = null; render(); break;
-    case 'presence-today': presenceDate = null; render(); break;
+    case 'presence-view': presenceView = ['semaine','mois','plage'].includes(el.dataset.view) ? el.dataset.view : 'jour'; render(); break;
+    case 'presence-date-nav': { const dir = Number(el.dataset.dir || 1);
+      if(presenceView === 'mois'){ const a = new Date(presencePageDay() + 'T12:00:00'); presenceDate = toDateInputValue(new Date(a.getFullYear(), a.getMonth() + dir, 1)); }
+      else presenceDate = addDaysToKey(presencePageDay(), (presenceView==='semaine' ? 7 : 1) * dir); } if(presenceDate === toDateInputValue(new Date())) presenceDate = null; render(); break;
+    case 'presence-today': presenceDate = null; presenceRangeFrom = null; presenceRangeTo = null; render(); break;
     case 'presence-goto-day': presenceDate = el.dataset.day === toDateInputValue(new Date()) ? null : el.dataset.day; presenceView = 'jour'; render(); break;
     case 'presence-export': exportPresencePage(); break;
     case 'presence-open-correction': openPresenceCorrection(el.dataset.userId, el.dataset.day, el.dataset.preset || null); break;
@@ -19267,7 +19307,7 @@ function dispatchClickAction(action, el){
     case 'temps-prod-sort': setTempsProdSort(el.dataset.key); break;
     case 'temps-prod-sort-dir': toggleTempsProdSortDir(); break;
     case 'temps-prod-detail-sort': setTempsProdDetailSort(el.dataset.userId, el.dataset.key); break;
-    case 'open-fiche-salarie': openFicheSalarie(el.dataset.userId, el.dataset.from, el.dataset.day); break;
+    case 'open-fiche-salarie': openFicheSalarie(el.dataset.userId, el.dataset.from, el.dataset.day, ['mois','plage'].includes(el.dataset.fmode) ? { mode: el.dataset.fmode, from: el.dataset.day, to: el.dataset.to } : null); break;
     case 'fiche-back': closeFicheSalarie(); break;
     case 'fiche-mode': if(ficheSalarie){ ficheSalarie.mode = el.dataset.mode; render(); } break;
     case 'fiche-nav': if(ficheSalarie){ ficheSalarie.anchor = shiftPeriodAnchor(ficheSalarie.mode, ficheSalarie.anchor, el.dataset.dir); render(); } break;
@@ -19486,6 +19526,8 @@ function dispatchChangeAction(el, action){
     case 'dup-field': presenceDupInit(); presenceDup[el.dataset.field] = el.dataset.field === 'minutes' ? (Number(el.value) || 5) : el.value; break;
     case 'mon-pointage-date-input': setMonPointageDay(el.value); break;
     case 'presence-date-input': if(/^\d{4}-\d{2}-\d{2}$/.test(el.value)){ presenceDate = el.value === toDateInputValue(new Date()) ? null : el.value; render(); } break;
+    case 'presence-range-from': if(/^\d{4}-\d{2}-\d{2}$/.test(el.value)){ presenceRangeFrom = el.value; if(presenceRangeTo && presenceRangeTo < el.value) presenceRangeTo = el.value; render(); } break;
+    case 'presence-range-to': if(/^\d{4}-\d{2}-\d{2}$/.test(el.value)){ presenceRangeTo = el.value; if(presenceRangeFrom && presenceRangeFrom > el.value) presenceRangeFrom = el.value; render(); } break;
     // Formulaire de correction : mémorisé sans redessin (un clic sur « Enregistrer » juste après la
     // sortie d'un champ heure ne doit pas tomber sur un bouton reconstruit entre-temps).
     case 'presence-correction-field': if(presenceCorrection) presenceCorrection[el.dataset.field] = el.value; break;

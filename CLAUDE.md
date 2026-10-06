@@ -1677,6 +1677,17 @@ Distinct des séances sur les tâches (`sessions[]`) : ici on mesure la PRÉSENC
   des pointages et le lien « Demander une correction » portent sur le jour affiché (`data-day`). `goto-mon-pointage`
   remet le jour à aujourd'hui. Vérifié (Playwright, serveur réel, pointages semés sur la veille) : clic sur un jour,
   ‹ ›, sélecteur de date, retour à aujourd'hui, aucune erreur.
+- **Vues Mois et Entre dates de la page Présence (v1.107.0).** Onglets « Jour / Semaine / Mois / Entre dates » (`presenceView`).
+  Les trois vues multi-jours partagent **un seul calcul de bornes**, `presencePeriodBounds()` (`{from,to,label,nDays}`) — chargement
+  (`loadPresenceRange`, `refreshPresenceVisible`), tableau et export Excel — et le même tableau (`renderPresenceWeek`, nom conservé,
+  `presenceWeekModel(st, punches, from, now, nDays)` généralisé) : pointé par jour et par salarié, total, théorique, écart. Mois = mois
+  calendaire du jour affiché (‹ › d'un mois, « Mois en cours ») ; Entre dates = deux champs `presenceRangeFrom/To` (transitoires ;
+  défaut : 1er du mois → aujourd'hui ; fin ramenée au début si antérieure ; **400 jours max**, limite de `/api/presence/range`). Week-ends
+  masqués tant qu'aucun pointage n'y tombe (règle de la semaine, désormais par jour réel et non « 6e/7e colonne »). **Au-delà de 62 jours,
+  plus de colonne par jour** (totaux seulement, note affichée) : 400 colonnes seraient illisibles. Cliquer un jour ramène à la vue Jour.
+  Le prénom ouvre la fiche salarié **sur la même période** (`openFicheSalarie(uid, from, dayKey, {mode,from,to})` : mode `mois` ou
+  `plage` de la fiche, sinon semaine du jour). Test (scratchpad `period_test.js`, 17 assertions) : bornes (fév., plafond, inversion), modèle
+  14 jours, week-end, rendu des trois vues, mode compact, fiche.
 - **Conformité** (liste de contrôle des Paramètres) : note d'information (L1222-4, art. 13 RGPD) et
   fiche du registre (art. 30) générées par `presenceDocText` (champs entre crochets à compléter, à
   faire relire), consultation du CSE ≥ 50 salariés (L2312-38) ou « non concerné », conservation
