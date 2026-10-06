@@ -1262,6 +1262,66 @@ validé avant codage : pastille de couleur + texte, « À faire » pour une piè
   faire) · fin prévue mar 06 oct., 08:56 » ; filtre actif sur tout le Kanban : 83 cartes disponibles,
   35 masquées ; vue groupée cohérente ; aucune erreur.
 
+### Tâches disponibles mais pas démarrées — pastille « depuis N j », bloc, badge, e-mail (v1.100.0)
+
+Constat réel (export du 06/10, affaire C026-0744 KH-SK) : cinq tâches Ajustage dont les étapes précédentes étaient
+terminées depuis le 18/09 n'avaient toujours pas démarré 18 jours plus tard. Le planning les classait pourtant devant
+d'autres affaires (même urgence, échéance plus proche) : **personne ne les prenait** — l'opérateur choisit librement sa
+tâche, et rien ne montrait l'attente. Proposition validée : points 1 à 5 (le 6, « pause qui libère le poste », est à part).
+
+- **« Disponible »** = pièce `a_faire`, ni sous-traitée, ni hors planning, ni sur un poste de sous-traitance, dont toutes les
+  étapes précédentes (`resolveEffectiveDeps` : même pièce, phases inférieures, lot fusionné compris) sont terminées — les
+  états `free`/`ready` de `kanbanWaitInfoFor`. `pieceDisponibleDepuis(c, o, w)` : fin RÉELLE de la dernière étape précédente
+  (`ready`) ou création de la commande (`free`, seulement si `dateCreation` est connue — rien d'inventé sinon) ; une
+  `dateDebutPossible` plus tardive prime, et dans le futur la tâche n'est pas encore disponible. **Jours calendaires**
+  (`dispoJoursDepuis` : « terminée le 18/09 » = 18 j le 06/10, quelle que soit l'heure — pas des périodes de 24 h).
+- **Seuil** `config.dispoAlerteJours` (3 par défaut, **0 = désactivé**, `migrateState` en `=== undefined`) : Paramètres → Alertes &
+  seuils → « Tâche disponible mais pas démarrée » (`dispoAlerte` dans `SETTINGS_HELP`).
+- **1. Pastille Kanban** : `kanbanWaitInfoMap` pose `since` sur chaque info d'attente ; `kanbanWaitPillHtml` ajoute
+  `.kb-since` « depuis 18 j » (neutre dès 1 j, ambre au seuil, rouge au double). Vue groupée : `kanbanWaitInfoForGroup` prend le
+  DERNIER membre disponible et ne dit rien si l'un n'a pas de date.
+- **2. Bloc** `computeDisponiblesNonDemarrees(st, now, seuil)` (commandes ACTIVES du `state`, pas de moteur) : une ligne par
+  lot fusionné (disponible seulement si TOUS ses membres le sont, depuis le plus tardif), triée **échéance dépassée d'abord**
+  (la plus ancienne en tête) puis par échéance puis par attente. `renderDisponiblesNonDemarreesHtml` (partagé) : pastilles par
+  poste (nombre, plus ancienne attente, « ⚠ sans salarié rattaché ») + tableau. Vue d'ensemble : bloc `disponibles` (12 lignes
+  max, renvoi vers Risques) et tuile `disponibles` (rouge si une échéance est dépassée) — nouvelles clés de
+  `DASHBOARD_BLOCKS`/`DASHBOARD_TILES`, ajoutées EN FIN des dispositions personnalisées par `dashboardLayoutFor`. Page Risques :
+  section repliable (`panelCollapsed.disponibles`) en tête de la colonne de droite, avec la recherche de la page.
+- **Badge d'en-tête** (`renderPointageHeaderBadges`, superviseurs) : « ⏳ N à démarrer (échéance dépassée) » — seules les tâches
+  d'une commande à l'échéance dépassée font un badge (la liste complète, bien plus longue, reste dans les blocs). Indépendant
+  de l'alerte « pointage de l'équipe » : il s'affiche même si celle-ci est désactivée (`dispoAlerteJours=0` le coupe).
+- **3. Rapport e-mail** (`reportEmail.js`, `tachesDisponiblesNonDemarrees`, section « ⏳ Tâches disponibles depuis plus de N j… ») :
+  **portage simplifié** (même règle, `resolveEffectiveDeps` recopié, aucun moteur) — à reporter si la règle client change. Sur
+  l'export réel, client et serveur donnent les mêmes 28 lignes dont 9 à l'échéance dépassée.
+- **4. Poste sans salarié rattaché** : `posteSansOperateur(st, machineId)` (`userMachines`) — signalé dans les pastilles de poste.
+  Le rattachement se fait dans Paramètres → Utilisateurs (postes de chaque personne). **Attention, ce n'est pas neutre pour le
+  planning** : `effectiveConfig` rend un poste indisponible les jours où TOUS ses salariés rattachés sont en congé — rattacher
+  une seule personne à Ajustage bloquerait Ajustage pendant ses congés ; en rattacher plusieurs évite ce blocage.
+- Tests (scratchpad `dispo_test.js`, 31 assertions sur l'export du 06/10 ; `report_dispo_test.js` ; `dispo_ui.js` Playwright) :
+  C026-0744 = 5 lignes Ajustage « depuis 18 j », échéance dépassée, en tête ; seuil 0 = rien ; date de début possible future =
+  non disponible ; lot compté une fois ; pastille rouge « depuis 18 j » ; tuile, bloc, section Risques, badge d'en-tête.
+
+### Urgence automatique à l'échéance dépassée (v1.100.0, Paramètres → Planification)
+
+Point 5 de la même demande. **Calcul à la lecture, jamais une modification de `commande.urgence`** : le niveau saisi reste intact
+et réapparaît dès que l'option est décochée, l'échéance repoussée ou la commande terminée.
+
+- `config.urgenceAuto` `{ actif:false, niveau:'importante'|'urgente', apresJours:0 }` (`migrateState`, désactivé par défaut) —
+  « Relever automatiquement l'urgence d'une commande dont l'échéance est dépassée », « traiter comme », « une fois l'échéance
+  dépassée de N jours » (0 = dès le lendemain de la date de besoin). `updateConfig('urgenceAuto.*')` fait un `commit()` complet :
+  l'urgence effective change l'ordre du planning, le cache doit être recalculé.
+- `effectiveUrgence(cmd, st)` ne fait que **relever** (une commande déjà « Urgente » le reste ; « Importante » relevée en
+  « Urgente » si c'est le niveau choisi), ignore une commande terminée ou sans échéance. `computeSchedule` pose `urg` sur chaque
+  élément de la phase 3 (`pendingVolante`, lot fusionné compris) et `comparePriorityItems` le lit à la place de `cmd.urgence` ;
+  `sortByPriority` utilise le même critère. Les **tâches déjà démarrées** (phases 1 et 2) ne bougent pas.
+- Affichage : listes d'opérations (Kanban/Gantt/Liste, bordure d'urgence) via `effectiveUrgence`, carte commande (bordure +
+  pastille « ⬆ traitée comme Importante » `.urg-auto-badge`, le `<select>` garde le niveau saisi), page Risques (« Normale →
+  traitée comme Importante (échéance dépassée) »).
+- Effet réel vérifié sur l'export : une commande « Importante » à échéance plus tardive (C026-0777) passait devant C026-0744
+  (Normale, échéance dépassée) sur Ajustage ; avec l'option, C026-0744 repasse devant. Si toutes les commandes en retard sont
+  déjà classées par échéance (cas de C026-0693/0751/0744), l'ordre ne change pas : le gain est face aux commandes d'urgence
+  supérieure à échéance plus tardive.
+
 ### Cartes Kanban à 4 lignes, séparateurs par jour et mode Compact (v1.92.0)
 
 Demande utilisateur (capture du Kanban) : meilleur affichage des tâches. Proposition validée avant codage
@@ -2713,6 +2773,8 @@ existante (`backup.js`), mais pour du contenu plutôt qu'un export complet des d
     suffisant pour un simple compteur de rapport (on ne veut qu'un signal "il y a une pause suspecte
     en ce moment", pas le détail complet affiché par la page Risques de retard), et évite de
     dupliquer une fonction plus élaborée pour ce seul besoin. Même seuil de bruit qu'ailleurs (1h).
+  - `tachesDisponiblesNonDemarrees(state, now, seuilJours)` (v1.100.0) — voir « Tâches disponibles mais pas démarrées » : même
+    sélection que le client, sans moteur ; section ajoutée au rapport tant que `config.dispoAlerteJours` n'est pas 0.
   - `buildReportText(state, now, since, frequenceLabel)` — texte simple (pas de HTML, comme les
     autres e-mails de l'application), une section par métrique ci-dessus, chaque liste tronquée aux
     15 premiers éléments (« … et N autre(s) ») pour ne jamais produire un e-mail interminable sur un

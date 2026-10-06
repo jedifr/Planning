@@ -1666,6 +1666,15 @@
   .pc-ok{width:22px; height:22px; border-radius:50%; background:var(--green); color:#fff; display:inline-flex; align-items:center; justify-content:center; font-size:12px; font-weight:700;}
   .pc-todo{width:22px; height:22px; border-radius:50%; border:2px solid var(--amber); box-sizing:border-box; display:inline-block;}
   .pc-pins{display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:6px 16px;}
+  .kb-since{font-weight:700; font-size:10px; padding:0 6px; border-radius:8px; margin-left:6px; background:var(--panel-2); color:var(--text-dim); border:1px solid var(--line); white-space:nowrap;}
+  .kb-since.amber{background:var(--amber-dim); color:var(--amber); border-color:var(--amber);}
+  .kb-since.red{background:rgba(178,58,48,0.12); color:var(--red); border-color:var(--red);}
+  .dispo-chips{display:flex; flex-wrap:wrap; gap:6px 8px; margin:2px 0 10px;}
+  .dispo-chip{font-size:12px; padding:3px 9px; border-radius:12px; border:1px solid var(--line); background:var(--panel-2); color:var(--text);}
+  .dispo-chip.amber{background:var(--amber-dim); border-color:var(--amber);}
+  .dispo-chip.red{background:rgba(178,58,48,0.10); border-color:var(--red);}
+  .dispo-chip i{font-style:normal; color:var(--red); font-weight:600;}
+  .urg-auto-badge{white-space:nowrap;}
   .pa-cards{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:6px 0 10px;}
   .pa-card{text-align:left; padding:10px 12px; border:1px solid var(--line); background:var(--panel); border-radius:var(--radius); cursor:pointer; font:inherit; color:var(--text); line-height:1.4; height:auto;}
   .pa-card b{display:block; font-size:13px; margin-bottom:3px;}
@@ -1766,7 +1775,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.99.0';
+const APP_VERSION = '1.100.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1948,6 +1957,8 @@ const SETTINGS_HELP = {
   presenceArrondi: "Règle appliquée à la lecture pour calculer l'heure RETENUE d'un pointage (présence, retard, fiche salarié, exports). Les pointages enregistrés ne sont jamais modifiés : l'heure réelle reste visible à côté. Sans effet pour les salariés au forfait.",
   presenceArrondiEffet: "Les jours avant cette date gardent leurs heures réelles : changer la règle ne réécrit jamais l'historique déjà consulté ou exporté.",
   tmFrequence: "Fréquence à laquelle le conteneur zk-sync relit la pointeuse. Le réglage est repris par l'agent en moins d'une minute, sans redémarrage. « Par défaut » = valeur SYNC_INTERVAL du fichier TM616.env (300 s à défaut). Minimum 1 minute.",
+  urgenceAuto: "Quand l'échéance d'une commande est dépassée (depuis le nombre de jours choisi), le planning la traite comme « Importante » ou « Urgente » : ses tâches passent devant celles des commandes moins prioritaires, et sa carte est colorée en conséquence. Le niveau saisi sur la commande n'est jamais modifié. Désactivé par défaut.",
+  dispoAlerte: "Une tâche « À faire » dont toutes les étapes précédentes sont terminées est disponible. Passé ce nombre de jours sans qu'elle soit démarrée, elle est signalée (pastille ambre/rouge sur le Kanban, bloc de la Vue d'ensemble et des Risques de retard, rapport e-mail). 0 = alerte désactivée. Par défaut : 3 jours.",
   userForfait: "Pas de « non arrivé », de retard ni de départ non pointé signalés pour cette personne. Si elle pointe, sa présence compte normalement."
 };
 function helpTip(key){
@@ -2738,6 +2749,10 @@ function migrateState(st){
     st._iconesAutoAssignees = true;
   }
   if(!st.config.margeEcheanceJours && st.config.margeEcheanceJours !== 0) st.config.margeEcheanceJours = 0;
+  // v1.100.0 : alerte « tâche disponible mais pas démarrée » (jours ; 0 = désactivée) et urgence automatique
+  // à l'échéance dépassée (désactivée par défaut — elle change l'ordre du planning).
+  if(st.config.dispoAlerteJours === undefined) st.config.dispoAlerteJours = 3;
+  if(!st.config.urgenceAuto || typeof st.config.urgenceAuto !== 'object') st.config.urgenceAuto = { actif:false, niveau:'importante', apresJours:0 };
   if(st.config.archiveApresJours === undefined) st.config.archiveApresJours = 365; // 0 = archivage automatique désactivé
   if(st.config.archiveAutoActive === undefined) st.config.archiveAutoActive = Number(st.config.archiveApresJours) > 0; // préserve le comportement des états déjà enregistrés
   // Pointage de l'équipe / disponibilité des postes (voir CLAUDE.md) — actifs par défaut, seuils
@@ -4085,9 +4100,31 @@ function topoOrderPieces(pieces, depsMap){
   return order;
 }
 
+// Urgence AUTOMATIQUE à l'échéance dépassée (v1.100.0, Paramètres → Planification). Calcul à la lecture,
+// JAMAIS une modification de `commande.urgence` : le niveau choisi à la main reste intact (et réapparaît
+// tel quel dès que l'option est décochée ou l'échéance repoussée). Ne fait que RELEVER, jamais abaisser.
+function urgenceAutoCfg(st){
+  const c = (((st || state).config) || {}).urgenceAuto || {};
+  const n = Math.round(Number(c.apresJours));
+  return { actif: !!c.actif, niveau: c.niveau === 'urgente' ? 'urgente' : 'importante', apresJours: (isFinite(n) && n > 0) ? Math.min(365, n) : 0 };
+}
+function effectiveUrgence(cmd, st){
+  const base = (cmd && cmd.urgence) || 'normale';
+  const cfg = urgenceAutoCfg(st);
+  if(!cfg.actif || !cmd || !cmd.dateBesoin || !Array.isArray(cmd.pieces) || isCommandeFullyDone(cmd)) return base;
+  const limite = new Date(cmd.dateBesoin + 'T12:00:00');
+  if(isNaN(limite.getTime())) return base;
+  limite.setDate(limite.getDate() + cfg.apresJours);
+  if(toDateInputValue(new Date()) <= toDateInputValue(limite)) return base; // échéance (+ délai) pas encore dépassée
+  const rb = URGENCY_RANK[base] !== undefined ? URGENCY_RANK[base] : 2;
+  return rb <= URGENCY_RANK[cfg.niveau] ? base : cfg.niveau;
+}
 function comparePriorityItems(itemA, itemB){
-  const ra = URGENCY_RANK[itemA.cmd.urgence] !== undefined ? URGENCY_RANK[itemA.cmd.urgence] : 2;
-  const rb = URGENCY_RANK[itemB.cmd.urgence] !== undefined ? URGENCY_RANK[itemB.cmd.urgence] : 2;
+  // `urg` = urgence effective posée par computeSchedule à la création de l'élément (voir effectiveUrgence).
+  const ua = itemA.urg !== undefined ? itemA.urg : itemA.cmd.urgence;
+  const ub = itemB.urg !== undefined ? itemB.urg : itemB.cmd.urgence;
+  const ra = URGENCY_RANK[ua] !== undefined ? URGENCY_RANK[ua] : 2;
+  const rb = URGENCY_RANK[ub] !== undefined ? URGENCY_RANK[ub] : 2;
   if(ra !== rb) return ra - rb; // l'urgence prime sur le délai — même critère que "Trier par priorité"
   const da = itemA.cmd.dateBesoin, db = itemB.cmd.dateBesoin;
   if(!da && !db){ /* pas d'échéance des deux côtés : on départage plus bas */ }
@@ -4263,7 +4300,7 @@ function computeSchedule(st){
         return;
       }
       // "à faire", volante : planifiée par la phase 3.
-      pendingVolante.push({ op, cmd, cfg, dureeH, deps: depsMap[op.id]||[] });
+      pendingVolante.push({ op, cmd, cfg, dureeH, deps: depsMap[op.id]||[], urg: effectiveUrgence(cmd, st) });
     });
   });
 
@@ -4290,7 +4327,7 @@ function computeSchedule(st){
     const memberIds = new Set(members.map(mm=>mm.op.id));
     const combinedDeps = [...new Set(members.flatMap(mm=>mm.deps).filter(id => !memberIds.has(id)))];
     const best = members.reduce((b,mm) => comparePriorityItems(b, mm) > 0 ? mm : b);
-    finalVolante.push({ op: best.op, cmd: best.cmd, cfg: best.cfg, dureeH: best.dureeH, deps: combinedDeps, groupMembers: members });
+    finalVolante.push({ op: best.op, cmd: best.cmd, cfg: best.cfg, dureeH: best.dureeH, deps: combinedDeps, groupMembers: members, urg: best.urg });
   });
 
 // Recherche, en avançant, le premier créneau réellement libre dans le calendrier du poste (à
@@ -4596,6 +4633,15 @@ function updateConfig(field, value){
     commit(true);
     return;
   }
+  if(field.startsWith('urgenceAuto.')){
+    if(!state.config.urgenceAuto || typeof state.config.urgenceAuto !== 'object') state.config.urgenceAuto = { actif:false, niveau:'importante', apresJours:0 };
+    const sub = field.split('.')[1];
+    if(sub==='actif') state.config.urgenceAuto.actif = !!value;
+    else if(sub==='niveau') state.config.urgenceAuto.niveau = value === 'urgente' ? 'urgente' : 'importante';
+    else if(sub==='apresJours'){ const n = Math.round(Number(value)); state.config.urgenceAuto.apresJours = (isFinite(n) && n > 0) ? Math.min(365, n) : 0; }
+    commit(); // l'urgence effective change l'ordre du planning : le calcul doit être refait
+    return;
+  }
   if(field.startsWith('urgencyColors.')){
     if(!state.config.urgencyColors) state.config.urgencyColors = { importante:'#a06d1a', urgente:'#b23a30' };
     const sub = field.split('.')[1];
@@ -4617,6 +4663,9 @@ function updateConfig(field, value){
     state.config.retardDemarragePopupActive = !!value;
   } else if(field==='pointageAlerteActive' || field==='pointageRappelOperateur' || field==='autoPauseDejeuner' || field==='autoPauseHorsHoraires' || field==='pauseRappelRetour'){
     state.config[field] = !!value;
+  } else if(field==='dispoAlerteJours'){
+    const v = Math.round(Number(value));
+    state.config.dispoAlerteJours = (isFinite(v) && v >= 0) ? Math.min(365, v) : 3; // 0 = alerte désactivée
   } else if(field==='dispoHorizonJours'){
     const v = Math.round(Number(value));
     if(isFinite(v) && v >= 1) state.config.dispoHorizonJours = Math.min(20, v);
@@ -7301,8 +7350,9 @@ function pinOpAtCurrentTime(cid, oid){
 const URGENCY_RANK = { urgente: 0, importante: 1, normale: 2 };
 function sortByPriority(){
   state.commandes.sort((a,b)=>{
-    const ra = URGENCY_RANK[a.urgence] !== undefined ? URGENCY_RANK[a.urgence] : 2;
-    const rb = URGENCY_RANK[b.urgence] !== undefined ? URGENCY_RANK[b.urgence] : 2;
+    const ua = effectiveUrgence(a, state), ub = effectiveUrgence(b, state); // urgence effective, comme le moteur
+    const ra = URGENCY_RANK[ua] !== undefined ? URGENCY_RANK[ua] : 2;
+    const rb = URGENCY_RANK[ub] !== undefined ? URGENCY_RANK[ub] : 2;
     if(ra !== rb) return ra - rb; // l'urgence prime sur le délai
     if(!a.dateBesoin && !b.dateBesoin) return 0;
     if(!a.dateBesoin) return 1;
@@ -10844,7 +10894,9 @@ function renderRisquesPage(){
   const machineTimelines = buildMachineTimelines(schedule);
   const bodyCards = atRisk.length ? atRisk.map(c => {
     const joursRetard = Math.ceil(commandeRiskDaysLate(c));
-    const urgenceTxt = c.urgence==='urgente' ? 'Urgente' : c.urgence==='importante' ? 'Importante' : 'Normale';
+    const urgEffR = effectiveUrgence(c, state);
+    const urgLbl = u => u==='urgente' ? 'Urgente' : u==='importante' ? 'Importante' : 'Normale';
+    const urgenceTxt = urgEffR !== (c.urgence||'normale') ? `${urgLbl(c.urgence)} → traitée comme ${urgLbl(urgEffR)} (échéance dépassée)` : urgLbl(c.urgence);
     const chains = pieceChainsForCommande(c);
     // Chaîne en pastilles (voir renderRisqueChainBlockHtml) : un coup d'œil visuel avant le détail
     // tabulaire, qui reste affiché tel quel juste en dessous, derrière "▸ Détail".
@@ -11005,6 +11057,22 @@ function renderRisquesPage(){
       </table>` : `<div class="footer-note" style="text-align:left; padding-top:6px;">Aucun retard constaté ne correspond à « ${escapeHtml(risquesSearchQuery)} ».</div>`}` : ''}
     </div>`}
   </section>` : '';
+  const disponiblesAll = computeDisponiblesNonDemarrees(state, new Date());
+  const disponiblesRows = disponiblesAll.filter(r => risquesSearchMatch(r.commandeNom, r.refClient, r.piece, r.etape, r.machineNom, r.numeroLigne));
+  const disponiblesHtml = dispoAlerteJours() > 0 && disponiblesAll.length ? `
+  <section class="panel">
+    <div class="panel-head">
+      <h2>⏳ Tâches disponibles non démarrées</h2>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span class="footer-note" style="margin:0;">${risquesSearchQuery.trim() ? `${disponiblesRows.length} sur ${disponiblesAll.length}` : disponiblesAll.length} tâche(s) · depuis plus de ${dispoAlerteJours()} j</span>
+        <button class="ghost icon-btn collapse-chevron ${isPanelEffectivelyCollapsed('disponibles')?'collapsed':''}" data-action="toggle-panel-collapse" data-key="disponibles" title="${isPanelEffectivelyCollapsed('disponibles')?'Déplier':'Replier'}">▾</button>
+      </div>
+    </div>
+    ${isPanelEffectivelyCollapsed('disponibles') ? '' : `<div class="panel-body">
+      <div class="footer-note" style="text-align:left; padding-bottom:8px;">Étapes précédentes terminées (ou première étape) mais tâche toujours « À faire » : ce n'est pas le planning qui retient ces tâches, personne ne les a prises. Échéances dépassées en tête. Seuil et alerte : Paramètres → Alertes &amp; seuils.</div>
+      ${disponiblesRows.length ? renderDisponiblesNonDemarreesHtml(disponiblesRows, {}) : `<div class="footer-note" style="text-align:left;">Aucune tâche ne correspond à « ${escapeHtml(risquesSearchQuery)} ».</div>`}
+    </div>`}
+  </section>` : '';
   const summary = computeRisquesSummaryStats(atRiskAll, pauseParPoste, retardsDemarrage);
   const summaryHtml = `
   <section class="panel">
@@ -11064,7 +11132,7 @@ function renderRisquesPage(){
   ${searchBarHtml}
   <div class="risques-two-col">
     <div class="risques-col-left">${risquesHtml}</div>
-    <div class="risques-col-right">${pausesHtml}${retardsDemarrageHtml}</div>
+    <div class="risques-col-right">${disponiblesHtml}${pausesHtml}${retardsDemarrageHtml}</div>
   </div>`;
 }
 
@@ -11255,7 +11323,12 @@ function renderPointageHeaderBadges(){
   const settings = pointageSettings();
   const now = new Date();
   const nDecl = countPendingDeclarations(state);
-  const declBadge = nDecl ? `<button class="small pointage-alert-badge amber" data-action="goto-pointages-a-valider" title="Tâches déclarées terminées sans avoir été démarrées — temps à valider dans Pointages">⏳ ${nDecl} temps à valider</button>` : '';
+  const declBadge0 = nDecl ? `<button class="small pointage-alert-badge amber" data-action="goto-pointages-a-valider" title="Tâches déclarées terminées sans avoir été démarrées — temps à valider dans Pointages">⏳ ${nDecl} temps à valider</button>` : '';
+  // Tâches disponibles depuis plus de N jours, non démarrées, sur une commande à l'échéance DÉPASSÉE
+  // (seules celles-là font un badge : la liste complète vit dans la Vue d'ensemble / Risques de retard).
+  const nDispoRetard = computeDisponiblesNonDemarrees(state, now).filter(r => r.depasse).length;
+  const dispoBadge = nDispoRetard ? `<button class="small pointage-alert-badge red" data-action="goto-risques" title="Tâches disponibles depuis plus de ${dispoAlerteJours()} jour(s), pas démarrées, sur une commande dont l'échéance est dépassée — détail dans Risques de retard">⏳ ${nDispoRetard} à démarrer (échéance dépassée)</button>` : '';
+  const declBadge = declBadge0 + dispoBadge;
   if(!settings.actif) return declBadge;
   const nSans = computeTeamPointage(state, now).filter(r => r.status==='sansPointage').length;
   const nPause = computeLongPausedToday(state, now, settings.seuilPauseMin).length;
@@ -11491,6 +11564,7 @@ const DASHBOARD_BLOCKS = [
   { key:'postes', label:'🏭 État des postes' },
   { key:'dispo', label:'🗓 Disponibilité des postes' },
   { key:'pausesSuspectes', label:'⏸ Pauses suspectes en cours (détail)' },
+  { key:'disponibles', label:'⏳ Tâches disponibles non démarrées' },
   { key:'prodPies', label:'⏱ Temps de production par poste' },
   { key:'rebuts', label:'🗑 Rebuts par motif' }
 ];
@@ -11502,7 +11576,8 @@ const DASHBOARD_TILES = [
   { key:'retardsDemarrage', label:'Tâches démarrées en retard' },
   { key:'pausesSuspectes', label:'Pauses suspectes en cours' },
   { key:'pausesVeille', label:'En pause depuis la veille' },
-  { key:'tempsDeclares', label:'Temps déclarés à valider' }
+  { key:'tempsDeclares', label:'Temps déclarés à valider' },
+  { key:'disponibles', label:'Tâches disponibles non démarrées' }
 ];
 let dashboardCustomizeOpen = false;
 function dashboardListDefs(list){ return list === 'tiles' ? DASHBOARD_TILES : DASHBOARD_BLOCKS; }
@@ -11655,7 +11730,14 @@ function renderDashboardPage(){
   // Tuiles et blocs : un rendu par clé, dans l'ordre et selon les choix de la personne (voir
   // CLAUDE.md « Vue d'ensemble personnalisable ») — un bloc masqué n'est jamais calculé.
   const nbDecl = countPendingDeclarations(state);
+  const disponibles = computeDisponiblesNonDemarrees(state, now);
+  const nbDispoDepasse = disponibles.filter(r => r.depasse).length;
   const tileRenderers = {
+    disponibles: () => `<div class="dash-stat-tile ${nbDispoDepasse>0?'tone-red':disponibles.length>0?'tone-amber':'tone-green'} ${disponibles.length>0?'dst-clickable':''}" ${disponibles.length>0?'data-action="goto-risques"':''}>
+        <div class="dst-top"><div class="dst-num">${disponibles.length}</div><span class="dst-icon">⏳</span></div>
+        <div class="dst-lbl">Disponibles non démarrées</div>
+        <div class="dst-sub">${dispoAlerteJours()>0 ? `depuis plus de ${dispoAlerteJours()} j${nbDispoDepasse ? ` — dont ${nbDispoDepasse} à l'échéance dépassée` : ''}` : 'alerte désactivée'}</div>
+      </div>`,
     tempsDeclares: () => `<div class="dash-stat-tile ${nbDecl>0?'tone-amber dst-clickable':'tone-green'}" ${nbDecl>0?'data-action="goto-pointages-a-valider"':''}>
         <div class="dst-top"><div class="dst-num">${nbDecl}</div><span class="dst-icon">⏳</span></div>
         <div class="dst-lbl">Temps déclarés à valider</div>
@@ -11703,6 +11785,9 @@ function renderDashboardPage(){
     <div class="dash-machine-grid">${machineCards}</div>`,
     dispo: () => renderMachineAvailabilitySection(schedule, now),
     pausesSuspectes: () => pausesSuspectesHtml,
+    disponibles: () => dispoAlerteJours() > 0 ? `<div class="trend-section-title" style="margin-top:20px;">⏳ Tâches disponibles non démarrées</div>
+      <div class="footer-note" style="text-align:left; padding-bottom:8px;">Étapes précédentes terminées depuis plus de ${dispoAlerteJours()} jour(s), tâche toujours « À faire » — échéances dépassées en tête. Seuil réglable dans Paramètres → Alertes &amp; seuils.</div>
+      ${renderDisponiblesNonDemarreesHtml(disponibles, { limit: 12 })}` : '',
     prodPies: () => `<div class="trend-section-title" style="margin-top:24px;">⏱ Temps de production par poste</div>
     <div class="dash-pie-grid">
       ${prodPieCard("Aujourd'hui", computeProductionByMachineItems(state, dayStart, nextDay))}
@@ -14099,6 +14184,23 @@ function renderSettingsModal(){
         <div><label class="field">Heures libres des postes sur (jours ouvrés) ${helpTip('dispoHorizon')}</label><input type="number" min="1" max="20" step="1" value="${dispoHorizonJours()}" data-action="update-config" data-field="dispoHorizonJours"></div>
       </div>
       <div class="footer-note" style="text-align:left; padding:8px 0 16px;">La marge décale l'échéance utilisée pour les indicateurs « en retard » : une commande est signalée en retard si sa fin estimée dépasse (date de besoin − marge). 0 = pas de marge. L'horizon des heures libres alimente le bloc « Disponibilité des postes » de la Vue d'ensemble.</div>
+      <div class="modal-section-title">Urgence automatique à l'échéance dépassée</div>
+      <label class="statut-chip" style="margin-bottom:8px;">
+        <input type="checkbox" ${urgenceAutoCfg().actif?'checked':''} data-action="update-config" data-field="urgenceAuto.actif">
+        Relever automatiquement l'urgence d'une commande dont l'échéance est dépassée ${helpTip('urgenceAuto')}
+      </label>
+      <div class="commande-top-fields" style="grid-template-columns:1fr 1fr;">
+        <label class="field">Traiter la commande comme
+          <select data-action="update-config" data-field="urgenceAuto.niveau" ${urgenceAutoCfg().actif?'':'disabled'}>
+            <option value="importante" ${urgenceAutoCfg().niveau==='importante'?'selected':''}>Importante</option>
+            <option value="urgente" ${urgenceAutoCfg().niveau==='urgente'?'selected':''}>Urgente</option>
+          </select>
+        </label>
+        <label class="field">Une fois l'échéance dépassée de (jours)
+          <input type="number" min="0" max="365" step="1" value="${urgenceAutoCfg().apresJours}" data-action="update-config" data-field="urgenceAuto.apresJours" ${urgenceAutoCfg().actif?'':'disabled'}>
+        </label>
+      </div>
+      <div class="footer-note" style="text-align:left; padding:6px 0 16px;">Le niveau choisi sur la commande n'est jamais modifié : le relèvement est calculé à l'affichage et dans le planning, puis disparaît de lui-même si l'échéance est repoussée ou la commande terminée. Il ne fait que relever (une commande déjà « Urgente » le reste). Les tâches déjà démarrées ne bougent pas ; les autres peuvent passer devant des commandes moins prioritaires. Une pastille « ⬆ traitée comme… » l'indique sur la commande. Désactivé par défaut.</div>
       <div class="modal-section-title">Regroupement de pièces</div>
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${state.config.matiereFusionActive?'checked':''} data-action="update-config" data-field="matiereFusionActive">
@@ -14395,6 +14497,11 @@ function renderSettingsModal(){
         Avertir l'opérateur par une pop-up quand il démarre une tâche en retard sur son démarrage théorique ${helpTip('retardPopup')}
       </label>
       <div class="footer-note" style="text-align:left; padding-bottom:6px;">S'affiche juste après un clic sur « ▶ Démarrer » (jamais à la reprise après pause), seulement si le retard dépasse un demi-jour — le même seuil et la même donnée que le badge « 🕓 » déjà affiché sur les tâches concernées. Désactivée par défaut.</div>
+      <div class="modal-section-title" style="margin-top:22px;">⏳ Tâche disponible mais pas démarrée</div>
+      <label class="field" style="max-width:300px;">Signaler une tâche disponible depuis plus de (jours) ${helpTip('dispoAlerte')}
+        <input type="number" min="0" max="365" step="1" value="${dispoAlerteJours()}" data-action="update-config" data-field="dispoAlerteJours">
+      </label>
+      <div class="footer-note" style="text-align:left; padding:6px 0 6px;">Une tâche « À faire » dont toutes les étapes précédentes sont terminées est <b>disponible</b>. Passé ce délai sans démarrage : pastille ambre (à partir du seuil) puis rouge (à partir du double) sur la carte Kanban, bloc dans la Vue d'ensemble et les Risques de retard, badge d'en-tête pour celles dont l'échéance est dépassée, et section dans le rapport e-mail. <b>0 = alerte désactivée.</b> Par défaut 3 jours.</div>
       <div class="modal-section-title" style="margin-top:22px;">👥 Pointage de l'équipe</div>
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${cfg.pointageAlerteActive!==false?'checked':''} data-action="update-config" data-field="pointageAlerteActive">
@@ -14592,7 +14699,7 @@ function renderDayView(schedule){
   }).join('');
 
   let allOps = [];
-  schedule.forEach(c => c.pieces.forEach(o => { if(o.start && o.end) allOps.push({...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin}); }));
+  schedule.forEach(c => c.pieces.forEach(o => { if(o.start && o.end) allOps.push({...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:effectiveUrgence(c, state), dateBesoin:c.dateBesoin}); }));
   const dayEndExclusive = nextDayStart(day);
   const visibleOps = allOps.filter(o => o.end > day && o.start < dayEndExclusive);
 
@@ -14656,7 +14763,7 @@ function renderWeekView(schedule){
   }).join('');
 
   let allOps = [];
-  schedule.forEach(c => c.pieces.forEach(o => { if(o.start && o.end) allOps.push({...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin}); }));
+  schedule.forEach(c => c.pieces.forEach(o => { if(o.start && o.end) allOps.push({...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:effectiveUrgence(c, state), dateBesoin:c.dateBesoin}); }));
   const weekEndExclusive = new Date(days[4]); weekEndExclusive.setDate(weekEndExclusive.getDate()+1);
   const visibleOps = allOps.filter(o => o.end > days[0] && o.start < weekEndExclusive);
 
@@ -14704,7 +14811,7 @@ function renderMonthView(schedule){
   schedule.forEach(c=>c.pieces.forEach(o=>{
     if(!o.start) return;
     const key = toDateInputValue(o.start);
-    (byDay[key]=byDay[key]||[]).push({...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin});
+    (byDay[key]=byDay[key]||[]).push({...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:effectiveUrgence(c, state), dateBesoin:c.dateBesoin});
   }));
   const hd = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'].map(w=>`<div class="month-weekday-hd">${w}</div>`).join('');
   const dayCells = cells.map(d=>{
@@ -14772,7 +14879,7 @@ const PANEL_COLLAPSE_STORAGE_KEY = 'planning-atelier-panel-collapse';
 // `pauses`/`retardsDemarrage`/`atRisk` : les trois sections de la page "⚠️ Risques de retard" (voir
 // renderRisquesPage) — même mécanisme, même clé de stockage que les panneaux du planning ci-dessus,
 // réutilisé tel quel plutôt qu'un second système de repli à inventer pour une autre page.
-let panelCollapsed = { planning:false, active:false, done:false, archives:true, pauses:false, retardsDemarrage:false, atRisk:false };
+let panelCollapsed = { planning:false, active:false, done:false, archives:true, pauses:false, retardsDemarrage:false, atRisk:false, disponibles:false };
 let archiveSearchQuery = '';
 function loadPanelCollapsePref(){
   try{
@@ -15128,12 +15235,138 @@ function kanbanWaitInfoFor(c, deps, byId, o){
   const blocker = open.slice().sort((a,b) => (b.end ? b.end.getTime() : 0) - (a.end ? a.end.getTime() : 0))[0];
   return { state: blocker.statut === 'a_faire' ? 'waiting' : 'wip', pred:blocker, endDate: blocker.end || null, others: open.length - 1 };
 }
+// Tâches disponibles mais pas démarrées (v1.100.0). « Disponible » = pièce « À faire » dont toutes les
+// étapes précédentes sont terminées (états 'free'/'ready' ci-dessus), pas sous-traitée ni hors planning.
+// `pieceDisponibleDepuis` donne l'instant depuis lequel elle l'est : fin réelle de la dernière étape
+// précédente, ou — pour une première étape — la création de la commande ; une « date de début possible »
+// plus tardive prime (la matière n'est pas là avant). null = inconnu (rien d'inventé) ou pas encore dispo.
+function dispoAlerteJours(st){
+  const v = Number((((st || state).config) || {}).dispoAlerteJours);
+  return (isFinite(v) && v >= 0) ? Math.round(v) : 3; // 0 = alerte désactivée
+}
+function pieceDisponibleDepuis(c, o, w){
+  if(!w || (w.state !== 'free' && w.state !== 'ready')) return null;
+  let since = null;
+  if(w.state === 'ready') since = w.endDate || null;
+  else if(c.dateCreation) since = new Date(c.dateCreation);
+  if(since && isNaN(since.getTime())) since = null;
+  if(o.dateDebutPossible){
+    const d = new Date(o.dateDebutPossible + 'T00:00:00');
+    if(!isNaN(d.getTime()) && (!since || d > since)) since = d;
+  }
+  return since;
+}
+// Jours CALENDAIRES écoulés (date du jour − date de disponibilité) : « terminée le 18/09 » donne bien 18 j le 06/10,
+// quelle que soit l'heure — plus lisible qu'un nombre de périodes de 24 h.
+function dispoJoursDepuis(since, now){
+  const a = new Date(toDateInputValue(since) + 'T12:00:00'), b = new Date(toDateInputValue(now || new Date()) + 'T12:00:00');
+  return Math.max(0, Math.round((b.getTime() - a.getTime()) / 86400000));
+}
+function dispoJoursTone(jours, seuil){
+  if(!(seuil > 0)) return '';
+  if(jours >= 2 * seuil) return 'red';
+  if(jours >= seuil) return 'amber';
+  return '';
+}
+// Liste des tâches disponibles depuis au moins `seuilJours` jours sans avoir démarré (une ligne par lot
+// fusionné : un lot démarre d'un seul geste). Lecture des commandes ACTIVES du `state` : ni moteur ni
+// calendrier nécessaires (les dates utiles sont des dates réelles déjà enregistrées).
+function computeDisponiblesNonDemarrees(st, now, seuilJours){
+  const seuil = seuilJours != null ? seuilJours : dispoAlerteJours(st);
+  if(!(seuil > 0)) return [];
+  const nowD = now || new Date();
+  const todayKey = toDateInputValue(nowD);
+  const out = [];
+  (st.commandes || []).forEach(c => {
+    if(!Array.isArray(c.pieces) || isCommandeFullyDone(c)) return;
+    const deps = resolveEffectiveDeps(c.pieces);
+    const byId = {}; c.pieces.forEach(x => byId[x.id] = x);
+    const groups = {}; // fusionGroupId -> { members:[{o,since}], blocked:bool }
+    const singles = [];
+    c.pieces.forEach(o => {
+      if(o.statut !== 'a_faire') return;
+      if(o.fusionGroupId){ const g = groups[o.fusionGroupId] = groups[o.fusionGroupId] || { members:[], blocked:false }; g.members.push(o); }
+    });
+    c.pieces.forEach(o => {
+      if(o.statut !== 'a_faire') return;
+      const m = (st.machines || []).find(mm => mm.id === o.machineId);
+      const concerned = !o.sousTraitance && !o.horsPlanning && m && !machineNameLooksLikeSousTraitance(m.nom);
+      const since = concerned ? pieceDisponibleDepuis(c, o, kanbanWaitInfoFor(c, deps, byId, o)) : null;
+      if(o.fusionGroupId){ const g = groups[o.fusionGroupId]; if(!since) g.blocked = true; else g.since = (!g.since || since > g.since) ? since : g.since; }
+      else if(since) singles.push({ o, since, m });
+    });
+    const emit = (o, since, m, nbPieces) => {
+      if(since > nowD) return; // pas encore disponible (date de début possible dans le futur)
+      const jours = dispoJoursDepuis(since, nowD);
+      if(jours < seuil) return;
+      const depasse = !!(c.dateBesoin && c.dateBesoin < todayKey);
+      const echeanceJours = depasse ? Math.max(1, Math.round((new Date(todayKey + 'T12:00:00') - new Date(c.dateBesoin + 'T12:00:00')) / 86400000)) : 0;
+      out.push({ commandeId: c.id, commandeNom: c.nom, refClient: c.refClient || '', oid: o.id, piece: o.piece || '', etape: o.etape || '', numeroLigne: o.numeroLigne || '',
+        machineId: o.machineId, machineNom: m.nom, depuis: since, jours, dateBesoin: c.dateBesoin || '', depasse, echeanceJours, nbPieces });
+    };
+    singles.forEach(x => emit(x.o, x.since, x.m, 1));
+    Object.keys(groups).forEach(gid => {
+      const g = groups[gid];
+      if(g.blocked || !g.since) return;
+      const o = g.members[0];
+      const m = (st.machines || []).find(mm => mm.id === o.machineId);
+      if(m) emit(o, g.since, m, g.members.length);
+    });
+  });
+  // Échéances dépassées d'abord (la plus ancienne en tête), puis les autres par échéance, puis les plus anciennes en attente.
+  return out.sort((a, b) => (a.depasse === b.depasse ? 0 : a.depasse ? -1 : 1)
+    || (a.dateBesoin && b.dateBesoin ? a.dateBesoin.localeCompare(b.dateBesoin) : (a.dateBesoin ? -1 : b.dateBesoin ? 1 : 0))
+    || b.jours - a.jours);
+}
+function posteSansOperateur(st, machineId){
+  return !Object.keys(st.userMachines || {}).some(uid => (st.userMachines[uid] || []).includes(machineId));
+}
+function dispoSinceBadgeHtml(jours, seuil){
+  if(!(jours >= 1)) return '';
+  return `<span class="kb-since ${dispoJoursTone(jours, seuil)}">depuis ${jours} j</span>`;
+}
+// Bloc partagé Vue d'ensemble / page Risques : synthèse par poste puis détail (`opts.limit` lignes au plus).
+function renderDisponiblesNonDemarreesHtml(rows, opts){
+  const o = opts || {};
+  const seuil = dispoAlerteJours();
+  if(!(seuil > 0)) return `<div class="footer-note" style="text-align:left;">Alerte désactivée (Paramètres → Alertes &amp; seuils → « Tâche disponible mais pas démarrée »).</div>`;
+  if(!rows.length) return `<div class="footer-note" style="text-align:left;">Aucune tâche n'attend de démarrer depuis plus de ${seuil} jour${seuil>1?'s':''}.</div>`;
+  const byPoste = {};
+  rows.forEach(r => { const e = byPoste[r.machineId] = byPoste[r.machineId] || { machineId:r.machineId, nom:r.machineNom, nb:0, max:0, depasse:0 }; e.nb++; e.max = Math.max(e.max, r.jours); if(r.depasse) e.depasse++; });
+  const chips = Object.values(byPoste).sort((a, b) => b.depasse - a.depasse || b.max - a.max).map(e => {
+    const noOp = posteSansOperateur(state, e.machineId);
+    return `<span class="dispo-chip ${e.depasse ? 'red' : 'amber'}" title="${escapeHtml(`${e.nb} tâche(s) disponible(s) non démarrée(s), la plus ancienne depuis ${e.max} j${e.depasse ? `, dont ${e.depasse} sur une commande à l'échéance dépassée` : ''}${noOp ? ' — aucun salarié rattaché à ce poste' : ''}`)}">${escapeHtml(e.nom)} · <b>${e.nb}</b> · max ${e.max} j${noOp ? ' <i title="Aucun salarié rattaché à ce poste (Paramètres → Utilisateurs) : sa file n\'est dans la liste de personne">⚠ sans salarié rattaché</i>' : ''}</span>`;
+  }).join('');
+  const shown = o.limit ? rows.slice(0, o.limit) : rows;
+  const reste = rows.length - shown.length;
+  const lotTxt = r => r.nbPieces > 1 ? ` <span class="footer-note" style="margin:0;">(+${r.nbPieces-1} pièce(s) du même lot)</span>` : '';
+  return `
+    <div class="dispo-chips">${chips}</div>
+    <table class="ops-table">
+      <thead><tr><th>Poste</th><th>Commande</th><th>Pièce / Étape</th><th>Disponible depuis</th><th>Échéance</th></tr></thead>
+      <tbody>${shown.map(r => `<tr>
+        <td>${escapeHtml(r.machineNom)}</td>
+        <td><button class="temps-prod-commande-link" data-action="isolate-commande-goto-planning" data-cid="${r.commandeId}" style="background:none; border:none; padding:0; color:var(--text);">${escapeHtml(r.commandeNom)}</button></td>
+        <td>${escapeHtml([r.piece, r.etape].filter(Boolean).join(' / ') || '—')}${r.numeroLigne ? ` <span class="footer-note" style="margin:0;">(n°${escapeHtml(r.numeroLigne)})</span>` : ''}${lotTxt(r)}</td>
+        <td><span title="${escapeHtml(formatDT(r.depuis))}">${escapeHtml(formatDateFr(toDateInputValue(r.depuis)))}</span> ${dispoSinceBadgeHtml(r.jours, seuil)}</td>
+        <td>${r.dateBesoin ? escapeHtml(formatDateFr(r.dateBesoin)) : '—'}${r.depasse ? ` <span class="badge red badge-overdue" title="Échéance dépassée depuis ${r.echeanceJours} jour(s)">⏰ ${r.echeanceJours} j</span>` : ''}</td>
+      </tr>`).join('')}</tbody>
+    </table>
+    ${reste > 0 ? `<div class="footer-note" style="text-align:left; padding-top:6px;">… et ${reste} autre${reste>1?'s':''} — <button class="ghost small" data-action="goto-risques">liste complète dans « Risques de retard »</button></div>` : ''}`;
+}
 function kanbanWaitInfoMap(schedule){
   const map = {};
+  const seuilNow = new Date();
   schedule.forEach(c => {
     const deps = resolveEffectiveDeps(c.pieces);
     const byId = {}; c.pieces.forEach(x => byId[x.id] = x);
-    c.pieces.forEach(o => { if(o.statut === 'a_faire') map[o.id] = kanbanWaitInfoFor(c, deps, byId, o); });
+    c.pieces.forEach(o => {
+      if(o.statut !== 'a_faire') return;
+      const w = kanbanWaitInfoFor(c, deps, byId, o);
+      const since = pieceDisponibleDepuis(c, o, w);
+      if(since && since <= seuilNow) w.since = since;
+      map[o.id] = w;
+    });
   });
   return map;
 }
@@ -15147,12 +15380,21 @@ function kanbanWaitInfoForGroup(members, waitMap){
     if(!best || rank[w.state] > rank[best.state] ||
        (rank[w.state] === rank[best.state] && (w.endDate ? w.endDate.getTime() : 0) > (best.endDate ? best.endDate.getTime() : 0))) best = w;
   });
+  // Lot disponible : il l'est depuis que son DERNIER membre l'est ; un membre sans date connue → on n'affirme rien.
+  if(best && (best.state === 'free' || best.state === 'ready')){
+    const sinces = members.map(mb => waitMap[mb.id]).filter(Boolean).map(w => w.since);
+    best = { ...best, since: sinces.length && sinces.every(Boolean) ? new Date(Math.max(...sinces.map(d => d.getTime()))) : null };
+  }
   return best;
 }
 function kanbanWaitPillHtml(w){
   if(!w) return '';
   const dot = '<i>●</i>';
-  if(w.state === 'free') return `<div class="kanban-avail kb-avail-free" title="Aucune étape précédente : la pièce est disponible">${dot}À faire</div>`;
+  const seuilK = dispoAlerteJours();
+  const sinceJ = w.since ? dispoJoursDepuis(w.since, new Date()) : null;
+  const sinceBadge = sinceJ != null ? dispoSinceBadgeHtml(sinceJ, seuilK) : '';
+  const sinceTitle = w.since ? ` — disponible depuis le ${formatDT(w.since)}` : '';
+  if(w.state === 'free') return `<div class="kanban-avail kb-avail-free" title="${escapeHtml('Aucune étape précédente : la pièce est disponible' + sinceTitle)}">${dot}<span class="kb-txt">À faire</span>${sinceBadge}</div>`;
   const m = state.machines.find(mm => mm.id === w.pred.machineId);
   const posteNom = m ? m.nom : (w.pred.etape || 'étape précédente');
   const etapeNom = [w.pred.piece, w.pred.etape].filter(Boolean).join(' / ');
@@ -15161,7 +15403,7 @@ function kanbanWaitPillHtml(w){
   const dateCourte = w.endDate ? `${w.endDate.toLocaleDateString('fr-FR',{weekday:'short'}).replace('.','')} ${w.endDate.getDate()}/${w.endDate.getMonth()+1} ${w.endDate.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}` : '';
   const autres = w.others > 0 ? ` (+${w.others} autre${w.others>1?'s':''} étape${w.others>1?'s':''} précédente${w.others>1?'s':''})` : '';
   if(w.state === 'ready'){
-    return `<div class="kanban-avail kb-avail-ready" title="${escapeHtml(`Étape précédente terminée : ${etapeNom} — ${posteNom}${dateTxt ? ' — le ' + dateTxt : ''}`)}">${dot}<span class="kb-txt">Disponible · ${escapeHtml(posteNom)} terminé</span>${dateCourte ? `<small>${escapeHtml(dateCourte)}</small>` : ''}</div>`;
+    return `<div class="kanban-avail kb-avail-ready" title="${escapeHtml(`Étape précédente terminée : ${etapeNom} — ${posteNom}${dateTxt ? ' — le ' + dateTxt : ''}${sinceTitle ? ' (' + sinceTitle.replace(' — ', '') + ')' : ''}`)}">${dot}<span class="kb-txt">Disponible · ${escapeHtml(posteNom)} terminé</span>${sinceBadge}${dateCourte ? `<small>${escapeHtml(dateCourte)}</small>` : ''}</div>`;
   }
   const cls = w.state === 'wip' ? 'kb-avail-wip' : 'kb-avail-wait';
   const statutTxt = opStatutLabel(w.pred.statut).toLowerCase();
@@ -15177,7 +15419,7 @@ function renderKanbanView(schedule){
   const zonesInfoK = computeStorageZones(state); // calculé une fois, pas par carte
   let allOps = [];
   schedule.forEach(c => c.pieces.forEach(o => {
-    allOps.push({ ...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin, zoneStockage:c.zoneStockage });
+    allOps.push({ ...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:effectiveUrgence(c, state), dateBesoin:c.dateBesoin, zoneStockage:c.zoneStockage });
   }));
   allOps = allOps.filter(o => matchesSearch({ nom:o.commandeNom, pieces:[o] }, searchQuery));
   // Disponibilité vis-à-vis des étapes précédentes (calculée sur le planning complet : un filtre de
@@ -15515,7 +15757,7 @@ function renderListeView(schedule){
   let allOps = [];
   schedule.forEach(c => c.pieces.forEach(o => {
     if(o.statut==='termine') return; // déjà couvert par le tableau des tâches terminées
-    allOps.push({ ...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:c.urgence||'normale', dateBesoin:c.dateBesoin });
+    allOps.push({ ...o, commandeNom:c.nom, refClient:c.refClient, cid:c.id, urgence:effectiveUrgence(c, state), dateBesoin:c.dateBesoin });
   }));
   allOps = allOps.filter(o => matchesSearch({ nom:o.commandeNom, pieces:[o] }, searchQuery));
   allOps.sort((a,b) => {
@@ -15806,7 +16048,10 @@ function renderCommandeCard(c, idx, total){
     <div class="ops-subhead ops-subhead-done">Tâches terminées <span class="ops-subcount">(${donePieces.length})</span></div>
     <table class="ops-table ops-table-done">${opsTableHead()}<tbody>${donePieces.map(o=>renderOpsRow(o,c)).join('')}</tbody></table>` : '';
 
-  const cardUCol = urgencyColorFor(c.urgence);
+  const urgEff = effectiveUrgence(c, state);
+  const urgAutoBadge = urgEff !== (c.urgence||'normale')
+    ? `<span class="badge amber urg-auto-badge" title="Échéance dépassée : cette commande est priorisée comme « ${urgEff==='urgente'?'Urgente':'Importante'} » dans le planning (réglage Paramètres → Planification). Le niveau choisi (« ${c.urgence==='urgente'?'Urgente':c.urgence==='importante'?'Importante':'Normale'} ») n'est pas modifié.">⬆ traitée comme ${urgEff==='urgente'?'Urgente':'Importante'}</span>` : '';
+  const cardUCol = urgencyColorFor(urgEff);
   const cardBorderStyle = cardUCol ? `border-left-color:${cardUCol};` : '';
   const selectUCol = urgencyColorFor(c.urgence);
   const selectStyle = selectUCol ? `background:${hexToRgba(selectUCol,0.12)};color:${selectUCol};border-color:${selectUCol};` : '';
@@ -15833,6 +16078,7 @@ function renderCommandeCard(c, idx, total){
         <option value="importante" ${c.urgence==='importante'?'selected':''}>Importante</option>
         <option value="urgente" ${c.urgence==='urgente'?'selected':''}>Urgente</option>
       </select>
+      ${urgAutoBadge}
       <div class="due-field">Échéance <input type="date" required value="${c.dateBesoin}" data-action="commande-field" data-cid="${c.id}" data-field="dateBesoin"></div>
       ${zoneSelect}
       ${badge}
