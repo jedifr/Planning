@@ -1645,6 +1645,49 @@ sans réglage, ils remontaient en permanence en « Non arrivé »/« Aucun point
   pour qu'un forfait qui ne travaille pas sur tâches n'y figure pas, décocher « Afficher dans le temps de
   production » (même exclusion que pour un compte admin).
 
+### Arrondi des pointages (v1.98.0)
+
+Demande : un réglage « Type d'arrondi » comme celui de TimeMoto (Pas d'arrondi / Intervalle / Arrondis à heures fixes).
+Proposition validée avant codage : réglage **global**, **pas d'arrondi par défaut**, **pauses non arrondies sauf option**.
+
+- **Un calcul à la lecture, jamais une modification.** Les lignes de `presence_punches` (et le serveur, `presence.js`, qui ne
+  connaît pas l'arrondi) restent celles de la pointeuse/du serveur — infalsifiables, exigence du module. `effectivePresencePunches`
+  applique `applyPresenceRounding` aux pointages retenus et renvoie, pour un pointage arrondi, une **copie** `{...p, ts: heure
+  retenue, rawTs: heure réelle, rounded:true}` (un pointage inchangé est renvoyé tel quel). Un seul point d'application pour tous les
+  consommateurs (page Présence jour/semaine, Mon pointage, Fiche salarié, exports) : `presenceDaySummary` voit donc l'heure
+  retenue, et conserve `arriveeReelle`/`departReelle`. `effectivePresencePunches(punches, { raw:true })` court-circuite l'arrondi.
+- **Réglage** `config.presence.arrondi` (lu par `presenceArrondiCfg`, normalisé : valeurs hors liste → défaut) :
+  `mode` (`aucun` par défaut | `intervalle` | `fixe`), `dateEffet` (`AAAA-MM-JJ`), `pauses` (bool), `intervalle {minutes 5/10/15/30,
+  arrivee, depart}` (règle `proche` | `suivant` | `precedent`), `fixe {debutAvant, debutApres, finAvant, finApres, pauseTolMin}`.
+  Valeurs par défaut **neutres** (fourchettes à 0, tolérance de pause 5) : rien ne change tant qu'on ne règle rien. Paramètres →
+  Pointage présentiel → « Arrondi des pointages » (`renderPresenceArrondiSettings`, trois cartes `.pa-card`, champs selon le mode,
+  exemple chiffré recalculé en direct `presenceArrondiExample`). Écriture : `updatePresenceArrondi` (`data-action="presence-arrondi"`
+  pour les champs, `presence-arrondi-mode` pour les cartes) ; un `commit()`, pas de rechargement des pointages (calcul local).
+- **Date d'effet** : posée à aujourd'hui à la première activation (modifiable). Les jours antérieurs gardent leurs heures réelles :
+  changer la règle ne réécrit jamais l'historique déjà consulté ou exporté. Question des totaux déjà vus / exportés tranchée ainsi.
+- **Ce qui est arrondi** : la **première entrée** du jour (`in`) et la **dernière sortie** (`out`, seulement si aucune entrée ne la
+  suit — une sortie intermédiaire n'est pas un départ). Les pauses seulement si `pauses` est coché. Jamais pour un salarié au
+  forfait (`isForfaitUser`), jamais avant `dateEffet`, jamais si l'arrondi changerait de jour (`target` hors 0–1439 min).
+  - *Intervalle* : `proche` (arrondi classique), `suivant` (heure ronde suivante), `precedent` ; pauses toujours « au plus proche ».
+  - *Heures fixes* : horaire de la PERSONNE (`expectedDayFor` : horaire perso, vendredi, congé, demi-journée) ; arrivée comprise
+    entre `début − debutAvant` et `début + debutApres` → heure de début ; départ entre `fin − finAvant` et `fin + finApres` → heure
+    de fin. Comparaison à la minute (secondes ignorées). Pauses : alignées sur la borne de pause prévue la plus proche si l'écart
+    ≤ `pauseTolMin`. Jour sans horaire attendu (week-end, férié, congé) : aucun arrondi.
+  - **Garde d'ordre** : un pointage arrondi est borné par le précédent (déjà retenu) et le suivant (heure réelle) — l'arrondi ne
+    peut jamais inverser l'ordre de la journée ni le sens des paires entrée/sortie (cas d'une double entrée, d'une pause à 2 min
+    de l'arrivée) ; l'arrondi est alors réduit, voire annulé.
+- **Affichage** : page Présence, colonnes Arrivée/Départ = heure retenue + sous-ligne grise « réel hh:mm » (`presenceRealSubHtml`) ;
+  note de légende « Arrondi actif à partir du … » (`presenceArrondiNote`, jour et semaine) ; Mon pointage : « → retenu hh:mm » à côté
+  de l'heure réelle ; Fiche salarié : alerte bleue « ARRONDI » ; Excel : colonne « Heure retenue » dans les pointages bruts, la
+  synthèse utilise l'heure retenue. Retard, présence, pauses, écarts et temps hors présence sont calculés sur l'heure retenue.
+- **Avertissement juridique affiché dans Paramètres** : un arrondi qui retire du temps de travail effectif au salarié est risqué
+  (le temps à disposition de l'employeur est dû) — règle à faire relire, comme la note d'information.
+- Non fait (pistes) : réglage par salarié ; arrondi des demandes de correction à valider ; règle par jour de la semaine.
+- Test (scratchpad `arrondi_test.js`, 26 assertions : défaut, intervalle proche/suivant/précédent, pauses, date d'effet, forfait,
+  heures fixes (dans/hors fourchette, 0 = neutre, favorable), pauses fixes, sortie intermédiaire, minuit, double entrée, borne par
+  le pointage suivant, résumé retenu/réel, `raw`, réglages rendus et bornés) ; navigateur (`arrondi_ui.js`, Playwright sur serveur
+  réel : cartes, champs par mode, 07:41 → « 07:45 · réel 07:41 », note de légende, aucune erreur).
+
 ### Pointeuse TimeMoto TM-616 (`timemotoSync.js`) — import manuel par jeton
 
 Sans formule Plus (ni webhook ni clé d'API officielle), la seule voie est l'API **interne** de

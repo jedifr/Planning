@@ -744,7 +744,8 @@
   .fs-alert.red{background:rgba(178,58,48,0.08); border-color:var(--red);}
   .fs-alert.amber{background:var(--amber-dim); border-color:var(--amber);}
   .fs-alert .tag{font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; flex:none;}
-  .fs-alert.red .tag{color:var(--red);} .fs-alert.amber .tag{color:var(--amber);}
+  .fs-alert.blue{background:rgba(49,111,152,0.08); border-color:var(--blue);}
+  .fs-alert.red .tag{color:var(--red);} .fs-alert.amber .tag{color:var(--amber);} .fs-alert.blue .tag{color:var(--blue);}
   .fs-frise-scroll{overflow-x:auto;}
   .fs-frise{min-width:720px;}
   .fs-axis, .fs-row{display:grid; grid-template-columns:108px 1fr 116px; gap:10px; align-items:center;}
@@ -1665,6 +1666,18 @@
   .pc-ok{width:22px; height:22px; border-radius:50%; background:var(--green); color:#fff; display:inline-flex; align-items:center; justify-content:center; font-size:12px; font-weight:700;}
   .pc-todo{width:22px; height:22px; border-radius:50%; border:2px solid var(--amber); box-sizing:border-box; display:inline-block;}
   .pc-pins{display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:6px 16px;}
+  .pa-cards{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:6px 0 10px;}
+  .pa-card{text-align:left; padding:10px 12px; border:1px solid var(--line); background:var(--panel); border-radius:var(--radius); cursor:pointer; font:inherit; color:var(--text); line-height:1.4; height:auto;}
+  .pa-card b{display:block; font-size:13px; margin-bottom:3px;}
+  .pa-card span{font-size:12px; color:var(--text-dim);}
+  .pa-card.on{border-color:var(--accent); background:var(--accent-dim);}
+  .pa-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px 16px; margin:6px 0;}
+  .pa-grid .field{display:flex; flex-direction:column; align-items:flex-start; gap:4px;}
+  .pa-grid .field input{max-width:120px;}
+  .pa-grid .field select{max-width:100%; width:auto; min-width:150px;}
+  .pa-grid .pa-sub{grid-column:1/-1; font-weight:600; font-size:12px; color:var(--text-dim); margin-top:4px;}
+  .pr-real-sub{font-size:10.5px; color:var(--text-faint); font-weight:400;}
+  @media (max-width:720px){ .pa-cards{grid-template-columns:1fr;} }
   .pc-pin{display:flex; align-items:center; gap:10px; font-size:13px; padding:4px 0; border-bottom:1px solid var(--line-soft);}
   .pc-pin > span:first-child{flex:1; font-weight:600;}
   .presence-doc-text{width:100%; min-height:420px; font-family:'IBM Plex Sans',sans-serif; font-size:13px; line-height:1.5; box-sizing:border-box; white-space:pre-wrap;}
@@ -1753,7 +1766,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.97.2';
+const APP_VERSION = '1.98.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1932,6 +1945,8 @@ const SETTINGS_HELP = {
   presenceRetard: "Minutes de retard sur le début de SON horaire au-delà desquelles une arrivée est signalée comme retard (page Présence, fiche salarié). Par défaut : 10.",
   presenceConservation: "Durée de conservation des pointages avant suppression automatique : 3 ans (recommandé, prescription des salaires) ou 5 ans (maximum admis par la CNIL).",
   presenceLier: "Si coché, un pointage de pause ou de départ propose de mettre en pause les tâches en cours de la personne, et la fin de pause de les reprendre. Toujours au choix de la personne, jamais automatique.",
+  presenceArrondi: "Règle appliquée à la lecture pour calculer l'heure RETENUE d'un pointage (présence, retard, fiche salarié, exports). Les pointages enregistrés ne sont jamais modifiés : l'heure réelle reste visible à côté. Sans effet pour les salariés au forfait.",
+  presenceArrondiEffet: "Les jours avant cette date gardent leurs heures réelles : changer la règle ne réécrit jamais l'historique déjà consulté ou exporté.",
   userForfait: "Pas de « non arrivé », de retard ni de départ non pointé signalés pour cette personne. Si elle pointe, sa présence compte normalement."
 };
 function helpTip(key){
@@ -13247,6 +13262,7 @@ function renderFicheSalariePage(){
   const dayList = arr => arr.slice(0, 6).map(it => { const x = it.x || it; return `${ficheJourCourt(x.date).toLowerCase()} ${x.date.getDate()}${it.min != null ? ` (${pointageDurLabel(it.min)})` : ''}`; }).join(', ') + (arr.length > 6 ? `… (+${arr.length - 6})` : '');
   const presAlerts = [];
   if(PT){
+    if(presenceArrondiActive()) presAlerts.push({ kind: 'blue', tag: 'ARRONDI', text: `Les heures d'arrivée et de départ pointées sont arrondies selon la règle de Paramètres → Pointage présentiel${presenceArrondiNote().includes('à partir du') ? ' (' + presenceArrondiNote().match(/à partir du [\d/]+/)[0] + ')' : ''} — les heures réelles restent dans l'export Excel et la page Présence.` });
     if(PT.ouverts.length) presAlerts.push({ kind: 'red', tag: 'DÉPART NON POINTÉ', text: `${PT.ouverts.length} jour${PT.ouverts.length>1?'s':''} : ${dayList(PT.ouverts)} — à corriger dans Présence (le temps après le dernier pointage n'est pas compté).` });
     if(PT.sansPointage.length) presAlerts.push({ kind: 'red', tag: 'SANS POINTAGE', text: `${PT.sansPointage.length} jour${PT.sansPointage.length>1?'s':''} attendu${PT.sansPointage.length>1?'s':''} sans aucun pointage : ${dayList(PT.sansPointage)}.` });
     if(PT.retards.length) presAlerts.push({ kind: 'amber', tag: 'RETARDS', text: `${PT.retards.length} jour${PT.retards.length>1?'s':''} au-delà de ${presenceCfg().retardSeuilMin} min : ${dayList(PT.retards)}.` });
@@ -16084,8 +16100,44 @@ function presenceCfg(st){
   return {
     telephone: c.telephone !== false, reseaux: c.reseaux || '', retardSeuilMin: Number(c.retardSeuilMin) >= 0 ? Number(c.retardSeuilMin) : 10,
     lierTaches: c.lierTaches !== false, conservationAns: Number(c.conservationAns) || 3,
-    infoDate: c.infoDate || '', registreDate: c.registreDate || '', cseDate: c.cseDate || '', cseNonConcerne: !!c.cseNonConcerne
+    infoDate: c.infoDate || '', registreDate: c.registreDate || '', cseDate: c.cseDate || '', cseNonConcerne: !!c.cseNonConcerne,
+    arrondi: presenceArrondiCfg(c)
   };
+}
+// Arrondi des pointages (v1.98.0) : réglage `config.presence.arrondi`, lu avec repli sur « aucun ».
+// Valeurs par défaut volontairement neutres (fourchettes à 0) : rien ne change tant qu'on ne règle rien.
+const PRESENCE_ARRONDI_REGLES = { proche: 'Au plus proche', suivant: 'À l’heure ronde suivante', precedent: 'À l’heure ronde précédente' };
+function presenceArrondiCfg(c){
+  const a = (c && c.arrondi) || {};
+  const iv = a.intervalle || {}, fx = a.fixe || {};
+  const num = (v, d, max) => { const n = Math.round(Number(v)); return (v === '' || v == null || isNaN(n) || n < 0) ? d : Math.min(max, n); };
+  const rule = v => (v === 'suivant' || v === 'precedent') ? v : 'proche';
+  return {
+    mode: (a.mode === 'intervalle' || a.mode === 'fixe') ? a.mode : 'aucun',
+    dateEffet: /^\d{4}-\d{2}-\d{2}$/.test(String(a.dateEffet || '')) ? a.dateEffet : '',
+    pauses: !!a.pauses,
+    intervalle: { minutes: [5, 10, 15, 30].includes(Number(iv.minutes)) ? Number(iv.minutes) : 5, arrivee: rule(iv.arrivee), depart: rule(iv.depart) },
+    fixe: { debutAvant: num(fx.debutAvant, 0, 60), debutApres: num(fx.debutApres, 0, 60), finAvant: num(fx.finAvant, 0, 60), finApres: num(fx.finApres, 0, 60), pauseTolMin: num(fx.pauseTolMin, 5, 30) }
+  };
+}
+function presenceArrondiActive(st){
+  if(typeof state === 'undefined' && !st) return false;
+  return presenceCfg(st).arrondi.mode !== 'aucun';
+}
+// Sous-ligne « réel hh:mm » quand l'heure retenue d'un pointage a été arrondie (v1.98.0).
+function presenceRealSubHtml(retenue, reelle){
+  if(!retenue || !reelle || retenue.getTime() === reelle.getTime()) return '';
+  const hm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if(hm(retenue) === hm(reelle)) return '';
+  return `<div class="pr-real-sub" title="Heure réelle du pointage ; l'heure retenue est le résultat de la règle d'arrondi (Paramètres → Pointage présentiel)">réel ${hm(reelle)}</div>`;
+}
+function presenceArrondiNote(){
+  const a = presenceCfg().arrondi;
+  if(a.mode === 'aucun') return '';
+  const dt = a.dateEffet ? ` à partir du ${a.dateEffet.slice(8,10)}/${a.dateEffet.slice(5,7)}/${a.dateEffet.slice(0,4)}` : '';
+  return a.mode === 'intervalle'
+    ? ` Arrondi actif${dt} : arrivée et départ sur ${a.intervalle.minutes} min (heure réelle indiquée sous l'heure retenue).`
+    : ` Arrondi actif${dt} : heures fixes autour de l'horaire (heure réelle indiquée sous l'heure retenue).`;
 }
 function presenceHhmm(ts){ return ts ? String(ts).slice(11, 16) : '—'; }
 function presenceDateLabel(dayKey){
@@ -16102,11 +16154,89 @@ function addDaysToKey(key, n){ const d = new Date(key + 'T12:00:00'); d.setDate(
 
 // Pointages retenus : lignes validées moins celles qu'une annulation validée neutralise (même règle
 // que presence.js côté serveur — un seul sens pour « ce qui compte »), triées dans le temps.
-function effectivePresencePunches(punches){
+function effectivePresencePunches(punches, opts){
   const cancelled = new Set((punches || []).filter(p => p.type === 'cancel' && p.status === 'valide').map(p => p.cancelsId));
-  return (punches || [])
+  const eff = (punches || [])
     .filter(p => p.type !== 'cancel' && p.status === 'valide' && !cancelled.has(p.id))
     .sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.id - b.id);
+  return (opts && opts.raw) ? eff : applyPresenceRounding(eff);
+}
+// Arrondi des pointages retenus (v1.98.0). Un calcul à la lecture, JAMAIS une modification : les lignes
+// de `presence_punches` restent celles de la pointeuse/du serveur (infalsifiables). Un pointage arrondi
+// est renvoyé en COPIE avec `ts` = heure retenue et `rawTs` = heure réelle ; un pointage inchangé est
+// renvoyé tel quel. Seuls arrivée (1re entrée du jour) et départ (dernière sortie) sont concernés, et
+// les pauses seulement si l'option est cochée. Pas d'arrondi avant la date d'effet, pour un salarié au
+// forfait, ni quand l'arrondi ferait changer de jour.
+function presenceRoundOne(p, kind, cfg, exp){
+  const t = new Date(p.ts);
+  const dayKey = p.ts.slice(0, 10);
+  const secOfDay = t.getHours() * 3600 + t.getMinutes() * 60 + t.getSeconds();
+  let target = null; // minutes depuis minuit
+  const minNow = t.getHours() * 60 + t.getMinutes(); // secondes ignorées pour comparer à une fourchette
+  const minOf = d => d.getHours() * 60 + d.getMinutes();
+  if(cfg.mode === 'intervalle'){
+    if(kind === 'pause' && !cfg.pauses) return null;
+    const step = cfg.intervalle.minutes * 60;
+    const rule = kind === 'in' ? cfg.intervalle.arrivee : kind === 'out' ? cfg.intervalle.depart : 'proche';
+    const sec = rule === 'suivant' ? Math.ceil(secOfDay / step) * step : rule === 'precedent' ? Math.floor(secOfDay / step) * step : Math.round(secOfDay / step) * step;
+    target = sec / 60;
+  } else if(cfg.mode === 'fixe' && exp && exp.expected && exp.expected.length){
+    const f = cfg.fixe;
+    if(kind === 'in'){
+      const S = minOf(exp.expected[0][0]);
+      if(minNow >= S - f.debutAvant && minNow <= S + f.debutApres) target = S;
+    } else if(kind === 'out'){
+      const E = minOf(exp.expected[exp.expected.length - 1][1]);
+      if(minNow >= E - f.finAvant && minNow <= E + f.finApres) target = E;
+    } else if(cfg.pauses && (exp.pauses || []).length){
+      const bounds = exp.pauses.map(w => minOf(p.type === 'pause_start' ? w[0] : w[1]));
+      let best = null;
+      bounds.forEach(b => { const d = Math.abs(minNow - b); if(d <= f.pauseTolMin && (best == null || d < best.d)) best = { b, d }; });
+      if(best) target = best.b;
+    }
+  }
+  if(target == null || target < 0 || target >= 1440) return null;
+  const ts = `${dayKey}T${pad(Math.floor(target / 60))}:${pad(target % 60)}:00`;
+  return ts === p.ts ? null : ts;
+}
+function applyPresenceRounding(eff){
+  if(!eff || !eff.length || typeof state === 'undefined' || !state || !state.config) return eff;
+  const cfg = presenceCfg(state).arrondi;
+  if(cfg.mode === 'aucun') return eff;
+  const groups = {};
+  eff.forEach((p, i) => { const k = p.userId + '|' + p.ts.slice(0, 10); (groups[k] = groups[k] || []).push(i); });
+  const out = eff.slice();
+  let changed = false;
+  Object.keys(groups).forEach(k => {
+    const [uid, dayKey] = k.split('|');
+    if(cfg.dateEffet && dayKey < cfg.dateEffet) return;
+    if(isForfaitUser(state, uid)) return;
+    const idx = groups[k];
+    const firstIn = idx.find(i => eff[i].type === 'in');
+    const lastIn = idx.slice().reverse().find(i => eff[i].type === 'in');
+    const lastOutRaw = idx.slice().reverse().find(i => eff[i].type === 'out');
+    // Un « départ » suivi d'une nouvelle entrée n'est pas le départ de la journée.
+    const lastOut = (lastOutRaw != null && (lastIn == null || idx.indexOf(lastOutRaw) > idx.indexOf(lastIn))) ? lastOutRaw : null;
+    const exp = cfg.mode === 'fixe' ? expectedDayFor(uid, state, new Date(dayKey + 'T12:00:00')) : null;
+    // L'arrondi ne doit jamais faire passer un pointage avant le précédent (déjà arrondi) ni après le suivant
+    // (heure réelle) : l'ordre de la journée, donc le sens des paires entrée/sortie, reste celui du terminal.
+    const sod = ts => { const h = Number(ts.slice(11, 13)), m = Number(ts.slice(14, 16)), sc = Number(ts.slice(17, 19)) || 0; return h * 3600 + m * 60 + sc; };
+    const fromSod = (dayKeyS, sec) => `${dayKeyS}T${pad(Math.floor(sec / 3600))}:${pad(Math.floor(sec % 3600 / 60))}:${pad(sec % 60)}`;
+    let prevSec = 0;
+    idx.forEach((i, pos) => {
+      const p = eff[i];
+      const kind = (i === firstIn) ? 'in' : (i === lastOut) ? 'out' : (p.type === 'pause_start' || p.type === 'pause_end') ? 'pause' : null;
+      let ts = kind ? presenceRoundOne(p, kind, cfg, exp) : null;
+      if(ts){
+        const hi = pos + 1 < idx.length ? sod(eff[idx[pos + 1]].ts) : 86399;
+        const sec = Math.min(hi, Math.max(prevSec, sod(ts)));
+        ts = sec === sod(p.ts) ? null : fromSod(dayKey, sec);
+      }
+      if(ts){ out[i] = { ...p, ts, rawTs: p.ts, rounded: true }; changed = true; prevSec = sod(ts); }
+      else prevSec = Math.max(prevSec, sod(p.ts));
+    });
+  });
+  return changed ? out.sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.id - b.id) : eff;
 }
 function presenceStatusFromType(type){
   if(!type) return 'absent';
@@ -16120,13 +16250,14 @@ function presenceDaySummary(eff, dayKey, now){
   const dayEnd = new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate() + 1);
   const isToday = dayKey === toDateInputValue(now);
   const work = [], pauses = [];
-  let wStart = null, pStart = null, arrivee = null, depart = null, nbPauses = 0;
+  let wStart = null, pStart = null, arrivee = null, depart = null, nbPauses = 0, arriveeReelle = null, departReelle = null;
   (eff || []).forEach(p => {
     const t = new Date(p.ts);
-    if(p.type === 'in'){ if(!arrivee) arrivee = t; if(pStart){ pauses.push([pStart, t]); pStart = null; } if(!wStart) wStart = t; depart = null; }
+    const tr = p.rawTs ? new Date(p.rawTs) : t; // heure réelle si le pointage a été arrondi (v1.98.0)
+    if(p.type === 'in'){ if(!arrivee){ arrivee = t; arriveeReelle = tr; } if(pStart){ pauses.push([pStart, t]); pStart = null; } if(!wStart) wStart = t; depart = null; departReelle = null; }
     else if(p.type === 'pause_start'){ nbPauses++; if(wStart){ work.push([wStart, t]); wStart = null; } if(!pStart) pStart = t; }
     else if(p.type === 'pause_end'){ if(pStart){ pauses.push([pStart, t]); pStart = null; } if(!wStart) wStart = t; }
-    else if(p.type === 'out'){ if(wStart){ work.push([wStart, t]); wStart = null; } if(pStart){ pauses.push([pStart, t]); pStart = null; } depart = t; }
+    else if(p.type === 'out'){ if(wStart){ work.push([wStart, t]); wStart = null; } if(pStart){ pauses.push([pStart, t]); pStart = null; } depart = t; departReelle = tr; }
   });
   const openEnd = isToday ? (now < dayEnd ? now : dayEnd) : null;
   if(wStart && openEnd && openEnd > wStart) work.push([wStart, openEnd]);
@@ -16134,7 +16265,7 @@ function presenceDaySummary(eff, dayKey, now){
   const last = (eff && eff.length) ? eff[eff.length - 1] : null;
   const mins = list => list.reduce((s, [a, b]) => s + Math.max(0, (b - a) / 60000), 0);
   return {
-    work, pauses, arrivee, depart, last, nbPauses, status: presenceStatusFromType(last && last.type),
+    work, pauses, arrivee, depart, arriveeReelle, departReelle, last, nbPauses, status: presenceStatusFromType(last && last.type),
     workMin: mins(work), pauseMin: mins(pauses), ouvert: !isToday && !!last && last.type !== 'out'
   };
 }
@@ -16520,9 +16651,9 @@ function renderPresencePage(){
         <td><div class="pr-user">${renderAvatar(r.username)}<b>${escapeHtml(r.username)}</b></div></td>
         <td>${presenceStatusPill(r.status)}${r.exp.leave && r.exp.leave.demiJournee ? `<div class="footer-note" style="text-align:left;">${escapeHtml(r.exp.leave.label)} (${r.exp.leave.demiJournee==='matin'?'matin':'après-midi'})</div>` : ''}</td>
         <td class="pr-mono pr-dim">${r.firstStart ? `${hm(r.firstStart)}–${hm(r.lastEnd)}` : '—'}</td>
-        <td class="pr-mono"><b class="${r.retardMin > presenceCfg().retardSeuilMin ? 'pr-late' : ''}">${hm(r.sum.arrivee)}</b>${r.retardMin > presenceCfg().retardSeuilMin ? `<div class="pr-late-sub">+${presenceMinLabel(r.retardMin)}</div>` : ''}</td>
+        <td class="pr-mono"><b class="${r.retardMin > presenceCfg().retardSeuilMin ? 'pr-late' : ''}">${hm(r.sum.arrivee)}</b>${r.retardMin > presenceCfg().retardSeuilMin ? `<div class="pr-late-sub">+${presenceMinLabel(r.retardMin)}</div>` : ''}${presenceRealSubHtml(r.sum.arrivee, r.sum.arriveeReelle)}</td>
         <td class="pr-small">${pausesTxt}</td>
-        <td class="pr-mono">${r.sum.depart ? hm(r.sum.depart) : (r.sum.ouvert ? '<span class="pr-late">manquant</span>' : '—')}</td>
+        <td class="pr-mono">${r.sum.depart ? hm(r.sum.depart) : (r.sum.ouvert ? '<span class="pr-late">manquant</span>' : '—')}${presenceRealSubHtml(r.sum.depart, r.sum.departReelle)}</td>
         <td class="pr-frise-cell">${presenceFriseHtml(r, win.winStart, win.winEnd, now, isToday)}</td>
         <td><b>${r.sum.workMin ? presenceMinLabel(r.sum.workMin) : '—'}</b>${r.expectedMin ? `<div class="pr-small pr-dim">prévu ${presenceMinLabel(r.expectedMin)}${Math.abs(ecart) >= 5 ? ` · <span style="color:${ecart<0?'var(--red)':'var(--green)'};">${ecart>0?'+':'−'}${presenceMinLabel(Math.abs(ecart))}</span>` : ''}</div>` : ''}</td>
         <td>${occ != null ? `<div class="pr-small">${formatHeures(r.tachesH)} · ${occ} %</div><div class="pr-occ"><span class="${occTone}" style="width:${occ}%;"></span></div>` : (r.tachesH > 0 ? `<span class="pr-small">${formatHeures(r.tachesH)}</span>` : '<span class="footer-note">—</span>')}</td>
@@ -16551,7 +16682,7 @@ function renderPresencePage(){
       </div>
       <div class="pr-legend">
         <span><i class="pr-lg pr-seg-work"></i>Présent</span><span><i class="pr-lg pr-seg-pause"></i>Pause</span><span><i class="pr-lg pr-seg-exp"></i>Horaire prévu</span><span><i class="pr-lg pr-seg-work pr-seg-corr"></i>Journée corrigée</span>
-        <span class="pr-legend-note">« Sur tâches » = temps pointé sur les tâches du planning ÷ présence. Les pointages bruts ne sont jamais modifiés : une correction ajoute une ligne tracée (auteur, heure, motif).</span>
+        <span class="pr-legend-note">« Sur tâches » = temps pointé sur les tâches du planning ÷ présence. Les pointages bruts ne sont jamais modifiés : une correction ajoute une ligne tracée (auteur, heure, motif).${escapeHtml(presenceArrondiNote())}</span>
       </div>
       ${journalHtml}
     </div>
@@ -16619,7 +16750,7 @@ function renderPresenceWeek(){
         </tbody>
       </table>
     </div>
-    <div class="pr-legend"><span class="pr-legend-note">Présence pointée (pauses déduites) face à la présence théorique (horaire de chacun, jours fériés et congés approuvés retirés). ⚠ = départ non pointé. Cliquez un jour pour le détail.</span></div>`;
+    <div class="pr-legend"><span class="pr-legend-note">Présence pointée (pauses déduites) face à la présence théorique (horaire de chacun, jours fériés et congés approuvés retirés). ⚠ = départ non pointé. Cliquez un jour pour le détail.${escapeHtml(presenceArrondiNote())}</span></div>`;
 }
 // Export Excel : période affichée (jour ou semaine), ou « Mon pointage » (une personne, un mois).
 function exportPresenceExcel(punches, from, to, titre){
@@ -16639,10 +16770,11 @@ function exportPresenceExcel(punches, from, to, titre){
     synth.push([presenceUserName(uid), day, s.arrivee ? presenceHhmm(toInputValue(s.arrivee)) : '', s.depart ? presenceHhmm(toInputValue(s.depart)) : '', s.nbPauses, r2(s.pauseMin / 60), r2(s.workMin / 60), r2(expMin / 60), r2((s.workMin - expMin) / 60),
       [...new Set(byUserDay[k].map(p => PRESENCE_SOURCE_LABELS[p.source] || p.source))].join(', '), raw.some(p => p.source === 'manuel') ? 'oui' : '', s.ouvert ? 'oui' : '']);
   });
-  const detail = [['Date', 'Heure', 'Salarié', 'Pointage', 'Source', 'Statut', 'Retenu', 'Motif', 'Commentaire', 'Saisi par', 'Saisi le', 'Annule le pointage n°', 'N°']];
+  const effById = {}; eff.forEach(p => { effById[p.id] = p; });
+  const detail = [['Date', 'Heure', 'Heure retenue', 'Salarié', 'Pointage', 'Source', 'Statut', 'Retenu', 'Motif', 'Commentaire', 'Saisi par', 'Saisi le', 'Annule le pointage n°', 'N°']];
   const effIds = new Set(eff.map(p => p.id));
   punches.slice().sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.id - b.id).forEach(p => {
-    detail.push([p.ts.slice(0, 10), p.ts.slice(11, 19), presenceUserName(p.userId), PRESENCE_TYPE_LABELS[p.type] || p.type, PRESENCE_SOURCE_LABELS[p.source] || p.source,
+    detail.push([p.ts.slice(0, 10), p.ts.slice(11, 19), effById[p.id] && effById[p.id].rounded ? effById[p.id].ts.slice(11, 19) : '', presenceUserName(p.userId), PRESENCE_TYPE_LABELS[p.type] || p.type, PRESENCE_SOURCE_LABELS[p.source] || p.source,
       p.status === 'valide' ? 'validé' : p.status === 'a_valider' ? 'à valider' : 'refusé', effIds.has(p.id) ? 'oui' : (p.type === 'cancel' ? '' : 'non'),
       p.motif || '', p.commentaire || '', p.createdBy ? presenceUserName(p.createdBy) : '', p.createdAt ? new Date(p.createdAt).toLocaleString('fr-FR') : '', p.cancelsId || '', p.id]);
   });
@@ -17014,7 +17146,9 @@ function renderMonPointagePage(){
   const todayList = me && me.mine.length ? me.mine.filter(p => p.type !== 'cancel').sort((a, b) => a.ts < b.ts ? -1 : 1).map(p => {
     const retenu = me.eff.some(e => e.id === p.id);
     const tag = p.status === 'a_valider' ? '<span class="pr-pill pr-pause">à valider</span>' : p.status === 'refuse' ? '<span class="pr-pill pr-absent">refusée</span>' : !retenu ? '<span class="pr-pill pr-parti">annulé</span>' : `<span class="pr-src">${escapeHtml(PRESENCE_SOURCE_LABELS[p.source] || p.source)}</span>`;
-    return `<div class="mp-line"><span class="pr-mono"><b>${presenceHhmm(p.ts)}</b></span><span>${escapeHtml(PRESENCE_TYPE_LABELS[p.type])}</span>${tag}</div>`;
+    const ret = me.eff.find(e => e.id === p.id);
+    const retTxt = (ret && ret.rounded) ? ` <span class="pr-real-sub" title="Heure retenue après arrondi">→ retenu ${presenceHhmm(ret.ts)}</span>` : '';
+    return `<div class="mp-line"><span class="pr-mono"><b>${presenceHhmm(p.ts)}</b></span><span>${escapeHtml(PRESENCE_TYPE_LABELS[p.type])}${retTxt}</span>${tag}</div>`;
   }).join('') : `<div class="footer-note" style="text-align:left;">${isToday ? 'Aucun pointage aujourd’hui.' : 'Aucun pointage ce jour-là.'}</div>`;
   // Détail de la journée : frise prévu / présent / pauses (même rendu que la page Présence) + arrivée, départ, pauses.
   let detailHtml = '';
@@ -17351,6 +17485,25 @@ function updatePresenceConfig(field, value){
   else p[field] = String(value || '').trim();
   commit();
 }
+function updatePresenceArrondi(field, value){
+  if(!state.config.presence) state.config.presence = {};
+  const p = state.config.presence;
+  if(!p.arrondi || typeof p.arrondi !== 'object') p.arrondi = {};
+  const a = p.arrondi;
+  if(field === 'mode'){
+    a.mode = (value === 'intervalle' || value === 'fixe') ? value : 'aucun';
+    // Première activation : l'arrondi ne s'applique qu'à partir d'aujourd'hui (jamais à l'historique déjà consulté).
+    if(a.mode !== 'aucun' && !a.dateEffet) a.dateEffet = toDateInputValue(new Date());
+  } else if(field === 'pauses') a.pauses = !!value;
+  else if(field === 'dateEffet') a.dateEffet = /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? value : '';
+  else {
+    const m = String(field).match(/^(intervalle|fixe)\.(\w+)$/);
+    if(!m) return;
+    if(!a[m[1]] || typeof a[m[1]] !== 'object') a[m[1]] = {};
+    a[m[1]][m[2]] = value;
+  }
+  commit();
+}
 // ---------- Pointeuse TimeMoto TM-616 (synchro serveur, voir timemotoSync.js et CLAUDE.md) ----------
 // Le serveur se connecte seul à TimeMoto Cloud avec un compte dédié (identifiants dans les variables
 // d'environnement du conteneur, jamais dans `state`) et importe les paires entrée/sortie. Ici :
@@ -17627,6 +17780,59 @@ function renderTimemotoSettings(){
       <div class="tm-actions"><button class="small" data-action="presence-tm-goto">👥 Ouvrir la page Présence</button></div>
     </div>`;
 }
+function presenceArrondiExample(a){
+  const hm = m => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+  if(a.mode === 'intervalle'){
+    const n = a.intervalle.minutes;
+    const ex = (t, rule) => { const sec = t * 60; const r = rule === 'suivant' ? Math.ceil(sec / (n * 60)) * n : rule === 'precedent' ? Math.floor(sec / (n * 60)) * n : Math.round(sec / (n * 60)) * n; return hm(r); };
+    const arr = 7 * 60 + 49, dep = 16 * 60 + 29;
+    return `Exemple : arrivée réelle 07:49 → retenue ${ex(arr, a.intervalle.arrivee)} ; départ réel 16:29 → retenu ${ex(dep, a.intervalle.depart)}.`;
+  }
+  if(a.mode === 'fixe'){
+    const f = a.fixe, S = 7 * 60 + 45, E = 16 * 60 + 30;
+    return `Exemple (horaire 07:45–16:30) : une arrivée entre ${hm(S - f.debutAvant)} et ${hm(S + f.debutApres)} est retenue à 07:45 ; un départ entre ${hm(E - f.finAvant)} et ${hm(E + f.finApres)} est retenu à 16:30. Hors de ces fourchettes, l'heure réelle est conservée.`;
+  }
+  return '';
+}
+function renderPresenceArrondiSettings(cfg){
+  const a = cfg.arrondi;
+  const card = (mode, titre, texte) => `<button type="button" class="pa-card ${a.mode === mode ? 'on' : ''}" data-action="presence-arrondi-mode" data-mode="${mode}" aria-pressed="${a.mode === mode}"><b>${titre}</b><span>${texte}</span></button>`;
+  const num = (field, label, val, max) => `<label class="field">${label}<input type="number" min="0" max="${max}" step="1" value="${val}" data-action="presence-arrondi" data-field="${field}"></label>`;
+  const rule = (field, label, val) => `<label class="field">${label}<select data-action="presence-arrondi" data-field="${field}">${Object.keys(PRESENCE_ARRONDI_REGLES).map(k => `<option value="${k}" ${val === k ? 'selected' : ''}>${PRESENCE_ARRONDI_REGLES[k]}</option>`).join('')}</select></label>`;
+  let body = '';
+  if(a.mode === 'intervalle'){
+    body = `<div class="pa-grid">
+      <label class="field">Intervalle<select data-action="presence-arrondi" data-field="intervalle.minutes">${[5, 10, 15, 30].map(m => `<option value="${m}" ${a.intervalle.minutes === m ? 'selected' : ''}>${m} minutes</option>`).join('')}</select></label>
+      ${rule('intervalle.arrivee', 'Arrivée', a.intervalle.arrivee)}
+      ${rule('intervalle.depart', 'Départ', a.intervalle.depart)}
+    </div>`;
+  } else if(a.mode === 'fixe'){
+    body = `<div class="pa-grid">
+      <div class="pa-sub">Heure de début de l'horaire</div>
+      ${num('fixe.debutAvant', 'Minutes avant', a.fixe.debutAvant, 60)}
+      ${num('fixe.debutApres', 'Minutes après', a.fixe.debutApres, 60)}
+      <div class="pa-sub">Heure de fin de l'horaire</div>
+      ${num('fixe.finAvant', 'Minutes avant', a.fixe.finAvant, 60)}
+      ${num('fixe.finApres', 'Minutes après', a.fixe.finApres, 60)}
+    </div>`;
+  }
+  const pauses = a.mode === 'aucun' ? '' : `
+    <label class="statut-chip" style="margin:4px 0;"><input type="checkbox" ${a.pauses ? 'checked' : ''} data-action="presence-arrondi" data-field="pauses"> Arrondir aussi les pauses ${a.mode === 'fixe' ? '(alignées sur les pauses prévues, tolérance ci-dessous)' : '(au plus proche)'}</label>
+    ${a.mode === 'fixe' && a.pauses ? `<div class="pa-grid">${num('fixe.pauseTolMin', 'Tolérance des pauses (± min)', a.fixe.pauseTolMin, 30)}</div>` : ''}
+    <label class="field" style="margin-top:6px; max-width:240px;">Appliquer à partir du ${helpTip('presenceArrondiEffet')}
+      <input type="date" value="${escapeHtml(a.dateEffet)}" data-action="presence-arrondi" data-field="dateEffet">
+    </label>
+    <div class="footer-note" style="text-align:left; padding:6px 0 0;">${escapeHtml(presenceArrondiExample(a))}</div>
+    <div class="footer-note" style="text-align:left; padding:4px 0 0; color:var(--amber);">À valider avant usage : un arrondi qui retire du temps de travail effectif au salarié est risqué en droit du travail (le temps passé à disposition de l'employeur est dû). Il ne s'applique ni aux salariés au forfait ni aux jours avant la date ci-dessus.</div>`;
+  return `
+    <div class="modal-section-title" style="margin-top:14px;">Arrondi des pointages ${helpTip('presenceArrondi')}</div>
+    <div class="pa-cards">
+      ${card('aucun', 'Pas d\'arrondi', 'Les heures réelles des pointages sont utilisées telles quelles.')}
+      ${card('intervalle', 'Intervalle', 'Arrivée et départ arrondis à un intervalle défini (ex. 5 minutes au plus proche).')}
+      ${card('fixe', 'Heures fixes', 'Un pointage dans une fourchette autour de l\'heure de début ou de fin de l\'horaire est aligné sur cette heure.')}
+    </div>
+    ${body}${pauses}`;
+}
 function renderPresenceSettingsBody(){
   const cfg = presenceCfg();
   const actif = presenceModuleActive();
@@ -17670,7 +17876,8 @@ function renderPresenceSettingsBody(){
       <input type="checkbox" ${cfg.lierTaches?'checked':''} data-action="presence-config" data-field="lierTaches">
       Lier au temps de production : pause et départ proposent de mettre en pause les tâches en cours, la fin de pause de les reprendre ${helpTip('presenceLier')}
     </label>
-    <div class="footer-note" style="text-align:left; padding-bottom:8px;">Toujours au choix de la personne (cases cochées par défaut). Les pointages ne sont jamais arrondis : l'heure réelle du serveur est conservée. Un oubli de départ est signalé aux superviseurs, jamais complété automatiquement. Un salarié peut demander une correction : elle ne compte qu'une fois validée par un superviseur.</div>
+    <div class="footer-note" style="text-align:left; padding-bottom:8px;">Toujours au choix de la personne (cases cochées par défaut). Les pointages bruts ne sont jamais modifiés : un arrondi éventuel (réglage ci-dessous) n'est qu'un calcul à la lecture. Un oubli de départ est signalé aux superviseurs, jamais complété automatiquement. Un salarié peut demander une correction : elle ne compte qu'une fois validée par un superviseur.</div>
+    ${renderPresenceArrondiSettings(cfg)}
     <div class="modal-section-title" style="margin-top:14px;">Conformité (Code du travail, RGPD)</div>
     <div class="pc-checklist">
       <div class="pc-check">${cfg.infoDate ? ok : todo}<div><b>Note d'information remise aux salariés</b><div class="footer-note" style="text-align:left;">Obligatoire avant la mise en service (L1222-4, article 13 du RGPD).</div></div>
@@ -18158,6 +18365,7 @@ function dispatchClickAction(action, el){
     case 'presence-set-pin': setMyPresencePin(); break;
     case 'presence-clear-pin': clearPresencePin(el.dataset.userId); break;
     case 'presence-tm-toggle': presenceTmOpen = !presenceTmOpen; render(); break;
+    case 'presence-arrondi-mode': updatePresenceArrondi('mode', el.dataset.mode); break;
     case 'presence-tm-goto': closeSettingsModal(); currentPage = 'presence'; presenceTmOpen = true; invalidatePresenceCaches(); render(); break;
     case 'tm-sync': runTimemotoSync(el.dataset.mode); break;
     case 'tm-csv-sync': runTimemotoCsvImport(el.dataset.mode); break;
@@ -18426,6 +18634,7 @@ function dispatchChangeAction(el, action){
       commit();
       if(el.checked) loadPresenceDay(toDateInputValue(new Date()), { force: true });
       break;
+    case 'presence-arrondi': updatePresenceArrondi(el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
     case 'presence-config': updatePresenceConfig(el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
     case 'tm-config': updateTimemotoConfig(el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
     case 'tm-user-map': setTimemotoUserMap(el.dataset.tmId, el.value); break;
