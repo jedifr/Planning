@@ -1775,7 +1775,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.101.0';
+const APP_VERSION = '1.101.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -16850,6 +16850,22 @@ function presenceUserName(uid){
 }
 
 // ---------- Lignes de la page Présence ----------
+// Salariés ATTENDUS sur la page Présence : ceux qui ne sont pas masqués du temps de production, PLUS
+// tout salarié associé à un badge de la pointeuse (config.presence.timemoto.userMap). Bug réel (06/10) :
+// une salariée dont « Afficher dans le temps de production » était décoché n'avait aucune ligne tant
+// qu'aucun pointage n'existait — son retard de 4 h n'a donc jamais été signalé (ni « Non arrivé », ni
+// retard). Un salarié qui a un badge est attendu quoi qu'il en soit ; ceux qui ne doivent pas pointer
+// se règlent par « Au forfait » (isForfaitUser).
+function presenceExpectedUserIds(st){
+  const ids = [];
+  (usersList || []).forEach(u => { if(!isHiddenFromTempsProd(st, String(u.id))) ids.push(String(u.id)); });
+  const map = (((st.config || {}).presence || {}).timemoto || {}).userMap || {};
+  Object.values(map).forEach(uid => {
+    const k = String(uid);
+    if(k && (usersList || []).some(u => String(u.id) === k) && !ids.includes(k)) ids.push(k);
+  });
+  return ids;
+}
 function computePresenceRows(st, data, dayKey, now){
   const punches = (data && data.punches) || [];
   const eff = effectivePresencePunches(punches);
@@ -16863,8 +16879,7 @@ function computePresenceRows(st, data, dayKey, now){
   const isFuture = dayStart > now;
   const prod = computeProductionTimeByUser(st, dayStart, isToday ? now : dayEnd);
   const seuil = presenceCfg(st).retardSeuilMin;
-  const ids = [];
-  (usersList || []).forEach(u => { if(!isHiddenFromTempsProd(st, String(u.id))) ids.push(String(u.id)); });
+  const ids = presenceExpectedUserIds(st);
   Object.keys(rawByUser).forEach(id => { if(!ids.includes(id)) ids.push(id); });
   const rows = ids.map(uid => {
     const exp = expectedDayFor(uid, st, refDate);
@@ -17103,8 +17118,7 @@ function presenceWeekModel(st, punches, from, now){
   const eff = effectivePresencePunches(punches);
   const map = {};
   eff.forEach(p => { const k = p.userId + '|' + p.ts.slice(0, 10); (map[k] = map[k] || []).push(p); });
-  const ids = [];
-  (usersList || []).forEach(u => { if(!isHiddenFromTempsProd(st, String(u.id))) ids.push(String(u.id)); });
+  const ids = presenceExpectedUserIds(st);
   eff.forEach(p => { if(!ids.includes(p.userId)) ids.push(p.userId); });
   const start = new Date(from + 'T00:00:00');
   const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
@@ -17668,7 +17682,8 @@ function borneTiles(data, now){
   const last = {};
   (data.lastByUser || []).forEach(l => { last[l.userId] = l; });
   const pins = new Set(data.pinUserIds || []);
-  return (usersList || []).filter(u => !isHiddenFromTempsProd(state, String(u.id))).map(u => {
+  const expectedIds = new Set(presenceExpectedUserIds(state));
+  return (usersList || []).filter(u => expectedIds.has(String(u.id))).map(u => {
     const uid = String(u.id);
     const l = last[uid];
     let st = presenceStatusFromType(l && l.type);

@@ -1721,6 +1721,17 @@ données sans avoir à enregistrer la correction ? ». Oui : **liste de modifica
   un seul envoi, heures d'origine conservées) ; `batch_ui.js` (Playwright sur serveur réel, scénario
   complet + capture).
 
+### Salarié masqué du temps de production mais doté d'un badge (v1.101.1)
+
+Constat réel (06/10) : « Laurine » avait « Afficher dans le temps de production » décoché ; la page Présence ne listait que les
+salariés non masqués (+ ceux ayant déjà un pointage) : sans pointage, **aucune ligne** — ni « Non arrivé », ni retard — jusqu'à ce
+qu'elle pointe (arrivée 12:02, « +4 h 03 » vu seulement après avoir recoché la case). `presenceExpectedUserIds(st)` = non masqués
+**plus** tout salarié associé à un badge de la pointeuse (`config.presence.timemoto.userMap`) ; utilisé par `computePresenceRows`,
+`presenceWeekModel` et `borneTiles` (un salarié masqué mais doté d'un badge apparaît aussi sur la borne). Qui ne doit pas pointer se
+règle par « Au forfait » (`isForfaitUser`) ; la case « Afficher dans le temps de production » reste réservée au temps de production.
+Si un compte de test/admin est associé à un badge, il apparaîtra désormais « Non arrivé » : le mettre « Au forfait » ou « ne pas
+importer ». Test scratchpad `pres_exp_test.js`.
+
 ### Salariés au forfait — non tenus de pointer
 
 Retour utilisateur réel : « j'ai aussi des salariés au forfait qui ne sont pas tenus de pointer » —
