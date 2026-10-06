@@ -591,6 +591,17 @@ app.post('/api/presence/timemoto/sync', requireAdmin, requireLicense, requirePre
   res.json({ ok: true, result: r.result, status: timemoto.status(db) });
 });
 
+// Import du CSV produit par tools/tm616_export.py (lecture directe de la pointeuse en réseau local,
+// sans TimeMoto Cloud ni jeton). Même niveau d'accès que l'import cloud : administrateur.
+app.post('/api/presence/timemoto/device-import', requireAdmin, requireLicense, requirePresence, (req, res) => {
+  const b = req.body || {};
+  if(typeof b.csv !== 'string' || !b.csv.trim()) return res.status(400).json({ error: 'Aucun fichier CSV fourni.' });
+  if(b.since != null && b.since !== '' && !presence.DATE_RE.test(String(b.since))) return res.status(400).json({ error: 'Date de reprise invalide.' });
+  const r = timemoto.runDeviceImport(db, readStateFull(), b.csv, { since: b.since || null, dryRun: !!b.dryRun });
+  if(!r.ok) return res.status(400).json({ error: r.error, status: timemoto.status(db) });
+  res.json({ ok: true, result: r.result, status: timemoto.status(db) });
+});
+
 // Sortie du mode borne : mot de passe du compte connecté sur la tablette.
 app.post('/api/presence/verify-password', requireAuth, requireLicense, (req, res) => {
   const ip = req.ip || 'unknown';

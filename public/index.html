@@ -1753,7 +1753,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.95.0';
+const APP_VERSION = '1.96.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -17359,6 +17359,7 @@ function updatePresenceConfig(field, value){
 let timemotoStatusCache = null;   // { status: 'loading'|'ok'|'error', data, error }
 let timemotoLastResult = null;    // résultat du dernier bouton (aperçu ou synchro), transitoire
 let timemotoBusy = false;
+let timemotoCsv = null;           // { name, text } : CSV de la pointeuse choisi (transitoire, jamais enregistré)
 function presenceTmCfg(st){
   const t = (((st || state).config || {}).presence || {}).timemoto || {};
   return { actif: !!t.actif, joursSynchro: Number(t.joursSynchro) || 7, userMap: t.userMap || {} };
@@ -17449,6 +17450,43 @@ async function runTimemotoSync(mode){
   timemotoBusy = false;
   render();
 }
+// Import du CSV produit par tools/tm616_export.py (lecture directe de la pointeuse sur le réseau
+// local, sans TimeMoto Cloud ni jeton). Le fichier est lu dans le navigateur puis envoyé tel quel ;
+// il n'est conservé nulle part (ni état, ni base) : seuls les pointages retenus sont enregistrés.
+function loadTimemotoCsvFile(file){
+  if(!file){ timemotoCsv = null; render(); return; }
+  if(file.size > 4 * 1024 * 1024){ showToast('Fichier trop volumineux (4 Mo maximum).'); return; }
+  const rd = new FileReader();
+  rd.onload = () => { timemotoCsv = { name: file.name, text: String(rd.result || '') }; timemotoLastResult = null; render(); };
+  rd.onerror = () => showToast('Lecture du fichier impossible.');
+  rd.readAsText(file, 'utf-8');
+}
+async function runTimemotoCsvImport(mode){
+  if(timemotoBusy) return;
+  if(!timemotoCsv){ showToast('Choisissez d’abord le fichier CSV de la pointeuse.'); return; }
+  const body = { csv: timemotoCsv.text, dryRun: mode === 'preview' };
+  if(mode === 'since'){
+    const el = document.getElementById('tm-since-input');
+    if(!el || !el.value){ showToast('Choisissez la date de reprise de l’historique (champ « Reprendre l’historique depuis le »).'); return; }
+    body.since = el.value;
+  }
+  timemotoBusy = true;
+  render();
+  try{
+    const res = await fetch('/api/presence/timemoto/device-import', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const json = await res.json().catch(() => ({}));
+    if(json.status) timemotoStatusCache = { status: 'ok', data: json.status };
+    if(!res.ok) timemotoLastResult = { error: json.error || `Erreur HTTP ${res.status}.` };
+    else {
+      timemotoLastResult = json.result;
+      if(!json.result.dryRun && (json.result.added || json.result.cancelled)){ invalidatePresenceCaches(); loadPresenceDay(toDateInputValue(new Date()), { force: true, noRender: true }); }
+    }
+  }catch(e){
+    timemotoLastResult = { error: 'Serveur injoignable.' };
+  }
+  timemotoBusy = false;
+  render();
+}
 function timemotoDateTime(iso){ return iso ? new Date(iso).toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'; }
 function timemotoResultHtml(r){
   if(!r) return '';
@@ -17460,6 +17498,9 @@ function timemotoResultHtml(r){
   if(r.autoOut) parts.push(`${r.autoOut} sortie${r.autoOut > 1 ? 's' : ''} automatique${r.autoOut > 1 ? 's' : ''} TimeMoto ignorée${r.autoOut > 1 ? 's' : ''} (départ non pointé)`);
   if(r.ignored) parts.push(`${r.ignored} pointage${r.ignored > 1 ? 's' : ''} incohérent${r.ignored > 1 ? 's' : ''} ignoré${r.ignored > 1 ? 's' : ''} (double entrée, sortie sans entrée)`);
   if(r.unmapped) parts.push(`<b>${r.unmapped} journée${r.unmapped > 1 ? 's' : ''} de salariés non associés</b> (non importées)`);
+  if(r.noUser) parts.push(`${r.noUser} événement${r.noUser > 1 ? 's' : ''} sans salarié ignoré${r.noUser > 1 ? 's' : ''} (ouverture de porte, alarme…)`);
+  if(r.otherAction) parts.push(`${r.otherAction} événement${r.otherAction > 1 ? 's' : ''} ni entrée ni sortie ignoré${r.otherAction > 1 ? 's' : ''}`);
+  if(r.badDate) parts.push(`${r.badDate} ligne${r.badDate > 1 ? 's' : ''} à la date illisible ignorée${r.badDate > 1 ? 's' : ''}`);
   if(!r.complete) parts.push('<b>lecture incomplète</b> — rien n’a été annulé par prudence');
   return `<div class="tm-result ${r.dryRun ? '' : 'tm-ok'}">${r.dryRun ? '🔍 Aperçu (rien n’a été enregistré) : ' : '✓ '}${parts.join(' · ')}</div>`;
 }
@@ -17481,14 +17522,26 @@ function renderTimemotoImportPanel(){
   const bmHref = TIMEMOTO_BOOKMARKLET.replace(/&/g, '&amp;');
   return `
     <div class="tm-box pr-tm-panel">
-      <div class="tm-panel-head"><div class="tm-title">⏱ Import des pointages TimeMoto TM-616 <span class="footer-note">(via TimeMoto Cloud)</span></div>
+      <div class="tm-panel-head"><div class="tm-title">⏱ Import des pointages TimeMoto TM-616 <span class="footer-note">(fichier CSV de la pointeuse ou TimeMoto Cloud)</span></div>
         <button class="small" data-action="presence-tm-toggle" aria-label="Fermer">✕ Fermer</button></div>
       <label class="statut-chip" style="margin:6px 0;">
         <input type="checkbox" ${tm.actif ? 'checked' : ''} data-action="tm-config" data-field="actif">
         Suivre les pointages de la TM-616 (rappel d’import affiché sur cette page)
       </label>
-      <div class="footer-note" style="text-align:left; padding-bottom:8px;">Import déclenché à la main : la page de connexion de TimeMoto est protégée par un reCAPTCHA, donc le serveur ne peut pas s'y connecter seul. Vous vous connectez vous-même à TimeMoto, récupérez votre jeton d'un clic et le collez ici. Chaque entrée/sortie devient un pointage (1re entrée = arrivée, sortie suivie d'une entrée = pause, dernière sortie = départ, heure de la pointeuse). Une modification faite dans TimeMoto annule et remplace le pointage importé (tout reste tracé) ; une correction faite ici par un superviseur n'est jamais écrasée. Le jeton n'est jamais enregistré.</div>
+      <div class="footer-note" style="text-align:left; padding-bottom:8px;">Import déclenché à la main, deux voies au choix : <b>A</b> le fichier CSV lu directement sur la pointeuse (réseau local), ou <b>B</b> TimeMoto Cloud (sa page de connexion est protégée par un reCAPTCHA : vous récupérez vous-même votre jeton d'un clic et le collez ici). Dans les deux cas, chaque entrée/sortie devient un pointage (1re entrée = arrivée, sortie suivie d'une entrée = pause, dernière sortie = départ, heure de la pointeuse). Une modification faite dans TimeMoto annule et remplace le pointage importé (tout reste tracé) ; une correction faite ici par un superviseur n'est jamais écrasée. Le jeton n'est jamais enregistré.</div>
 
+      <div class="modal-section-title">A. Fichier CSV de la pointeuse <span class="footer-note">(lecture directe en réseau local — recommandé)</span></div>
+      <div class="footer-note" style="text-align:left; padding-bottom:6px;">Lancez <span class="pr-mono">tools/tm616_export.py</span> sur un PC du réseau de l'atelier (il lit la TM-616 directement, sans TimeMoto Cloud ni jeton), puis choisissez ici le fichier <span class="pr-mono">pointages_tm616.csv</span> obtenu. Seule la période choisie ci-dessous est importée (par défaut les derniers jours) ; relancer ne crée jamais de doublon.</div>
+      <div class="tm-actions">
+        <input type="file" accept=".csv,text/csv" data-action="tm-csv-file" style="flex:1; min-width:220px;">
+        <button class="small" data-action="tm-csv-sync" data-mode="preview" ${timemotoBusy || !timemotoCsv ? 'disabled' : ''} title="Lit le fichier sans rien enregistrer">🔍 Aperçu</button>
+        <button class="small primary" data-action="tm-csv-sync" data-mode="import" ${timemotoBusy || !timemotoCsv ? 'disabled' : ''}>${timemotoBusy ? 'Import…' : '⬇ Importer'}</button>
+        <button class="small" data-action="tm-csv-sync" data-mode="since" ${timemotoBusy || !timemotoCsv ? 'disabled' : ''} title="Importe depuis la date saisie dans « Reprendre l’historique depuis le » (plus bas)">Importer depuis la date…</button>
+      </div>
+      <div class="footer-note" style="text-align:left; padding-top:4px;">${timemotoCsv ? `Fichier prêt : <b>${escapeHtml(timemotoCsv.name)}</b> (${Math.round(timemotoCsv.text.length / 1024)} Ko).` : 'Aucun fichier choisi.'}</div>
+      ${timemotoLastResult && timemotoLastResult.device ? timemotoResultHtml(timemotoLastResult) : ''}
+
+      <div class="modal-section-title" style="margin-top:14px;">B. Via TimeMoto Cloud <span class="footer-note">(jeton collé à la main)</span></div>
       <div class="modal-section-title">1. Récupérer votre jeton</div>
       <div class="footer-note" style="text-align:left; padding-bottom:6px;">Glissez ce bouton dans votre barre de favoris (une seule fois). Ensuite, sur un onglet <b>cloud-eu.timemoto.com</b> où vous êtes connecté, cliquez-le : votre jeton est copié dans le presse-papier.</div>
       <div class="tm-actions">
@@ -17511,7 +17564,7 @@ function renderTimemotoImportPanel(){
         <button class="small" data-action="tm-sync" data-mode="since" ${timemotoBusy ? 'disabled' : ''}>Importer cette période</button>
       </div>
       <div class="footer-note" style="text-align:left; padding-top:4px;">${lastImport}</div>
-      ${timemotoResultHtml(timemotoLastResult)}
+      ${timemotoLastResult && !timemotoLastResult.device ? timemotoResultHtml(timemotoLastResult) : ''}
 
       <div class="modal-section-title" style="margin-top:12px;">Association des salariés</div>
       ${allTm.length ? `
@@ -17528,7 +17581,7 @@ function renderTimemotoImportPanel(){
         }).join('')}
       </div>
       ${suggestions ? `<button class="small" data-action="tm-apply-suggestions" style="margin-top:6px;">Appliquer les ${suggestions} suggestion${suggestions > 1 ? 's' : ''} par le nom</button>` : ''}`
-      : `<div class="footer-note" style="text-align:left;">La liste des salariés TimeMoto apparaît après un premier « 🔍 Aperçu ».</div>`}
+      : `<div class="footer-note" style="text-align:left;">La liste des salariés de la pointeuse apparaît après un premier « 🔍 Aperçu » (fichier CSV ou TimeMoto Cloud).</div>`}
       <details class="tm-help">
         <summary>Comment récupérer le jeton en détail</summary>
         <ol>
@@ -18086,6 +18139,7 @@ function dispatchClickAction(action, el){
     case 'presence-tm-toggle': presenceTmOpen = !presenceTmOpen; render(); break;
     case 'presence-tm-goto': closeSettingsModal(); currentPage = 'presence'; presenceTmOpen = true; invalidatePresenceCaches(); render(); break;
     case 'tm-sync': runTimemotoSync(el.dataset.mode); break;
+    case 'tm-csv-sync': runTimemotoCsvImport(el.dataset.mode); break;
     case 'tm-apply-suggestions': applyTimemotoSuggestions(); break;
     case 'tm-copy-bookmarklet': { const t = TIMEMOTO_BOOKMARKLET; const done = () => showToast('Marque-page copié — créez un favori et collez-le dans son adresse.'); try{ navigator.clipboard.writeText(t).then(done, () => { window.prompt('Copiez ce texte dans l’adresse d’un favori :', t); }); }catch(e){ window.prompt('Copiez ce texte dans l’adresse d’un favori :', t); } break; }
     case 'presence-my-export': exportMyPresenceMonth(); break;
@@ -18354,6 +18408,7 @@ function dispatchChangeAction(el, action){
     case 'presence-config': updatePresenceConfig(el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
     case 'tm-config': updateTimemotoConfig(el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
     case 'tm-user-map': setTimemotoUserMap(el.dataset.tmId, el.value); break;
+    case 'tm-csv-file': loadTimemotoCsvFile(el.files && el.files[0]); break;
     case 'mon-pointage-date-input': setMonPointageDay(el.value); break;
     case 'presence-date-input': if(/^\d{4}-\d{2}-\d{2}$/.test(el.value)){ presenceDate = el.value === toDateInputValue(new Date()) ? null : el.value; render(); } break;
     // Formulaire de correction : mémorisé sans redessin (un clic sur « Enregistrer » juste après la

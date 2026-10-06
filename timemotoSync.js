@@ -220,12 +220,113 @@ async function syncOnce(db, st, opts){
   return res;
 }
 
+// ---------- Import du fichier CSV de la pointeuse (lecture directe en réseau local) ----------
+// Variante SANS TimeMoto Cloud : un script Python (tools/tm616_export.py, bibliothèque pyzk, port 4370)
+// lit la pointeuse TM-616 directement sur le réseau de l'atelier et produit un CSV `;` UTF-8 :
+// UID;UserID;Nom;Badge;Date;Heure;Action;Status. Le sens Entrée/Sortie vient de la pointeuse elle-même.
+// Les pointages passent par le MÊME moteur que l'import cloud (desiredPunches → reconcileDay) : mêmes
+// règles (1re entrée = arrivée, sortie suivie d'une entrée = pause, dernière sortie = départ), même
+// réconciliation (rien n'est jamais modifié ni supprimé, une annulation humaine est respectée). Les
+// salariés de la pointeuse sont identifiés `zk:<UserID>` dans userMap : jamais de collision avec les
+// identifiants TimeMoto Cloud.
+const runtime = { running: false };
+const ZK_PREFIX = 'zk:';
+const noAccent = x => String(x || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+function parseDeviceCsv(text){
+  let src = String(text || '').replace(/^﻿/, '');
+  const lines = src.split(/\r?\n/).filter(l => l.trim());
+  if(!lines.length) throw new Error('Fichier vide.');
+  const sep = lines[0].split(';').length >= lines[0].split(',').length ? ';' : ',';
+  const head = lines[0].split(sep).map(noAccent);
+  const col = n => head.indexOf(n);
+  const iUser = col('userid'), iName = col('nom'), iDate = col('date'), iTime = col('heure'), iAct = col('action');
+  if(iUser < 0 || iDate < 0 || iTime < 0 || iAct < 0) throw new Error('Fichier non reconnu : colonnes attendues UserID, Date, Heure, Action (CSV produit par tools/tm616_export.py).');
+  const out = { events: [], names: new Map(), noUser: 0, otherAction: 0, badDate: 0, lines: lines.length - 1 };
+  lines.slice(1).forEach(l => {
+    const c = l.split(sep).map(x => x.trim());
+    const uid = c[iUser] || '';
+    if(!uid){ out.noUser++; return; }
+    const act = noAccent(c[iAct]);
+    const kind = act.startsWith('entr') ? 'in' : act.startsWith('sort') ? 'out' : null;
+    if(!kind){ out.otherAction++; return; }
+    const dm = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(c[iDate] || '');
+    const day = dm ? `${dm[3]}-${dm[2]}-${dm[1]}` : (presence.DATE_RE.test(c[iDate] || '') ? c[iDate] : null);
+    const tm = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(c[iTime] || '');
+    if(!day || !tm){ out.badDate++; return; }
+    const ts = `${day}T${String(tm[1]).padStart(2, '0')}:${tm[2]}:${tm[3] || '00'}`;
+    const nm = iName >= 0 ? c[iName] : '';
+    if(nm && noAccent(nm) !== 'inconnu') out.names.set(uid, nm);
+    out.events.push({ uid, day, ts, kind });
+  });
+  return out;
+}
+function syncDeviceRows(db, st, parsed, opts){
+  const o = opts || {};
+  const tmCfg = ((st.config || {}).presence || {}).timemoto || {};
+  const userMap = tmCfg.userMap || {};
+  const now = new Date();
+  const today = presence.localTs(now).slice(0, 10);
+  const jours = Math.max(1, Math.min(31, Number(tmCfg.joursSynchro) || 7));
+  let from = presence.DATE_RE.test(String(o.since || '')) ? o.since : addDays(today, -(jours - 1));
+  if(from > today) from = today;
+  const byDay = new Map();
+  parsed.events.forEach(ev => {
+    if(ev.day < from) return;
+    const k = `${ev.uid}|${ev.day}`;
+    if(!byDay.has(k)) byDay.set(k, { uid: ev.uid, day: ev.day, events: [] });
+    byDay.get(k).events.push(ev);
+  });
+  const res = { device: true, from, to: today, rows: byDay.size, complete: true, added: 0, cancelled: 0, respected: 0, autoOut: 0, ignored: 0, unmapped: 0, noUser: parsed.noUser, otherAction: parsed.otherAction, badDate: parsed.badDate, dryRun: !!o.dryRun, byUser: {} };
+  const apply = () => {
+    byDay.forEach(g => {
+      const tmId = ZK_PREFIX + g.uid;
+      const uid = userMap[tmId] ? String(userMap[tmId]) : '';
+      if(!uid){ res.unmapped++; return; }
+      // Même forme que la réponse TimeMoto Cloud : un « pair » par événement (entrée ou sortie seule).
+      const row = { date: g.day, clockData: g.events.map(ev => ev.kind === 'in'
+        ? { in: { fullClockTime: ev.ts, clockingActionTypeId: 0 } }
+        : { out: { fullClockTime: ev.ts, clockingActionTypeId: 1 } }) };
+      const d = desiredPunches(row, uid, st, now);
+      res.autoOut += d.anomalies.autoOut; res.ignored += d.anomalies.ignored;
+      const r = reconcileDay(db, tmId, g.day, uid, d.punches, o.dryRun);
+      res.added += r.added; res.cancelled += r.cancelled; res.respected += r.respected;
+      const bu = res.byUser[uid] || (res.byUser[uid] = { added: 0, cancelled: 0, jours: 0 });
+      bu.added += r.added; bu.cancelled += r.cancelled; if(d.punches.length) bu.jours++;
+    });
+  };
+  if(o.dryRun) apply(); else db.transaction(apply)();
+  // Liste des salariés de la pointeuse (association dans Paramètres), fusionnée avec la précédente.
+  const ids = new Set(parsed.events.map(e => e.uid));
+  const known = new Map((readMeta(db, 'users', []) || []).map(u => [u.id, u.name]));
+  ids.forEach(id => known.set(ZK_PREFIX + id, parsed.names.get(id) || `Pointeuse n° ${id} (nom absent — salarié supprimé de la pointeuse ?)`));
+  writeMeta(db, 'users', [...known].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, 'fr')));
+  return res;
+}
+function runDeviceImport(db, st, csvText, opts){
+  if(runtime.running) return { ok: false, error: 'Un import TimeMoto est déjà en cours.' };
+  runtime.running = true;
+  try{
+    const parsed = parseDeviceCsv(csvText);
+    const r = syncDeviceRows(db, st, parsed, opts);
+    if(!r.dryRun){
+      const s = readMeta(db, 'status', {}) || {};
+      Object.assign(s, { lastOkAt: new Date().toISOString(), lastResult: publicResult(r), lastImportTo: r.to });
+      writeMeta(db, 'status', s);
+      if(r.added || r.cancelled) console.log(`Pointeuse (CSV) : ${r.added} pointage(s) importé(s), ${r.cancelled} annulé(s) (${r.from} → ${r.to}).`);
+    }
+    return { ok: true, result: r };
+  }catch(err){
+    return { ok: false, error: String(err && err.message || err).slice(0, 300) };
+  }finally{
+    runtime.running = false;
+  }
+}
+
 function status(db){
   const s = readMeta(db, 'status', {}) || {};
   return { lastOkAt: s.lastOkAt || null, lastResult: s.lastResult || null, lastImportTo: s.lastImportTo || null, users: readMeta(db, 'users', []) || [] };
 }
 function publicResult(r){ const { byUser, tmUsers, ...rest } = r; return rest; }
-const runtime = { running: false };
 async function runSync(db, st, opts){
   if(runtime.running) return { ok: false, error: 'Un import TimeMoto est déjà en cours.' };
   runtime.running = true;
@@ -247,5 +348,5 @@ async function runSync(db, st, opts){
 }
 
 module.exports = {
-  initTimemotoTables, runSync, status, syncOnce, desiredPunches, reconcileDay, expectedEndFor, SYSTEM_USER
+  initTimemotoTables, runSync, runDeviceImport, parseDeviceCsv, syncDeviceRows, status, syncOnce, desiredPunches, reconcileDay, expectedEndFor, SYSTEM_USER
 };

@@ -1715,6 +1715,39 @@ l'utilisateur récupère lui-même dans sa propre session TimeMoto (reCAPTCHA fr
   jeton collé a été validée en réel par l'utilisateur (liste des salariés + pointages remontés) ; la
   connexion serveur, elle, était impossible (reCAPTCHA) et a été retirée.
 
+#### Lecture directe de la pointeuse en réseau local — import du CSV (v1.96.0)
+
+Retour utilisateur réel : le TM-616 se lit **directement sur le réseau de l'atelier** (protocole ZK, port 4370, bibliothèque
+Python `pyzk`, mot de passe de communication 0 par défaut) — sans TimeMoto Cloud, sans reCAPTCHA, sans jeton. Validé en réel
+par l'utilisateur (script `test_tm616.py` → CSV de 9 420 pointages, 03/10/2024 → 06/10/2026, 11 identifiants).
+
+- **`tools/tm616_export.py`** : le script de l'utilisateur, paramétré (`--ip`, `--port`, `--commkey`, `--out`), même CSV
+  (`UID;UserID;Nom;Badge;Date;Heure;Action;Status`, `;`, UTF-8 BOM, dates `JJ/MM/AAAA`). **Lecture seule** : ne vide jamais la
+  mémoire de la pointeuse. Testé avec un faux module `zk` (pas de pointeuse accessible depuis le cloud).
+- **`POST /api/presence/timemoto/device-import`** (admin, `{ csv, since?, dryRun? }`, `timemoto.runDeviceImport`) : le CSV est lu
+  dans le navigateur puis envoyé (jamais conservé). **Même moteur que l'import cloud** : `parseDeviceCsv` → pour chaque
+  (salarié, jour) un `row.clockData` synthétique → `desiredPunches` → `reconcileDay` (1re entrée = arrivée, sortie suivie d'une
+  entrée = pause, dernière sortie = départ — ou pause si c'est aujourd'hui avant la fin d'horaire ; doubles entrées/sorties sans
+  entrée ignorées ; rien n'est jamais modifié ni supprimé ; annulation humaine respectée ; idempotent). Heure = celle de la
+  pointeuse (**la mettre à l'heure** : l'heure du serveur n'intervient pas ici, contrairement au pointage borne/téléphone).
+- **Identifiants `zk:<UserID>`** dans `config.presence.timemoto.userMap` et dans `timemoto_punch_refs.tm_user_id` : aucune collision
+  possible avec les identifiants TimeMoto Cloud ; la liste des salariés de la pointeuse (`timemoto_meta.users`) alimente la **même**
+  zone « Association des salariés » (suggestions par le nom). Un salarié supprimé de la pointeuse (ses pointages restent, nom
+  « INCONNU » — constaté : UserID 11, 480 pointages) apparaît « Pointeuse n° 11 (nom absent…) » : à laisser « ne pas importer ».
+- **Ignorés et comptés** : événements sans UserID (6 « Punch 255 » + 1 entrée, status 3 : porte/alarme), actions autres que
+  Entrée/Sortie, dates illisibles. `Status` (4, 12, 16, 3) n'est pas exploité.
+- **Période** : comme l'import cloud — les `joursSynchro` derniers jours (7 par défaut), ou `since` (bouton « Importer depuis la
+  date… » + champ « Reprendre l'historique depuis le »). Seuls les jours présents dans le fichier sont réconciliés (jamais
+  d'annulation d'une journée absente du fichier).
+- Interface : page Présence → « ⏱ TimeMoto » → **A. Fichier CSV de la pointeuse** (Aperçu / Importer / Importer depuis la date),
+  **B. Via TimeMoto Cloud** inchangé. `timemotoCsv` (transitoire), `loadTimemotoCsvFile`, `runTimemotoCsvImport`.
+- Test (scratchpad `zk_test.js`, 11 assertions sur le vrai CSV et un vrai SQLite) : 9 420 lignes, 7 sans salarié ignorées,
+  05/10/2026 d'un salarié = `in 07:49 · 3 pauses · out 16:29`, relance = 0 ajout, annulation humaine respectée, historique complet
+  (2 827 pointages pour 2 salariés associés, 9 incohérences ignorées), fichier invalide refusé ; Playwright (`zk_ui.js`) : boutons
+  désactivés sans fichier, aperçu, liste des 10 salariés.
+- **Étape suivante possible (non faite)** : automatiser (conteneur annexe Python qui lit la pointeuse chaque minute et envoie les
+  pointages à Planning avec une clé d'API dédiée) — demande une nouvelle voie d'authentification machine, à décider avant.
+
 ## Onglet « Pointages »
 
 Retour utilisateur réel : jusqu'ici, voir/corriger un pointage demandait de retrouver la bonne
