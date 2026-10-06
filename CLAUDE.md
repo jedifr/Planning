@@ -2314,6 +2314,25 @@ de la page Planning (`render()`), pas seulement de Temps de production.
   poste (et les exceptions déclarées) — d'où un écart possible entre la somme des lignes et le temps compté.
 - Test (scratchpad `timedetail_test.js`, 7 assertions sur l'export du 06/10) : entrée de menu par statut, résumé, tableau, lot.
 
+### Bouton « ⏱ Détail » dans Pointages et chronologie Début / Pause / Reprise / Terminé (v1.108.0)
+
+Demande : un bouton détail directement dans la vue Pointages, et le type de chaque pointage (début, pause, reprise, terminé).
+Pas de nouvelle pop-up : le bouton (`data-action="show-temps-prod-sessions"`, une ligne = un bouton, tous statuts sauf rien à
+détailler) ouvre la pop-up « Détail des horaires » déjà utilisée par Temps de production et le clic droit du planning
+(`showTempsProdSessions`) ; `renderTempsProdSessionModal()` est donc aussi composée dans la page Pointages (`render()`).
+- **`buildPointageEvents(o, sessions)`** — purement dérivé de `sessions[]` ou de l'historique archivé, rien n'est stocké :
+  ▶ **Début** (première séance), ⏸ **Pause** (fin de séance quand personne d'autre n'est dessus), ▶ **Reprise** (séance qui suit
+  une pause), ➕ **Rejoint** / ⏹ **Quitte** (travail à plusieurs : séance qui chevauche une autre — la fin d'une séance n'est PAS une
+  pause tant qu'un collègue est encore dessus), ✔ **Terminé** (dernière fin d'une tâche `termine` sans séance ouverte).
+  Une séance encore ouverte n'a pas d'événement de fin. Une pause déjeuner/hors horaires automatique n'est pas distinguable d'une
+  pause manuelle une fois la séance refermée : elle s'affiche « Pause ». Sans séance (tâche close avant l'archivage) : repli sur
+  `debutReel`/`finReel`, seulement Début/Terminé, marqués « ≈ ».
+- `renderPointageEventsHtml` : section « Chronologie des pointages » sous le tableau des séances (jour, heure, type coloré,
+  opérateur — celui de la séance, repli sur l'assigné), avec le décompte pauses/reprises. Masquée pendant le chargement de
+  l'historique.
+- Test (scratchpad `ev_test.js`, 11 assertions) : simple/en pause/séance ouverte/à plusieurs/repli, pop-up sur l'export du 06/10,
+  bouton sur chaque ligne de Pointages.
+
 ## Pauses de production mises en évidence
 
 Demande manager réelle : *« que les pauses de production soient mises en évidence dans les risques

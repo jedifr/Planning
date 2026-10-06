@@ -1776,7 +1776,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.107.0';
+const APP_VERSION = '1.108.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -9768,6 +9768,7 @@ function renderPointagesPage(){
       ? `<button class="ghost small" data-action="open-correct-pointage" data-cid="${r.cid}" data-oid="${r.oid}">✎ Corriger</button>` : '';
     const sessionsBtn = isSessionsCorrectable(r.cid, r.oid)
       ? `<button class="ghost small" data-action="open-correct-sessions" data-cid="${r.cid}" data-oid="${r.oid}">🕘 Sessions</button>` : '';
+    const detailBtn = `<button class="ghost small" data-action="show-temps-prod-sessions" data-cid="${r.cid}" data-oid="${r.oid}" title="Détail des horaires : séances, pauses, reprises, fin">⏱ Détail</button>`;
     const rebutBtn = `<button class="ghost small" data-action="open-rebut-draft" data-cid="${r.cid}" data-oid="${r.oid}">🗑 Rebut</button>`;
     const declPending = r.declaration && r.declaration.statut === 'a_valider';
     const declBtns = declPending && canSupervise()
@@ -9790,7 +9791,7 @@ function renderPointagesPage(){
       <td>${pauseTimeCellHtml(r.pauseH)}</td>
       <td>${rebutCell}</td>
       <td>${formatEuros(r.coutReel)}</td>
-      <td style="white-space:nowrap;">${declBtns}${correctBtn}${sessionsBtn}${rebutBtn}</td>
+      <td style="white-space:nowrap;">${detailBtn}${declBtns}${correctBtn}${sessionsBtn}${rebutBtn}</td>
     </tr>`;
   }).join('');
 
@@ -12830,6 +12831,74 @@ function renderSessionRowsHtml(sessions, fmtJour, fmtHeure, fallbackOperatorUser
   });
   return rows;
 }
+// Chronologie des pointages d'une tâche (v1.108.0) : traduit les séances en événements lisibles —
+// ▶ Début (première séance), ⏸ Pause (fin d'une séance sans autre personne encore dessus),
+// ▶ Reprise (séance qui suit une pause), ➕ Rejoint / ⏹ Quitte (travail à plusieurs, voir CLAUDE.md),
+// ✔ Terminé (dernière fin d'une tâche clôturée). Purement dérivé de sessions[] ou de l'historique
+// archivé : rien n'est stocké. Une pause automatique (déjeuner, hors horaires) n'est pas distinguable
+// d'une pause manuelle une fois la séance refermée : elle s'affiche simplement « Pause ».
+// Sans séance (tâche close avant l'archivage), repli sur debutReel/finReel : seulement Début/Terminé.
+function buildPointageEvents(o, sessions){
+  const events = [];
+  const list = (sessions || []).filter(s => s && s.debut).slice().sort((a,b) => a.debut.localeCompare(b.debut));
+  const closed = o.statut === 'termine';
+  if(!list.length){
+    if(o.debutReel) events.push({ ts:o.debutReel, type:'debut', uid:o.operatorUserId||null, approx:true });
+    if(closed && o.finReel) events.push({ ts:o.finReel, type:'termine', uid:null, approx:true });
+    return events;
+  }
+  const lastFin = list.reduce((m,s) => s.fin && s.fin > m ? s.fin : m, '');
+  const anyOpen = list.some(s => !s.fin);
+  list.forEach((s, i) => {
+    const uidS = s.operatorUserId || o.operatorUserId || null;
+    // Début de séance : première = Début ; chevauche une autre séance = Rejoint ; sinon Reprise.
+    const prevActive = list.slice(0, i).some(t => !t.fin || t.fin > s.debut);
+    events.push({ ts:s.debut, type: i === 0 ? 'debut' : (prevActive ? 'rejoint' : 'reprise'), uid:uidS });
+    if(s.fin){
+      // Fin de séance : d'autres séances encore ouvertes à cet instant = Quitte ; dernière fin
+      // d'une tâche terminée = Terminé ; sinon Pause.
+      const othersActive = list.some((t, j) => j !== i && t.debut <= s.fin && (!t.fin || t.fin > s.fin));
+      const isLast = !anyOpen && s.fin === lastFin;
+      events.push({ ts:s.fin, type: othersActive ? 'quitte' : (isLast && closed ? 'termine' : 'pause'), uid:uidS });
+    }
+  });
+  const order = { debut:0, reprise:1, rejoint:1, quitte:2, pause:2, termine:3 };
+  events.sort((a,b) => a.ts.localeCompare(b.ts) || order[a.type] - order[b.type]);
+  return events;
+}
+const POINTAGE_EVENT_LABELS = {
+  debut:   { icon:'▶', label:'Début',   color:'var(--green)' },
+  pause:   { icon:'⏸', label:'Pause',   color:'var(--amber)' },
+  reprise: { icon:'▶', label:'Reprise', color:'var(--accent)' },
+  rejoint: { icon:'➕', label:'Rejoint', color:'var(--accent)' },
+  quitte:  { icon:'⏹', label:'Quitte',  color:'var(--text-dim)' },
+  termine: { icon:'✔', label:'Terminé', color:'var(--green)' }
+};
+function renderPointageEventsHtml(o, sessions, fmtJourCourt, fmtHeure){
+  const events = buildPointageEvents(o, sessions);
+  if(!events.length) return '';
+  const rows = events.map(ev => {
+    const d = new Date(ev.ts);
+    const meta = POINTAGE_EVENT_LABELS[ev.type];
+    const u = ev.uid ? usersList.find(uu => String(uu.id) === String(ev.uid)) : null;
+    return `<tr>
+      <td>${fmtJourCourt(d)}</td>
+      <td>${fmtHeure(d)}</td>
+      <td><span class="pe-type" style="color:${meta.color}; font-weight:600;">${meta.icon} ${meta.label}</span>${ev.approx ? ' <span class="footer-note" style="margin:0;" title="Déduit du début/fin global : le détail des séances n\'est plus disponible">≈</span>' : ''}</td>
+      <td>${u ? escapeHtml(u.username) : '—'}</td>
+    </tr>`;
+  }).join('');
+  const nbPauses = events.filter(e => e.type === 'pause').length;
+  const nbReprises = events.filter(e => e.type === 'reprise').length;
+  return `
+    <div class="modal-section-title" style="margin-top:14px;">Chronologie des pointages</div>
+    <div class="footer-note" style="text-align:left; margin-bottom:4px;">${events.length} pointage${events.length>1?'s':''} — ${nbPauses} pause${nbPauses>1?'s':''}, ${nbReprises} reprise${nbReprises>1?'s':''}.</div>
+    <div style="max-height:300px; overflow-y:auto;">
+    <table class="ops-table">
+      <thead><tr><th>Jour</th><th>Heure</th><th>Type</th><th>Opérateur</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+}
 function renderTempsProdSessionModal(){
   if(!tempsProdSessionModal) return '';
   const { cid, oid } = tempsProdSessionModal;
@@ -12919,6 +12988,9 @@ function renderTempsProdSessionModal(){
     : '';
   const lotNote = o.fusionGroupId ? ' <span style="opacity:.7;">(lot fusionné : temps du lot entier)</span>' : '';
   const summaryHtml = `<div class="footer-note" style="text-align:left; margin-bottom:10px;"><strong>Temps compté : ${formatHeures(passeH)}</strong> sur ${formatHeures(prevuH)} prévus${parOpHtml}${lotNote}. <span style="opacity:.7;">Les durées du tableau sont des durées d'horloge ; le temps compté ne retient que les heures d'ouverture du poste (et les exceptions déclarées).</span></div>`;
+  const eventSessions = (o.sessions && o.sessions.length) ? o.sessions
+    : (Array.isArray(tempsProdHistoryCache[cid+'|'+oid]) ? tempsProdHistoryCache[cid+'|'+oid] : []);
+  const eventsBlock = tempsProdHistoryCache[cid+'|'+oid] === null ? '' : renderPointageEventsHtml(o, eventSessions, fmtJourCourt, fmtHeure);
   return `<div class="modal-overlay">
     <div class="modal-box" role="dialog" aria-modal="true">
       <div class="modal-head">
@@ -12933,6 +13005,7 @@ function renderTempsProdSessionModal(){
           <thead><tr><th>Jour</th><th>Début</th><th>Fin</th><th>Durée</th><th>Opérateur</th></tr></thead>
           <tbody>${rows || `<tr><td colspan="5" style="text-align:center; color:var(--text-faint);">Aucun horaire enregistré</td></tr>`}</tbody>
         </table>
+        ${eventsBlock}
         ${purgedNote}
         ${previsionBlock}
       </div>
@@ -18881,6 +18954,7 @@ function render(){
     appEl.innerHTML = [
       renderHeader(),
       renderPointagesPage(),
+      renderTempsProdSessionModal(),
       renderCorrectPointageModal(),
       renderCorrectSessionsModal(),
       renderRebutModal(),
