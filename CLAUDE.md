@@ -109,7 +109,7 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
   `fusionGroupId`, `fusionPinned`, `sousTraitance`, `dateDebutPossible`,
   `autoPausedOperators`, `autoPausedUntil`, `pauseReminderSnoozeUntil`, `numeroLigne`,
-  `previsionAvantCloture`, `horsPlanning`, `dureeReelleH`, `dureeReelleParOperateur` (voir sections
+  `previsionAvantCloture`, `horsPlanning`, `dureeReelleH`, `dureeReelleParOperateur`, `posteLibere` (voir sections
   dédiées plus bas)
   - `sousTraitance` se coche **automatiquement** (jamais décoché automatiquement) dès que le poste
     choisi pour la ligne a un nom contenant "sous-traitance"/"sous traitance"
@@ -1321,6 +1321,47 @@ et réapparaît dès que l'option est décochée, l'échéance repoussée ou la 
   (Normale, échéance dépassée) sur Ajustage ; avec l'option, C026-0744 repasse devant. Si toutes les commandes en retard sont
   déjà classées par échéance (cas de C026-0693/0751/0744), l'ordre ne change pas : le gain est face aux commandes d'urgence
   supérieure à échéance plus tardive.
+
+### Pause qui libère le poste (v1.101.0)
+
+Constat réel (export du 06/10) : C026-0766 CRISTEL, en pause depuis le 05/10 (9 h 05 prévues, 1 h pointée), était
+verrouillée dans le planning comme un **bloc continu sur Ajustage** jusqu'à « maintenant + temps restant » (07/10 09:20) —
+alors que l'atelier travaillait d'autres tâches pendant la pause. Les cinq tâches de C026-0744 étaient donc planifiées le
+07/10 au lieu d'aujourd'hui. Demande validée : option **manuelle** par tâche + libération **automatique réglable** + pop-up
+« libérer le poste ? » à la mise en pause.
+
+- **Calcul à la lecture, jamais une modification des données.** `isPosteLibere(o, st, now)` : tâche `en_pause` avec poste,
+  ni sous-traitée ni hors planning, ET (`o.posteLibere` — seul champ stocké, `migrateState` → `false` — OU réglage
+  automatique `config.libereAutoApresH` > 0 et pause **manuelle** — `isUnexplainedPause`, donc jamais pause déjeuner ni
+  hors horaires — durant depuis au moins N **heures d'ouverture du poste** : `pauseWorkedHoursSince` =
+  `workingHoursBetween` sur la pause en cours, une pause posée le soir ne « vieillit » pas la nuit). Le choix manuel prime.
+- **Moteur** (`computeSchedule`, `posteLibereNow` : libération effective seulement s'il reste > 0,01 h de travail) : phase 1
+  ne pose plus d'intervalle ni de `machineFree` ; phase 2 envoie la tâche dans `pendingVolante` (`released:true`) avec le
+  **temps restant** (`dureeH − opElapsedHours`), **sans dépendances** (déjà commencée : une dépendance non terminée l'aurait
+  rendue impossible à planifier) et plancher = maintenant ; elle concourt par priorité (`urg` compris) avec les autres.
+  Résultat : `start` = début réel conservé, `end` = fin du créneau replanifié (alimente `computedEnd` pour les phases
+  suivantes de la même pièce), `dureeH` = durée totale, `posteLibereEff:true`, `libereStart` = début du créneau.
+  `runningTaskSegments` y démarre le segment « restant » à `libereStart`. Lot fusionné : chaque membre porte sa copie des
+  champs, le candidat groupé les écrit tous (`mm.released`).
+- **Remise à `false`** à la reprise (`applySingleStatusChange` en_cours, pointage `pause_end`), à « ↺ Rouvrir » et à la
+  déclaration terminée. **Propagation au lot** par `propagateFusionGroupFields`.
+- **Manuel** : clic droit sur une tâche `en_pause` → « 🔓 Libérer le poste pendant la pause » / « 🔒 Réserver de nouveau le
+  poste » (`ctx-libere-poste`, `setPosteLibere` : un `commit()`). **Pop-up** (`liberePosteDraft`, `renderLiberePosteModal`) ouverte
+  par `setOpStatut` APRÈS l'enregistrement d'une mise en pause manuelle (jamais les pauses automatiques, qui ne passent pas
+  par là) : nombre de tâches « À faire » qui attendent le poste, temps restant ; « Oui » libère, « Non »/✕/Échap garde la
+  réservation. Réglable : case « Demander « libérer le poste ? » à chaque mise en pause manuelle » (`config.libereProposerPause`,
+  `true` par défaut).
+- **Réglage** : Paramètres → Planification → « Pause qui libère le poste » (`libereAutoApresH`, 0 = jamais, **0 par défaut**,
+  pas de 0,25 h ; ajouté à `CONFIG_FIELDS_AFFECTING_SCHEDULE` car lu par le moteur ; `SETTINGS_HELP.libereAuto`).
+- **Badge** « 🔓 Poste libéré » (« (auto) » si automatique) sur le tableau des tâches et les cartes Kanban (`posteLibereBadgeHtml`,
+  lit `posteLibereEff` de l'opération planifiée, jamais de la pièce brute).
+- **Limite assumée** : libérer ne fait pas disparaître la tâche, elle repasse **derrière** les tâches plus prioritaires — sa fin
+  projetée peut donc reculer (CRISTEL : 07/10 08:30 → 08/10) alors que celle des autres avance (C026-0744 : 07/10 09:13 →
+  06/10 09:53). C'est le but.
+- Tests (scratchpad `libere_test.js`, 32 assertions sur l'export du 06/10 ; `libere_render.js` ; `libere_ui.js` Playwright) :
+  migration, planning avant/après (aucun chevauchement, aucune tâche devenue non planifiée, retour exact à l'état d'origine en
+  réservant de nouveau), seuil automatique, pauses automatiques jamais libérées, lot fusionné (13 membres), reprise, pop-up,
+  badge, segment du Gantt, menu contextuel, réglage rendu.
 
 ### Cartes Kanban à 4 lignes, séparateurs par jour et mode Compact (v1.92.0)
 

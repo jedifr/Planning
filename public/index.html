@@ -1775,7 +1775,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.100.0';
+const APP_VERSION = '1.101.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1957,6 +1957,7 @@ const SETTINGS_HELP = {
   presenceArrondi: "Règle appliquée à la lecture pour calculer l'heure RETENUE d'un pointage (présence, retard, fiche salarié, exports). Les pointages enregistrés ne sont jamais modifiés : l'heure réelle reste visible à côté. Sans effet pour les salariés au forfait.",
   presenceArrondiEffet: "Les jours avant cette date gardent leurs heures réelles : changer la règle ne réécrit jamais l'historique déjà consulté ou exporté.",
   tmFrequence: "Fréquence à laquelle le conteneur zk-sync relit la pointeuse. Le réglage est repris par l'agent en moins d'une minute, sans redémarrage. « Par défaut » = valeur SYNC_INTERVAL du fichier TM616.env (300 s à défaut). Minimum 1 minute.",
+  libereAuto: "Une tâche mise en pause à la main réserve son poste jusqu'à la fin du travail restant : pendant ce temps, rien d'autre ne peut y être planifié. Avec une valeur N > 0, une pause manuelle qui dure depuis plus de N heures d'ouverture du poste libère automatiquement ce poste : le temps restant est replanifié comme une tâche à faire, par priorité. Ne concerne jamais les pauses déjeuner ou hors horaires automatiques. 0 = désactivé (valeur par défaut). Chaque tâche peut aussi être libérée à la main (clic droit).",
   urgenceAuto: "Quand l'échéance d'une commande est dépassée (depuis le nombre de jours choisi), le planning la traite comme « Importante » ou « Urgente » : ses tâches passent devant celles des commandes moins prioritaires, et sa carte est colorée en conséquence. Le niveau saisi sur la commande n'est jamais modifié. Désactivé par défaut.",
   dispoAlerte: "Une tâche « À faire » dont toutes les étapes précédentes sont terminées est disponible. Passé ce nombre de jours sans qu'elle soit démarrée, elle est signalée (pastille ambre/rouge sur le Kanban, bloc de la Vue d'ensemble et des Risques de retard, rapport e-mail). 0 = alerte désactivée. Par défaut : 3 jours.",
   userForfait: "Pas de « non arrivé », de retard ni de départ non pointé signalés pour cette personne. Si elle pointe, sa présence compte normalement."
@@ -2752,6 +2753,10 @@ function migrateState(st){
   // v1.100.0 : alerte « tâche disponible mais pas démarrée » (jours ; 0 = désactivée) et urgence automatique
   // à l'échéance dépassée (désactivée par défaut — elle change l'ordre du planning).
   if(st.config.dispoAlerteJours === undefined) st.config.dispoAlerteJours = 3;
+  // Libération automatique du poste d'une tâche en pause manuelle depuis N heures d'ouverture
+  // (0 = désactivé) et proposition « libérer le poste ? » à chaque mise en pause manuelle.
+  if(st.config.libereAutoApresH === undefined) st.config.libereAutoApresH = 0;
+  if(st.config.libereProposerPause === undefined) st.config.libereProposerPause = true;
   if(!st.config.urgenceAuto || typeof st.config.urgenceAuto !== 'object') st.config.urgenceAuto = { actif:false, niveau:'importante', apresJours:0 };
   if(st.config.archiveApresJours === undefined) st.config.archiveApresJours = 365; // 0 = archivage automatique désactivé
   if(st.config.archiveAutoActive === undefined) st.config.archiveAutoActive = Number(st.config.archiveApresJours) > 0; // préserve le comportement des états déjà enregistrés
@@ -2931,6 +2936,8 @@ function migrateState(st){
       if(o.autoPausedOperators === undefined) o.autoPausedOperators = null;
       if(o.autoPausedUntil === undefined) o.autoPausedUntil = null;
       if(o.autoPausedOutOfHours === undefined) o.autoPausedOutOfHours = false;
+      // Poste libéré pendant une pause manuelle (v1.101.0, voir isPosteLibere) : choix explicite.
+      if(o.posteLibere === undefined) o.posteLibere = false;
       // Exception "Je travaille maintenant" (voir CLAUDE.md, « Exception hors horaires ») — décidée
       // par l'opérateur au moment même, sur une tâche à_faire (avant de démarrer) ou en_cours (déjà
       // démarrée) : borne haute exclusive (la prochaine pause programmée, ou minuit si aucune ne
@@ -3664,7 +3671,7 @@ function runningTaskSegments(o, st, windowStart, windowEnd){
     if(end > start) segments.push({ start, end, kind:'reel' });
   });
   segments.sort((a,b) => a.start - b.start);
-  const from = nextWorkingInstant(now, cfg);
+  const from = (o.posteLibereEff && o.libereStart) ? o.libereStart : nextWorkingInstant(now, cfg);
   if(o.end > from) segments.push({ start: from, end: o.end, kind:'restant' });
   if(!segments.length) segments.push({ start:o.start, end:o.end, kind:'restant' });
   return segments.filter(seg => seg.end > windowStart && seg.start < windowEnd);
@@ -4178,9 +4185,44 @@ function getSchedule(){
   if(!scheduleCache) scheduleCache = computeSchedule(state);
   return scheduleCache;
 }
+// ---- Poste libéré pendant une pause manuelle (v1.101.0) ----
+// Une tâche en_pause verrouille son poste en bloc continu jusqu'à « maintenant + temps restant » :
+// pendant la pause, l'atelier ne peut donc rien planifier dessus (cas réel : une affaire en pause
+// depuis des jours repoussait de 2 jours toutes les tâches d'Ajustage). « Libérer le poste » la sort
+// de cette réservation : le temps RESTANT est replanifié comme une tâche volante (plancher =
+// maintenant), qui reprend sa place dans la file par priorité. Calcul À LA LECTURE, jamais une
+// modification des données : seul `posteLibere` (choix manuel) est stocké.
+function libereAutoApresH(st){
+  const n = Number((((st || state).config) || {}).libereAutoApresH);
+  return (isFinite(n) && n > 0) ? n : 0;
+}
+function pauseWorkedHoursSince(o, st, now){
+  // Durée de la pause EN COURS en heures d'ouverture du poste (pas en heures d'horloge : une pause
+  // posée le soir ne doit pas « vieillir » toute la nuit).
+  const gap = pieceCurrentPauseGap(o, now);
+  if(!gap) return 0;
+  return workingHoursBetween(gap.debut, now, configForPiece(o, st));
+}
+function isPosteLibere(o, st, now){
+  if(!o || o.statut !== 'en_pause') return false;
+  if(!o.machineId || o.sousTraitance || o.horsPlanning) return false;
+  if(o.posteLibere) return true;
+  const h = libereAutoApresH(st);
+  if(!h) return false;
+  if(!isUnexplainedPause(o)) return false; // jamais une pause déjeuner / hors horaires automatique
+  return pauseWorkedHoursSince(o, st, now || new Date()) >= h;
+}
 function computeSchedule(st){
   const machineFree = {};
   const machineIntervals = {};
+  const nowRef = new Date();
+  // Poste libéré (voir isPosteLibere) : seulement si du temps reste réellement à faire, sinon la
+  // tâche garde son traitement habituel (rien à replanifier).
+  const posteLibereNow = op => {
+    if(!isPosteLibere(op, st, nowRef)) return false;
+    const full = (op.dureeOverrideH!=null && op.dureeOverrideH>0) ? op.dureeOverrideH : (op.tempsUnitaire*op.quantite)/60;
+    return full - opElapsedHours(op, st) > 0.01;
+  };
   const machineDispoFloor = {}; // plancher fixe (jamais modifié ensuite) : le poste n'existe simplement pas avant cette date
   st.machines.forEach(m => {
     machineFree[m.id] = nextWorkingInstant(new Date(m.dispo), effectiveConfig(m, st));
@@ -4192,7 +4234,7 @@ function computeSchedule(st){
   // elles occupent le poste pour de vrai et ne doivent jamais être déplacées par la résolution de conflit.
   st.commandes.forEach(cmd => {
     cmd.pieces.forEach(op => {
-      if((op.statut==='en_cours' || op.statut==='en_pause') && op.manualStart && op.machineId && !op.sousTraitance && !op.horsPlanning){
+      if((op.statut==='en_cours' || op.statut==='en_pause') && op.manualStart && op.machineId && !op.sousTraitance && !op.horsPlanning && !posteLibereNow(op)){
         const cfg = configForPiece(op, st);
         const dureeH = (op.dureeOverrideH!=null && op.dureeOverrideH>0) ? op.dureeOverrideH : (op.tempsUnitaire*op.quantite)/60;
         const start = nextWorkingInstant(new Date(op.manualStart), cfg);
@@ -4257,6 +4299,15 @@ function computeSchedule(st){
       const isRunning = (op.statut==='en_cours' || op.statut==='en_pause');
       const runningAnchor = op.manualStart || op.debutReel || (op.sessions && op.sessions.length ? op.sessions[0].debut : null);
       const alreadyLocked = isRunning && runningAnchor;
+      if(isRunning && op.machineId && posteLibereNow(op)){
+        // Pause avec poste libéré : on ne réserve rien. Le temps restant concourt comme une tâche
+        // volante (plancher = maintenant, aucune dépendance — la tâche est déjà commencée) ; son début
+        // réel reste affiché, sa fin projetée alimente les phases suivantes de la même pièce.
+        const remH = Math.max(0.01, dureeH - opElapsedHours(op, st));
+        const anchor = runningAnchor ? nextWorkingInstant(new Date(runningAnchor), cfg) : nextWorkingInstant(nowRef, cfg);
+        pendingVolante.push({ op, cmd, cfg, dureeH: remH, deps: [], urg: effectiveUrgence(cmd, st), released: true, fullH: dureeH, anchorStart: anchor });
+        return;
+      }
       if(alreadyLocked){
         const start = nextWorkingInstant(new Date(runningAnchor), cfg);
         const end = runningTaskEnd(op, st, dureeH, cfg);
@@ -4433,7 +4484,12 @@ function findNextFreeSlot(floor, dureeH, intervals, cfg){
         (item.groupMembers || [item]).forEach(mm => {
           machineIntervals[mm.op.machineId].push({ start, end, fusionGroupId: mm.op.fusionGroupId || null });
           computedEnd[mm.op.id] = end;
-          opsById[mm.op.id] = { ...mm.op, start, end, dureeH: mm.dureeH };
+          if(mm.released){
+            // poste libéré : début réel conservé, fin = fin du créneau replanifié ; libereStart = début de ce créneau
+            opsById[mm.op.id] = { ...mm.op, start: mm.anchorStart, end, dureeH: mm.fullH, posteLibereEff: true, libereStart: start };
+          } else {
+            opsById[mm.op.id] = { ...mm.op, start, end, dureeH: mm.dureeH };
+          }
         });
         const cur = machineFree[m.id];
         machineFree[m.id] = (cur && cur > end) ? cur : end;
@@ -4447,7 +4503,7 @@ function findNextFreeSlot(floor, dureeH, intervals, cfg){
   // Sécurité : une pièce qui n'aurait pas pu être planifiée (dépendance cassée) reste visible sans
   // horaire plutôt que de disparaître silencieusement.
   remaining.forEach(item => {
-    (item.groupMembers || [item]).forEach(mm => { opsById[mm.op.id] = { ...mm.op, start: null, end: null, dureeH: mm.dureeH }; });
+    (item.groupMembers || [item]).forEach(mm => { opsById[mm.op.id] = { ...mm.op, start: mm.released ? mm.anchorStart : null, end: null, dureeH: mm.released ? mm.fullH : mm.dureeH }; });
   });
 
   const results = [];
@@ -4614,7 +4670,7 @@ function updateMachineHoraire(id, field, value){
 // dayHoursFor/dayStartFor/pauseWindowsFor) — tous les autres peuvent sauter le recalcul du planning
 // (voir invalidateSchedule/commit). Ne JAMAIS retirer un champ d'ici sans vérifier qu'il n'est lu
 // nulle part dans computeSchedule/effectiveConfig/configForPiece.
-const CONFIG_FIELDS_AFFECTING_SCHEDULE = new Set(['startTime','monThuHours','friHours','pauseActive','pauseDebut','pauseFin']);
+const CONFIG_FIELDS_AFFECTING_SCHEDULE = new Set(['startTime','monThuHours','friHours','pauseActive','pauseDebut','pauseFin','libereAutoApresH']);
 function updateConfig(field, value){
   if(field.startsWith('backup.')){
     if(!state.config.backup) state.config.backup = { destinataire:'', motDePasse:'', heure:'02:00', actif:false, dernierEnvoi:null };
@@ -4663,6 +4719,11 @@ function updateConfig(field, value){
     state.config.retardDemarragePopupActive = !!value;
   } else if(field==='pointageAlerteActive' || field==='pointageRappelOperateur' || field==='autoPauseDejeuner' || field==='autoPauseHorsHoraires' || field==='pauseRappelRetour'){
     state.config[field] = !!value;
+  } else if(field==='libereProposerPause'){
+    state.config.libereProposerPause = !!value;
+  } else if(field==='libereAutoApresH'){
+    const v = Number(String(value).replace(',','.'));
+    state.config.libereAutoApresH = (isFinite(v) && v > 0) ? Math.min(720, Math.round(v*4)/4) : 0; // 0 = désactivé
   } else if(field==='dispoAlerteJours'){
     const v = Math.round(Number(value));
     state.config.dispoAlerteJours = (isFinite(v) && v >= 0) ? Math.min(365, v) : 3; // 0 = alerte désactivée
@@ -6407,6 +6468,13 @@ function setLunchException(cid, oid){
   commit();
   showToast(`🍽 Exception activée : cette tâche ne sera pas mise en pause pour la pause déjeuner jusqu'à ${formatDT(endDate)} — le temps travaillé pendant la pause sera compté.`);
 }
+// Badge « 🔓 poste libéré » : tâche en pause dont le poste n'est plus réservé (choix manuel ou
+// libération automatique, voir isPosteLibere). `o` vient du planning calculé (posteLibereEff).
+function posteLibereBadgeHtml(o){
+  if(!o || !o.posteLibereEff) return '';
+  const auto = !o.posteLibere;
+  return `<div class="footer-note" style="margin:2px 0 0; color:var(--accent);" title="Le poste n'est plus réservé par cette tâche en pause : son temps restant est replanifié par priorité${auto?' (libération automatique après '+libereAutoApresH(state)+' h de pause)':''}">🔓 Poste libéré${auto?' (auto)':''}</div>`;
+}
 function lunchExceptionBadgeHtml(o){
   if(!o.lunchExceptionUntil) return '';
   if(new Date() >= new Date(o.lunchExceptionUntil)) return '';
@@ -7081,6 +7149,7 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
       o.sessions.push({ debut: nowStr, fin: null, operatorUserId: activeIdentityId() }); // ouvre une session (démarrage ou reprise après pause)
       o.statut = 'en_cours';
       o.autoPaused = false;
+      o.posteLibere = false; // reprise : la tâche reprend sa place sur le poste
       o.autoPausedOutOfHours = false; // relancée manuellement — un nouveau contrôle serveur la mettra en pause au prochain "hors horaires" le cas échéant
     }
   } else if(newStatut === 'en_pause'){
@@ -7163,6 +7232,7 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
     // "↺ Rouvrir" n'est pas une nouvelle création, il n'y a donc rien de nouveau à figer à la place.
     o.autoPaused = false;
     o.autoPausedOutOfHours = false;
+    o.posteLibere = false;
   }
   return null;
 }
@@ -7250,6 +7320,12 @@ function setOpStatut(cid, oid, newStatut){
     showToast(`Terminée ${durationLabel(maxAdvanceH)} en avance — les tâches non figées viennent de se recaler automatiquement.`);
   }
   commit();
+  // Mise en pause MANUELLE (jamais les pauses automatiques, qui ne passent pas par ici) : propose de
+  // libérer le poste (voir isPosteLibere) — la pause est déjà enregistrée, la pop-up n'en dépend pas.
+  if(newStatut === 'en_pause' && state.config.libereProposerPause !== false){
+    openLiberePostePrompt(c.id, o.id);
+    if(liberePosteDraft) render();
+  }
   // Alerte de démarrage tardif (voir CLAUDE.md, Paramètres → Risques de retard) : uniquement au tout
   // premier démarrage réel (a_faire → en_cours, jamais une reprise après pause) et seulement si
   // activée — même donnée et même seuil que le badge "🕓" déjà affiché sur les tâches concernées
@@ -7280,6 +7356,62 @@ function setOpStatut(cid, oid, newStatut){
   }
 }
 function closeRetardDemarragePopup(){ retardDemarragePopupInfo = null; render(); }
+// ---- Poste libéré pendant une pause (v1.101.0, voir isPosteLibere) ----
+// Libère (ou réserve de nouveau) le poste d'une tâche en pause : un seul commit, propagé à tout le
+// lot fusionné (chaque membre garde sa propre valeur — champ scalaire).
+function setPosteLibere(cid, oid, libere){
+  const c = state.commandes.find(c=>c.id===cid); if(!c) return;
+  const o = c.pieces.find(o=>o.id===oid); if(!o) return;
+  if(o.statut !== 'en_pause') return;
+  o.posteLibere = !!libere;
+  propagateFusionGroupFields(o, { posteLibere: !!libere });
+  commit();
+  showToast(libere
+    ? '🔓 Poste libéré : le temps restant de cette tâche est replanifié, les autres tâches du poste peuvent passer devant.'
+    : '🔒 Poste de nouveau réservé pour cette tâche.');
+}
+// Pop-up posée juste APRÈS une mise en pause manuelle (la pause est déjà enregistrée) : propose de
+// libérer le poste. Purement transitoire, comme retardDemarragePopupInfo.
+let liberePosteDraft = null;
+function openLiberePostePrompt(cid, oid){
+  const c = state.commandes.find(c=>c.id===cid); const o = c && c.pieces.find(o=>o.id===oid);
+  if(!o || o.statut !== 'en_pause' || !o.machineId || o.sousTraitance || o.horsPlanning) return;
+  if(isPosteLibere(o, state, new Date())) return; // déjà libéré (réglage automatique)
+  const m = state.machines.find(mm=>mm.id===o.machineId);
+  let attente = 0;
+  state.commandes.forEach(cc => { if(isCommandeFullyDone(cc)) return; cc.pieces.forEach(oo => { if(oo.machineId===o.machineId && oo.statut==='a_faire' && !oo.sousTraitance && !oo.horsPlanning && (!o.fusionGroupId || oo.fusionGroupId!==o.fusionGroupId)) attente++; }); });
+  const restantH = Math.max(0, ((o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (o.tempsUnitaire*o.quantite)/60) - opElapsedHours(o, state));
+  liberePosteDraft = { cid, oid, label: [c.nom, o.piece, o.etape].filter(Boolean).join(' · '), posteNom: m ? m.nom : null, attente, restantH };
+}
+function closeLiberePostePrompt(){ liberePosteDraft = null; render(); }
+function answerLiberePostePrompt(libere){
+  const d = liberePosteDraft; liberePosteDraft = null;
+  if(libere && d) setPosteLibere(d.cid, d.oid, true); else render();
+}
+function renderLiberePosteModal(){
+  if(!liberePosteDraft) return '';
+  const d = liberePosteDraft;
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:460px;">
+      <div class="modal-head">
+        <h2>⏸ Tâche mise en pause</h2>
+        <button class="ghost icon-btn" data-action="libere-poste-no" title="Fermer (garder le poste)">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="footer-note" style="text-align:left; margin:0 0 6px;">${escapeHtml(d.label)}</div>
+        <div style="margin:8px 0 6px; font-weight:600;">Libérer le poste${d.posteNom ? ` « ${escapeHtml(d.posteNom)} »` : ''} pendant la pause ?</div>
+        <div class="footer-note" style="text-align:left; padding:0 0 8px;">Tant que le poste est réservé, aucune autre tâche ne peut y être planifiée avant la fin de celle-ci${d.restantH>0 ? ` (encore ${durationLabel(d.restantH)} de travail)` : ''}.
+        ${d.attente ? `<strong>${d.attente} tâche(s) « À faire »</strong> attendent ce poste.` : ''}
+        Libéré, son temps restant est replanifié par priorité avec les autres tâches ; elle reste « En pause » et se relance normalement.</div>
+        <div class="form-actions" style="justify-content:flex-end; margin-top:8px; gap:8px;">
+          <button data-action="libere-poste-no">Non, garder le poste réservé</button>
+          <button class="primary" data-action="libere-poste-yes">🔓 Oui, libérer le poste</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
 // Permet à un second (ou troisième…) opérateur de se signaler comme travaillant, en parallèle, sur
 // une pièce déjà en_cours — cas réel d'un travail à plusieurs mains sur la même ligne (à distinguer
 // du split en plusieurs lignes utilisé pour deux MACHINES différentes, voir CLAUDE.md). Contrairement
@@ -9808,7 +9940,7 @@ function submitDeclareDone(){
     oo.finReel = d.fin;
     oo.manualStart = null;
     oo.sessions = [];
-    oo.autoPaused = false; oo.autoPausedOutOfHours = false;
+    oo.autoPaused = false; oo.autoPausedOutOfHours = false; oo.posteLibere = false;
     if(sansTemps){
       // Sous-traitance revenue, aucun temps salarié : rien à compter ni à valider.
       oo.dureeReelleH = 0; oo.dureeReelleParOperateur = null; oo.declaration = null;
@@ -14042,6 +14174,11 @@ function renderContextMenu(){
   }
   if(o.statut==='en_pause'){
     items.push({action:'ctx-resume', label:'▶ Reprendre'});
+    if(o.machineId && !o.sousTraitance && !o.horsPlanning){
+      items.push(o.posteLibere
+        ? {action:'ctx-libere-poste', label:'🔒 Réserver de nouveau le poste'}
+        : {action:'ctx-libere-poste', label:'🔓 Libérer le poste pendant la pause'});
+    }
     items.push({action:'ctx-finish', label:'✔ Terminer'});
     items.push({action:'ctx-work-exception', label:'🕐 Je travaille maintenant (hors horaires)'});
     items.push({action:'ctx-lunch-exception', label:'🍽 Je travaille pendant la pause'});
@@ -14201,6 +14338,17 @@ function renderSettingsModal(){
         </label>
       </div>
       <div class="footer-note" style="text-align:left; padding:6px 0 16px;">Le niveau choisi sur la commande n'est jamais modifié : le relèvement est calculé à l'affichage et dans le planning, puis disparaît de lui-même si l'échéance est repoussée ou la commande terminée. Il ne fait que relever (une commande déjà « Urgente » le reste). Les tâches déjà démarrées ne bougent pas ; les autres peuvent passer devant des commandes moins prioritaires. Une pastille « ⬆ traitée comme… » l'indique sur la commande. Désactivé par défaut.</div>
+      <div class="modal-section-title">Pause qui libère le poste</div>
+      <div class="commande-top-fields" style="grid-template-columns:1fr 1fr;">
+        <label class="field">Libérer automatiquement après (heures d'ouverture, 0 = jamais) ${helpTip('libereAuto')}
+          <input type="number" min="0" max="720" step="0.25" value="${libereAutoApresH(state)}" data-action="update-config" data-field="libereAutoApresH">
+        </label>
+      </div>
+      <label class="statut-chip" style="margin:8px 0;">
+        <input type="checkbox" ${cfg.libereProposerPause!==false?'checked':''} data-action="update-config" data-field="libereProposerPause">
+        Demander « libérer le poste ? » à chaque mise en pause manuelle
+      </label>
+      <div class="footer-note" style="text-align:left; padding:6px 0 16px;">Une tâche en pause garde son poste réservé jusqu'à la fin de son travail restant, ce qui repousse les autres tâches du poste. Libérée, elle n'occupe plus rien : son temps restant est replanifié par priorité avec les autres. Elle reste « En pause » et se relance normalement. Jamais appliqué aux pauses déjeuner ou hors horaires automatiques.</div>
       <div class="modal-section-title">Regroupement de pièces</div>
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${state.config.matiereFusionActive?'checked':''} data-action="update-config" data-field="matiereFusionActive">
@@ -15631,7 +15779,7 @@ function renderKanbanView(schedule){
       }
       // Même badges que le tableau des tâches — uniquement sur À faire/En cours/En pause (statuts où
       // l'exception a un effet réel) ; déclaration (temps déclaré) sur Terminée.
-      const extrasK = (col.key==='a_faire'||col.key==='en_cours'||col.key==='en_pause') ? (workHoursExceptionBadgeHtml(o) + lunchExceptionBadgeHtml(o)) : (col.key==='termine' ? declarationBadgeHtml(o) : '');
+      const extrasK = (col.key==='a_faire'||col.key==='en_cours'||col.key==='en_pause') ? (workHoursExceptionBadgeHtml(o) + lunchExceptionBadgeHtml(o) + posteLibereBadgeHtml(o)) : (col.key==='termine' ? declarationBadgeHtml(o) : '');
       const titleAttrK = `Clic : isoler la commande — clic droit : menu de statut${o._fusionMembers ? '\nPièces du lot :' + fusionTitleK : ''}`;
       const r4K = (col.key==='termine')
         ? `<div class="kc-r4"><span class="kc-done">✓ ${escapeHtml(whenK)}</span>${doneLineK}</div>`
@@ -15907,7 +16055,7 @@ function renderOpsRow(o, c){
   const dureeH = (o.dureeOverrideH!=null && o.dureeOverrideH>0) ? o.dureeOverrideH : (o.tempsUnitaire*o.quantite)/60;
   const overridden = isPositionPinned(o);
   const elapsedNote = running
-    ? `<div class="elapsed-note">${durationLabel(opElapsedHours(o, state))} écoulé${o.statut==='en_pause'?(o.autoPaused?' (pause déjeuner)':' (en pause)'):''}</div>${workHoursExceptionBadgeHtml(o)}${lunchExceptionBadgeHtml(o)}`
+    ? `<div class="elapsed-note">${durationLabel(opElapsedHours(o, state))} écoulé${o.statut==='en_pause'?(o.autoPaused?' (pause déjeuner)':' (en pause)'):''}</div>${workHoursExceptionBadgeHtml(o)}${lunchExceptionBadgeHtml(o)}${posteLibereBadgeHtml(o)}`
     : (done && dureePasseeH(o, state)
         ? `<div class="elapsed-note">${durationLabel(dureePasseeH(o, state))} réellement passé</div>${declarationBadgeHtml(o)}`
         : (done ? declarationBadgeHtml(o) : ''));
@@ -16661,7 +16809,7 @@ function applyPresenceTaskLinkage(uid, type, ts, chosenKeys){
       if(o.statut !== 'en_pause' && o.statut !== 'en_cours') return;
       if(o.sessions.some(s => !s.fin && presenceSessionOwner(s, o) === u)) return;
       o.sessions.push({ debut: minute, fin: null, operatorUserId: u });
-      o.statut = 'en_cours'; o.autoPaused = false; o.autoPausedOutOfHours = false;
+      o.statut = 'en_cours'; o.autoPaused = false; o.autoPausedOutOfHours = false; o.posteLibere = false;
       if(Array.isArray(o.autoPausedOperators)){
         o.autoPausedOperators = o.autoPausedOperators.filter(id => String(id) !== u);
         if(!o.autoPausedOperators.length){ o.autoPausedOperators = null; o.autoPausedUntil = null; }
@@ -18341,6 +18489,7 @@ function render(){
     renderFusionGroupDetailModal(),
     renderNewCommandeZoneNoticeModal(),
     renderRetardDemarragePopupModal(),
+    renderLiberePosteModal(),
     renderCorrectOperatorModal(),
     renderQuickPointageModal(),
     renderDeclareDoneModal(),
@@ -18511,7 +18660,7 @@ document.addEventListener('click', (e) => {
     // Pop-up de document ouverte PAR-DESSUS Paramètres : ne referme qu'elle, pas Paramètres.
     if(presenceDocModal){ presenceDocModal = null; render(); return; }
     presenceCorrection = null; presencePunchDraft = null;
-    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; parcoursModal = null; closeSettingsModal(); return;
+    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; liberePosteDraft = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; parcoursModal = null; closeSettingsModal(); return;
   }
   if(contextMenu && !e.target.closest('.context-menu')){
     contextMenu = null; render();
@@ -18860,6 +19009,9 @@ function dispatchClickAction(action, el){
     case 'ctx-join': contextMenu = null; joinOpSession(el.dataset.cid, el.dataset.oid); break;
     case 'ctx-reopen': contextMenu = null; setOpStatut(el.dataset.cid, el.dataset.oid, 'a_faire'); break;
     case 'ctx-work-exception': contextMenu = null; setWorkHoursException(el.dataset.cid, el.dataset.oid); break;
+    case 'ctx-libere-poste': { contextMenu = null; const cc_ = state.commandes.find(c=>c.id===el.dataset.cid); const oo_ = cc_ && cc_.pieces.find(o=>o.id===el.dataset.oid); if(oo_) setPosteLibere(el.dataset.cid, el.dataset.oid, !oo_.posteLibere); break; }
+    case 'libere-poste-yes': answerLiberePostePrompt(true); break;
+    case 'libere-poste-no': answerLiberePostePrompt(false); break;
     case 'ctx-lunch-exception': contextMenu = null; setLunchException(el.dataset.cid, el.dataset.oid); break;
     case 'resume-paused-task': setOpStatut(el.dataset.cid, el.dataset.oid, 'en_cours'); break;
     case 'dismiss-paused-banner': dismissPausedBanner(); break;
@@ -19480,6 +19632,7 @@ document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && excelImportResult){ excelImportResult = null; render(); }
   if(e.key === 'Escape' && newCommandeZoneNotice){ newCommandeZoneNotice = null; render(); }
   if(e.key === 'Escape' && retardDemarragePopupInfo){ closeRetardDemarragePopup(); }
+  if(e.key === 'Escape' && liberePosteDraft){ closeLiberePostePrompt(); }
   if(e.key === 'Escape' && rebutDraft){ closeRebutDraft(); }
   if(e.key === 'Escape' && historiqueDetailInfo){ closeHistoriqueDetail(); }
   if(e.key === 'Escape' && parcoursModal){ closeParcours(); }
