@@ -1551,6 +1551,10 @@ salarié pour **sa propre** fiche, export **Excel et impression A4**.
   infobulle par segment. Excel (`exportFicheSalarieExcel`) : feuilles Synthèse, Jours, Séances,
   Tâches. Impression : `window.print()` ; la règle d'impression générale masque tout `#app` sauf le
   planning — `#app > #fiche-salarie-page` y est ajouté, `.fiche-noprint` masqué (vérifié : 2 pages A4).
+- **Depuis la page Présence (v1.106.1).** Le prénom de chaque ligne (vues Jour et Semaine) est un lien « 📋 » vers la fiche
+  (`open-fiche-salarie`, `data-from="presence"`). Contrairement aux autres points d'entrée (semaine en cours), la fiche s'ouvre sur
+  **la semaine du jour affiché** (`data-day` = jour de la vue Jour, ou lundi de la semaine affichée) : `openFicheSalarie(uid, from,
+  dayKey)` ancre la période dessus, pour qu'un jour passé consulté sur Présence mène à la bonne semaine. « ← Retour » revient sur Présence.
 - **Dans le menu « Plus ▾ »** (v1.74.0) : clé `fiche` de `PAGE_MENU_KEYS` (« 📋 Fiche salarié »,
   « 📋 Ma fiche » pour un employé), épinglable comme les autres, page `ficheSalarie`
   (`isCurrentKey` fait le lien pour l'état actif). `goto-fiche` → `openFicheSalarie(defaultFicheUid(),

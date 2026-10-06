@@ -700,6 +700,7 @@
   .pt-name-link{display:block; max-width:100%; background:none; border:none; padding:0; margin:0; font:inherit; font-weight:600; color:var(--text); text-align:left; cursor:pointer;}
   .pt-name-link:hover{color:var(--accent); text-decoration:underline;}
   .pt-fiche-ico{font-size:10px; opacity:.55;}
+  .pr-user .pr-name-link{display:inline; width:auto;}
   /* Fiche salarié (voir CLAUDE.md « Fiche salarié ») — préfixe fs- : aucune collision avec pt-/dp-. */
   .fs-page{display:flex; flex-direction:column; gap:0;}
   .fs-crumb{display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-faint); margin:2px 0 10px;}
@@ -1775,7 +1776,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.106.0';
+const APP_VERSION = '1.106.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -13357,7 +13358,7 @@ function ficheJourCourt(d){ return ['DIM.','LUN.','MAR.','MER.','JEU.','VEN.','S
 function ficheJourLong(d){ return d.toLocaleDateString('fr-FR', { weekday:'long' }).replace(/^./, c => c.toUpperCase()); }
 function ficheMinLabel(min){ return min > 0 ? pointageDurLabel(min) : '—'; }
 
-function openFicheSalarie(uid, from){
+function openFicheSalarie(uid, from, dayKey){
   uid = String(uid);
   // Un employé ne voit que SA fiche (identité active du poste, comme « Mon temps de production »).
   if(!canSupervise() && uid !== String(activeIdentityId())) return;
@@ -13365,7 +13366,8 @@ function openFicheSalarie(uid, from){
   ficheSalarie = {
     uid, from: from || currentPage,
     mode: fromTempsProd ? tempsProdPeriodMode : 'semaine',
-    anchor: fromTempsProd ? new Date(tempsProdAnchor.getTime()) : new Date(),
+    // Depuis la page Présence : la semaine du jour affiché (ou de la semaine affichée), pas forcément la semaine en cours.
+    anchor: fromTempsProd ? new Date(tempsProdAnchor.getTime()) : (dayKey ? new Date(dayKey + 'T12:00:00') : new Date()),
     rangeDebut: fromTempsProd ? tempsProdRangeDebut : null,
     rangeFin: fromTempsProd ? tempsProdRangeFin : null
   };
@@ -17242,7 +17244,7 @@ function renderPresencePage(){
     const occTone = occ == null ? '' : occ >= 70 ? 'o-green' : occ >= 45 ? 'o-amber' : 'o-red';
     return `
       <tr class="${r.anomalies.length ? 'pr-row-alert' : ''}">
-        <td><div class="pr-user">${renderAvatar(r.username)}<b>${escapeHtml(r.username)}</b></div></td>
+        <td><div class="pr-user">${renderAvatar(r.username)}<button class="pt-name-link pr-name-link" data-action="open-fiche-salarie" data-user-id="${escapeHtml(r.userId)}" data-from="presence" data-day="${dayKey}" title="Ouvrir la fiche salarié">${escapeHtml(r.username)} <span class="pt-fiche-ico">📋</span></button></div></td>
         <td>${presenceStatusPill(r.status)}${r.exp.leave && r.exp.leave.demiJournee ? `<div class="footer-note" style="text-align:left;">${escapeHtml(r.exp.leave.label)} (${r.exp.leave.demiJournee==='matin'?'matin':'après-midi'})</div>` : ''}</td>
         <td class="pr-mono pr-dim">${r.firstStart ? `${hm(r.firstStart)}–${hm(r.lastEnd)}` : '—'}</td>
         <td class="pr-mono"><b class="${r.retardMin > presenceCfg().retardSeuilMin ? 'pr-late' : ''}">${hm(r.sum.arrivee)}</b>${r.retardMin > presenceCfg().retardSeuilMin ? `<div class="pr-late-sub">+${presenceMinLabel(r.retardMin)}</div>` : ''}${presenceRealSubHtml(r.sum.arrivee, r.sum.arriveeReelle)}</td>
@@ -17333,7 +17335,7 @@ function renderPresenceWeek(){
         ${m.rows.map(r => {
           const ecartH = r.totalMin / 60 - r.theoH;
           return `<tr>
-            <td><div class="pr-user">${renderAvatar(r.username)}<b>${escapeHtml(r.username)}</b></div></td>
+            <td><div class="pr-user">${renderAvatar(r.username)}<button class="pt-name-link pr-name-link" data-action="open-fiche-salarie" data-user-id="${escapeHtml(r.userId)}" data-from="presence" data-day="${w.from}" title="Ouvrir la fiche salarié">${escapeHtml(r.username)} <span class="pt-fiche-ico">📋</span></button></div></td>
             ${r.cells.filter(c => days.includes(c.day)).map(c => `<td><button class="pr-weekcell ${c.sum.ouvert && !r.forfait?'pr-weekcell-alert':''}" data-action="presence-goto-day" data-day="${c.day}" title="Voir la journée">${c.has ? presenceMinLabel(c.sum.workMin) : '<span class="footer-note">—</span>'}${c.sum.ouvert && !r.forfait ? ' ⚠' : ''}</button></td>`).join('')}
             <td><b>${presenceMinLabel(r.totalMin)}</b></td>
             <td class="pr-dim">${formatHeures(r.theoH)}</td>
@@ -19265,7 +19267,7 @@ function dispatchClickAction(action, el){
     case 'temps-prod-sort': setTempsProdSort(el.dataset.key); break;
     case 'temps-prod-sort-dir': toggleTempsProdSortDir(); break;
     case 'temps-prod-detail-sort': setTempsProdDetailSort(el.dataset.userId, el.dataset.key); break;
-    case 'open-fiche-salarie': openFicheSalarie(el.dataset.userId, el.dataset.from); break;
+    case 'open-fiche-salarie': openFicheSalarie(el.dataset.userId, el.dataset.from, el.dataset.day); break;
     case 'fiche-back': closeFicheSalarie(); break;
     case 'fiche-mode': if(ficheSalarie){ ficheSalarie.mode = el.dataset.mode; render(); } break;
     case 'fiche-nav': if(ficheSalarie){ ficheSalarie.anchor = shiftPeriodAnchor(ficheSalarie.mode, ficheSalarie.anchor, el.dataset.dir); render(); } break;
