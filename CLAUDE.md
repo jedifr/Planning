@@ -4967,6 +4967,8 @@ donc `restoreModalScroll` conserve la position au changement de mode). **Rien n'
   automatique, tri, rendu des deux modes, export avec faux XLSX, vraie commande C026-0728 ; `parc_ui.js` Playwright sur serveur réel : plein écran, tuiles, scroll, mode mémorisé, tri,
   détail par-dessus, Échap, recherche, 390 px sans débordement). `delivery_test` garde son échec déjà présent avant.
 
+- **Correctifs v1.120.1.** (1) Bouton « 🧭 Parcours » sans saisie ni commande isolée : la pop-up plein écran n'affichait qu'une ligne de texte (page vide). `renderParcoursModal` liste désormais les commandes ACTIVES (échéance la plus proche en tête, avancement, badge « Échéance dépassée »/« Retard estimé »/« Dans les temps » via `commandeDelayStatus`), un clic = `pickParcours`. Pendant une saisie, seule la liste de résultats du haut est affichée. (2) Vue d'ensemble, légende du pointage de l'équipe : « Hors horaire / à venir » était `#e4e7e4` sur fond `#f1f3f1`, quasi invisible — pastille et barres en `#b9c6d6` (bleu-gris, bordure sur la pastille). (3) Fiche salarié : le texte brut sous « Frise » est remplacé par une légende à pastilles colorées (mêmes classes `.sw` que la légende de la synthèse, plus `.sw.horaire` et `.sw.now`) — réflexe : une légende doit montrer la couleur qu'elle explique, pas la décrire.
+
 ### Frise des retards et dérives de démarrage (v1.111.0)
 
 Demande : remplacer les tableaux « retards constatés » / « dérive des démarrages à venir » par une frise (début prévu → début réel, nombre de

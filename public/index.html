@@ -728,6 +728,8 @@
   .sw.hors{background:#c3d9cc; border:1px solid var(--green);}
   .sw.lunch{background:repeating-linear-gradient(135deg,rgba(34,38,42,.14) 0 3px,transparent 3px 6px); border:1px solid var(--line);}
   .sw.conge{background:repeating-linear-gradient(135deg,var(--amber-dim) 0 3px,transparent 3px 6px); border:1px dashed var(--amber);}
+  .sw.horaire{background:transparent; border-top:2px solid #8e968e; border-bottom:2px solid #8e968e; border-radius:0; box-sizing:border-box;}
+  .sw.now{width:3px !important; background:var(--accent);}
   .sw.presence{background:#6b4fa0;} .sw.presence-pause{background:repeating-linear-gradient(135deg,#6b4fa0 0 3px,transparent 3px 6px); border:1px solid #6b4fa0;}
   .fs-seg.presence{top:auto; bottom:0; height:4px; background:#6b4fa0; border-radius:0; z-index:1;}
   .fs-seg.presence-pause{top:auto; bottom:0; height:4px; background:repeating-linear-gradient(135deg,#6b4fa0 0 3px,transparent 3px 6px); border-radius:0; z-index:1;}
@@ -824,7 +826,7 @@
   .pt-seg.work{background:var(--green);}
   .pt-seg.gap{background:var(--red); opacity:0.82;}
   .pt-seg.pause{background:repeating-linear-gradient(135deg, #c9cec9 0 3px, transparent 3px 6px);}
-  .pt-seg.outside{background:#e4e7e4;}
+  .pt-seg.outside{background:#b9c6d6;}
   .pt-seg.leave{background:repeating-linear-gradient(135deg, #cfd4cf 0 2px, transparent 2px 8px);}
   .pt-now{position:absolute; top:-2px; bottom:-2px; width:2px; background:var(--text); border-radius:1px;}
   .pt-scale{position:relative; height:12px; font-size:9.5px; color:var(--text-faint); font-family:'IBM Plex Mono',monospace;}
@@ -838,7 +840,7 @@
   .pt-legend{display:flex; gap:14px; flex-wrap:wrap; align-items:center; font-size:11.5px; color:var(--text-dim); margin-top:6px;}
   .pt-legend i{display:inline-block; width:14px; height:9px; border-radius:2px; vertical-align:-1px; margin-right:4px;}
   .pt-legend i.work{background:var(--green);} .pt-legend i.gap{background:var(--red); opacity:0.82;}
-  .pt-legend i.pause{background:repeating-linear-gradient(135deg, #c9cec9 0 3px, transparent 3px 6px);} .pt-legend i.outside{background:#e4e7e4;}
+  .pt-legend i.pause{background:repeating-linear-gradient(135deg, #c9cec9 0 3px, transparent 3px 6px);} .pt-legend i.outside{background:#b9c6d6; border:1px solid #8fa1b8; box-sizing:border-box;}
   .pt-paused-list{display:flex; flex-direction:column; gap:6px;}
   .pt-paused{display:flex; gap:12px; align-items:center; padding:8px 12px; border-radius:var(--radius); background:var(--amber-dim); border:1px solid rgba(160,109,26,0.3);}
   .pt-paused-time{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:14px; color:var(--amber); flex:none; min-width:62px;}
@@ -977,6 +979,7 @@
   .pc-results{display:flex; flex-direction:column; border:1px solid var(--line); margin-top:4px; max-height:200px; overflow:auto;}
   .pc-result{background:var(--panel); border:none; border-bottom:1px solid var(--line); text-align:left; padding:6px 10px; cursor:pointer; font-family:inherit; font-size:13px;}
   .pc-result:hover{background:var(--panel-2);}
+  .pc-results.pcx-pick-list{max-height:none; margin-top:10px;}
   .pc-result-piece{font-size:11px; color:var(--blue); margin-left:8px;}
   .pc-filter-bar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:12px; background:rgba(49,111,152,0.08); border:1px solid rgba(49,111,152,0.3); padding:6px 10px; margin:8px 0 4px;}
   /* Parcours en plein écran + analyse de production (v1.120.0) */
@@ -2042,7 +2045,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.120.0';
+const APP_VERSION = '1.120.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -11975,7 +11978,25 @@ function renderParcoursModal(){
     : '';
   let bodyHtml;
   if(!c){
-    bodyHtml = `<div class="footer-note" style="text-align:left;">${parcoursModal.cid ? 'Commande introuvable parmi les commandes actives (archivée ou supprimée). ' : ''}Tapez ci-dessus un numéro de commande, une référence client, une pièce ou une étape.</div>`;
+    // Rien de sélectionné (bouton « Parcours » sans saisie ni commande isolée) : plutôt qu'une page vide, la liste
+    // des commandes ACTIVES (échéance la plus proche en tête) à choisir d'un clic. Pendant une saisie, la liste de
+    // résultats au-dessus fait déjà foi : on ne l'encombre pas d'une seconde liste.
+    const intro = `${parcoursModal.cid ? 'Commande introuvable parmi les commandes actives (archivée ou supprimée). ' : ''}Choisissez une commande ci-dessous, ou tapez un numéro de commande, une référence client, une pièce ou une étape.`;
+    if(parcoursModal.search.trim()){
+      bodyHtml = '';
+    } else {
+      const actives = schedule.filter(cc => !isCommandeFullyDone(cc))
+        .sort((a,b) => String(a.dateBesoin||'9999').localeCompare(String(b.dateBesoin||'9999')) || String(a.nom||'').localeCompare(String(b.nom||'')));
+      const rows = actives.map(cc => {
+        const st = commandeDelayStatus(cc);
+        const badge = st.kind==='overdue' ? `<span class="badge red badge-overdue">⏰ Échéance dépassée depuis ${st.overdueDays} j</span>`
+          : st.kind==='atrisk' ? `<span class="badge red">Retard estimé ~${Math.round(st.deltaDays)} j</span>`
+          : st.kind==='ontime' ? `<span class="badge green">Dans les temps</span>` : '';
+        const nOk = cc.pieces.filter(o => o.statut==='termine').length;
+        return `<button class="pc-result pcx-pick-row" data-action="parcours-pick" data-cid="${cc.id}"><strong>${escapeHtml(cc.nom)}</strong>${cc.refClient?` <span class="footer-note" style="margin:0;">(${escapeHtml(cc.refClient)})</span>`:''}<span class="footer-note" style="margin:0 0 0 8px;">échéance ${escapeHtml(formatDateFr(cc.dateBesoin))} · ${nOk}/${cc.pieces.length} étape(s) terminée(s)</span> ${badge}</button>`;
+      }).join('');
+      bodyHtml = `<div class="footer-note" style="text-align:left;">${intro}</div>${actives.length ? `<div class="pc-results pcx-pick-list">${rows}</div>` : '<div class="footer-note" style="text-align:left;">Aucune commande active.</div>'}`;
+    }
   } else {
     const now = new Date();
     const urgenceTxt = c.urgence==='urgente' ? 'Urgente' : c.urgence==='importante' ? 'Importante' : 'Normale';
@@ -14958,7 +14979,8 @@ function renderFicheSalariePage(){
   <section class="panel fs-break">
     <div class="panel-head"><h2>Frise ${periodWord}</h2></div>
     <div class="panel-body fs-frise-scroll">${renderFicheFriseHtml(fiche, now, pres)}
-      <div class="fs-note">Le trait gris au-dessus et en dessous marque l'horaire attendu.${pres ? ' Le liseré violet en pied de piste est la présence pointée (hachuré : pause pointée).' : ''} Survoler un segment affiche les heures exactes et la tâche concernée.</div></div>
+      <div class="fs-legend"><span><i class="sw pointe"></i>Pointé</span><span><i class="sw trou"></i>Non pointé dans l'horaire</span><span><i class="sw lunch"></i>Pause prévue</span><span><i class="sw horaire"></i>Horaire attendu (traits en haut et en bas)</span>${pres ? '<span><i class="sw presence"></i>Présence pointée (liseré en pied de piste)</span><span><i class="sw presence-pause"></i>Pause pointée</span>' : ''}<span><i class="sw now"></i>Maintenant</span></div>
+      <div class="fs-note">Survoler un segment affiche les heures exactes et la tâche concernée.</div></div>
   </section>
   <div class="fs-cols">
     <section class="panel"><div class="panel-head"><h2>Présence</h2></div><div class="panel-body">${presenceBlock}</div></section>
