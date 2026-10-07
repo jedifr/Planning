@@ -2045,7 +2045,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.120.1';
+const APP_VERSION = '1.120.2';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -12705,15 +12705,17 @@ function renderTeamPointageSection(now){
     pause: ['off','En pause prévue'], avant: ['off','Pas encore commencé'], fini: ['off','Journée terminée'],
     hors: ['off','Hors horaires'], absent: ['off','Absent']
   };
+  // Échelle de temps COMMUNE à toutes les lignes (retour : des axes différents par salarié empêchaient de
+  // comparer deux personnes d'un coup d'œil — 9h n'était pas au même endroit d'une ligne à l'autre) : du plus
+  // tôt au plus tard de tous les horaires/séances du jour, arrondi à l'heure. Sans aucun horaire, 7h-18h.
+  const allPtsGlobal = [];
+  rows.forEach(r => { allPtsGlobal.push(...r.expected.flat(), ...r.work.flat()); if(r.status==='pointe') allPtsGlobal.push(now); });
+  let axA = allPtsGlobal.length ? new Date(Math.min(...allPtsGlobal)) : new Date(dayStart.getTime() + 7*3600000);
+  let axB = allPtsGlobal.length ? new Date(Math.max(...allPtsGlobal)) : new Date(dayStart.getTime() + 18*3600000);
+  axA = new Date(axA.getFullYear(), axA.getMonth(), axA.getDate(), axA.getHours());
+  axB = new Date(axB.getFullYear(), axB.getMonth(), axB.getDate(), axB.getHours() + (axB.getMinutes()||axB.getSeconds() ? 1 : 0));
+  if(axB <= axA) axB = new Date(axA.getTime() + 3600000);
   const rowsHtml = rows.map(r => {
-    const allPts = [...r.expected.flat(), ...r.work.flat()];
-    // Sans aucun horaire à afficher (absent toute la journée) : une journée d'atelier type, 7h-18h,
-    // plutôt qu'un axe de 24 h illisible.
-    let axA = allPts.length ? new Date(Math.min(...allPts)) : new Date(dayStart.getTime() + 7*3600000);
-    let axB = allPts.length ? new Date(Math.max(...allPts, r.status==='pointe' ? now.getTime() : 0)) : new Date(dayStart.getTime() + 18*3600000);
-    axA = new Date(axA.getFullYear(), axA.getMonth(), axA.getDate(), axA.getHours());
-    axB = new Date(axB.getFullYear(), axB.getMonth(), axB.getDate(), axB.getHours() + (axB.getMinutes()||axB.getSeconds() ? 1 : 0));
-    if(axB <= axA) axB = new Date(axA.getTime() + 3600000);
     const span = axB - axA;
     const pct = d => Math.max(0, Math.min(100, ((d - axA) / span) * 100));
     const seg = (cls, a, b) => `<div class="pt-seg ${cls}" style="left:${pct(a)}%;width:${Math.max(0.3, pct(b)-pct(a))}%"></div>`;
