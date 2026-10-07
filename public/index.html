@@ -1776,7 +1776,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.109.0';
+const APP_VERSION = '1.110.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -1916,6 +1916,7 @@ const SETTINGS_HELP = {
   friHours: "Heures travaillées le vendredi, souvent plus courtes. Mettez la même valeur que lun.–jeu. si l'atelier ne raccourcit pas le vendredi, ou 0 s'il est fermé.",
   pauseActive: "Si coché, la pause déjeuner est retirée des créneaux disponibles : aucune tâche n'est planifiée dessus, et une tâche en cours est mise en pause automatiquement à l'heure de la pause. Chaque personne peut avoir sa propre pause (Utilisateurs).",
   autoPauseDejeuner: "Si coché (par défaut), une tâche en cours est mise en pause toute seule à l'heure de la pause déjeuner de la personne ou de l'atelier. Décoché : aucune mise en pause à midi, les tâches restent en cours — à vous de les mettre en pause. N'a d'effet que si la pause déjeuner est intégrée au planning.",
+  autoPauseDepart: "Si coché (par défaut, module Pointage présentiel actif), une tâche en cours est mise en pause dès qu'un salarié a pointé son DÉPART : ses séances sont fermées à l'heure du départ (pas à l'heure du contrôle). La tâche ne passe en pause que s'il ne reste personne dessus. Jamais pour une simple pause pointée, ni pour un salarié au forfait, ni sous l'exception « Je travaille maintenant ». Aucune reprise automatique.",
   autoPauseHorsHoraires: "Si coché (par défaut), une tâche restée en cours le soir, la nuit ou le week-end (ou sur un poste indisponible) est mise en pause par le serveur, sans reprise automatique. Décoché : une tâche oubliée reste « en cours » et continue de compter du temps tant que personne ne la met en pause. Les exceptions « Je travaille maintenant » / « Je travaille pendant la pause » restent possibles.",
   pauseRappelRetour: "Si coché (par défaut), une grande pop-up demande à l'opérateur de confirmer la reprise de ses tâches au retour théorique de la pause déjeuner. Il n'y a jamais de reprise automatique sans clic : décoché, la tâche reste simplement en pause jusqu'à ce que quelqu'un la relance.",
   pauseHeures: "Début et fin de la pause commune à tout l'atelier. La journée se prolonge d'autant pour que la durée travaillée reste celle indiquée ci-dessus.",
@@ -2772,6 +2773,7 @@ function migrateState(st){
   // choisi doit survivre.
   if(st.config.autoPauseDejeuner === undefined) st.config.autoPauseDejeuner = true;
   if(st.config.autoPauseHorsHoraires === undefined) st.config.autoPauseHorsHoraires = true;
+  if(st.config.autoPauseDepart === undefined) st.config.autoPauseDepart = true;
   if(st.config.pauseRappelRetour === undefined) st.config.pauseRappelRetour = true;
   if(st.config.dispoHorizonJours === undefined) st.config.dispoHorizonJours = 5;
   if(st.config.retardDemarragePopupActive === undefined) st.config.retardDemarragePopupActive = false; // désactivée par défaut, comportement inchangé pour qui ne l'active pas
@@ -4724,7 +4726,7 @@ function updateConfig(field, value){
     state.config.archiveAutoActive = !!value;
   } else if(field==='retardDemarragePopupActive'){
     state.config.retardDemarragePopupActive = !!value;
-  } else if(field==='pointageAlerteActive' || field==='pointageRappelOperateur' || field==='autoPauseDejeuner' || field==='autoPauseHorsHoraires' || field==='pauseRappelRetour'){
+  } else if(field==='pointageAlerteActive' || field==='pointageRappelOperateur' || field==='autoPauseDejeuner' || field==='autoPauseHorsHoraires' || field==='autoPauseDepart' || field==='pauseRappelRetour'){
     state.config[field] = !!value;
   } else if(field==='libereProposerPause'){
     state.config.libereProposerPause = !!value;
@@ -14787,6 +14789,11 @@ function renderSettingsModal(){
         <input type="checkbox" ${cfg.autoPauseHorsHoraires!==false?'checked':''} data-action="update-config" data-field="autoPauseHorsHoraires">
         Mettre en pause automatiquement hors horaires (soir, nuit, week-end) ${helpTip('autoPauseHorsHoraires')}
       </label>
+      <label class="statut-chip" style="margin-bottom:8px; margin-left:0;">
+        <input type="checkbox" ${cfg.autoPauseDepart!==false?'checked':''} data-action="update-config" data-field="autoPauseDepart">
+        Mettre en pause automatiquement les tâches d'un salarié qui a pointé son départ ${helpTip('autoPauseDepart')}
+        ${cfg.modules && cfg.modules.presence ? '' : '<span class="footer-note">(nécessite le module Pointage présentiel)</span>'}
+      </label>
       <div class="footer-note" style="text-align:left; padding-top:6px;">La reprise n'est jamais automatique : chaque opérateur relance lui-même sa tâche (ou confirme son retour dans la pop-up). Les mises en pause automatiques sont contrôlées toutes les minutes par le serveur, même sans onglet ouvert.</div>` },
     planification: { title: 'Planification', body: `
       <div class="footer-note" style="text-align:left; padding-bottom:12px;">Réglages qui influencent la façon dont le moteur place les tâches et signale les retards.</div>
@@ -17808,6 +17815,48 @@ function presenceStageAdd(){
   presenceStage({ kind: 'add', type: d.type, time: d.time });
   render();
 }
+// Inversion Entrée ↔ Sortie de TOUTE une journée (superviseur). La pointeuse ne connaît que des entrées et des
+// sorties : l'application en déduit arrivée / pause / reprise / départ. Quand la pointeuse a perdu le fil, tout est
+// décalé d'un cran (une sortie à la place d'une entrée…) : on reprend le SENS brut de chaque pointage retenu
+// (arrivée et fin de pause = entrée ; début de pause et départ = sortie), on l'inverse, puis on reclasse avec la
+// même règle que l'import (1re entrée = arrivée, sortie suivie d'une entrée = début de pause, entrée après une
+// pause = fin de pause, dernière sortie = départ). Purement un calcul : ne renvoie que les changements de type à
+// EMPILER (rien n'est enregistré avant « Enregistrer »). `ok:false` si l'inversion donne une suite impossible.
+function presenceInvertDayPlan(effPunches){
+  const list = (effPunches || []).slice().sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.id - b.id);
+  if(!list.length) return { ok: false, error: 'Aucun pointage retenu ce jour-là.', ops: [] };
+  const dir = p => (p.type === 'in' || p.type === 'pause_end') ? 'in' : 'out';
+  const inv = list.map(p => ({ p, kind: dir(p) === 'in' ? 'out' : 'in' }));
+  let stt = 'none';
+  const ops = [];
+  for(let i = 0; i < inv.length; i++){
+    const { p, kind } = inv[i];
+    let type;
+    if(kind === 'in'){
+      if(stt === 'none'){ type = 'in'; stt = 'present'; }
+      else if(stt === 'pause'){ type = 'pause_end'; stt = 'present'; }
+      else return { ok: false, error: `L'inversion donnerait deux entrées de suite (à ${presenceHhmm(p.ts)}) : corrigez ces pointages un par un avec « Changer le type ».`, ops: [] };
+    } else {
+      if(stt !== 'present') return { ok: false, error: `L'inversion donnerait une sortie sans entrée (à ${presenceHhmm(p.ts)}) : corrigez ces pointages un par un avec « Changer le type ».`, ops: [] };
+      const laterIn = inv.slice(i + 1).some(x => x.kind === 'in');
+      type = laterIn ? 'pause_start' : 'out';
+      stt = laterIn ? 'pause' : 'done';
+    }
+    if(type !== p.type) ops.push({ kind: 'retype', id: p.id, type, time: presenceHhmm(p.ts) });
+  }
+  return { ok: true, ops, error: '' };
+}
+function presenceInvertDay(){
+  const d = presenceCorrection; if(!d || d.mode !== 'sup') return;
+  presenceSyncCorrectionForm();
+  const plan = presenceInvertDayPlan(effectivePresencePunches(d.punches, { raw: true }));
+  if(!plan.ok){ alert(plan.error); return; }
+  if(!plan.ops.length){ alert('Aucun changement : l\'inversion redonne exactement les mêmes types.'); return; }
+  plan.ops.forEach(op => presenceStage(op));
+  if(d.motif === PRESENCE_MOTIFS[0]) d.motif = 'Erreur de pointage';
+  d.editId = null;
+  render();
+}
 function presenceEditApply(){
   const d = presenceCorrection; if(!d || !d.editId) return;
   const q = id => (typeof document !== 'undefined' ? document.getElementById(id) : null);
@@ -17935,6 +17984,7 @@ function renderPresenceCorrectionModal(){
       <div class="modal-body">
       <div class="modal-section-title">Pointages enregistrés (jamais modifiés)</div>
       ${d.status === 'loading' ? '<div class="pr-empty">Chargement…</div>' : d.status === 'error' ? `<div class="pr-empty">${escapeHtml(d.error)}</div>` : (cards ? `<div class="pc-cards">${cards}</div>` : '<div class="pr-empty">Aucun pointage ce jour-là.</div>')}
+      ${sup && d.status === 'ok' && eff.length ? `<div style="margin-top:8px;"><button class="small" data-action="presence-invert-day" title="Inverse le sens (entrée ↔ sortie) de tous les pointages retenus de la journée, puis reclasse arrivée / pauses / départ. Les changements sont empilés : rien n'est enregistré avant « Enregistrer ».">⇄ Inverser entrées et sorties de la journée</button> <span class="footer-note">Utile quand la pointeuse a perdu le fil (une sortie à la place d'une entrée, tout est décalé).</span></div>` : ''}
       ${editor}
       ${stagedList}
       ${formHtml}
@@ -19513,6 +19563,7 @@ function dispatchClickAction(action, el){
     case 'presence-edit-cancel': if(presenceCorrection){ presenceCorrection.editId = null; render(); } break;
     case 'presence-stage-cancel': if(presenceCorrection){ presenceSyncCorrectionForm(); presenceStage({ kind: 'cancel', id: Number(el.dataset.id) }); if(presenceCorrection.motif === PRESENCE_MOTIFS[0]) presenceCorrection.motif = 'Erreur de pointage'; render(); } break;
     case 'presence-stage-add': presenceStageAdd(); break;
+    case 'presence-invert-day': presenceInvertDay(); break;
     case 'presence-unstage-id': if(presenceCorrection){ presenceSyncCorrectionForm(); presenceCorrection.staged = (presenceCorrection.staged || []).filter(x => x.id !== Number(el.dataset.id)); render(); } break;
     case 'presence-unstage': if(presenceCorrection){ presenceSyncCorrectionForm(); (presenceCorrection.staged || []).splice(Number(el.dataset.idx), 1); render(); } break;
     case 'presence-cancel-punch': if(presenceCorrection){ presenceCorrection.cancelsId = el.dataset.id ? Number(el.dataset.id) : null; if(presenceCorrection.cancelsId) presenceCorrection.motif = 'Erreur de pointage'; render(); } break;

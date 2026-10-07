@@ -826,7 +826,22 @@ function checkAutoPauseResume(){
   try{
     const row = db.prepare('SELECT data, version FROM app_state WHERE id = 1').get();
     const data = JSON.parse(row.data);
-    const changed = autoPauseResume.applyAutoPauseResume(data, new Date());
+    const now = new Date();
+    // Départs pointés (module Pointage présentiel actif) : dernier pointage retenu d'hier/aujourd'hui, seulement
+    // s'il s'agit d'un départ — voir autoPauseResume.applyDepartPause. Exécuté AVANT la pause « hors horaires »
+    // pour que les séances soient fermées à l'heure réelle du départ plutôt qu'à celle du contrôle.
+    let departs = null;
+    if(data.config && data.config.modules && data.config.modules.presence){
+      const today = localDateKey(now);
+      const all = presence.getPunchesBetween(db, addDaysKey(today, -1) + 'T00:00:00', today + 'T99');
+      const lastBy = {};
+      presence.effectivePunches(all).forEach(p => { lastBy[p.userId] = p; });
+      departs = {};
+      Object.keys(lastBy).forEach(u => { if(lastBy[u].type === 'out') departs[u] = lastBy[u].ts.slice(0, 16); });
+    }
+    const c1 = autoPauseResume.applyDepartPause(data, now, departs);
+    const c2 = autoPauseResume.applyAutoPauseResume(data, now);
+    const changed = c1 || c2;
     if(!changed) return;
     // Entièrement synchrone (better-sqlite3) : aucune requête client ne peut s'intercaler entre
     // cette lecture et cette écriture, donc jamais de conflit de version pour CE job lui-même. Un

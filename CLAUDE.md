@@ -1751,6 +1751,49 @@ données sans avoir à enregistrer la correction ? ». Oui : **liste de modifica
   un seul envoi, heures d'origine conservées) ; `batch_ui.js` (Playwright sur serveur réel, scénario
   complet + capture).
 
+### Pause automatique au départ pointé (v1.110.0)
+
+Constat réel (page Présence du 06/10, Louka « Parti » à 16:21) : une tâche restait `en_cours` chez quelqu'un qui avait pointé son
+départ — alerte « Tâche en cours sans présence pointée ». Un pointage importé de la pointeuse (ou fait à la borne) ne touchait
+jamais aux tâches : seule la case « fermer mes séances » d'un pointage fait DANS l'application le faisait (`applyPresenceTaskLinkage`).
+Proposition validée : départ seulement, pas les pauses pointées.
+
+- **`autoPauseResume.applyDepartPause(st, now, lastOutByUser)`** (`lastOutByUser` = `{ userId: "AAAA-MM-JJTHH:mm" }`, seulement quand le
+  DERNIER pointage retenu de la personne est un départ — jamais `pause_start`, une sortie courte n'est pas un départ). Pour chaque pièce
+  `en_cours`, ferme les séances ouvertes de cette personne **à l'heure du départ**, pas à celle du contrôle ; la pièce ne passe `en_pause`
+  que s'il ne reste personne dessus (travail à plusieurs). Une séance ouverte APRÈS le départ (retour sans repointer) n'est jamais fermée ;
+  un départ « dans le futur » est ignoré. Aucune reprise automatique. Réutilise `autoPausedOutOfHours = true` (pause « expliquée »,
+  affichée dans la bannière du lendemain, jamais reprise toute seule) plutôt qu'un second drapeau : tous les lecteurs existants la traitent déjà bien.
+- **`checkAutoPauseResume`** (`server.js`, 60 s) : si `config.modules.presence`, lit les pointages d'hier et d'aujourd'hui
+  (`presence.getPunchesBetween` + `effectivePunches`), garde le dernier par personne s'il est de type `out`, appelle `applyDepartPause`
+  **avant** `applyAutoPauseResume` (la fin de séance garde l'heure réelle du départ plutôt que celle du contrôle « hors horaires »).
+  Idempotent. Aucun nouveau fichier serveur (Dockerfile inchangé).
+- **Option** `config.autoPauseDepart` (`true` par défaut, `migrateState` en `=== undefined` ; côté serveur seul `=== false` désactive), case dans
+  Paramètres → Horaires & pauses (avec `SETTINGS_HELP.autoPauseDepart`, mention « nécessite le module Pointage présentiel »).
+- **Ignorés** : salarié au forfait (`presenceForfaitUserIds`, pointage facultatif), exception « 🕐 Je travaille maintenant » active sur la pièce.
+- **Pas de miroir client** : le job serveur suffit (le client resynchronise l'état au poll).
+- **« Laurine est en pause » (06/10) n'est pas un bug** : `desiredPunches` classe la dernière sortie du jour en **pause** tant que la fin
+  d'horaire de la personne (`expectedEndFor`) n'est pas passée ; elle est reclassée en départ à la lecture suivante, sans nouveau pointage.
+  Une sortie anticipée définitive se corrige à la main (voir ci-dessous).
+- Tests (scratchpad `depart_test.js`, 13 assertions ; `it_depart.js` sur serveur réel : séance fermée à 06:38 = heure du départ, pas celle du contrôle).
+
+### Inverser entrées et sorties d'une journée dans la pop-up de correction (v1.110.0)
+
+Demande : « corriger dans la pointeuse l'état, entrée vers sortie ou inversement ». La pointeuse (agent en lecture seule, jamais
+d'écriture) n'est pas modifiable ; la correction se fait dans Planning, avec l'historique conservé. Jusque-là : « Changer le type » pointage par pointage
+et l'inversion proposée pour une journée dont le premier événement est une SORTIE (`flip`, `applyFlagAction`). Nouveau, pour **n'importe quelle** journée
+et n'importe quelle source : bouton « ⇄ Inverser entrées et sorties de la journée » (superviseur, `presence-invert-day`).
+
+- `presenceInvertDayPlan(effPunches)` — pur : prend le SENS brut de chaque pointage retenu (arrivée/fin de pause = entrée, début de pause/départ = sortie),
+  l'inverse, puis reclasse avec la règle de l'import (1re entrée = arrivée, sortie suivie d'une entrée = début de pause, entrée après pause = fin de pause,
+  dernière sortie = départ). Renvoie les `retype` à empiler ; `ok:false` + message si l'inversion donne une suite impossible (sortie sans entrée, deux entrées
+  de suite) — dans ce cas rien n'est empilé. `presenceInvertDay()` les empile dans `presenceCorrection.staged` (heures d'origine, secondes comprises, jamais celles
+  arrondies : `effectivePresencePunches(…, { raw:true })`) : rien n'est enregistré avant « Enregistrer N modifications », le lot reste atomique
+  (`/api/presence/correction/batch`) et réversible (« Retirer »/« Rétablir »). Motif passé à « Erreur de pointage » s'il était au défaut.
+- Compatible avec l'import TimeMoto (voir « Corriger plusieurs pointages d'un coup ») : un original annulé par un humain n'est jamais réimporté.
+- Test (scratchpad `invert_test.js`, 12 assertions) : journée décalée in/out/in/out → arrivée, début de pause, fin de pause, départ ; journée normale = refus
+  motivé ; sortie isolée → arrivée ; bouton absent en mode salarié.
+
 ### Salarié masqué du temps de production mais doté d'un badge (v1.101.1)
 
 Constat réel (06/10) : « Laurine » avait « Afficher dans le temps de production » décoché ; la page Présence ne listait que les

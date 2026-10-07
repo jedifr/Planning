@@ -234,8 +234,54 @@ function applyAutoPauseResume(st, now){
   return changed;
 }
 
+// Mise en pause au DÉPART pointé (voir CLAUDE.md, « Pause automatique au départ pointé »). `lastOutByUser`
+// = { [userId]: "AAAA-MM-JJTHH:mm" } : l'heure du dernier pointage retenu de chaque salarié, SEULEMENT si ce
+// dernier pointage est un départ (jamais une pause pointée : une sortie courte n'est pas un départ). Pour chaque
+// pièce en cours, les séances ouvertes de cette personne sont fermées À L'HEURE DU DÉPART (jamais à l'heure du
+// contrôle) ; la pièce ne passe en pause que s'il ne reste plus personne dessus (travail à plusieurs). Une
+// séance ouverte APRÈS le départ (la personne est revenue sans repointer) n'est jamais touchée. Aucune reprise
+// automatique. Réutilise `autoPausedOutOfHours` (pause « expliquée », visible dans la bannière du lendemain,
+// jamais reprise toute seule) plutôt qu'un second drapeau : tous les lecteurs existants la traitent déjà bien.
+// Ignorés : option décochée (`autoPauseDepart === false`), salarié au forfait (pointage facultatif), exception
+// « 🕐 Je travaille maintenant » active sur la pièce.
+function applyDepartPause(st, now, lastOutByUser){
+  now = now || new Date();
+  if(((st && st.config) || {}).autoPauseDepart === false) return false;
+  if(!lastOutByUser) return false;
+  const forfait = new Set(((st && st.presenceForfaitUserIds) || []).map(String));
+  const nowStr = toInputValue(now);
+  let changed = false;
+  (st.commandes||[]).forEach(c => {
+    (c.pieces||[]).forEach(o => {
+      if(o.statut !== 'en_cours') return;
+      if(o.workHoursExceptionUntil && now < new Date(o.workHoursExceptionUntil)) return;
+      let closed = false;
+      (o.sessions||[]).forEach(s => {
+        if(s.fin) return;
+        const uid = String(s.operatorUserId || o.operatorUserId || '');
+        const out = lastOutByUser[uid];
+        if(!out || forfait.has(uid) || out > nowStr) return;
+        if(String(s.debut) > out) return; // reprise après le départ : jamais fermée
+        s.fin = out;
+        closed = true;
+      });
+      if(!closed) return;
+      changed = true;
+      if(!(o.sessions||[]).some(s => !s.fin)){
+        o.statut = 'en_pause';
+        o.autoPaused = false;
+        o.autoPausedOutOfHours = true;
+        o.autoPausedOperators = null;
+        o.autoPausedUntil = null;
+      }
+    });
+  });
+  return changed;
+}
+
 module.exports = {
   applyAutoPauseResume,
+  applyDepartPause,
   isInPauseWindow,
   pauseKindForRunningTask,
   configForPiece,
