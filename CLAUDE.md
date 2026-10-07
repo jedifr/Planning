@@ -1794,6 +1794,45 @@ et n'importe quelle source : bouton « ⇄ Inverser entrées et sorties de la jo
 - Test (scratchpad `invert_test.js`, 12 assertions) : journée décalée in/out/in/out → arrivée, début de pause, fin de pause, départ ; journée normale = refus
   motivé ; sortie isolée → arrivée ; bouton absent en mode salarié.
 
+### Pointages manquants proposés dans la pop-up de correction (v1.112.0)
+
+Cas réel (Cyril, 06/10) : début de pause de 15h30 jamais badgé (retour à 15h40). La pointeuse a donc enregistré une ENTRÉE alors que la personne était
+déjà présente ; `desiredPunches` l'ignorait (« double entrée », simple compteur `anomalies.ignored`) et rien ne signalait le manque. Demande : proposer par
+défaut les pointages manquants à la correction des présences.
+
+- **Événements écartés conservés** : `desiredPunches` renvoie `ignoredEvents` (`{kind, ts, reason:'doubleIn'|'outSansEntree'}`) ; `noteDayFlags` les mémorise dans la
+  meta `gapEvents` (par `tmId|jour`, remplacés à chaque lecture, effacés dès qu'il n'y en a plus, purgés à 400 jours). Un aperçu (`dryRun`) n'écrit rien.
+  Valable pour les trois voies (agent `zk-sync`, CSV, TimeMoto Cloud) : elles passent toutes par `noteDayFlags`. **Les jours déjà importés se remplissent à la
+  lecture suivante** (3 derniers jours) ou par « Récupérer une période ».
+- **`presence.suggestMissing({punches, ignored, expectedStart, expectedEnd, isPast})`** (pur) : (1) `doubleIn` non encore comblé (aucun pointage retenu à la même
+  minute) → fin de pause à l'heure lue (exacte) + début de pause 10 min avant (estimée, jamais avant le pointage précédent) si le pointage précédent n'est pas
+  déjà une sortie ; (2) deux pointages retenus de même sens à la suite (deux entrées → début de pause ; deux sorties → fin de pause/arrivée) ; (3) première
+  pointage qui n'est pas une arrivée → arrivée à l'heure de début d'horaire ; (4) **journée passée** terminée sur une entrée/fin de pause/début de pause → départ à la
+  fin d'horaire (jamais proposé pour aujourd'hui). `approx:true` = heure estimée, à confirmer. Une journée normale ne produit rien ; un manque comblé disparaît.
+- **`GET /api/presence/missing?userId&date`** (superviseur) : pointages retenus du jour + `timemoto.ignoredEventsFor` + `timemoto.expectedBoundsFor` (même règle d'horaire que
+  `expectedEndFor`, qui en dérive). Lecture seule.
+- **Pop-up « Corriger un pointage »** (superviseur uniquement ; le salarié garde sa demande unique) : `presenceCorrection.suggestions` chargé après les pointages ; bloc
+  ambre « ⚠ Pointages manquants probables (N) » : type, **champ heure modifiable**, explication, « ＋ Ajouter » (empile un `add` dans la liste en attente) et « ＋ Tout ajouter
+  à la liste ». **Jamais ajouté tout seul** : rien n'est enregistré avant « Enregistrer N modifications » ; une suggestion déjà empilée (même type + heure) disparaît du bloc.
+  Les heures éditées sont relues dans le DOM avant tout redessin (`presenceSyncCorrectionForm`, classe `.pc-sug-time`).
+- Tests (scratchpad `missing_test.js`, 13 assertions : le cas Cyril exact → 15:30 estimée + 15:40, comblé → rien, seul le début ajouté, deux entrées, deux sorties, départ
+  manquant, aujourd'hui, journée normale, arrivée manquante ; API de bout en bout sur serveur réel via `device-sync` → `missing` ; Playwright `corr_ui.js` : 2 suggestions,
+  heure modifiée, « Tout ajouter », liste en attente, suggestions vidées) ; `recover_test.js` (37) inchangé.
+
+### Frise dans la pop-up de démarrage tardif (v1.112.0)
+
+Demande : la même frise que la page Risques dans la pop-up affichée au démarrage d'une tâche en retard, **avec** le bloc « ce qui occupait le poste » (gardé après la maquette).
+
+- `retardDemarragePopupInfo` gagne `machineId`, `fusionGroupId`, `mode` (`'autour'` par défaut | `'30j'`), `occ` (true). `renderRetardDemarragePopupModal` : en-tête rouge (commande, pièce,
+  poste) avec « N j de retard », dates prévu/démarré, puis `renderRetardDemarrageFriseHtml(info, now)` — mêmes classes `.rf-*` que la page Risques : ligne « Cette tâche » (cercle vide prévu →
+  point plein réel, « +N j », heures), axe en jours (week-ends, « maintenant »), fenêtre « Autour de la tâche » (début prévu − 1 j → début réel + 2 j, 5 jours au moins) ou « 30 jours »
+  (`retardDemarrageWindow`), boutons `rdp-mode`/`rdp-occ`.
+- **`computePosteOccupants(st, machineId, from, to, {oid, fusionGroupId})`** : autres pièces ACTIVES du même poste, une ligne par pièce (un lot fusionné une seule fois ; la tâche qui démarre et
+  son lot exclus), séances (`sessions[]`) recoupant [prévu, réel], séparées de moins de 90 min fusionnées (la pause déjeuner ne coupe pas la barre) ; à défaut de séances (pièce close dont
+  le détail est archivé) `debutReel → finReel` en hachuré (`approx`, 3 jours max). 6 lignes au plus, « … et N autre(s) ». Les commandes archivées ne sont pas lues. Synthèse sous la frise : « Entre-temps,
+  {poste} a travaillé sur : C026-… » (numéros de commande uniques) ou « Aucune autre séance enregistrée… » — jamais attribué à une personne.
+- Test (scratchpad `rdp_test.js`, 9 assertions sur l'export du 06/10 ; Playwright `corr_ui.js`) : Ajustage C026-0759, 4 occupants (C026-0755, C026-0668, C026-0712 ×2), bloc masquable, 30 jours.
+
 ### Salarié masqué du temps de production mais doté d'un badge (v1.101.1)
 
 Constat réel (06/10) : « Laurine » avait « Afficher dans le temps de production » décoché ; la page Présence ne listait que les

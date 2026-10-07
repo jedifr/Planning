@@ -576,6 +576,23 @@ app.get('/api/presence/timemoto/status', requireAuth, requireLicense, requirePre
   if(!isSupervisorReq(req)) return res.status(403).json({ error: 'Réservé aux superviseurs.' });
   res.json(timemoto.status(db, readStateFull()));
 });
+// Pointages manquants probables d'une journée (pop-up de correction, superviseur) : entrées écartées à
+// l'import, enchaînements incohérents, journée passée sans départ — voir presence.suggestMissing.
+app.get('/api/presence/missing', requireAuth, requireLicense, requirePresence, (req, res) => {
+  if(!isSupervisorReq(req)) return res.status(403).json({ error: 'Réservé aux superviseurs.' });
+  const userId = String(req.query.userId || '');
+  const date = String(req.query.date || '');
+  if(!userId || !presence.DATE_RE.test(date)) return res.status(400).json({ error: 'Paramètres "userId" et "date" (AAAA-MM-JJ) requis.' });
+  const st = readStateFull();
+  const punches = presence.effectivePunches(presence.getPunchesBetween(db, date + 'T00:00:00', date + 'T99', userId));
+  const b = timemoto.expectedBoundsFor(st, userId, date);
+  const hmOfDate = d => d ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : null;
+  res.json({ suggestions: presence.suggestMissing({
+    punches, ignored: timemoto.ignoredEventsFor(db, userId, date),
+    expectedStart: b ? hmOfDate(b.start) : null, expectedEnd: b ? hmOfDate(b.end) : null,
+    isPast: date < localDateKey(new Date())
+  }) });
+});
 // Récupération d'une période à la demande par l'agent zk-sync (voir timemotoSync.js) : l'administrateur
 // demande, l'agent répond au contact suivant (≤ 1 min) avec un aperçu, l'administrateur confirme.
 app.post('/api/presence/timemoto/recover', requireAdmin, requireLicense, requirePresence, (req, res) => {

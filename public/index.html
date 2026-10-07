@@ -1002,6 +1002,16 @@
   table.ops-table.rd-table .temps-prod-commande-link{display:inline; text-align:left; font:inherit; line-height:1.3; white-space:normal; overflow-wrap:anywhere;}
   /* Frise des retards/dérives de démarrage (v1.111.0) : une ligne par tâche, cercle vide = début prévu, point plein = début réel
      (cercle en pointillé = début projeté pour une tâche pas encore démarrée). */
+  .rf-row.static{cursor:default;} .rf-row.static:hover{background:transparent;}
+  .rf-row.main .rf-lane{height:60px;} .rf-row.ctx .rf-lane{height:32px;}
+  .rf-tag{position:absolute; bottom:2px; font-size:10.5px; font-weight:600; white-space:nowrap; transform:translateX(-50%); z-index:2; color:var(--text-dim);}
+  .rf-occ{position:absolute; top:6px; bottom:6px; border-radius:5px; background:var(--green); opacity:.75; z-index:1; display:flex; align-items:center; padding-left:6px; font-size:10px; color:#fff; white-space:nowrap; overflow:hidden;}
+  .rf-occ.approx{background:repeating-linear-gradient(135deg,var(--green) 0 6px,transparent 6px 10px); color:var(--text);}
+  .rdp-why{font-size:12px; background:var(--panel-2); border-radius:var(--radius); padding:8px 12px; margin-top:10px;}
+  .pc-suggest{border:1px solid var(--amber); background:var(--amber-dim); border-radius:var(--radius); padding:2px 12px 10px; margin-top:12px;}
+  .pc-suggest ul{margin:6px 0 8px; padding-left:0; list-style:none; display:flex; flex-direction:column; gap:6px;}
+  .pc-suggest li{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  .pc-suggest input[type=time]{width:auto;}
   .rf-ctl{display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-bottom:8px;}
   .rf-seg{display:inline-flex; border:1px solid var(--line); border-radius:var(--radius); overflow:hidden;}
   .rf-seg button{border:0; border-radius:0; background:var(--panel); padding:5px 12px;}
@@ -1817,7 +1827,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.111.0';
+const APP_VERSION = '1.112.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -7451,7 +7461,9 @@ function setOpStatut(cid, oid, newStatut){
         posteNom: m ? m.nom : null,
         prevu: o.previsionAuDemarrage.debut,
         debutReel: o.debutReel,
-        retardJours: retard
+        retardJours: retard,
+        machineId: o.machineId || null, fusionGroupId: o.fusionGroupId || null,
+        mode: 'autour', occ: true
       };
     }
   }
@@ -14625,28 +14637,112 @@ function renderNewCommandeZoneNoticeModal(){
 // façon déjà démarrée) : indique de combien de jours le démarrage réel a dépassé la prévision figée à
 // la création de la pièce (previsionAuDemarrage). Activable/désactivable dans Paramètres → Risques de
 // retard, désactivée par défaut.
+// ---- Frise de la pop-up de démarrage tardif (v1.112.0) : même langage visuel que la frise de la page Risques ----
+// Autres tâches qui ont occupé un poste dans [from, to[ : séances (`sessions[]`) des pièces ACTIVES du même poste,
+// regroupées par pièce (séances séparées de moins de 90 min fusionnées : la pause déjeuner ne coupe pas la barre) ;
+// à défaut de séances (pièce close dont le détail est archivé), `debutReel` → `finReel` en trait hachuré (`approx`).
+// Un lot fusionné ne compte qu'une fois ; la tâche qui démarre (et son lot) est exclue. Lecture seule, rien de stocké.
+function computePosteOccupants(st, machineId, from, to, exclude){
+  if(!machineId) return [];
+  const now = new Date(), byKey = {};
+  (st.commandes || []).forEach(c => (c.pieces || []).forEach(p => {
+    if(p.machineId !== machineId || p.id === exclude.oid) return;
+    if(exclude.fusionGroupId && p.fusionGroupId === exclude.fusionGroupId) return;
+    const key = p.fusionGroupId ? 'g' + p.fusionGroupId : p.id;
+    if(byKey[key]) return;
+    let ivs = [], approx = false;
+    (p.sessions || []).forEach(x => {
+      const a = new Date(x.debut), b = x.fin ? new Date(x.fin) : now;
+      if(!(b > from && a < to)) return;
+      ivs.push([a < from ? from : a, b > to ? to : b]);
+    });
+    if(!ivs.length && !(p.sessions || []).length && p.debutReel && p.finReel){
+      const a = new Date(p.debutReel), b = new Date(p.finReel);
+      if(b > from && a < to && (b - a) <= 3 * 86400000){ ivs.push([a < from ? from : a, b > to ? to : b]); approx = true; }
+    }
+    if(!ivs.length) return;
+    ivs.sort((x, y) => x[0] - y[0]);
+    const merged = [];
+    ivs.forEach(iv => { const l = merged[merged.length - 1]; if(l && iv[0] - l[1] <= 90 * 60000) l[1] = new Date(Math.max(+l[1], +iv[1])); else merged.push([iv[0], iv[1]]); });
+    byKey[key] = { cmd: c.nom, piece: p.piece, etape: p.etape, intervals: merged, approx, hours: merged.reduce((a, iv) => a + (iv[1] - iv[0]) / 3600000, 0) };
+  }));
+  return Object.values(byKey).sort((a, b) => b.hours - a.hours);
+}
+// Fenêtre : « autour de la tâche » (début prévu − 1 j → début réel + 2 j, 5 jours au moins) ou 30 jours jusqu'à aujourd'hui.
+function retardDemarrageWindow(info, now){
+  if(info.mode === '30j'){ const e = rdAddDays(rdDay0(now), 2); return [rdAddDays(e, -31), e]; }
+  let s = rdAddDays(rdDay0(new Date(info.prevu)), -1), e = rdAddDays(rdDay0(new Date(info.debutReel)), 2);
+  while((e - s) / 86400000 < 5) e = rdAddDays(e, 1);
+  return [s, e];
+}
+function renderRetardDemarrageFriseHtml(info, now){
+  now = now || new Date();
+  const P = new Date(info.prevu), R = new Date(info.debutReel);
+  const [s, e] = retardDemarrageWindow(info, now);
+  const span = e - s, nd = Math.max(1, Math.round(span / 86400000));
+  const pct = d => Math.max(0, Math.min(100, (d - s) / span * 100));
+  const hm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const jours = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
+  const c = info.retardJours >= 3 ? 'var(--red)' : 'var(--amber)';
+  let ax = `<div class="rf-axis"><div></div><div class="rf-lane" style="--step:${100 / nd}%">`;
+  for(let i = 0; i < nd; i++){ const d = rdAddDays(s, i); if(nd <= 10 || i % 2 === 0) ax += `<div class="rf-dlab" style="left:${(i + .5) / nd * 100}%">${jours[d.getDay()]}<b>${d.getDate()}</b></div>`; }
+  ax += '</div></div>';
+  let we = '';
+  for(let i = 0; i < nd; i++){ const w = rdAddDays(s, i).getDay(); if(w === 0 || w === 6) we += `<div class="rf-we" style="left:${i / nd * 100}%; width:${100 / nd}%"></div>`; }
+  const today = (now >= s && now < e) ? `<div class="rf-today" style="left:${pct(now)}%"></div>` : '';
+  const lp = pct(P), lr = pct(R);
+  let h = ax + `<div class="rf-row main static"><div class="rf-name"><b>Cette tâche</b><span>prévu → réel</span></div>
+    <div class="rf-lane" style="--step:${100 / nd}%; --lc:${c}">${we}${today}
+      <div class="rf-line" style="left:${lp}%; width:${Math.max(0.3, lr - lp)}%"></div>
+      <div class="rf-dot p" style="left:${lp}%"></div><div class="rf-dot r" style="left:${lr}%"></div>
+      <div class="rf-lbl" style="left:${Math.max(6, Math.min(94, (lp + lr) / 2))}%">+${escapeHtml(rdFj(info.retardJours))}</div>
+      <div class="rf-tag" style="left:${Math.max(6, Math.min(94, lp))}%">prévu ${hm(P)}</div><div class="rf-tag" style="left:${Math.max(6, Math.min(94, lr))}%; color:${c};">réel ${hm(R)}</div>
+    </div></div>`;
+  let occ = [];
+  if(info.occ){
+    occ = computePosteOccupants(state, info.machineId, P, R, { oid: info.oid, fusionGroupId: info.fusionGroupId });
+    occ.slice(0, 6).forEach(o => {
+      const bars = o.intervals.map(iv => {
+        const a = pct(iv[0]), b = pct(iv[1]);
+        return `<div class="rf-occ ${o.approx ? 'approx' : ''}" style="left:${a}%; width:${Math.max(0.8, b - a)}%" title="${escapeHtml(o.cmd + ' — ' + [o.piece, o.etape].filter(Boolean).join(' / ') + ' : ' + formatDT(iv[0]) + ' → ' + formatDT(iv[1]))}">${b - a > 9 ? escapeHtml(hm(iv[0]) + ' → ' + hm(iv[1])) : ''}</div>`;
+      }).join('');
+      const num = String(o.cmd).split(/\s+/)[0], rest = String(o.cmd).split(/\s+/).slice(1).join(' ');
+      h += `<div class="rf-row ctx static"><div class="rf-name"><b>${escapeHtml(num)}</b><span>${escapeHtml(rest || [o.piece, o.etape].filter(Boolean).join(' / '))}</span></div><div class="rf-lane" style="--step:${100 / nd}%">${we}${today}${bars}</div></div>`;
+    });
+    if(occ.length > 6) h += `<div class="footer-note" style="text-align:left; padding-top:4px;">… et ${occ.length - 6} autre(s) tâche(s) sur ce poste.</div>`;
+  }
+  const why = !info.occ ? 'Le retard se mesure sur le début de la tâche, jamais attribué à une personne : il tient à la disponibilité du poste et à l\'ordonnancement.'
+    : occ.length ? `<b>Entre-temps, ${escapeHtml(info.posteNom || 'ce poste')} a travaillé sur :</b> ${(() => { const u = [...new Set(occ.map(o => String(o.cmd).split(/\s+/)[0]))]; return u.slice(0, 4).map(escapeHtml).join(', ') + (u.length > 4 ? '…' : ''); })()}. Le retard vient de la file d'attente du poste, pas de l'opérateur.`
+    : `Aucune autre séance enregistrée sur ${escapeHtml(info.posteNom || 'ce poste')} entre le début prévu et le démarrage : le poste n'était pas occupé par une autre tâche suivie (étape précédente terminée tard, matière, opérateur absent ?).`;
+  return `<div class="rf-ctl">
+      <div class="rf-seg"><button data-action="rdp-mode" data-mode="autour" class="${info.mode !== '30j' ? 'on' : ''}">Autour de la tâche</button><button data-action="rdp-mode" data-mode="30j" class="${info.mode === '30j' ? 'on' : ''}">30 jours</button></div>
+      ${info.machineId ? `<button class="small" data-action="rdp-occ">${info.occ ? '🙈 Masquer' : '👁 Montrer'} ce qui occupait le poste</button>` : ''}
+    </div>
+    <div class="rf-scroll"><div class="rf-in" style="min-width:600px;">${h}</div></div>
+    <div class="rf-legend" style="margin-top:6px;"><span><span class="rf-dot p" style="position:static; display:inline-block; margin:0 4px 0 0; vertical-align:middle;"></span>Début prévu (figé à la création)</span><span><span class="rf-dot r" style="--lc:${c}; position:static; display:inline-block; margin:0 4px 0 0; vertical-align:middle;"></span>Début réel</span>${info.occ ? '<span><span style="display:inline-block; width:12px; height:10px; border-radius:3px; background:var(--green); opacity:.75; margin-right:4px; vertical-align:middle;"></span>Autres tâches sur le poste</span>' : ''}<span style="color:var(--blue);">▎ Maintenant</span></div>
+    <div class="rdp-why">${why}</div>`;
+}
 function renderRetardDemarragePopupModal(){
   if(!retardDemarragePopupInfo) return '';
   const info = retardDemarragePopupInfo;
   return `
   <div class="modal-overlay">
-    <div class="modal-box retard-demarrage-box" role="dialog" aria-modal="true" style="max-width:420px;">
+    <div class="modal-box retard-demarrage-box" role="dialog" aria-modal="true" style="max-width:860px; width:min(860px, 96vw);">
       <div class="modal-head retard-demarrage-head">
         <div class="retard-demarrage-head-main">
           <div class="rd-icon">⏰</div>
-          <h2>Démarrage tardif</h2>
+          <div style="min-width:0;"><h2>Démarrage tardif</h2><div class="footer-note" style="margin:0; text-align:left;">${escapeHtml(info.commandeNom)} — ${escapeHtml(info.pieceLabel)}${info.posteNom ? ' · ' + escapeHtml(info.posteNom) : ''}</div></div>
         </div>
+        <div class="retard-demarrage-days" style="margin:0 12px 0 auto; white-space:nowrap; padding:6px 14px; font-size:15px;">⏱ ${info.retardJours.toFixed(1)} j de retard</div>
         <button class="ghost icon-btn" data-action="close-retard-demarrage-popup" title="Fermer">✕</button>
       </div>
       <div class="modal-body">
-        <div class="footer-note" style="text-align:left; margin:0 0 4px;">${escapeHtml(info.commandeNom)} — ${escapeHtml(info.pieceLabel)}</div>
-        ${info.posteNom ? `<div class="footer-note" style="text-align:left; margin:0 0 12px;">Poste : ${escapeHtml(info.posteNom)}</div>` : ''}
-        <div class="machines-grid" style="margin-bottom:12px;">
-          <div><label class="field">Prévu le</label><div class="mono">${formatDT(new Date(info.prevu))}</div></div>
+        <div class="machines-grid" style="margin-bottom:10px;">
+          <div><label class="field">Prévu à la création</label><div class="mono">${formatDT(new Date(info.prevu))}</div></div>
           <div><label class="field">Démarré le</label><div class="mono">${formatDT(new Date(info.debutReel))}</div></div>
         </div>
-        <div class="retard-demarrage-days">⏱ Retard : ${info.retardJours.toFixed(1)} jour(s)</div>
-        <div class="form-actions" style="justify-content:flex-end; margin-top:8px;">
+        ${renderRetardDemarrageFriseHtml(info, new Date())}
+        <div class="form-actions" style="justify-content:flex-end; margin-top:10px;">
           <button class="primary" data-action="close-retard-demarrage-popup">OK, j'ai compris</button>
         </div>
       </div>
@@ -17837,7 +17933,7 @@ async function openPresenceCorrection(userId, day, preset){
   const mode = canSupervise() ? 'sup' : 'self';
   const uid = mode === 'self' ? String(currentUser.id) : String(userId);
   const defTime = day === toDateInputValue(new Date()) ? `${pad(new Date().getHours())}:${pad(new Date().getMinutes())}` : '17:00';
-  presenceCorrection = { userId: uid, day, mode, punches: [], status: 'loading', type: preset || 'in', time: defTime, motif: PRESENCE_MOTIFS[0], commentaire: '', cancelsId: null, staged: [], editId: null, editType: '', editTime: '', saving: false, error: '' };
+  presenceCorrection = { userId: uid, day, mode, punches: [], status: 'loading', type: preset || 'in', time: defTime, motif: PRESENCE_MOTIFS[0], commentaire: '', cancelsId: null, staged: [], suggestions: [], editId: null, editType: '', editTime: '', saving: false, error: '' };
   if(preset === 'out'){
     const exp = expectedDayFor(uid, state, new Date(day + 'T12:00:00'));
     if(exp.expected.length){ const e = exp.expected[exp.expected.length - 1][1]; presenceCorrection.time = `${pad(e.getHours())}:${pad(e.getMinutes())}`; }
@@ -17852,6 +17948,38 @@ async function openPresenceCorrection(userId, day, preset){
     else { presenceCorrection.status = 'error'; presenceCorrection.error = json.error || 'Chargement impossible.'; }
   }catch(e){ if(presenceCorrection){ presenceCorrection.status = 'error'; presenceCorrection.error = 'Serveur injoignable.'; } }
   presenceRenderIfIdle();
+  // Pointages manquants probables (superviseur seulement) : proposés dans la pop-up, jamais ajoutés tout seuls. Un échec
+  // (route absente, réseau) ne gêne en rien la correction : la liste reste simplement vide.
+  if(mode === 'sup' && presenceCorrection && presenceCorrection.userId === uid && presenceCorrection.day === day && presenceCorrection.status === 'ok'){
+    try{
+      const r2 = await fetch(`/api/presence/missing?userId=${encodeURIComponent(uid)}&date=${day}`, { credentials: 'include' });
+      const j2 = await r2.json().catch(() => ({}));
+      if(r2.ok && presenceCorrection && presenceCorrection.userId === uid && presenceCorrection.day === day){
+        presenceCorrection.suggestions = Array.isArray(j2.suggestions) ? j2.suggestions : [];
+        presenceRenderIfIdle();
+      }
+    }catch(e){ /* sans suggestions */ }
+  }
+}
+// Suggestions encore à proposer : celles dont le même pointage (type + heure) n'est pas déjà dans la liste en attente.
+function presenceOpenSuggestions(d){
+  const staged = (d.staged || []).filter(op => op.kind === 'add');
+  return (d.suggestions || []).map((x, i) => ({ ...x, idx: i })).filter(x => !staged.some(op => op.type === x.type && op.time === x.time));
+}
+function presenceSugAdd(idx){
+  const d = presenceCorrection; if(!d) return;
+  presenceSyncCorrectionForm();
+  const x = (d.suggestions || [])[idx]; if(!x || !/^\d{2}:\d{2}$/.test(x.time)){ alert("Indiquez l'heure du pointage."); return; }
+  presenceStage({ kind: 'add', type: x.type, time: x.time });
+  render();
+}
+function presenceSugAddAll(){
+  const d = presenceCorrection; if(!d) return;
+  presenceSyncCorrectionForm();
+  const todo = presenceOpenSuggestions(d);
+  if(todo.some(x => !/^\d{2}:\d{2}$/.test(x.time))){ alert("Indiquez l'heure de chaque pointage."); return; }
+  todo.forEach(x => presenceStage({ kind: 'add', type: x.type, time: x.time }));
+  render();
 }
 // Lit les champs du formulaire avant un redessin : les zones de saisie ne déclenchent pas de render() à
 // la frappe (voir le piège « Champs qui s'effacent en cours de frappe »), donc on les relit dans le DOM.
@@ -17862,6 +17990,7 @@ function presenceSyncCorrectionForm(){
   if(q('pc-comment')) d.commentaire = q('pc-comment').value;
   if(q('pc-type')) d.type = q('pc-type').value;
   if(q('pc-time')) d.time = q('pc-time').value;
+  if(typeof document.querySelectorAll === 'function') document.querySelectorAll('.pc-sug-time').forEach(inp => { const x = (d.suggestions || [])[Number(inp.dataset.sug)]; if(x && inp.value) x.time = inp.value; });
 }
 // Superviseur : les changements (type/heure, annulations, ajouts) s'empilent dans `d.staged` et sont
 // envoyés ENSEMBLE, en une transaction côté serveur (POST /api/presence/correction/batch). Liste vide :
@@ -18046,6 +18175,14 @@ function renderPresenceCorrectionModal(){
         return `<li>${escapeHtml(txt)} <button class="pr-link" data-action="presence-unstage" data-idx="${i}">Retirer</button></li>`;
       }).join('')}</ul>
     </div>` : '';
+  const sugs = sup && d.status === 'ok' ? presenceOpenSuggestions(d) : [];
+  const sugHtml = sugs.length ? `
+    <div class="pc-suggest">
+      <div class="modal-section-title" style="margin-top:14px;">⚠ Pointages manquants probables (${sugs.length}) — proposés d'après la pointeuse et l'enchaînement de la journée</div>
+      <ul>${sugs.map(x => `<li><b>${escapeHtml(typeLbl(x.type))}</b> <input class="pc-sug-time" type="time" value="${escapeHtml(x.time)}" data-sug="${x.idx}" ${x.approx ? 'title="Heure estimée : à confirmer"' : ''}> <span class="footer-note" style="margin:0;">${x.approx ? '≈ ' : ''}${escapeHtml(x.why)}</span> <button class="small" data-action="presence-sug-add" data-idx="${x.idx}">＋ Ajouter</button></li>`).join('')}</ul>
+      ${sugs.length > 1 ? `<button class="small" data-action="presence-sug-add-all">＋ Tout ajouter à la liste</button>` : ''}
+      <div class="footer-note" style="text-align:left;">Rien n'est enregistré avant « Enregistrer » : ajustez l'heure si besoin, puis ajoutez à la liste.</div>
+    </div>` : '';
   const editing = (sup && d.editId) ? origOf(d.editId) : null;
   const editor = editing ? `
     <div class="modal-section-title" style="margin-top:14px;">Changer le type de « ${escapeHtml(typeLbl(editing.type))} ${presenceHhmm(editing.ts)} »</div>
@@ -18091,6 +18228,7 @@ function renderPresenceCorrectionModal(){
       ${d.status === 'loading' ? '<div class="pr-empty">Chargement…</div>' : d.status === 'error' ? `<div class="pr-empty">${escapeHtml(d.error)}</div>` : (cards ? `<div class="pc-cards">${cards}</div>` : '<div class="pr-empty">Aucun pointage ce jour-là.</div>')}
       ${sup && d.status === 'ok' && eff.length ? `<div style="margin-top:8px;"><button class="small" data-action="presence-invert-day" title="Inverse le sens (entrée ↔ sortie) de tous les pointages retenus de la journée, puis reclasse arrivée / pauses / départ. Les changements sont empilés : rien n'est enregistré avant « Enregistrer ».">⇄ Inverser entrées et sorties de la journée</button> <span class="footer-note">Utile quand la pointeuse a perdu le fil (une sortie à la place d'une entrée, tout est décalé).</span></div>` : ''}
       ${editor}
+      ${sugHtml}
       ${stagedList}
       ${formHtml}
       <label class="field" style="margin-top:10px;">Commentaire${sup && staged.length ? ' (commun à toutes les modifications)' : ''}</label><textarea id="pc-comment" class="pc-comment" rows="2" data-action="presence-correction-field" data-field="commentaire" placeholder="Ex. parti après avoir clos la tâche à 17:04">${escapeHtml(d.commentaire)}</textarea>
@@ -19668,6 +19806,8 @@ function dispatchClickAction(action, el){
     case 'presence-edit-cancel': if(presenceCorrection){ presenceCorrection.editId = null; render(); } break;
     case 'presence-stage-cancel': if(presenceCorrection){ presenceSyncCorrectionForm(); presenceStage({ kind: 'cancel', id: Number(el.dataset.id) }); if(presenceCorrection.motif === PRESENCE_MOTIFS[0]) presenceCorrection.motif = 'Erreur de pointage'; render(); } break;
     case 'presence-stage-add': presenceStageAdd(); break;
+    case 'presence-sug-add': presenceSugAdd(Number(el.dataset.idx)); break;
+    case 'presence-sug-add-all': presenceSugAddAll(); break;
     case 'presence-invert-day': presenceInvertDay(); break;
     case 'presence-unstage-id': if(presenceCorrection){ presenceSyncCorrectionForm(); presenceCorrection.staged = (presenceCorrection.staged || []).filter(x => x.id !== Number(el.dataset.id)); render(); } break;
     case 'presence-unstage': if(presenceCorrection){ presenceSyncCorrectionForm(); (presenceCorrection.staged || []).splice(Number(el.dataset.idx), 1); render(); } break;
@@ -19911,6 +20051,8 @@ function dispatchClickAction(action, el){
     case 'zones-filter': zonesFilter = el.dataset.filter || 'tous'; render(); break;
     case 'toggle-select-commande': toggleIsolateCommande(el.dataset.id); if(selectedCommandeId) maybeJumpToHighlight(); render(); break;
     case 'toggle-panel-collapse': togglePanelCollapse(el.dataset.key); break;
+    case 'rdp-mode': if(retardDemarragePopupInfo){ retardDemarragePopupInfo.mode = el.dataset.mode === '30j' ? '30j' : 'autour'; render(); } break;
+    case 'rdp-occ': if(retardDemarragePopupInfo){ retardDemarragePopupInfo.occ = !retardDemarragePopupInfo.occ; render(); } break;
     case 'rd-frise-mode': rdFrise.mode = el.dataset.mode === 'semaine' ? 'semaine' : '30j'; render(); break;
     case 'rd-frise-nav': rdFriseNav(Number(el.dataset.dir) || 0); render(); break;
     case 'rd-frise-today': rdFrise.anchor = null; render(); break;

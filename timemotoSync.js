@@ -75,7 +75,7 @@ function tsOf(x){ return x && x.fullClockTime && presence.TS_RE.test(String(x.fu
 function origOf(x){ return x && x.originalFullClockTime ? presence.normTs(String(x.originalFullClockTime).slice(0, 19)) : null; }
 // Fin d'horaire attendue de la personne ce jour-là (null si jour non travaillé ou en congé) : tant
 // qu'elle n'est pas passée, la DERNIÈRE sortie du jour est une pause (retour attendu), pas un départ.
-function expectedEndFor(st, uid, dayKey){
+function expectedBoundsFor(st, uid, dayKey){
   const d = new Date(dayKey + 'T12:00:00');
   if(d.getDay() === 0 || d.getDay() === 6) return null;
   const conge = (st.leaveRequests || []).some(r => String(r.userId) === String(uid) && r.statut === 'approuve' && r.debut <= dayKey && r.fin >= dayKey && !r.demiJournee);
@@ -83,7 +83,11 @@ function expectedEndFor(st, uid, dayKey){
   const cfg = autoPause.applyUserLunchOverride({ ...(st.config || {}) }, String(uid), st);
   if(cfg.startHour == null || !(Number(cfg.monThuHours) > 0)) return null;
   const segs = autoPause.dayIntervals(d, cfg);
-  return segs.length ? segs[segs.length - 1][1] : null;
+  return segs.length ? { start: segs[0][0], end: segs[segs.length - 1][1] } : null;
+}
+function expectedEndFor(st, uid, dayKey){
+  const b = expectedBoundsFor(st, uid, dayKey);
+  return b ? b.end : null;
 }
 // Paires TimeMoto → pointages : 1re entrée = arrivée, sortie suivie d'une entrée = pause, dernière
 // sortie = départ (ou pause si la fin d'horaire du jour n'est pas encore passée). Sortie automatique
@@ -116,17 +120,20 @@ function desiredPunches(row, uid, st, now, flip){
     flipped = true;
   }
   const anomalies = { autoOut: 0, ignored: 0, startsWithOut, flipped };
+  // Événements écartés (entrée alors que la personne est déjà présente, sortie sans entrée) : conservés pour
+  // que la pop-up de correction PROPOSE le pointage manquant (voir noteDayFlags/presence.suggestMissing).
+  const ignoredEvents = [];
   const out = [];
   let stt = 'none';
   events.forEach((ev, i) => {
     if(ev.kind === 'in'){
       if(stt === 'none'){ out.push({ type: 'in', ...ev }); stt = 'present'; }
       else if(stt === 'pause'){ out.push({ type: 'pause_end', ...ev }); stt = 'present'; }
-      else anomalies.ignored++;
+      else { anomalies.ignored++; ignoredEvents.push({ kind: 'in', ts: ev.ts, reason: 'doubleIn' }); }
       return;
     }
     if(ev.auto){ anomalies.autoOut++; return; }
-    if(stt !== 'present'){ anomalies.ignored++; return; }
+    if(stt !== 'present'){ anomalies.ignored++; ignoredEvents.push({ kind: 'out', ts: ev.ts, reason: 'outSansEntree' }); return; }
     const laterIn = events.slice(i + 1).some(x => x.kind === 'in');
     out.push({ type: laterIn ? 'pause_start' : 'out', ...ev });
     stt = laterIn ? 'pause' : 'done';
@@ -137,7 +144,7 @@ function desiredPunches(row, uid, st, now, flip){
     const end = expectedEndFor(st, uid, dayKey);
     if(end && now < end) last.type = 'pause_start';
   }
-  return { punches: out.map(p => ({ type: p.type, ts: p.ts, orig: p.orig })), anomalies, events: rawEvents };
+  return { punches: out.map(p => ({ type: p.type, ts: p.ts, orig: p.orig })), anomalies, events: rawEvents, ignoredEvents };
 }
 
 // Pointages déjà importés pour (salarié TimeMoto, jour), avec leur état d'annulation.
@@ -186,7 +193,7 @@ function reconcileDay(db, tmUserId, day, uid, desired, dryRun){
 // desiredPunches) ou l'ignorer (meta `flagIgnored`). Jamais automatique : l'hypothèse « la pointeuse
 // alterne strictement » n'est pas garantie. Tout reste tracé (annulations + nouveaux pointages).
 function loadFlags(db){
-  return { flagged: readMeta(db, 'flagged', {}) || {}, flips: readMeta(db, 'flips', {}) || {}, ignored: new Set(readMeta(db, 'flagIgnored', []) || []), dirty: false };
+  return { flagged: readMeta(db, 'flagged', {}) || {}, flips: readMeta(db, 'flips', {}) || {}, gaps: readMeta(db, 'gapEvents', {}) || {}, ignored: new Set(readMeta(db, 'flagIgnored', []) || []), dirty: false };
 }
 function saveFlags(db, f){
   if(!f.dirty) return;
@@ -194,6 +201,7 @@ function saveFlags(db, f){
   const prune = o => { Object.keys(o).forEach(k => { if((o[k].day || '') < cut) delete o[k]; }); return o; };
   writeMeta(db, 'flagged', prune(f.flagged));
   writeMeta(db, 'flips', prune(f.flips));
+  writeMeta(db, 'gapEvents', prune(f.gaps));
   writeMeta(db, 'flagIgnored', [...f.ignored].slice(-1000));
   f.dirty = false;
 }
@@ -202,6 +210,12 @@ function saveFlags(db, f){
 function noteDayFlags(f, tmId, uid, day, d, res){
   const key = `${tmId}|${day}`;
   const raw = d.events || [];
+  // Pointages écartés de la journée (voir desiredPunches) : mémorisés, remplacés à chaque lecture, effacés dès qu'il n'y en a plus.
+  const gapEv = d.ignoredEvents || [];
+  if(gapEv.length){
+    const next = { tmId, uid, day, events: gapEv };
+    if(JSON.stringify(f.gaps[key]) !== JSON.stringify(next)){ f.gaps[key] = next; f.dirty = true; }
+  } else if(f.gaps[key]){ delete f.gaps[key]; f.dirty = true; }
   if(d.anomalies.startsWithOut){
     if(f.flips[key]){ f.flips[key] = { ...f.flips[key], events: raw }; f.dirty = true; delete f.flagged[key]; return; }
     if(f.ignored.has(key)) return;
@@ -233,6 +247,13 @@ function describeFlag(entry, st, flipped){
     current: asIs.punches.map(p => `${TYPE_FR[p.type] || p.type} ${p.ts.slice(11, 16)}`),
     proposed: fixed.punches.map(p => `${TYPE_FR[p.type] || p.type} ${p.ts.slice(11, 16)}`)
   };
+}
+// Événements écartés à l'import pour (salarié Planning, jour) — voir presence.suggestMissing.
+function ignoredEventsFor(db, uid, day){
+  const f = loadFlags(db);
+  const out = [];
+  Object.values(f.gaps).forEach(g => { if(String(g.uid) === String(uid) && g.day === day) (g.events || []).forEach(e => out.push(e)); });
+  return out;
 }
 function flagInfo(db, st){
   const f = loadFlags(db);
@@ -652,6 +673,6 @@ async function runSync(db, st, opts){
 }
 
 module.exports = {
-  initTimemotoTables, runSync, runDeviceImport, runDeviceEvents, parseAgentEvents, parseDeviceCsv, syncDeviceRows, status, syncOnce, desiredPunches, reconcileDay, expectedEndFor, SYSTEM_USER,
+  initTimemotoTables, runSync, runDeviceImport, runDeviceEvents, parseAgentEvents, parseDeviceCsv, syncDeviceRows, status, syncOnce, desiredPunches, reconcileDay, expectedEndFor, expectedBoundsFor, ignoredEventsFor, SYSTEM_USER,
   requestRecovery, applyRecovery, cancelRecovery, recoveryRecord, applyFlagAction, flaggedCount, flagInfo, rowFromEvents
 };
