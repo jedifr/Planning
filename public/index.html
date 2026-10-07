@@ -1000,6 +1000,47 @@
   table.ops-table.rd-table{table-layout:fixed;}
   table.ops-table.rd-table th, table.ops-table.rd-table td{text-align:left; vertical-align:top; overflow-wrap:break-word; padding-left:6px; padding-right:6px;}
   table.ops-table.rd-table .temps-prod-commande-link{display:inline; text-align:left; font:inherit; line-height:1.3; white-space:normal; overflow-wrap:anywhere;}
+  /* Frise des retards/dérives de démarrage (v1.111.0) : une ligne par tâche, cercle vide = début prévu, point plein = début réel
+     (cercle en pointillé = début projeté pour une tâche pas encore démarrée). */
+  .rf-ctl{display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-bottom:8px;}
+  .rf-seg{display:inline-flex; border:1px solid var(--line); border-radius:var(--radius); overflow:hidden;}
+  .rf-seg button{border:0; border-radius:0; background:var(--panel); padding:5px 12px;}
+  .rf-seg button.on{background:var(--accent); color:#fff;}
+  .rf-chips{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;}
+  .rf-chip{font-size:11.5px; padding:2px 10px; border-radius:999px; border:1px solid var(--line); background:var(--panel); cursor:pointer; display:inline-flex; gap:6px; align-items:center;}
+  .rf-chip i{width:9px; height:9px; border-radius:50%; background:var(--c); display:inline-block;}
+  .rf-chip.off{opacity:.4;}
+  .rf-kpis{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;}
+  .rf-kpi{flex:1 1 130px; border:1px solid var(--line); border-radius:var(--radius); padding:6px 10px;}
+  .rf-kpi b{font-size:18px; display:block; font-variant-numeric:tabular-nums;}
+  .rf-kpi span{font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-faint);}
+  .rf-legend{display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--text-dim); margin-bottom:6px; align-items:center;}
+  .rf-scroll{overflow-x:auto;}
+  .rf-in{min-width:760px;}
+  .rf-axis,.rf-row{display:grid; grid-template-columns:200px 1fr; align-items:center;}
+  .rf-axis .rf-lane{height:32px; border-bottom:1px solid var(--line);}
+  .rf-dlab{position:absolute; top:2px; font-size:10px; color:var(--text-faint); transform:translateX(-50%); text-align:center; line-height:1.15; white-space:nowrap;}
+  .rf-dlab b{display:block; font-size:11px; color:var(--text);}
+  .rf-poste{font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; padding:10px 0 4px; display:flex; gap:8px; align-items:center; color:var(--text-dim);}
+  .rf-poste i{width:10px; height:10px; border-radius:3px; background:var(--c); display:inline-block;}
+  .rf-row{min-height:38px; border-bottom:1px solid var(--line-soft); cursor:pointer;}
+  .rf-row:hover{background:var(--panel-2);}
+  .rf-name{padding:3px 8px 3px 0; min-width:0;}
+  .rf-name b{font-size:12px; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .rf-name span{font-size:10.5px; color:var(--text-faint); display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .rf-lane{position:relative; height:38px; background-image:linear-gradient(to right,var(--line-soft) 1px,transparent 1px); background-size:var(--step) 100%;}
+  .rf-we{position:absolute; top:0; bottom:0; background:var(--panel-2); opacity:.85;}
+  .rf-today{position:absolute; top:0; bottom:0; width:2px; background:var(--blue); z-index:3;}
+  .rf-line{position:absolute; top:50%; height:4px; margin-top:-2px; border-radius:2px; background:var(--lc); z-index:1;}
+  .rf-line.dr{background:repeating-linear-gradient(to right,var(--lc) 0 6px,transparent 6px 10px);}
+  .rf-dot{position:absolute; top:50%; width:13px; height:13px; margin:-6.5px 0 0 -6.5px; border-radius:50%; z-index:2; box-sizing:border-box;}
+  .rf-dot.p{background:var(--panel); border:2.5px solid var(--text-faint);}
+  .rf-dot.r{background:var(--lc); border:2.5px solid var(--lc);}
+  .rf-dot.d{background:var(--panel); border:2.5px dashed var(--lc);}
+  .rf-lbl{position:absolute; top:50%; margin-top:-20px; font-size:10.5px; font-weight:700; color:var(--lc); white-space:nowrap; transform:translateX(-50%); z-index:2; font-variant-numeric:tabular-nums;}
+  .rf-clip{position:absolute; top:50%; margin-top:-8px; font-size:11px; color:var(--text-faint); z-index:2;}
+  .rf-det{grid-column:1/-1; padding:8px 12px; margin:2px 0 8px; background:var(--panel-2); border-radius:var(--radius); font-size:12px; display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start; cursor:default;}
+  .rf-det div{min-width:120px;} .rf-det small{display:block; color:var(--text-faint); font-size:10px; text-transform:uppercase; letter-spacing:.05em;}
   .pointages-ref-link{background:none; border:none; padding:0; font:inherit; color:inherit; font-weight:600; cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px;}
   .pointages-ref-link:hover{color:var(--accent);}
   .temps-prod-pause-row td{color:var(--text-faint); font-style:italic; background:var(--panel-2); text-align:center; font-size:11.5px;}
@@ -1776,7 +1817,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.110.0';
+const APP_VERSION = '1.111.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -11220,6 +11261,103 @@ function risquesSearchMatch(...parts){
   if(!q) return true;
   return parts.some(p => p != null && String(p).toLowerCase().includes(q));
 }
+// ---------- Frise des retards et dérives de démarrage (v1.111.0) ----------
+// Remplace les tableaux « retards constatés » / « dérive à venir » (mêmes données, mêmes seuils, mêmes lots comptés une
+// fois). `rdFrise` : état d'affichage purement transitoire (jamais persisté). `anchor` null = aujourd'hui.
+var rdFrise = { mode: '30j', anchor: null, off: {}, open: {} };
+function rdDay0(d){ return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+function rdAddDays(d, n){ return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
+// Lignes unifiées : kind 'reel' (début réel connu) ou 'derive' (début projeté d'une tâche pas encore démarrée).
+function rdFriseRows(constates, derives){
+  const rows = [];
+  (constates || []).forEach(r => rows.push({ kind: 'reel', key: `${r.commandeId}|${r.piece}|${r.etape}|${r.numeroLigne || ''}|r`, poste: r.machineNom, cid: r.commandeId, cmd: r.commandeNom, piece: r.piece, etape: r.etape, numeroLigne: r.numeroLigne, nbPieces: r.nbPieces || 1, p: new Date(r.prevu), e: new Date(r.reel), j: r.joursRetard }));
+  (derives || []).forEach(r => rows.push({ kind: 'derive', key: `${r.commandeId}|${r.piece}|${r.etape}|${r.numeroLigne || ''}|d`, poste: r.machineNom, cid: r.commandeId, cmd: r.commandeNom, piece: r.piece, etape: r.etape, numeroLigne: r.numeroLigne, nbPieces: r.nbPieces || 1, p: new Date(r.prevu), e: new Date(r.projete), j: r.joursDerive }));
+  return rows;
+}
+// Fenêtre affichée : 30 jours glissants (aujourd'hui − 26 j → aujourd'hui + 5 j, pour laisser voir les dérives) ou une
+// semaine lundi-dimanche. Pendant une recherche, la fenêtre s'adapte à TOUTES les lignes trouvées (jamais masquées par
+// la période — même principe que « rien ne doit masquer un résultat trouvé »), plafonnée à 120 jours.
+function rdFriseWindow(rows, now, searching){
+  const base = rdFrise.anchor ? rdDay0(rdFrise.anchor) : rdDay0(now);
+  if(searching && rows.length){
+    let s = new Date(Math.min.apply(null, rows.map(r => +r.p))), e = new Date(Math.max.apply(null, rows.map(r => +r.e).concat([+now])));
+    s = rdDay0(s); e = rdAddDays(rdDay0(e), 2);
+    const max = rdAddDays(e, -120); if(s < max) s = max;
+    return [s, e];
+  }
+  if(rdFrise.mode === 'semaine'){ const s = startOfWeek(base); return [s, rdAddDays(s, 7)]; }
+  return [rdAddDays(base, -26), rdAddDays(base, 5)];
+}
+function rdFj(x){ return `${(Math.round(x * 10) / 10).toLocaleString('fr-FR')} j`; }
+function rdFriseColor(r){ return r.j >= 3 ? 'var(--red)' : 'var(--amber)'; }
+function renderRetardFriseHtml(constates, derives, now, searchQuery){
+  now = now || new Date();
+  const q = String(searchQuery || '').trim();
+  const all = rdFriseRows(constates, derives);
+  const [s, e] = rdFriseWindow(all, now, !!q);
+  const span = e - s, nd = Math.max(1, Math.round(span / 86400000));
+  const postesPresents = [...new Set(all.map(r => r.poste))].sort((a, b) => a.localeCompare(b));
+  const colorOf = nom => { const m = (state.machines || []).find(mm => mm.nom === nom); return (m && m.couleur) || 'var(--text-faint)'; };
+  const rows = all.filter(r => !rdFrise.off[r.poste] && r.e >= s && r.p < e).sort((a, b) => b.j - a.j);
+  const re = rows.filter(r => r.kind === 'reel'), dr = rows.filter(r => r.kind === 'derive');
+  const sum = a => a.reduce((x, r) => x + r.j, 0), mx = a => a.length ? Math.max.apply(null, a.map(r => r.j)) : 0;
+  const pct = d => Math.max(0, Math.min(100, (d - s) / span * 100));
+  const fmt = d => formatDT(d);
+  const per = rdFrise.mode === 'semaine' && !q ? `Semaine du ${s.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} au ${rdAddDays(e, -1).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}`
+    : `Du ${s.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} au ${rdAddDays(e, -1).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}`;
+  const ctl = `<div class="rf-ctl">
+      <div class="rf-seg"><button data-action="rd-frise-mode" data-mode="semaine" class="${rdFrise.mode === 'semaine' ? 'on' : ''}" ${q ? 'disabled' : ''}>Semaine</button><button data-action="rd-frise-mode" data-mode="30j" class="${rdFrise.mode === '30j' ? 'on' : ''}" ${q ? 'disabled' : ''}>30 jours</button></div>
+      <div style="display:flex; gap:6px; align-items:center;"><button class="small" data-action="rd-frise-nav" data-dir="-1" ${q ? 'disabled' : ''}>‹</button><b style="font-size:12px; text-align:center; min-width:190px;">${escapeHtml(per)}</b><button class="small" data-action="rd-frise-nav" data-dir="1" ${q ? 'disabled' : ''}>›</button><button class="small" data-action="rd-frise-today" ${q ? 'disabled' : ''}>Aujourd'hui</button></div>
+    </div>`;
+  const chips = postesPresents.length > 1 ? `<div class="rf-chips">${postesPresents.map(p => `<span class="rf-chip ${rdFrise.off[p] ? 'off' : ''}" data-action="rd-frise-poste" data-p="${escapeHtml(p)}" style="--c:${escapeHtml(colorOf(p))}"><i></i>${escapeHtml(p)}</span>`).join('')}</div>` : '';
+  const kpis = `<div class="rf-kpis">
+      <div class="rf-kpi"><b>${re.length}</b><span>Démarrées en retard</span></div>
+      <div class="rf-kpi"><b>${rdFj(re.length ? sum(re) / re.length : 0)}</b><span>Retard moyen</span></div>
+      <div class="rf-kpi"><b>${rdFj(mx(re))}</b><span>Retard maximum</span></div>
+      <div class="rf-kpi"><b>${rdFj(sum(re))}</b><span>Retard cumulé</span></div>
+      <div class="rf-kpi"><b>${dr.length}</b><span>En dérive (pas démarrées)</span></div>
+    </div>`;
+  const legend = `<div class="rf-legend"><span><span class="rf-dot p" style="position:static; display:inline-block; margin:0 4px 0 0; vertical-align:middle;"></span>Début prévu (figé à la création)</span><span><span class="rf-dot r" style="--lc:var(--red); position:static; display:inline-block; margin:0 4px 0 0; vertical-align:middle;"></span>Début réel</span><span><span class="rf-dot d" style="--lc:var(--amber); position:static; display:inline-block; margin:0 4px 0 0; vertical-align:middle;"></span>Début projeté (tâche pas encore démarrée)</span><span>Ambre &lt; 3 j · rouge ≥ 3 j</span><span style="color:var(--blue);">▎ Aujourd'hui</span></div>`;
+  let ax = `<div class="rf-axis"><div></div><div class="rf-lane" style="--step:${100 / nd}%">`;
+  for(let i = 0; i < nd; i++){
+    const d = rdAddDays(s, i);
+    if(nd <= 8 || i % 2 === 0) ax += `<div class="rf-dlab" style="left:${(i + .5) / nd * 100}%">${['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'][d.getDay()]}<b>${d.getDate()}</b></div>`;
+  }
+  ax += '</div></div>';
+  let weekend = '';
+  for(let i = 0; i < nd; i++){ const dw = rdAddDays(s, i).getDay(); if(dw === 0 || dw === 6) weekend += `<div class="rf-we" style="left:${i / nd * 100}%; width:${100 / nd}%"></div>`; }
+  const todayHtml = (now >= s && now < e) ? `<div class="rf-today" style="left:${pct(now)}%"></div>` : '';
+  let h = ax;
+  postesPresents.forEach(p => {
+    const G = rows.filter(r => r.poste === p); if(!G.length) return;
+    const gre = G.filter(r => r.kind === 'reel');
+    h += `<div class="rf-poste" style="--c:${escapeHtml(colorOf(p))}"><i></i>${escapeHtml(p)} · ${G.length} tâche(s)${gre.length ? ` · retard moyen ${rdFj(sum(gre) / gre.length)}` : ''}</div>`;
+    G.forEach(r => {
+      const c = rdFriseColor(r), lp = pct(r.p), le = pct(r.e), isD = r.kind === 'derive';
+      const lot = r.nbPieces > 1 ? ` · +${r.nbPieces - 1} pièce(s) du lot` : '';
+      const ln = r.numeroLigne ? ` (n°${r.numeroLigne})` : '';
+      const lab = [r.piece, r.etape].filter(Boolean).join(' / ') || '—';
+      const tip = `Prévu ${fmt(r.p)} → ${isD ? 'projeté' : 'réel'} ${fmt(r.e)} (${isD ? 'dérive' : 'retard'} ${rdFj(r.j)})`;
+      h += `<div class="rf-row" data-action="rd-frise-row" data-key="${escapeHtml(r.key)}" title="${escapeHtml(tip)}">
+        <div class="rf-name"><b>${escapeHtml(r.cmd)}</b><span>${escapeHtml(lab + ln + lot)}</span></div>
+        <div class="rf-lane" style="--step:${100 / nd}%; --lc:${c}">${weekend}${todayHtml}
+          <div class="rf-line ${isD ? 'dr' : ''}" style="left:${lp}%; width:${Math.max(0.3, le - lp)}%"></div>
+          ${r.p < s ? `<span class="rf-clip" style="left:2px" title="Prévu le ${escapeHtml(fmt(r.p))}">◀</span>` : `<div class="rf-dot p" style="left:${lp}%"></div>`}
+          ${r.e >= e ? `<span class="rf-clip" style="right:2px" title="${isD ? 'Projeté' : 'Réel'} le ${escapeHtml(fmt(r.e))}">▶</span>` : `<div class="rf-dot ${isD ? 'd' : 'r'}" style="left:${le}%"></div>`}
+          <div class="rf-lbl" style="left:${Math.max(4, Math.min(96, (lp + le) / 2))}%">+${escapeHtml(rdFj(r.j))}</div>
+        </div></div>`;
+      if(rdFrise.open[r.key]) h += `<div class="rf-det"><div><small>Début prévu</small>${escapeHtml(fmt(r.p))}</div><div><small>${isD ? 'Début projeté' : 'Début réel'}</small>${escapeHtml(fmt(r.e))}</div><div><small>${isD ? 'Dérive' : 'Retard'}</small><b style="color:${c}">${escapeHtml(rdFj(r.j))}</b></div><div><small>Pièce</small>${escapeHtml(lab + ln)}${escapeHtml(lot)}</div><div><small>Commande</small><button class="temps-prod-commande-link" data-action="isolate-commande-goto-planning" data-cid="${r.cid}" style="background:none; border:none; padding:0; color:var(--text);">${escapeHtml(r.cmd)} ›</button></div></div>`;
+    });
+  });
+  if(!rows.length) h += `<div class="footer-note" style="text-align:center; padding:22px 0;">${q ? `Aucun retard ni aucune dérive ne correspond à « ${escapeHtml(q)} ».` : 'Aucune tâche en retard ni en dérive sur cette période.'}</div>`;
+  const note = q ? `<div class="footer-note" style="text-align:left; padding-bottom:6px;">🔎 Recherche « ${escapeHtml(q)} » : la période s'adapte à toutes les lignes trouvées (boutons de période suspendus).</div>` : '';
+  return `${note}${ctl}${chips}${kpis}${legend}<div class="rf-scroll"><div class="rf-in">${h}</div></div>`;
+}
+function rdFriseNav(dir){
+  const base = rdFrise.anchor ? new Date(rdFrise.anchor) : new Date();
+  rdFrise.anchor = rdAddDays(rdDay0(base), dir * (rdFrise.mode === 'semaine' ? 7 : 28));
+  if(rdDay0(rdFrise.anchor) >= rdDay0(new Date())) rdFrise.anchor = null;
+}
 function renderRisquesPage(){
   const schedule = getSchedule();
   // Même filtre "commande active" que la liste principale (renderCommandes) : une commande
@@ -11358,42 +11496,8 @@ function renderRisquesPage(){
       </div>
     </div>
     ${isPanelEffectivelyCollapsed('retardsDemarrage') ? '' : `<div class="panel-body">
-      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Écart entre la date de début que le planning prévoyait <b>à la création</b> d'une tâche et son démarrage — réel pour une tâche déjà démarrée (« constatés »), projeté aujourd'hui par le moteur pour une tâche qui n'a pas encore démarré (« dérive »). Un lot fusionné ne compte que pour une tâche. Mesuré uniquement sur les tâches créées depuis l'introduction de ce suivi. Regroupé par poste plutôt que par personne : cet écart tient à la disponibilité du poste et à l'ordonnancement.</div>
-      ${derive.parPoste.length ? `
-      <div class="modal-section-title" style="margin-top:4px;">📈 Dérive des démarrages à venir (tâches pas encore démarrées)</div>
-      <table class="ops-table rd-table">
-        ${rdColgroup}
-        <thead><tr><th>Poste</th><th>Tâches en dérive</th><th>Dérive moyenne</th><th colspan="3">Dérive max</th></tr></thead>
-        <tbody>${derive.parPoste.map(r => `<tr><td>${escapeHtml(r.machineNom)}</td><td>${r.nbTaches}</td><td>${Math.round(r.moyenneJours*10)/10} j</td><td colspan="3">${Math.round(r.maxJours*10)/10} j${miniBarHtml(r.maxJours, derive.parPoste[0].maxJours, 'var(--red)')}</td></tr>`).join('')}</tbody>
-      </table>
-      ${deriveDetail.length ? `
-      <table class="ops-table rd-table" style="margin-top:10px;">
-        ${rdColgroup}
-        <thead><tr><th>Poste</th><th>Commande</th><th>Pièce / Étape</th><th>Prévu à la création</th><th>Projeté aujourd'hui</th><th>Dérive</th></tr></thead>
-        <tbody>${deriveDetail.map(r => `<tr>
-          <td>${escapeHtml(r.machineNom)}</td><td>${commandeLink(r)}</td><td>${pieceCell(r)}</td>
-          <td>${formatDT(new Date(r.prevu))}</td><td>${formatDT(new Date(r.projete))}</td>
-          <td style="color:var(--red); font-weight:600;">+${Math.round(r.joursDerive*10)/10} j</td>
-        </tr>`).join('')}</tbody>
-      </table>` : `<div class="footer-note" style="text-align:left; padding-top:6px;">Aucune tâche en dérive ne correspond à « ${escapeHtml(risquesSearchQuery)} ».</div>`}` : ''}
-      ${retardsDemarrage.length ? `
-      <div class="modal-section-title" style="margin-top:18px;">🕓 Retards de démarrage constatés (tâches déjà démarrées)</div>
-      <table class="ops-table rd-table">
-        ${rdColgroup}
-        <thead><tr><th>Poste</th><th>Tâches démarrées en retard</th><th>Retard moyen</th><th colspan="3">Retard cumulé</th></tr></thead>
-        <tbody>${retardsDemarrage.map(r => `<tr><td>${escapeHtml(r.machineNom)}</td><td>${r.nbTaches}</td><td>${Math.round(r.moyenneJours*10)/10} j</td><td colspan="3">${Math.round(r.totalJours*10)/10} j${miniBarHtml(r.totalJours, retardsDemarrage[0].totalJours, 'var(--amber)')}</td></tr>`).join('')}</tbody>
-      </table>
-      ${retardsDemarrageDetail.length ? `
-      <div class="modal-section-title" style="margin-top:16px;">Détail des tâches concernées</div>
-      <table class="ops-table rd-table">
-        ${rdColgroup}
-        <thead><tr><th>Poste</th><th>Commande</th><th>Pièce / Étape</th><th>Début prévu</th><th>Début réel</th><th>Retard</th></tr></thead>
-        <tbody>${retardsDemarrageDetail.map(r => `<tr>
-          <td>${escapeHtml(r.machineNom)}</td><td>${commandeLink(r)}</td><td>${pieceCell(r)}</td>
-          <td>${formatDT(new Date(r.prevu))}</td><td>${formatDT(new Date(r.reel))}</td>
-          <td>${Math.round(r.joursRetard*10)/10} j</td>
-        </tr>`).join('')}</tbody>
-      </table>` : `<div class="footer-note" style="text-align:left; padding-top:6px;">Aucun retard constaté ne correspond à « ${escapeHtml(risquesSearchQuery)} ».</div>`}` : ''}
+      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Écart entre la date de début que le planning prévoyait <b>à la création</b> d'une tâche (cercle vide) et son démarrage : réel pour une tâche déjà démarrée (point plein), projeté aujourd'hui par le moteur pour une tâche qui n'a pas encore démarré (cercle en pointillé, « dérive »). Un lot fusionné ne compte que pour une tâche. Mesuré uniquement sur les tâches créées depuis l'introduction de ce suivi. Cliquez une ligne pour le détail ; la recherche de la page filtre par commande, pièce, étape ou poste.</div>
+      ${renderRetardFriseHtml(retardsDemarrageDetail, deriveDetail, new Date(), risquesSearchQuery)}
     </div>`}
   </section>` : '';
   const disponiblesAll = computeDisponiblesNonDemarrees(state, new Date());
@@ -11471,8 +11575,9 @@ function renderRisquesPage(){
   ${searchBarHtml}
   <div class="risques-two-col">
     <div class="risques-col-left">${risquesHtml}</div>
-    <div class="risques-col-right">${disponiblesHtml}${pausesHtml}${retardsDemarrageHtml}</div>
-  </div>`;
+    <div class="risques-col-right">${disponiblesHtml}${pausesHtml}</div>
+  </div>
+  <div style="margin-top:16px;">${retardsDemarrageHtml}</div>`;
 }
 
 /* ---------------- Vue d'ensemble atelier (voir CLAUDE.md « Vue d'ensemble atelier ») ---------------- */
@@ -19806,6 +19911,11 @@ function dispatchClickAction(action, el){
     case 'zones-filter': zonesFilter = el.dataset.filter || 'tous'; render(); break;
     case 'toggle-select-commande': toggleIsolateCommande(el.dataset.id); if(selectedCommandeId) maybeJumpToHighlight(); render(); break;
     case 'toggle-panel-collapse': togglePanelCollapse(el.dataset.key); break;
+    case 'rd-frise-mode': rdFrise.mode = el.dataset.mode === 'semaine' ? 'semaine' : '30j'; render(); break;
+    case 'rd-frise-nav': rdFriseNav(Number(el.dataset.dir) || 0); render(); break;
+    case 'rd-frise-today': rdFrise.anchor = null; render(); break;
+    case 'rd-frise-poste': rdFrise.off[el.dataset.p] = !rdFrise.off[el.dataset.p]; render(); break;
+    case 'rd-frise-row': rdFrise.open[el.dataset.key] = !rdFrise.open[el.dataset.key]; render(); break;
     case 'set-view': setView(el.dataset.view); break;
     case 'nav-view': navView(Number(el.dataset.dir)); break;
     case 'nav-today': goToday(); break;

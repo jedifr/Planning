@@ -4724,6 +4724,28 @@ seulement celles à risque. Pop-up retenue (pas de page dédiée), **sans impres
   cartes, présent dans la barre ; pièce tapée → 1 frise + barre de filtre ; numéro de commande → 3 frises ;
   « zzzz » et saisie vide → messages attendus, aucune erreur.
 
+### Frise des retards et dérives de démarrage (v1.111.0)
+
+Demande : remplacer les tableaux « retards constatés » / « dérive des démarrages à venir » par une frise (début prévu → début réel, nombre de
+jours de retard) et brancher une recherche de pièce et/ou de commande. Maquette validée (frise 30 jours / semaine) puis codée **à la place** des quatre
+tableaux : mêmes données (`computeRetardDemarrageDetail`, `computeDeriveDemarrageAVenir`), même seuil 0,5 j, lot fusionné compté une fois.
+`computeRetardDemarrageParPoste` et les résumés par poste restent calculés (tuiles du haut de la page Risques) mais ne sont plus affichés en tableau.
+
+- **`renderRetardFriseHtml(constates, derives, now, searchQuery)`** (pur, testable) : une ligne par tâche, cercle vide = début prévu (figé à la création),
+  point plein = début réel (tâche démarrée), **cercle en pointillé + barre en pointillé = début projeté** d'une tâche pas encore démarrée (dérive).
+  Barre ambre sous 3 j, rouge à partir de 3 j, libellé « +N j » au-dessus. Groupée par poste (couleur `machine.couleur`), triée du plus grand écart au plus petit.
+  Quatre indicateurs (démarrées en retard, moyenne, maximum, cumul) + « en dérive » — **calculés sur la période affichée**, plus sur tout l'historique
+  comme l'ancien résumé par poste. Puces de poste cliquables (masquer un poste). Clic sur une ligne = détail (dates exactes, pièce, lien « isoler la commande »).
+  Une ligne dont le début prévu ou le réel sort de la fenêtre porte ◀ / ▶ (dates exactes en infobulle).
+- **Période** (`rdFrise`, transitoire, jamais persisté) : « 30 jours » (aujourd'hui − 26 j → + 5 j, pour laisser voir les dérives) ou « Semaine » lundi-dimanche,
+  navigation ‹ › (28 j / 7 j), « Aujourd'hui ». **Pendant une recherche, la fenêtre s'adapte à toutes les lignes trouvées** (plafonnée à 120 jours) et les boutons de
+  période sont désactivés — rien ne doit masquer un résultat trouvé.
+- **Recherche** : celle de la page Risques (`#risques-search-input`, commande, pièce, étape, poste, n° de ligne) filtre déjà `retardsDemarrageDetail`/`deriveDetail`
+  avant la frise ; pas de second champ de recherche (deux champs côte à côte seraient ambigus). Une note rappelle le filtre actif.
+- **Mise en page** : la section passe **sous** les deux colonnes de la page, en pleine largeur (200 px de noms + frise ne tiennent pas dans une demi-colonne).
+- Classes `.rf-*` (jetons du thème), actions `rd-frise-mode|nav|today|poste|row`. Test réel (Playwright sur l'export du 06/10) : 50 lignes (19 retards + 31 dérives) en 30 jours,
+  semaine courante 41, semaine précédente 35, puce de poste, détail, recherche « SRMG » (3 lignes), pièce « PJO » (1 ligne), « zzzz » (message), plus aucun `table.rd-table`.
+
 ### Pauses de production à risque
 
 Complète « Retard de démarrage » ci-dessus sur un axe différent : celui-ci mesure un retard **avant**
