@@ -40,7 +40,8 @@ TICK_S = 5
 
 
 def kind_of(punch):
-    """0 = Entrée, 1 = Sortie ; tout le reste (porte, alarme...) est ignoré côté Planning."""
+    """0 = Entrée, 1 = Sortie ; tout le reste est « other » (le code brut `punch` accompagne chaque événement : 2/3 = touches pause,
+    4/5 = heures sup, lues seulement pour un salarié réglé « par ordre de passage » côté Planning ; porte/alarme ignorées)."""
     if punch == 0:
         return "in"
     if punch == 1:
@@ -69,6 +70,7 @@ def build_payload(users, attendances, days, now=None, since_date=None, until_dat
             "uid": str(a.user_id).strip(),
             "ts": ts.strftime("%Y-%m-%dT%H:%M:%S"),
             "kind": kind_of(a.punch),
+            "punch": a.punch,   # code brut (0 entrée, 1 sortie, 2/3 pause, 4/5 heures sup, 255 porte...) : Planning décide s'il le lit
         })
     events.sort(key=lambda e: (e["ts"], e["uid"]))
     return {

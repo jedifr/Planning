@@ -2151,6 +2151,34 @@ fonctions, **signalement simple** des journées décalées avec **correction pro
   doublons), `agent_recover_test.py` (plage, battement de cœur → récupération, dates invalides, pointeuse injoignable),
   `recover_ui.js` (Playwright sur serveur réel : bannière, correction, panneau, récupération, doublons).
 
+### Lecture « par ordre de passage » : un salarié qui n'appuie pas sur la bonne touche (v1.115.0)
+
+Cas réel (Cyril, 07/10, page Présence « En pause » alors qu'il travaillait) : pointages bruts de la TM-616 — 07:40:58 `Punch=1` (Sortie, à l'ARRIVÉE), 10:05:57 `Punch=0` (Entrée, au départ en
+pause), 10:14:16 `Punch=2` (touche Pause-sortie), 10:17:06 `Punch=3` (Pause-entrée). Codes de la pointeuse : 0 entrée, 1 sortie, **2/3 pause sortie/entrée**, 4/5 heures sup, 255 porte.
+Deux causes cumulées : (1) le premier passage étant une Sortie, la journée était « décalée » ; le bouton « corriger » (inversion de la journée, `flip`) donnait *arrivée 07:40 / début de pause 10:05* ;
+(2) l'agent classait 2/3 en `other` et **les jetait** — le retour de 10:14 n'existait donc pas, Cyril restait en pause « → en cours » indéfiniment. Même en lisant 2/3 comme sortie/entrée, la lecture selon
+la touche ne le sauve pas (inversée, elle finit encore en pause à 10:17) : son problème est le choix de touche, pas leur interprétation.
+
+- **Réglage** (page Présence → ⏱ TimeMoto → « Lecture des pointages : selon la touche ou par ordre de passage », `SETTINGS_HELP.tmOrdre`) : `config.presence.timemoto.ordreTous` (`false`),
+  `ordreIds` (ids de `userMap`, ex. `zk:10` — case « par ordre » sur chaque ligne de « Association des salariés ») et `antiDoubleMin` (3 min, 0–30, `0` = désactivé) ; `migrateState` en `=== undefined`,
+  et côté serveur (état jamais migré) `sequenceModeFor`/`antiDoubleMinOf` ont leurs propres défauts. **Rien ne change tant qu'on ne coche rien** (lecture selon la touche, comme avant).
+- **`timemotoSync.sequenceKinds(events, antiMin)`** (pur) : la touche est IGNORÉE — chaque passage (touches 0 à 5) bascule présent/absent (1er = entrée, 2e = sortie, 3e = entrée…) ; deux passages à moins
+  de `antiMin` minutes comptent pour un seul (le PREMIER est gardé : double appui ou touche corrigée aussitôt — test exact : 2 min 59 = double, 3 min 01 = passage distinct). Le classement
+  arrivée/pause/départ reste celui de `desiredPunches` (dernière sortie = pause tant que la fin d'horaire n'est pas passée). Appliqué dans `syncDeviceRows` par (salarié, jour) : donc aussi à l'import CSV et à
+  la récupération d'une période ; `res.doubles` compte les écartés (affiché dans le résultat). Une journée en mode ordre ne commence jamais par une sortie → plus de « journée décalée » signalée pour lui.
+  Cyril, mêmes pointages : *arrivée 07:40, pause 10:05 → 10:14, départ* (le 10:17 est un double).
+- **Touches 2 à 5 désormais transmises** : `tm616_sync.py` ajoute `punch` (code brut) à chaque événement ; `parseAgentEvents`/`parseDeviceCsv` (« Punch 2 »…) gardent les événements `other` de code 2 à 5
+  (porte/alarme 255 toujours écartés) mais `syncDeviceRows` ne les lit qu'en mode ordre : **lecture selon la touche inchangée**. **L'agent doit être reconstruit** (`bash deploy.sh`) pour envoyer `punch` ;
+  un ancien agent ne les envoie pas (Cyril resterait alors « en pause »). Un jour déjà importé se corrige à la lecture suivante (3 derniers jours) ou via « Récupérer une période » ; les pointages posés à la main
+  ne sont jamais écrasés, ceux de la pointeuse sont annulés/remplacés (ligne tracée).
+- Limite assumée : un passage **oublié** décale la parité du reste de la journée (retour de pause non badgé → « présent » devient « absent »). Il reste visible (départ non pointé, alerte « tâche en cours sans
+  présence », pointage manquant proposé) et se corrige en un clic ; piste non faite : proposer « fin de pause à l'heure théorique » quand une tâche est ouverte pendant une pause.
+- **Badges (non fait, étude)** : `pyzk` 0.9 sait `set_user(uid, name, privilege, password, group_id, user_id, card)` (créer/modifier), `delete_user(uid)`, `enroll_user` (déclenche l'enrôlement d'un doigt sur la
+  pointeuse) et `get_users()` (nom, n° de badge `card`, PIN) — l'agent ne lit aujourd'hui que `user_id` et `name`. Gérer les badges depuis l'app suppose un canal « agent tiré » comme `recover` (file de commandes
+  validée par un admin, exécutée par l'agent, résultat renvoyé) ; première écriture sur la pointeuse, jusqu'ici strictement en lecture seule.
+- Test (scratchpad `seq_test.js`, 14 assertions sur un vrai SQLite : touches inchangées par défaut, Cyril par ordre, Romain non concerné, relance idempotente, tous + anti-double 0, seuils, agent, CSV, défauts ;
+  `ord_ui.js` Playwright : bloc, case par salarié, anti-double, « tous » masque les cases).
+
 ## Onglet « Pointages »
 
 Retour utilisateur réel : jusqu'ici, voir/corriger un pointage demandait de retrouver la bonne

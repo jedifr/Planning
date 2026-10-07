@@ -1856,7 +1856,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.114.0';
+const APP_VERSION = '1.115.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -2040,6 +2040,7 @@ const SETTINGS_HELP = {
   presenceArrondiEffet: "Les jours avant cette date gardent leurs heures réelles : changer la règle ne réécrit jamais l'historique déjà consulté ou exporté.",
   tmFrequence: "Fréquence à laquelle le conteneur zk-sync relit la pointeuse. Le réglage est repris par l'agent en moins d'une minute, sans redémarrage. « Par défaut » = valeur SYNC_INTERVAL du fichier TM616.env (300 s à défaut). Minimum 1 minute.",
   terminerRecap: "Au clic sur « Terminer » (clic droit du planning, sélecteur de statut du tableau des tâches), une pop-up montre sur une frise le temps prévu face au temps réellement pointé (par personne, avec l'écart et la part au-delà du prévu) avant de clôturer. Rien n'est modifié tant qu'on ne confirme pas. Sans temps pointé, c'est la pop-up « temps déclaré » habituelle qui s'ouvre. Cochée par défaut ; décochée, « Terminer » clôture directement comme avant.",
+  tmOrdre: "La pointeuse classe chaque passage selon la touche appuyée (Entrée, Sortie, Pause…). Un salarié qui se trompe de touche fausse sa journée (ex. « en pause » toute la matinée alors qu'il travaille). En « par ordre de passage », la touche est ignorée : 1er passage = arrivée, 2e = sortie, 3e = retour, etc. ; deux passages à moins de N minutes (anti-double pointage, 3 par défaut) comptent pour un seul. Réglable pour tous ou salarié par salarié. Une journée avec un passage manquant reste signalée (départ non pointé, pointage manquant proposé à la correction).",
   libereAuto: "Une tâche mise en pause à la main réserve son poste jusqu'à la fin du travail restant : pendant ce temps, rien d'autre ne peut y être planifié. Avec une valeur N > 0, une pause manuelle qui dure depuis plus de N heures d'ouverture du poste libère automatiquement ce poste : le temps restant est replanifié comme une tâche à faire, par priorité. Ne concerne jamais les pauses déjeuner ou hors horaires automatiques. 0 = désactivé (valeur par défaut). Chaque tâche peut aussi être libérée à la main (clic droit).",
   urgenceAuto: "Quand l'échéance d'une commande est dépassée (depuis le nombre de jours choisi), le planning la traite comme « Importante » ou « Urgente » : ses tâches passent devant celles des commandes moins prioritaires, et sa carte est colorée en conséquence. Le niveau saisi sur la commande n'est jamais modifié. Désactivé par défaut.",
   dispoAlerte: "Une tâche « À faire » dont toutes les étapes précédentes sont terminées est disponible. Passé ce nombre de jours sans qu'elle soit démarrée, elle est signalée (pastille ambre/rouge sur le Kanban, bloc de la Vue d'ensemble et des Risques de retard, rapport e-mail). 0 = alerte désactivée. Par défaut : 3 jours.",
@@ -2912,6 +2913,10 @@ function migrateState(st){
   // userMap = { id salarié TimeMoto: id utilisateur Planning } — un salarié non associé n'est pas importé.
   if(!st.config.presence.timemoto || typeof st.config.presence.timemoto !== 'object') st.config.presence.timemoto = { actif: false, joursSynchro: 7, userMap: {} };
   if(!st.config.presence.timemoto.userMap || typeof st.config.presence.timemoto.userMap !== 'object') st.config.presence.timemoto.userMap = {};
+  // v1.115.0 : lecture « par ordre de passage » (touches ignorées) — pour tous (`ordreTous`) ou pour certains salariés de la pointeuse (`ordreIds`, ids de userMap), avec anti-double pointage (minutes).
+  if(st.config.presence.timemoto.ordreTous === undefined) st.config.presence.timemoto.ordreTous = false;
+  if(!Array.isArray(st.config.presence.timemoto.ordreIds)) st.config.presence.timemoto.ordreIds = [];
+  if(st.config.presence.timemoto.antiDoubleMin === undefined) st.config.presence.timemoto.antiDoubleMin = 3;
   if(st.config.modules.expedition === undefined) st.config.modules.expedition = false; // libération manuelle du casier — désactivé par défaut, comportement inchangé pour une installation existante
   if(st.config.matiereFusionActive === undefined) st.config.matiereFusionActive = false; // détection par matière/épaisseur désactivée par défaut
   if(st.config.importDateGroupingToleranceDays === undefined) st.config.importDateGroupingToleranceDays = 0; // 0 = aucun regroupement de campagnes à l'import (voir clusterImportDates)
@@ -19258,7 +19263,8 @@ function presenceTmCfg(st){
   const t = (((st || state).config || {}).presence || {}).timemoto || {};
   const im = Math.round(Number(t.intervalleMin));
   // intervalleMin : fréquence de lecture de la pointeuse par le conteneur zk-sync (minutes, 1–60) ; null = valeur du fichier TM616.env.
-  return { actif: !!t.actif, joursSynchro: Number(t.joursSynchro) || 7, userMap: t.userMap || {}, intervalleMin: (t.intervalleMin == null || t.intervalleMin === '' || !(im >= 1)) ? null : Math.min(60, im) };
+  const ad = Number(t.antiDoubleMin);
+  return { actif: !!t.actif, joursSynchro: Number(t.joursSynchro) || 7, userMap: t.userMap || {}, ordreTous: !!t.ordreTous, ordreIds: Array.isArray(t.ordreIds) ? t.ordreIds : [], antiDoubleMin: (t.antiDoubleMin == null || t.antiDoubleMin === '' || !isFinite(ad) || ad < 0) ? 3 : Math.min(30, ad), intervalleMin: (t.intervalleMin == null || t.intervalleMin === '' || !(im >= 1)) ? null : Math.min(60, im) };
 }
 async function loadTimemotoStatus(){
   if(timemotoStatusCache && timemotoStatusCache.status === 'loading') return;
@@ -19278,6 +19284,17 @@ function updateTimemotoConfig(field, value){
   if(field === 'actif') t.actif = !!value;
   else if(field === 'joursSynchro'){ const n = Math.round(Number(value)); t.joursSynchro = isNaN(n) ? 7 : Math.max(1, Math.min(31, n)); }
   else if(field === 'intervalleMin'){ const n = Math.round(Number(value)); t.intervalleMin = (value === '' || value == null || !(n >= 1)) ? null : Math.min(60, n); }
+  else if(field === 'ordreTous') t.ordreTous = !!value;
+  else if(field === 'antiDoubleMin'){ const n = Number(String(value).replace(',', '.')); t.antiDoubleMin = (value === '' || value == null || !isFinite(n) || n < 0) ? 3 : Math.min(30, Math.round(n * 2) / 2); }
+  commit();
+}
+// Lecture « par ordre de passage » pour UN salarié de la pointeuse (id de userMap, ex. « zk:10 ») — voir timemotoSync.sequenceKinds.
+function setTimemotoOrdre(tmId, on){
+  if(!state.config.presence) state.config.presence = {};
+  const t = state.config.presence.timemoto || (state.config.presence.timemoto = {});
+  const ids = new Set(Array.isArray(t.ordreIds) ? t.ordreIds : []);
+  if(on) ids.add(tmId); else ids.delete(tmId);
+  t.ordreIds = [...ids];
   commit();
 }
 function setTimemotoUserMap(tmId, uid){
@@ -19394,6 +19411,7 @@ function timemotoResultHtml(r){
   if(r.respected) parts.push(`${r.respected} laissé${r.respected > 1 ? 's' : ''} de côté (annulé${r.respected > 1 ? 's' : ''} à la main par un superviseur)`);
   if(r.autoOut) parts.push(`${r.autoOut} sortie${r.autoOut > 1 ? 's' : ''} automatique${r.autoOut > 1 ? 's' : ''} TimeMoto ignorée${r.autoOut > 1 ? 's' : ''} (départ non pointé)`);
   if(r.ignored) parts.push(`${r.ignored} pointage${r.ignored > 1 ? 's' : ''} incohérent${r.ignored > 1 ? 's' : ''} ignoré${r.ignored > 1 ? 's' : ''} (double entrée, sortie sans entrée)`);
+  if(r.doubles) parts.push(`${r.doubles} double${r.doubles > 1 ? 's' : ''} pointage${r.doubles > 1 ? 's' : ''} (moins de quelques minutes d’écart) compté${r.doubles > 1 ? 's' : ''} pour un seul`);
   if(r.unmapped) parts.push(`<b>${r.unmapped} journée${r.unmapped > 1 ? 's' : ''} de salariés non associés</b> (non importées)`);
   if(r.noUser) parts.push(`${r.noUser} événement${r.noUser > 1 ? 's' : ''} sans salarié ignoré${r.noUser > 1 ? 's' : ''} (ouverture de porte, alarme…)`);
   if(r.otherAction) parts.push(`${r.otherAction} événement${r.otherAction > 1 ? 's' : ''} ni entrée ni sortie ignoré${r.otherAction > 1 ? 's' : ''}`);
@@ -19668,6 +19686,15 @@ function renderTimemotoImportPanel(){
       ${renderTmRecoverHtml(st)}
       ${renderTmFlipsHtml(st)}
 
+      <div class="modal-section-title" style="margin-top:4px;">Lecture des pointages : selon la touche ou par ordre de passage ${helpTip('tmOrdre')}</div>
+      <div class="footer-note" style="text-align:left; padding-bottom:6px;">Par défaut, chaque passage est classé selon la touche appuyée (Entrée / Sortie). Quand un salarié n'appuie pas sur la bonne touche, vous pouvez la <b>faire ignorer</b> : chaque passage fait alors basculer présent / absent (1<sup>er</sup> = arrivée, 2<sup>e</sup> = sortie, 3<sup>e</sup> = retour…), touches pause comprises. Deux passages à moins de quelques minutes comptent pour un seul (double appui ou touche corrigée aussitôt).</div>
+      <div class="tm-actions">
+        <label class="statut-chip" style="margin:0;"><input type="checkbox" ${tm.ordreTous ? 'checked' : ''} data-action="tm-config" data-field="ordreTous"> Pour tous les salariés</label>
+        <span class="tm-sep"></span>
+        <label class="tm-inline">Anti-double pointage <input type="number" min="0" max="30" step="0.5" value="${tm.antiDoubleMin}" data-action="tm-config" data-field="antiDoubleMin" style="width:70px;"> min</label>
+      </div>
+      <div class="footer-note" style="text-align:left; padding:4px 0 2px;">Sinon, cochez « par ordre » sur les salariés concernés dans la liste ci-dessous. S'applique aux lectures suivantes de la pointeuse (les 3 derniers jours sont relus à chaque lecture) ; pour un jour plus ancien, utilisez « Récupérer une période ». Une correction faite à la main n'est jamais écrasée.</div>
+
       <div class="modal-section-title">A. Fichier CSV de la pointeuse <span class="footer-note">(import manuel — dépannage, reprise d’historique)</span></div>
       <div class="footer-note" style="text-align:left; padding-bottom:6px;">Lancez <span class="pr-mono">tools/tm616_export.py</span> sur un PC du réseau de l'atelier (il lit la TM-616 directement, sans TimeMoto Cloud ni jeton), puis choisissez ici le fichier <span class="pr-mono">pointages_tm616.csv</span> obtenu. Seule la période choisie ci-dessous est importée (par défaut les derniers jours) ; relancer ne crée jamais de doublon.</div>
       <div class="tm-actions">
@@ -19715,7 +19742,7 @@ function renderTimemotoImportPanel(){
               <option value="">— ne pas importer —</option>
               ${users.map(u => `<option value="${u.id}" ${String(u.id) === String(cur) ? 'selected' : ''}>${escapeHtml(u.username)}</option>`).join('')}
             </select>
-            ${sug ? `<span class="footer-note">suggestion : ${escapeHtml(presenceUserName(sug))}</span>` : (cur ? '' : '<span class="tm-err-txt" style="font-size:12px;">non importé</span>')}</div>`;
+            ${sug ? `<span class="footer-note">suggestion : ${escapeHtml(presenceUserName(sug))}</span>` : (cur ? (tm.ordreTous ? '<span class="footer-note">lu par ordre de passage</span>' : `<label class="tm-inline" style="font-size:12px;" title="Ignore la touche appuyée : chaque passage bascule présent / absent"><input type="checkbox" ${tm.ordreIds.includes(t.id) ? 'checked' : ''} data-action="tm-ordre-user" data-tm-id="${escapeHtml(t.id)}" style="width:auto;"> par ordre</label>`) : '<span class="tm-err-txt" style="font-size:12px;">non importé</span>')}</div>`;
         }).join('')}
       </div>
       ${suggestions ? `<button class="small" data-action="tm-apply-suggestions" style="margin-top:6px;">Appliquer les ${suggestions} suggestion${suggestions > 1 ? 's' : ''} par le nom</button>` : ''}`
@@ -20665,6 +20692,7 @@ function dispatchChangeAction(el, action){
     case 'presence-config': updatePresenceConfig(el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
     case 'tm-config': updateTimemotoConfig(el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
     case 'tm-user-map': setTimemotoUserMap(el.dataset.tmId, el.value); break;
+    case 'tm-ordre-user': setTimemotoOrdre(el.dataset.tmId, el.checked); break;
     case 'tm-csv-file': loadTimemotoCsvFile(el.files && el.files[0]); break;
     case 'tm-recover-field': tmRecoverFormGet()[el.dataset.field] = el.value; break;
     case 'dup-field': presenceDupInit(); presenceDup[el.dataset.field] = el.dataset.field === 'minutes' ? (Number(el.value) || 5) : el.value; break;

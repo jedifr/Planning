@@ -386,7 +386,8 @@ function parseDeviceCsv(text){
     const uid = c[iUser] || '';
     if(!uid){ out.noUser++; return; }
     const act = noAccent(c[iAct]);
-    const kind = act.startsWith('entr') ? 'in' : act.startsWith('sort') ? 'out' : null;
+    const pm = /^punch\s*([2-5])$/.exec(act);
+    const kind = act.startsWith('entr') ? 'in' : act.startsWith('sort') ? 'out' : pm ? 'other' : null;
     if(!kind){ out.otherAction++; return; }
     const dm = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(c[iDate] || '');
     const day = dm ? `${dm[3]}-${dm[2]}-${dm[1]}` : (presence.DATE_RE.test(c[iDate] || '') ? c[iDate] : null);
@@ -395,9 +396,28 @@ function parseDeviceCsv(text){
     const ts = `${day}T${String(tm[1]).padStart(2, '0')}:${tm[2]}:${tm[3] || '00'}`;
     const nm = iName >= 0 ? c[iName] : '';
     if(nm && noAccent(nm) !== 'inconnu') out.names.set(uid, nm);
-    out.events.push({ uid, day, ts, kind });
+    out.events.push(kind === 'other' ? { uid, day, ts, kind, punch: Number(pm[1]) } : { uid, day, ts, kind });
   });
   return out;
+}
+// ---------- Lecture « par ordre de passage » (v1.115.0) ----------
+// Cas réel (Cyril, 07/10) : un salarié qui n'appuie pas sur la bonne touche (Sortie à l'arrivée, Entrée à la pause, puis
+// Pause-sortie/Pause-entrée au retour) ne peut pas être lu « selon la touche » : la journée se retrouvait inversée puis figée
+// « en pause ». Pour lui (ou pour tous), la touche est IGNORÉE : chaque passage fait basculer présent/absent (1er = entrée,
+// 2e = sortie, 3e = entrée…), toutes touches confondues (0 à 5). Deux passages à moins de `antiDoubleMin` minutes comptent
+// pour un seul (le PREMIER est gardé : double appui, ou touche corrigée aussitôt). Le classement arrivée/pause/départ reste
+// celui de desiredPunches. Une journée impaire (retour ou départ non badgé) reste visible : « départ non pointé » / suggestion.
+function sequenceModeFor(tmCfg, tmId){ return !!(tmCfg && tmCfg.ordreTous) || (Array.isArray(tmCfg && tmCfg.ordreIds) && tmCfg.ordreIds.includes(tmId)); }
+function antiDoubleMinOf(tmCfg){ const n = Number(tmCfg && tmCfg.antiDoubleMin); return (tmCfg && tmCfg.antiDoubleMin != null && tmCfg.antiDoubleMin !== '' && isFinite(n) && n >= 0) ? Math.min(30, n) : 3; }
+function sequenceKinds(events, antiMin){
+  const sorted = events.slice().sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0);
+  const kept = [], dropped = [];
+  sorted.forEach(e => {
+    const last = kept[kept.length - 1];
+    if(last && antiMin > 0 && (Date.parse(e.ts) - Date.parse(last.ts)) / 60000 < antiMin){ dropped.push(e); return; }
+    kept.push(e);
+  });
+  return { events: kept.map((e, i) => ({ ts: e.ts, kind: i % 2 === 0 ? 'in' : 'out' })), dropped };
 }
 function syncDeviceRows(db, st, parsed, opts){
   const o = opts || {};
@@ -416,7 +436,8 @@ function syncDeviceRows(db, st, parsed, opts){
     if(!byDay.has(k)) byDay.set(k, { uid: ev.uid, day: ev.day, events: [] });
     byDay.get(k).events.push(ev);
   });
-  const res = { device: true, from, to: until || today, rows: byDay.size, complete: true, added: 0, cancelled: 0, respected: 0, autoOut: 0, ignored: 0, unmapped: 0, noUser: parsed.noUser, otherAction: parsed.otherAction, badDate: parsed.badDate, dryRun: !!o.dryRun, byUser: {} };
+  const antiMin = antiDoubleMinOf(tmCfg);
+  const res = { device: true, from, to: until || today, rows: byDay.size, complete: true, doubles: 0, added: 0, cancelled: 0, respected: 0, autoOut: 0, ignored: 0, unmapped: 0, noUser: parsed.noUser, otherAction: parsed.otherAction, badDate: parsed.badDate, dryRun: !!o.dryRun, byUser: {} };
   const flags = loadFlags(db);
   const apply = () => {
     byDay.forEach(g => {
@@ -424,7 +445,10 @@ function syncDeviceRows(db, st, parsed, opts){
       const uid = userMap[tmId] ? String(userMap[tmId]) : '';
       if(!uid){ res.unmapped++; return; }
       // Même forme que la réponse TimeMoto Cloud : un « pair » par événement (entrée ou sortie seule).
-      const row = rowFromEvents(g.day, g.events);
+      let evs;
+      if(sequenceModeFor(tmCfg, tmId)){ const sq = sequenceKinds(g.events, antiMin); evs = sq.events; res.doubles += sq.dropped.length; }
+      else evs = g.events.filter(e => e.kind === 'in' || e.kind === 'out'); // lecture selon la touche : les touches pause/heures sup restent ignorées
+      const row = rowFromEvents(g.day, evs);
       const d = desiredPunches(row, uid, st, now, !!flags.flips[`${tmId}|${g.day}`]);
       res.autoOut += d.anomalies.autoOut; res.ignored += d.anomalies.ignored;
       noteDayFlags(flags, tmId, uid, g.day, d, res);
@@ -480,13 +504,17 @@ function parseAgentEvents(payload){
     out.lines++;
     const uid = String((ev && ev.uid) == null ? '' : ev.uid).trim();
     if(!uid || uid === '0'){ out.noUser++; return; }
-    const kind = ev.kind === 'in' ? 'in' : ev.kind === 'out' ? 'out' : null;
+    // Touches pause / heures sup de la pointeuse (code 2 à 5) : conservées avec leur code — ignorées par défaut (lecture « selon la
+    // touche »), prises en compte seulement pour un salarié lu « par ordre de passage » (voir sequenceKinds). Porte, alarme... : écartées.
+    const pc = Number(ev && ev.punch);
+    const brk = ev.kind === 'other' && pc >= 2 && pc <= 5;
+    const kind = ev.kind === 'in' ? 'in' : ev.kind === 'out' ? 'out' : brk ? 'other' : null;
     if(!kind){ out.otherAction++; return; }
     const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(String(ev.ts || ''));
     if(!m){ out.badDate++; return; }
     const ts = `${m[1]}T${m[2]}:${m[3]}:${m[4] || '00'}`;
     if(new Date(ts).getTime() > limit){ out.future++; return; }
-    out.events.push({ uid, day: m[1], ts, kind });
+    out.events.push(kind === 'other' ? { uid, day: m[1], ts, kind, punch: pc } : { uid, day: m[1], ts, kind });
   });
   return out;
 }
@@ -674,5 +702,5 @@ async function runSync(db, st, opts){
 
 module.exports = {
   initTimemotoTables, runSync, runDeviceImport, runDeviceEvents, parseAgentEvents, parseDeviceCsv, syncDeviceRows, status, syncOnce, desiredPunches, reconcileDay, expectedEndFor, expectedBoundsFor, ignoredEventsFor, SYSTEM_USER,
-  requestRecovery, applyRecovery, cancelRecovery, recoveryRecord, applyFlagAction, flaggedCount, flagInfo, rowFromEvents
+  requestRecovery, applyRecovery, cancelRecovery, recoveryRecord, applyFlagAction, flaggedCount, flagInfo, rowFromEvents, sequenceKinds, sequenceModeFor
 };
