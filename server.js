@@ -609,6 +609,42 @@ app.post('/api/presence/timemoto/recover', requireAdmin, requireLicense, require
   if(!r.ok) return res.status(400).json({ error: r.error });
   res.json({ ok: true, status: timemoto.status(db, readStateFull()) });
 });
+// Badges de la pointeuse gérés depuis l'application (v1.116.0, administrateurs) : préparer → confirmer → l'agent
+// zk-sync écrit sur la pointeuse et relit pour vérifier. Voir timemotoSync.js (section « Badges de la pointeuse »).
+function requireTimemotoActif(req, res, next){
+  const tm = presenceConfig().timemoto || {};
+  if(!tm.actif) return res.status(403).json({ error: 'Le suivi TimeMoto est désactivé (page Présence → TimeMoto → case d\'activation).' });
+  next();
+}
+app.get('/api/presence/timemoto/badges', requireAdmin, requireLicense, requirePresence, requireTimemotoActif, (req, res) => {
+  res.json(timemoto.badgeState(db));
+});
+app.post('/api/presence/timemoto/badges', requireAdmin, requireLicense, requirePresence, requireTimemotoActif, (req, res) => {
+  const b = req.body || {};
+  const action = String(b.action || '');
+  const who = (db.prepare('SELECT username FROM users WHERE id = ?').get(req.session.userId) || {}).username || String(req.session.userId || '');
+  let r;
+  if(action === 'prepare') r = timemoto.prepareBadge(db, readStateFull(), { ...b, by: who });
+  else if(action === 'confirm') r = timemoto.confirmBadge(db, String(b.id || ''), who);
+  else if(action === 'cancel') r = timemoto.cancelBadge(db, String(b.id || ''), who);
+  else return res.status(400).json({ error: 'Action inconnue.' });
+  if(!r.ok) return res.status(400).json({ error: r.error });
+  res.json({ ok: true, cmd: r.cmd || null, badges: timemoto.badgeState(db) });
+});
+// Association Planning d'un salarié ajouté sur la pointeuse (choisie au moment de la demande) : appliquée une fois
+// l'écriture vérifiée, directement dans l'état (même schéma que les jobs serveur : lecture/écriture synchrones).
+function applyBadgeAssociation(cmd){
+  try{
+    if(!cmd || cmd.kind !== 'add' || cmd.state !== 'done' || !cmd.planningUserId) return;
+    const row = db.prepare('SELECT data, version FROM app_state WHERE id = 1').get();
+    const data = JSON.parse(row.data);
+    const tm = (((data.config || (data.config = {})).presence || (data.config.presence = {})).timemoto || (data.config.presence.timemoto = {}));
+    if(!tm.userMap) tm.userMap = {};
+    if(tm.userMap['zk:' + cmd.userId]) return;
+    tm.userMap['zk:' + cmd.userId] = cmd.planningUserId;
+    db.prepare('UPDATE app_state SET data = ?, version = ?, updated_at = ? WHERE id = 1').run(JSON.stringify(data), row.version + 1, nowIso());
+  }catch(e){ console.error('Association du badge ajouté impossible :', e.message); }
+}
 // Journées dont le premier pointage de la pointeuse est une sortie : correction proposée (inverser
 // entrées et sorties de la journée) ou ignorée, par un superviseur.
 app.post('/api/presence/timemoto/flag', requireAuth, requireLicense, requirePresence, (req, res) => {
@@ -682,6 +718,7 @@ app.post('/api/presence/device-sync', requireLicense, requirePresence, (req, res
   if(!tm.actif) return res.status(403).json({ error: 'Le suivi TimeMoto est désactivé (page Présence → TimeMoto → case d\'activation).' });
   const r = timemoto.runDeviceEvents(db, readStateFull(), req.body || {}, {});
   if(!r.ok) return res.status(r.busy ? 409 : 400).json({ error: r.error });
+  if(r.badgeDone){ applyBadgeAssociation(r.badgeDone); delete r.badgeDone; }
   res.json(r);
 });
 

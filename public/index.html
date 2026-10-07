@@ -1740,6 +1740,20 @@
   .tm-bookmarklet:active{cursor:grabbing;}
   .tm-panel-head{display:flex; justify-content:space-between; align-items:center; gap:10px;}
   .pr-tm-panel{margin:0 0 14px;}
+  .tmb-scroll{overflow-x:auto; margin-top:6px;}
+  table.tmb-table{width:100%; border-collapse:collapse; font-size:13px; min-width:640px;}
+  table.tmb-table th{font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-dim); text-align:left; padding:6px 8px; border-bottom:1px solid var(--line);}
+  table.tmb-table td{padding:7px 8px; border-bottom:1px solid var(--line-soft); vertical-align:middle;}
+  .tmb-tag{display:inline-block; font-size:11px; padding:1px 8px; border-radius:999px; border:1px solid var(--line); color:var(--text-dim); white-space:nowrap;}
+  .tmb-tag.ok{border-color:rgba(53,117,87,0.45); color:var(--green);}
+  .tmb-tag.warn{border-color:rgba(160,109,26,0.45); color:var(--amber);}
+  .tmb-tag.bad{border-color:var(--red); color:var(--red);}
+  .tmb-tag.blue{border-color:var(--blue); color:var(--blue);}
+  .tmb-cmd{border:1px solid var(--line); border-left:4px solid var(--amber); border-radius:8px; padding:8px 12px; background:var(--panel); display:flex; flex-direction:column; gap:5px; font-size:12.5px;}
+  .tmb-cmd.done{border-left-color:var(--green);} .tmb-cmd.err{border-left-color:var(--red);} .tmb-cmd.sent{border-left-color:var(--blue);} .tmb-cmd.off{border-left-color:var(--line); opacity:.75;}
+  .tmb-cmd-head{display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between;}
+  .tmb-form{display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:10px;}
+  .tmb-err{margin-top:8px; font-size:12.5px; padding:7px 10px; border-radius:8px; border:1px solid var(--red); color:var(--red); background:var(--panel);}
   @media (max-width:720px){ .tm-map-row{grid-template-columns:1fr; gap:3px;} .tm-arrow{display:none;} }
   .pc-checklist{display:flex; flex-direction:column;}
   .pc-check{display:grid; grid-template-columns:24px minmax(0,1fr) auto auto; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line-soft);}
@@ -1856,7 +1870,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.115.0';
+const APP_VERSION = '1.116.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -2040,6 +2054,7 @@ const SETTINGS_HELP = {
   presenceArrondiEffet: "Les jours avant cette date gardent leurs heures réelles : changer la règle ne réécrit jamais l'historique déjà consulté ou exporté.",
   tmFrequence: "Fréquence à laquelle le conteneur zk-sync relit la pointeuse. Le réglage est repris par l'agent en moins d'une minute, sans redémarrage. « Par défaut » = valeur SYNC_INTERVAL du fichier TM616.env (300 s à défaut). Minimum 1 minute.",
   terminerRecap: "Au clic sur « Terminer » (clic droit du planning, sélecteur de statut du tableau des tâches), une pop-up montre sur une frise le temps prévu face au temps réellement pointé (par personne, avec l'écart et la part au-delà du prévu) avant de clôturer. Rien n'est modifié tant qu'on ne confirme pas. Sans temps pointé, c'est la pop-up « temps déclaré » habituelle qui s'ouvre. Cochée par défaut ; décochée, « Terminer » clôture directement comme avant.",
+  tmBadges: "Ajouter un salarié sur la pointeuse, changer son nom ou son n° de badge (carte perdue ou remplacée), retirer le badge, ou supprimer le salarié — sans biométrie (pas d'empreinte). Administrateurs seulement. Vous préparez la modification, vous la confirmez, puis le conteneur zk-sync l'écrit sur la pointeuse (moins d'une minute) et RELIT la pointeuse pour vérifier. Chaque demande est journalisée (qui, quand, avant → après) ; le code n'est jamais affiché ni conservé. Un n° de badge déjà attribué est refusé. Supprimer un salarié ne supprime pas ses pointages déjà enregistrés dans Planning. Nécessite l'agent à jour (bash deploy.sh).",
   tmOrdre: "La pointeuse classe chaque passage selon la touche appuyée (Entrée, Sortie, Pause…). Un salarié qui se trompe de touche fausse sa journée (ex. « en pause » toute la matinée alors qu'il travaille). En « par ordre de passage », la touche est ignorée : 1er passage = arrivée, 2e = sortie, 3e = retour, etc. ; deux passages à moins de N minutes (anti-double pointage, 3 par défaut) comptent pour un seul. Réglable pour tous ou salarié par salarié. Une journée avec un passage manquant reste signalée (départ non pointé, pointage manquant proposé à la correction).",
   libereAuto: "Une tâche mise en pause à la main réserve son poste jusqu'à la fin du travail restant : pendant ce temps, rien d'autre ne peut y être planifié. Avec une valeur N > 0, une pause manuelle qui dure depuis plus de N heures d'ouverture du poste libère automatiquement ce poste : le temps restant est replanifié comme une tâche à faire, par priorité. Ne concerne jamais les pauses déjeuner ou hors horaires automatiques. 0 = désactivé (valeur par défaut). Chaque tâche peut aussi être libérée à la main (clic droit).",
   urgenceAuto: "Quand l'échéance d'une commande est dépassée (depuis le nombre de jours choisi), le planning la traite comme « Importante » ou « Urgente » : ses tâches passent devant celles des commandes moins prioritaires, et sa carte est colorée en conséquence. Le niveau saisi sur la commande n'est jamais modifié. Désactivé par défaut.",
@@ -19660,6 +19675,166 @@ function renderPresenceDupPanel(){
       ${body}
     </div>`;
 }
+// ---------- v1.116.0 : badges de la pointeuse gérés depuis l'application (administrateurs) ----------
+// Préparer → confirmer → l'agent zk-sync écrit sur la pointeuse (sous une minute) et relit pour vérifier. Sans biométrie :
+// nom + n° de badge + code facultatif. État côté serveur (timemoto_meta) ; ici seulement l'affichage et le formulaire (transitoires).
+let tmBadgesOpen = false;      // section dépliée dans le panneau TimeMoto (transitoire)
+let tmBadges = null;           // { status:'loading'|'ok'|'error', data:{users,usersAt,cmds,agent}, error }
+let tmBadgeForm = null;        // { mode:'add'|'edit'|'delete', slot, name, card, pin, clearPin, planningUserId, error, saving }
+let tmBadgePollTimer = null;
+const TMB_STATE_LABEL = { wait: ['warn', 'à confirmer'], confirmed: ['blue', 'confirmée — en attente de l’agent'], sent: ['blue', 'envoyée à la pointeuse…'], done: ['ok', '✓ écrit et vérifié sur la pointeuse'], error: ['bad', 'échec'], cancelled: ['', 'annulée'], expired: ['', 'oubliée (non confirmée)'] };
+async function loadTmBadges(){
+  if(tmBadges && tmBadges.status === 'loading') return;
+  tmBadges = { status: 'loading', data: tmBadges && tmBadges.data };
+  try{
+    const res = await fetch('/api/presence/timemoto/badges', { credentials: 'include' });
+    const json = await res.json().catch(() => ({}));
+    tmBadges = res.ok ? { status: 'ok', data: json } : { status: 'error', error: json.error || 'Chargement impossible.' };
+  }catch(e){ tmBadges = { status: 'error', error: 'Serveur injoignable.' }; }
+  presenceRenderIfIdle();
+}
+function tmBadgeSchedulePoll(){
+  const cmds = (tmBadges && tmBadges.data && tmBadges.data.cmds) || [];
+  const waiting = tmBadgesOpen && cmds.some(c => c.state === 'confirmed' || c.state === 'sent');
+  if(!waiting){ if(tmBadgePollTimer){ clearTimeout(tmBadgePollTimer); tmBadgePollTimer = null; } return; }
+  if(tmBadgePollTimer) return;
+  tmBadgePollTimer = setTimeout(async () => { tmBadgePollTimer = null; await loadTmBadges(); }, 4000);
+}
+async function tmBadgeCall(body){
+  try{
+    const res = await fetch('/api/presence/timemoto/badges', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const json = await res.json().catch(() => ({}));
+    if(json.badges) tmBadges = { status: 'ok', data: json.badges };
+    return res.ok ? { ok: true, json } : { ok: false, error: json.error || `Erreur HTTP ${res.status}.` };
+  }catch(e){ return { ok: false, error: 'Serveur injoignable.' }; }
+}
+function tmBadgeUsers(){ return (tmBadges && tmBadges.data && tmBadges.data.users) || []; }
+function tmBadgePending(slot){ return ((tmBadges && tmBadges.data && tmBadges.data.cmds) || []).some(c => c.slot === slot && (c.state === 'wait' || c.state === 'confirmed' || c.state === 'sent')); }
+function tmBadgeOpenForm(mode, slot){
+  const u = mode === 'add' ? null : tmBadgeUsers().find(x => x.slot === slot);
+  if(mode !== 'add' && !u) return;
+  tmBadgeForm = { mode, slot: slot == null ? null : slot, name: u ? u.name : '', card: u && u.card ? String(u.card) : '', pin: '', clearPin: false, planningUserId: '', error: '', saving: false };
+  render();
+}
+// Doublon de badge : message immédiat à la frappe (le serveur et l'agent revérifient de toute façon).
+function tmBadgeDupMsg(){
+  const f = tmBadgeForm; if(!f || f.mode === 'delete') return '';
+  const c = String(f.card || '').replace(/\s+/g, '').replace(/^0+(?=\d)/, '');
+  if(!c || c === '0') return '';
+  const dup = tmBadgeUsers().find(u => String(u.card) === c && u.slot !== f.slot);
+  return dup ? `⛔ Ce n° de badge est déjà attribué à « ${dup.name} » — modification impossible.` : '';
+}
+async function tmBadgeSubmitForm(){
+  const f = tmBadgeForm; if(!f || f.saving) return;
+  if(tmBadgeDupMsg()){ return; }
+  f.saving = true; f.error = ''; render();
+  const body = f.mode === 'add'
+    ? { action: 'prepare', kind: 'add', name: f.name, card: f.card, pin: f.pin, planningUserId: f.planningUserId || null }
+    : { action: 'prepare', kind: 'edit', slot: f.slot, name: f.name, card: f.card, pin: f.pin, clearPin: !!f.clearPin };
+  const r = await tmBadgeCall(body);
+  if(!r.ok){ f.saving = false; f.error = r.error; render(); return; }
+  tmBadgeForm = null; showToast('Modification préparée : confirmez-la dans la liste pour l’envoyer à la pointeuse.'); render();
+}
+async function tmBadgePrepareSimple(body, okMsg){
+  const f = tmBadgeForm; if(f){ f.saving = true; f.error = ''; render(); }
+  const r = await tmBadgeCall(body);
+  if(!r.ok){ if(f){ f.saving = false; f.error = r.error; } else showToast(r.error); render(); return; }
+  tmBadgeForm = null; showToast(okMsg); render();
+}
+async function tmBadgeAct(action, id){
+  const c = ((tmBadges && tmBadges.data && tmBadges.data.cmds) || []).find(x => x.id === id);
+  if(action === 'confirm' && c && c.kind === 'delete' && !confirm(`Supprimer « ${c.before.name} » de la pointeuse ?\n\nIl ne pourra plus pointer. Ses pointages déjà enregistrés restent dans Planning.`)) return;
+  const r = await tmBadgeCall({ action, id });
+  if(!r.ok) showToast(r.error);
+  else if(action === 'confirm') showToast('Envoyée à l’agent : écriture sur la pointeuse sous une minute.');
+  render();
+}
+function tmBadgeWho(c){
+  const p = [`Demandé par ${escapeHtml(c.requestedBy || '?')} · ${escapeHtml(timemotoDateTime(c.requestedAt))}`];
+  if(c.confirmedBy) p.push(`confirmé par ${escapeHtml(c.confirmedBy)}`);
+  if(c.doneAt) p.push(`terminé ${escapeHtml(timemotoDateTime(c.doneAt))}`);
+  return p.join(' · ');
+}
+function renderTmBadgesHtml(){
+  if(!tmBadgesOpen){
+    return `<div class="modal-section-title" style="margin-top:4px;">🪪 Badges de la pointeuse ${helpTip('tmBadges')}</div>
+      <div class="tm-actions"><button class="small" data-action="tm-badges-toggle">Gérer les badges (ajouter, modifier, supprimer)…</button></div>`;
+  }
+  if(!tmBadges) loadTmBadges();
+  tmBadgeSchedulePoll();
+  const d = tmBadges && tmBadges.data;
+  const tmc = presenceTmCfg();
+  const cards = u => u.card ? `<span class="pr-mono">${u.card}</span>` : '<span class="tmb-tag warn">aucun badge</span>';
+  const rows = d ? d.users.slice().sort((a, b) => (Number(a.uid) || 0) - (Number(b.uid) || 0)).map(u => {
+    const pend = tmBadgePending(u.slot);
+    const pl = tmc.userMap['zk:' + u.uid];
+    return `<tr><td class="pr-mono">${escapeHtml(u.uid)}</td><td><b>${escapeHtml(u.name)}</b>${u.privilege ? ' <span class="tmb-tag" title="Administrateur de la pointeuse : suppression impossible depuis l’application">admin pointeuse</span>' : ''}</td>
+      <td>${cards(u)}</td><td>${u.hasPin ? '<span class="tmb-tag">défini</span>' : '<span class="tmb-tag">—</span>'}</td>
+      <td>${pl ? escapeHtml(presenceUserName(pl)) : '<span class="footer-note">non associé</span>'}</td>
+      <td>${pend ? '<span class="tmb-tag blue">modification en attente</span>' : '<span class="tmb-tag ok">sur la pointeuse</span>'}</td>
+      <td style="white-space:nowrap;"><button class="small" data-action="tm-badge-edit" data-slot="${u.slot}" ${pend ? 'disabled' : ''}>Modifier</button> <button class="small danger-ghost" data-action="tm-badge-del" data-slot="${u.slot}" ${pend ? 'disabled' : ''}>Supprimer…</button></td></tr>`;
+  }).join('') : '';
+  const ageMin = d && d.usersAt ? Math.round((Date.now() - new Date(d.usersAt).getTime()) / 60000) : null;
+  const agent = d && d.agent;
+  const live = agent && agent.lastSeenAt && (Date.now() - new Date(agent.lastSeenAt).getTime()) < 15 * 60000;
+  const cmds = d ? d.cmds.slice(0, 15) : [];
+  const queue = cmds.length ? cmds.map(c => {
+    const [tone, lbl] = TMB_STATE_LABEL[c.state] || ['', c.state];
+    const cls = c.state === 'wait' ? '' : c.state === 'done' ? 'done' : c.state === 'error' ? 'err' : (c.state === 'sent' || c.state === 'confirmed') ? 'sent' : 'off';
+    return `<div class="tmb-cmd ${cls}"><div class="tmb-cmd-head"><b>${escapeHtml(c.summary || '')}</b><span class="tmb-tag ${tone}">${escapeHtml(lbl)}</span></div>
+      <div class="footer-note" style="text-align:left;">${tmBadgeWho(c)}</div>
+      ${c.error ? `<div class="tm-err-txt">${escapeHtml(c.error)}</div>` : ''}
+      ${c.state === 'wait' ? `<div class="tm-actions" style="margin-top:2px;"><button class="small primary" data-action="tm-badge-act" data-do="confirm" data-id="${escapeHtml(c.id)}">✔ Confirmer l’envoi à la pointeuse</button><button class="small" data-action="tm-badge-act" data-do="cancel" data-id="${escapeHtml(c.id)}">Annuler</button></div>` : ''}
+      ${c.state === 'confirmed' ? `<div class="tm-actions" style="margin-top:2px;"><span class="footer-note">L’agent la prend au prochain contact (moins d’une minute).</span><button class="small" data-action="tm-badge-act" data-do="cancel" data-id="${escapeHtml(c.id)}">Annuler</button></div>` : ''}
+    </div>`;
+  }).join('') : '<div class="footer-note" style="text-align:left;">Aucune modification pour l’instant.</div>';
+  return `<div class="modal-section-title" style="margin-top:4px;">🪪 Badges de la pointeuse ${helpTip('tmBadges')}
+      <button class="small" data-action="tm-badges-toggle" style="margin-left:8px;">Replier</button></div>
+    <div class="tm-actions" style="margin-top:0;">
+      ${agent ? `<span class="tmb-tag ${live ? 'ok' : 'warn'}">Agent ${live ? 'en ligne' : 'sans signe de vie récent'}</span>` : '<span class="tmb-tag bad">Aucun signe de vie de l’agent</span>'}
+      ${ageMin != null ? `<span class="footer-note">Liste lue sur la pointeuse il y a ${ageMin < 1 ? 'moins d’une minute' : ageMin + ' min'}.</span>` : ''}
+      <span style="flex:1;"></span>
+      <button class="small primary" data-action="tm-badge-add" ${d && d.users.length ? '' : 'disabled'}>＋ Ajouter un salarié / un badge</button>
+    </div>
+    <div class="footer-note" style="text-align:left; padding:4px 0;">Le n° de badge est celui de la carte ; le code n’est jamais affiché ni relu, seulement « défini ». Rien n’est écrit sans votre confirmation ; l’agent relit ensuite la pointeuse pour vérifier. Pas d’empreinte ni de visage.</div>
+    ${!tmBadges || (tmBadges.status === 'loading' && !d) ? '<div class="pr-empty">Chargement…</div>' : tmBadges.status === 'error' ? `<div class="tm-result tm-err">✗ ${escapeHtml(tmBadges.error)}</div>` : (d.users.length ? `<div class="tmb-scroll"><table class="tmb-table"><thead><tr><th>N°</th><th>Nom sur la pointeuse</th><th>Badge</th><th>Code</th><th>Salarié Planning</th><th>État</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="footer-note" style="text-align:left;">La liste des salariés de la pointeuse n’a pas encore été lue : l’agent doit être à jour (<span class="pr-mono">bash deploy.sh</span>) et la pointeuse joignable.</div>')}
+    <div class="modal-section-title" style="margin-top:10px;">Modifications en attente et historique</div>
+    <div style="display:flex; flex-direction:column; gap:6px;">${queue}</div>`;
+}
+function renderTmBadgeModal(){
+  const f = tmBadgeForm; if(!f) return '';
+  const u = f.mode === 'add' ? null : tmBadgeUsers().find(x => x.slot === f.slot);
+  const users = (usersList || []).slice().sort((a, b) => String(a.username).localeCompare(String(b.username), 'fr'));
+  const dup = tmBadgeDupMsg();
+  if(f.mode === 'delete'){
+    return `<div class="modal-overlay"><div class="modal-box" role="dialog" aria-label="Supprimer de la pointeuse" style="max-width:540px;">
+      <div class="modal-head"><div class="pc-title">Supprimer ${escapeHtml(u ? u.name : '')} de la pointeuse ?</div><button class="ghost icon-btn" data-action="tm-badge-close" aria-label="Fermer">✕</button></div>
+      <div class="modal-body">
+        <div class="tm-result" style="border-color:var(--amber);">⚠ Le salarié ne pourra plus pointer. <b>Ses pointages déjà enregistrés restent dans Planning</b> (la pointeuse les affichera « INCONNU »). Pour garder le salarié et seulement enlever sa carte, choisissez « Retirer le badge seulement ».</div>
+        ${f.error ? `<div class="tmb-err">${escapeHtml(f.error)}</div>` : ''}
+        <div class="form-actions"><button data-action="tm-badge-close">Annuler</button>
+          <button data-action="tm-badge-remove-card" ${u && u.card && !f.saving ? '' : 'disabled'}>Retirer le badge seulement</button>
+          <button class="danger" data-action="tm-badge-del-go" ${f.saving ? 'disabled' : ''}>Préparer la suppression</button></div>
+      </div></div></div>`;
+  }
+  const add = f.mode === 'add';
+  return `<div class="modal-overlay"><div class="modal-box" role="dialog" aria-label="${add ? 'Ajouter un salarié' : 'Modifier un salarié'}" style="max-width:600px;">
+    <div class="modal-head"><div class="pc-title">${add ? 'Ajouter un salarié sur la pointeuse' : 'Modifier ' + escapeHtml(u ? u.name : '')}</div><button class="ghost icon-btn" data-action="tm-badge-close" aria-label="Fermer">✕</button></div>
+    <div class="modal-body">
+      <div class="tmb-form">
+        <label class="field">Nom affiché sur la pointeuse<input id="tmb-name" value="${escapeHtml(f.name)}" maxlength="24" placeholder="Prénom NOM (24 caractères max)" data-action="tm-badge-field" data-field="name"></label>
+        <label class="field">N° de badge (carte)<input id="tmb-card" class="pr-mono" value="${escapeHtml(f.card)}" inputmode="numeric" placeholder="ex. 8412401" data-action="tm-badge-field" data-field="card"></label>
+        <label class="field">Code (facultatif)<input id="tmb-pin" type="password" value="${escapeHtml(f.pin)}" inputmode="numeric" maxlength="8" placeholder="${add ? '1 à 8 chiffres' : 'laisser vide = inchangé'}" autocomplete="new-password" data-action="tm-badge-field" data-field="pin"></label>
+        ${add ? `<label class="field">Salarié Planning associé<select data-action="tm-badge-field" data-field="planningUserId"><option value="">— associer plus tard —</option>${users.map(x => `<option value="${x.id}" ${String(f.planningUserId) === String(x.id) ? 'selected' : ''}>${escapeHtml(x.username)}</option>`).join('')}</select></label>`
+          : (u && u.hasPin ? `<label class="tm-inline" style="align-self:end;"><input type="checkbox" ${f.clearPin ? 'checked' : ''} data-action="tm-badge-field" data-field="clearPin"> Effacer le code actuel</label>` : '')}
+      </div>
+      <div class="footer-note" style="text-align:left; padding-top:8px;">Le n° de badge est celui imprimé sur la carte ou lu par un lecteur : l’application ne peut pas « lire » une carte posée sur la pointeuse. Pas d’empreinte, pas de visage. Les accents peuvent s’afficher mal sur l’écran de la pointeuse : préférez un nom sans accent.</div>
+      <div id="tmb-dup">${dup ? `<div class="tmb-err">${escapeHtml(dup)}</div>` : ''}</div>
+      ${f.error ? `<div class="tmb-err">${escapeHtml(f.error)}</div>` : ''}
+      <div class="form-actions"><button data-action="tm-badge-close">Annuler</button>
+        <button class="primary" id="tmb-go" data-action="tm-badge-submit" ${f.saving || dup ? 'disabled' : ''}>${f.saving ? 'Préparation…' : 'Préparer la modification'}</button></div>
+    </div></div></div>`;
+}
 function renderTimemotoImportPanel(){
   const tm = presenceTmCfg();
   if(!timemotoStatusCache) loadTimemotoStatus();
@@ -19685,6 +19860,7 @@ function renderTimemotoImportPanel(){
       ${timemotoAgentHtml(st && st.agent)}
       ${renderTmRecoverHtml(st)}
       ${renderTmFlipsHtml(st)}
+      ${renderTmBadgesHtml()}
 
       <div class="modal-section-title" style="margin-top:4px;">Lecture des pointages : selon la touche ou par ordre de passage ${helpTip('tmOrdre')}</div>
       <div class="footer-note" style="text-align:left; padding-bottom:6px;">Par défaut, chaque passage est classé selon la touche appuyée (Entrée / Sortie). Quand un salarié n'appuie pas sur la bonne touche, vous pouvez la <b>faire ignorer</b> : chaque passage fait alors basculer présent / absent (1<sup>er</sup> = arrivée, 2<sup>e</sup> = sortie, 3<sup>e</sup> = retour…), touches pause comprises. Deux passages à moins de quelques minutes comptent pour un seul (double appui ou touche corrigée aussitôt).</div>
@@ -19935,6 +20111,7 @@ function render(){
       currentPage === 'presence' ? renderPresencePage() : renderMonPointagePage(),
       renderPresenceCorrectionModal(),
       renderPresencePunchModal(),
+      renderTmBadgeModal(),
       renderSettingsModal(),
       renderPauseReminderModal(otherModalOpen),
       renderToast()
@@ -20256,6 +20433,7 @@ document.addEventListener('click', (e) => {
   if(e.target.classList && e.target.classList.contains('modal-overlay')){
     // Pop-up de document ouverte PAR-DESSUS Paramètres : ne referme qu'elle, pas Paramètres.
     if(presenceDocModal){ presenceDocModal = null; render(); return; }
+    if(tmBadgeForm){ tmBadgeForm = null; render(); return; }
     presenceCorrection = null; presencePunchDraft = null;
     excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; liberePosteDraft = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; terminerRecapDraft = null; bulkDoneDraft = null; parcoursModal = null; closeSettingsModal(); return;
   }
@@ -20389,6 +20567,15 @@ function dispatchClickAction(action, el){
     case 'presence-set-pin': setMyPresencePin(); break;
     case 'presence-clear-pin': clearPresencePin(el.dataset.userId); break;
     case 'presence-tm-toggle': presenceTmOpen = !presenceTmOpen; render(); break;
+    case 'tm-badges-toggle': tmBadgesOpen = !tmBadgesOpen; if(tmBadgesOpen) tmBadges = null; render(); break;
+    case 'tm-badge-add': tmBadgeOpenForm('add', null); break;
+    case 'tm-badge-edit': tmBadgeOpenForm('edit', Number(el.dataset.slot)); break;
+    case 'tm-badge-del': tmBadgeOpenForm('delete', Number(el.dataset.slot)); break;
+    case 'tm-badge-close': tmBadgeForm = null; render(); break;
+    case 'tm-badge-submit': tmBadgeSubmitForm(); break;
+    case 'tm-badge-remove-card': if(tmBadgeForm) tmBadgePrepareSimple({ action: 'prepare', kind: 'edit', slot: tmBadgeForm.slot, removeCard: true }, 'Retrait du badge préparé : confirmez-le dans la liste.'); break;
+    case 'tm-badge-del-go': if(tmBadgeForm) tmBadgePrepareSimple({ action: 'prepare', kind: 'delete', slot: tmBadgeForm.slot }, 'Suppression préparée : confirmez-la dans la liste.'); break;
+    case 'tm-badge-act': tmBadgeAct(el.dataset.do, el.dataset.id); break;
     case 'presence-arrondi-mode': updatePresenceArrondi('mode', el.dataset.mode); break;
     case 'presence-tm-goto': closeSettingsModal(); currentPage = 'presence'; presenceTmOpen = true; invalidatePresenceCaches(); render(); break;
     case 'tm-sync': runTimemotoSync(el.dataset.mode); break;
@@ -20703,6 +20890,7 @@ function dispatchChangeAction(el, action){
     // Formulaire de correction : mémorisé sans redessin (un clic sur « Enregistrer » juste après la
     // sortie d'un champ heure ne doit pas tomber sur un bouton reconstruit entre-temps).
     case 'presence-correction-field': if(presenceCorrection) presenceCorrection[el.dataset.field] = el.value; break;
+    case 'tm-badge-field': if(tmBadgeForm){ tmBadgeForm[el.dataset.field] = el.type === 'checkbox' ? el.checked : el.value; } break;
     case 'toggle-temps-prod-visibility': toggleTempsProdVisibility(el.dataset.userId); break;
     case 'toggle-presence-forfait': togglePresenceForfait(el.dataset.userId); break;
     case 'toggle-user-lunch': toggleUserLunchActive(el.dataset.userId, el.checked); break;
@@ -21226,6 +21414,17 @@ document.addEventListener('input', (e) => {
     declareDoneDraft[ddEl.dataset.field] = ddEl.value;
     return;
   }
+  // Formulaire des badges de la pointeuse : mémorisé à la frappe, doublon de badge signalé tout de suite (sans render()).
+  const tbEl = e.target.closest ? e.target.closest('[data-action="tm-badge-field"]') : null;
+  if(tbEl && tmBadgeForm && tbEl.type !== 'checkbox' && tbEl.tagName !== 'SELECT'){
+    tmBadgeForm[tbEl.dataset.field] = tbEl.value;
+    if(tbEl.dataset.field === 'card'){
+      const dup = tmBadgeDupMsg(), box = document.getElementById('tmb-dup'), go = document.getElementById('tmb-go');
+      if(box) box.innerHTML = dup ? `<div class="tmb-err">${escapeHtml(dup)}</div>` : '';
+      if(go) go.disabled = !!dup || !!tmBadgeForm.saving;
+    }
+    return;
+  }
   // Même principe pour le formulaire "Pointage rapide" : pas de render() par frappe.
   const qpEl = e.target.closest ? e.target.closest('[data-action="quick-pointage-field"]') : null;
   if(qpEl && quickPointageDraft){
@@ -21290,6 +21489,7 @@ document.addEventListener('input', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && presenceDocModal){ presenceDocModal = null; render(); return; }
+  if(e.key === 'Escape' && tmBadgeForm){ tmBadgeForm = null; render(); return; }
   if(e.key === 'Escape' && (presenceCorrection || presencePunchDraft)){ presenceCorrection = null; presencePunchDraft = null; render(); return; }
   if(e.key === 'Escape' && showSettingsModal){ closeSettingsModal(); }
   if(e.key === 'Escape' && excelImportResult){ excelImportResult = null; render(); }

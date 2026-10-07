@@ -2179,6 +2179,47 @@ la touche ne le sauve pas (inversée, elle finit encore en pause à 10:17) : son
 - Test (scratchpad `seq_test.js`, 14 assertions sur un vrai SQLite : touches inchangées par défaut, Cyril par ordre, Romain non concerné, relance idempotente, tous + anti-double 0, seuils, agent, CSV, défauts ;
   `ord_ui.js` Playwright : bloc, case par salarié, anti-double, « tous » masque les cases).
 
+### Badges de la pointeuse gérés depuis l'application (v1.116.0)
+
+Demande : ajouter, supprimer ou changer un badge directement depuis l'app. Cadrage validé (questions puis maquette) : **sans biométrie**
+(un salarié sur la pointeuse = nom + n° de badge + code facultatif ; `enroll_user` / `save_user_template` exclus), **administrateurs seulement**,
+**confirmation avant chaque envoi**. Première **écriture** sur la pointeuse (l'agent était en lecture seule) : voir « Non testé sur la vraie pointeuse ».
+
+- **Page Présence → ⏱ TimeMoto → « 🪪 Badges de la pointeuse »** (`renderTmBadgesHtml`, section repliée par défaut, `tmBadgesOpen`) : tableau des salariés de la
+  pointeuse (UserID, nom, badge, code « défini » — jamais le code —, salarié Planning associé via `userMap['zk:<UserID>']`, état), boutons Ajouter / Modifier /
+  Supprimer…, file « Modifications en attente et historique » (= le journal). Pop-up `renderTmBadgeModal` (`tmBadgeForm`, champs mémorisés à la frappe sans
+  `render()`, doublon de badge signalé tout de suite) : ajout (nom, badge, code, salarié Planning), modification (nom, badge, code ou « Effacer le code »),
+  suppression (« Retirer le badge seulement » ou « Préparer la suppression »). Sondage toutes les 4 s tant qu'une demande est `confirmed`/`sent` (`tmBadgeSchedulePoll`).
+- **File de commandes côté serveur** (`timemotoSync.js`, section « Badges de la pointeuse », meta `badgeCmds`, 100 dernières) — états : `wait` (préparée, à confirmer ;
+  oubliée après 1 h → `expired`) → `confirmed` (confirmée ; si l'agent ne la prend pas en 10 min → `error`, rien n'a été écrit) → `sent` (remise à l'agent ; sans résultat
+  en 5 min → `error` « vérifiez dans la liste ») → `done`/`error`. `cancelled` possible avant l'envoi. **Agent tiré, pas poussé** (même principe que `recover`) :
+  `runDeviceEvents` ajoute `badge` (la plus ancienne `confirmed`, qui passe `sent`) à la réponse de chaque contact (battement de cœur et lecture) ; l'agent renvoie `badgeResult`.
+- **Routes** (`server.js`, `requireAdmin` + `requirePresence` + suivi TimeMoto actif) : `GET /api/presence/timemoto/badges`, `POST` avec `action: prepare | confirm | cancel`.
+  Le salarié Planning choisi à l'ajout (`planningUserId`) est associé par `applyBadgeAssociation` **une fois l'écriture vérifiée** (`userMap['zk:<UserID>']`, un `UPDATE app_state`
+  synchrone comme les jobs serveur) ; `badgeDone` n'est jamais renvoyé à l'agent.
+- **Vérifications à la préparation** (`prepareBadge`) : liste de la pointeuse déjà lue par l'agent et de moins de 2 h ; nom 1–24 **octets** UTF-8 (un accent compte 2) ; badge chiffres
+  seulement, 10 max, ≤ 4 294 967 295, **0 = aucun** ; code 1–8 chiffres ; **n° de badge déjà attribué refusé** (pointeuse ET demandes en attente) ; une seule demande active par
+  salarié ; « aucun changement » refusé ; **administrateur de la pointeuse (`privilege` ≠ 0) non supprimable** (risque de perdre le menu de l'appareil) mais modifiable (droits conservés).
+- **UserID d'un nouveau salarié = max(connus) + 1** (`nextDeviceUserId`), « connus » = pointeuse + `timemoto_punch_refs` (`zk:N`) + `userMap` + liste d'association : **un salarié
+  supprimé garde ses pointages sous son ancien n° ; le réutiliser rattacherait cet historique au nouveau salarié** (testé : n° 14 supprimé → 15). Emplacement = premier libre.
+- **L'agent revérifie tout sur la pointeuse avant d'écrire** (`perform_badge`, `tools/tm616_sync.py` — la liste de Planning peut dater de quelques minutes) : badge pris entre-temps,
+  emplacement réutilisé, identifiant qui ne correspond plus → refus sans rien écrire. `set_user(uid, name, privilege, password, group_id, user_id, card)` ; en modification le code
+  existant est **conservé** (relu sur la pointeuse) sauf nouveau code / effacement, privilège et groupe conservés ; `delete_user(uid)`. **Relecture systématique** (`get_users`) :
+  écriture non retrouvée → `error` « écriture non confirmée à la relecture ». Idempotent (ajout rejoué = succès, suppression d'un absent = succès). Jusqu'à 5 demandes enchaînées par
+  contact. Nom tronqué à 24 octets.
+- **Le code (PIN) transite en clair vers l'agent** (la pointeuse le stocke ainsi) mais n'est conservé que le temps de l'envoi : retiré de la meta dès le résultat, l'annulation ou
+  l'expiration (`dropPin`), jamais renvoyé au navigateur (`publicBadgeCmd` ne garde que `pinChange: 'set'|'clear'`), jamais journalisé ; l'agent n'envoie à Planning que
+  `hasPin` (`user_payload`), jamais le mot de passe lu. La liste `devUsers` (slot, UserID, nom, badge, hasPin, privilege) est tenue à jour à chaque lecture (`noteDevUsers`).
+- **Supprimer ne supprime aucun pointage** déjà dans Planning (la pointeuse les affiche « INCONNU », comme le n° 11) ; l'association reste dans la liste.
+- **Journal** = la file : qui a demandé, qui a confirmé, quand, avant → après (`summary`), sans le code ; une ligne de journal serveur (`console.log`) par résultat.
+- **Mise à jour** : `bash deploy.sh` — l'agent `zk-sync` doit être **reconstruit** (sinon il n'envoie ni `slot` ni `hasPin` : « liste pas encore lue »). Aucun nouveau fichier serveur (Dockerfile inchangé).
+- **Non testé sur la vraie pointeuse** (inaccessible depuis le cloud) : `set_user`/`delete_user` de pyzk 0.9 sont écrits d'après sa documentation ; la relecture détecte toute écriture
+  sans effet. À essayer d'abord avec un salarié factice (« TEST »). Point à surveiller : `set_user` sur un salarié **existant** ne doit pas effacer ses empreintes (comportement du firmware
+  non garanti) — sans objet pour un salarié créé par l'appli, qui n'en a pas.
+- Tests (scratchpad) : `badge_test.js` (41 assertions sur un vrai SQLite : refus, UserID, PIN jamais exposé ni conservé, livraison unique, résultat, expirations),
+  `agent_badge_test.py` (23 assertions avec un faux module `zk` : ajout, modification, suppression, refus sans écriture, relecture, idempotence, enchaînement),
+  `badge_ui.js` (Playwright sur serveur réel : liste, doublon à la frappe, préparation, confirmation, livraison à l'agent, résultat, association appliquée, 390 px sans débordement).
+
 ## Onglet « Pointages »
 
 Retour utilisateur réel : jusqu'ici, voir/corriger un pointage demandait de retrouver la bonne

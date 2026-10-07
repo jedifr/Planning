@@ -614,6 +614,212 @@ function cancelRecovery(db){
   return { ok: true };
 }
 
+
+// ---------- Badges de la pointeuse, gérés depuis l'application (v1.116.0) ----------
+// Un administrateur PRÉPARE une modification (ajout d'un salarié, changement de nom ou de badge, retrait du badge,
+// suppression), la CONFIRME, puis l'agent zk-sync — qui contacte Planning chaque minute — la découvre dans la réponse
+// (`badge`), l'écrit sur la pointeuse (`set_user` / `delete_user` de pyzk), RELIT la pointeuse pour vérifier et renvoie
+// le résultat (`badgeResult`). File dans la meta `badgeCmds` (la plus récente en tête) = aussi le JOURNAL (qui, quand,
+// avant → après). Jamais de biométrie : nom + n° de badge + code facultatif. Le code (PIN) n'est conservé que le temps de
+// l'envoi (effacé dès le résultat, l'annulation ou l'expiration), jamais affiché, relu ni journalisé.
+const BADGE_WAIT_TTL_MS = 60 * 60 * 1000;        // préparée mais jamais confirmée : oubliée après 1 h
+const BADGE_DELIVER_TTL_MS = 10 * 60 * 1000;     // confirmée mais l'agent ne l'a pas prise : agent absent ou ancien
+const BADGE_RESULT_TTL_MS = 5 * 60 * 1000;       // envoyée mais sans réponse : à vérifier dans la liste
+const BADGE_USERS_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const BADGE_KEEP = 100;
+const BADGE_ACTIVE = ['wait', 'confirmed', 'sent'];
+const CARD_MAX = 4294967295;
+function badgeCmds(db){ return readMeta(db, 'badgeCmds', []) || []; }
+function saveBadgeCmds(db, list){ writeMeta(db, 'badgeCmds', list.slice(0, BADGE_KEEP)); }
+function dropPin(c){ delete c.pin; delete c.clearPin; return c; }
+// Les états « en attente » trop vieux passent en erreur (les écritures de la meta restent ici, pas dans une lecture HTTP anodine).
+function expireBadgeCmds(db){
+  const list = badgeCmds(db); let changed = false; const now = Date.now();
+  list.forEach(c => {
+    if(c.state === 'wait' && now - new Date(c.requestedAt).getTime() > BADGE_WAIT_TTL_MS){ c.state = 'expired'; c.error = 'Non confirmée dans l’heure : demande oubliée.'; dropPin(c); changed = true; }
+    else if(c.state === 'confirmed' && now - new Date(c.confirmedAt).getTime() > BADGE_DELIVER_TTL_MS){ c.state = 'error'; c.error = "L'agent de lecture n'a pas pris la demande (conteneur zk-sync arrêté, ou version à mettre à jour avec « bash deploy.sh »). Rien n'a été écrit sur la pointeuse."; c.doneAt = new Date().toISOString(); dropPin(c); changed = true; }
+    else if(c.state === 'sent' && now - new Date(c.sentAt).getTime() > BADGE_RESULT_TTL_MS){ c.state = 'error'; c.error = "L'agent n'a pas rendu de résultat : vérifiez dans la liste si la modification a bien eu lieu."; c.doneAt = new Date().toISOString(); dropPin(c); changed = true; }
+  });
+  if(changed) saveBadgeCmds(db, list);
+  return list;
+}
+function normCardInput(v){
+  const s = String(v == null ? '' : v).replace(/\s+/g, '');
+  if(!s) return { ok: true, card: 0 };
+  if(!/^\d{1,10}$/.test(s)) return { ok: false, error: 'Le n° de badge ne contient que des chiffres (10 au maximum).' };
+  const n = Number(s);
+  if(n > CARD_MAX) return { ok: false, error: 'N° de badge trop grand (4 294 967 295 au maximum).' };
+  return { ok: true, card: n };
+}
+function normNameInput(v){
+  const s = String(v == null ? '' : v).replace(/[\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim();
+  if(!s) return { ok: false, error: 'Le nom est obligatoire.' };
+  if(Buffer.byteLength(s, 'utf8') > 24) return { ok: false, error: 'Nom trop long : 24 caractères au maximum sur la pointeuse (un accent en compte 2).' };
+  return { ok: true, name: s };
+}
+function devUsersInfo(db){
+  const m = readMeta(db, 'devUsers', null);
+  return { users: (m && Array.isArray(m.users)) ? m.users : [], at: (m && m.at) || null };
+}
+// Liste détaillée des salariés de la pointeuse, lue par l'agent (jamais le code : seulement « défini » ou non).
+function noteDevUsers(db, payload){
+  const arr = Array.isArray(payload && payload.users) ? payload.users : [];
+  if(!arr.length || !arr.some(u => u && u.slot != null)) return;
+  const users = arr.slice(0, 500).map(u => ({
+    slot: Number(u.slot), uid: String(u.uid == null ? '' : u.uid).trim(), name: String(u.name || '').slice(0, 40),
+    card: Math.max(0, Number(u.card) || 0), hasPin: !!u.hasPin, privilege: Number(u.privilege) || 0
+  })).filter(u => isFinite(u.slot) && u.uid);
+  writeMeta(db, 'devUsers', { at: new Date().toISOString(), users });
+}
+// Prochain « UserID » sûr : au-dessus de tout identifiant connu de la pointeuse ET de tout identifiant déjà vu dans les
+// pointages (`zk:N`) ou associé — un salarié supprimé garde ses pointages sous son ancien n° : le réutiliser rattacherait
+// l'ancien historique au nouveau salarié.
+function nextDeviceUserId(db, st, devUsers){
+  let max = 0;
+  const take = id => { const n = Number(String(id).replace(/^zk:/, '')); if(isFinite(n) && /^(zk:)?\d+$/.test(String(id)) && n > max) max = n; };
+  devUsers.forEach(u => take(u.uid));
+  try{ db.prepare("SELECT DISTINCT tm_user_id FROM timemoto_punch_refs WHERE tm_user_id LIKE 'zk:%'").all().forEach(r => take(r.tm_user_id)); }catch(e){}
+  const tmCfg = ((((st || {}).config || {}).presence || {}).timemoto) || {};
+  Object.keys(tmCfg.userMap || {}).forEach(take);
+  (readMeta(db, 'users', []) || []).forEach(u => take(u.id));
+  return max + 1;
+}
+function nextFreeSlot(devUsers, cmds){
+  const used = new Set(devUsers.map(u => u.slot));
+  cmds.filter(c => BADGE_ACTIVE.includes(c.state) && c.slot != null).forEach(c => used.add(c.slot));
+  for(let i = 1; i < 10000; i++) if(!used.has(i)) return i;
+  return null;
+}
+const snap = u => u ? { name: u.name, card: u.card || 0, hasPin: !!u.hasPin } : null;
+function badgeSummary(c){
+  const cardTxt = n => n ? String(n) : 'aucun';
+  if(c.kind === 'add') return `Ajouter ${c.after.name} — badge ${cardTxt(c.after.card)}`;
+  if(c.kind === 'delete') return `Supprimer ${c.before.name} de la pointeuse`;
+  const parts = [];
+  if(c.before.name !== c.after.name) parts.push(`nom « ${c.before.name} » → « ${c.after.name} »`);
+  if((c.before.card || 0) !== (c.after.card || 0)) parts.push(`badge ${cardTxt(c.before.card)} → ${cardTxt(c.after.card)}`);
+  if(c.pin) parts.push('code modifié'); else if(c.clearPin) parts.push('code effacé');
+  return `${c.before.name} — ${parts.join(', ')}`;
+}
+// Prépare (état « wait ») : toutes les vérifications côté serveur — l'agent les refait sur la pointeuse avant d'écrire.
+function prepareBadge(db, st, o){
+  const kind = String(o.kind || '');
+  if(!['add', 'edit', 'delete'].includes(kind)) return { ok: false, error: 'Action inconnue.' };
+  const info = devUsersInfo(db);
+  if(!info.at) return { ok: false, error: "La liste des salariés de la pointeuse n'a pas encore été lue par l'agent (conteneur zk-sync à reconstruire avec « bash deploy.sh » ?)." };
+  if(Date.now() - new Date(info.at).getTime() > BADGE_USERS_MAX_AGE_MS) return { ok: false, error: "La liste de la pointeuse date de plus de 2 h : l'agent semble arrêté. Réessayez quand il est de nouveau en ligne." };
+  const cmds = expireBadgeCmds(db);
+  const active = cmds.filter(c => BADGE_ACTIVE.includes(c.state));
+  const cmd = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), kind, state: 'wait', requestedBy: String(o.by || ''), requestedAt: new Date().toISOString() };
+  let target = null;
+  if(kind !== 'add'){
+    target = info.users.find(u => u.slot === Number(o.slot));
+    if(!target) return { ok: false, error: 'Salarié introuvable sur la pointeuse (liste à jour ?).' };
+    if(active.some(c => c.slot === target.slot)) return { ok: false, error: 'Une modification est déjà en attente pour ce salarié.' };
+    cmd.slot = target.slot; cmd.userId = target.uid; cmd.before = snap(target);
+  }
+  if(kind === 'delete'){
+    if(target.privilege) return { ok: false, error: "Ce salarié est administrateur de la pointeuse : sa suppression depuis l'application est refusée (risque de perdre l'accès au menu de l'appareil)." };
+    cmd.after = null;
+  } else {
+    const nm = normNameInput(o.name != null ? o.name : (target && target.name));
+    if(!nm.ok) return nm;
+    let card;
+    if(o.removeCard) card = { ok: true, card: 0 };
+    else if(kind === 'edit' && (o.card === undefined || o.card === null)) card = { ok: true, card: target.card || 0 };
+    else card = normCardInput(o.card);
+    if(!card.ok) return card;
+    let pin = null;
+    if(o.pin != null && String(o.pin) !== ''){
+      if(!/^\d{1,8}$/.test(String(o.pin))) return { ok: false, error: 'Le code ne contient que des chiffres (8 au maximum).' };
+      pin = String(o.pin);
+    }
+    if(card.card){
+      const dup = info.users.find(u => u.card === card.card && (kind === 'add' || u.slot !== target.slot));
+      if(dup) return { ok: false, error: `Ce n° de badge est déjà attribué à « ${dup.name} » : modification impossible.` };
+      const dupP = active.find(c => c.after && c.after.card === card.card && (kind === 'add' || c.slot !== target.slot));
+      if(dupP) return { ok: false, error: `Ce n° de badge fait déjà l'objet d'une modification en attente (« ${dupP.after.name} »).` };
+    }
+    cmd.after = { name: nm.name, card: card.card, hasPin: pin ? true : (o.clearPin ? false : !!(target && target.hasPin)) };
+    cmd.name = nm.name; cmd.card = card.card;
+    if(pin) cmd.pin = pin; else if(o.clearPin) cmd.clearPin = true;
+    if(kind === 'edit' && cmd.before.name === nm.name && (cmd.before.card || 0) === card.card && !pin && !o.clearPin) return { ok: false, error: 'Aucun changement à envoyer.' };
+    if(kind === 'add'){
+      cmd.slot = nextFreeSlot(info.users, cmds);
+      if(cmd.slot == null) return { ok: false, error: 'Plus de place sur la pointeuse.' };
+      cmd.userId = String(nextDeviceUserId(db, st, info.users));
+      if(o.planningUserId) cmd.planningUserId = String(o.planningUserId).slice(0, 80);
+    }
+  }
+  cmd.summary = badgeSummary(cmd);
+  cmds.unshift(cmd); saveBadgeCmds(db, cmds);
+  return { ok: true, cmd: publicBadgeCmd(cmd) };
+}
+function confirmBadge(db, id, by){
+  const list = expireBadgeCmds(db);
+  const c = list.find(x => x.id === id);
+  if(!c) return { ok: false, error: 'Demande introuvable.' };
+  if(c.state !== 'wait') return { ok: false, error: 'Cette demande n’est plus en attente de confirmation.' };
+  c.state = 'confirmed'; c.confirmedBy = String(by || ''); c.confirmedAt = new Date().toISOString();
+  saveBadgeCmds(db, list);
+  return { ok: true, cmd: publicBadgeCmd(c) };
+}
+function cancelBadge(db, id, by){
+  const list = expireBadgeCmds(db);
+  const c = list.find(x => x.id === id);
+  if(!c) return { ok: false, error: 'Demande introuvable.' };
+  if(c.state !== 'wait' && c.state !== 'confirmed') return { ok: false, error: c.state === 'sent' ? 'Déjà envoyée à la pointeuse : trop tard pour annuler.' : 'Cette demande est terminée.' };
+  c.state = 'cancelled'; c.cancelledBy = String(by || ''); c.doneAt = new Date().toISOString(); dropPin(c);
+  saveBadgeCmds(db, list);
+  return { ok: true };
+}
+// La demande confirmée la plus ancienne, remise à l'agent dans la réponse d'un contact (passe à « sent »).
+function nextBadgeForAgent(db){
+  const list = expireBadgeCmds(db);
+  const c = list.slice().reverse().find(x => x.state === 'confirmed');
+  if(!c) return null;
+  c.state = 'sent'; c.sentAt = new Date().toISOString();
+  saveBadgeCmds(db, list);
+  const out = { id: c.id, kind: c.kind, slot: c.slot, userId: c.userId, name: c.name, card: c.card || 0 };
+  if(c.pin) out.pin = c.pin;
+  if(c.clearPin) out.clearPin = true;
+  if(c.before) out.before = c.before;
+  return out;
+}
+// Résultat renvoyé par l'agent (après relecture de la pointeuse). Renvoie la commande terminée (pour que le serveur
+// applique l'association Planning d'un ajout réussi), ou null si elle est inconnue ou déjà traitée.
+function receiveBadgeResult(db, payload){
+  const r = payload && payload.badgeResult;
+  if(!r || !r.id) return null;
+  const list = badgeCmds(db);
+  const c = list.find(x => x.id === String(r.id));
+  if(!c || c.state !== 'sent') return null;
+  c.doneAt = new Date().toISOString();
+  c.verified = !!(r.ok && r.verified !== false);
+  if(r.ok){ c.state = 'done'; c.error = null; }
+  else { c.state = 'error'; c.error = String(r.error || 'Échec de l’écriture sur la pointeuse.').slice(0, 300); }
+  dropPin(c);
+  saveBadgeCmds(db, list);
+  if(Array.isArray(r.users)) noteDevUsers(db, { users: r.users });
+  if(c.state === 'done' && c.kind !== 'delete'){
+    const known = new Map((readMeta(db, 'users', []) || []).map(u => [u.id, u.name]));
+    known.set(ZK_PREFIX + c.userId, c.after.name);
+    writeMeta(db, 'users', [...known].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, 'fr')));
+  }
+  console.log(`Badges pointeuse : ${c.summary} — ${c.state === 'done' ? 'écrit et vérifié' : 'ÉCHEC (' + c.error + ')'} (demandé par ${c.requestedBy}, confirmé par ${c.confirmedBy}).`);
+  return c;
+}
+function publicBadgeCmd(c){
+  const o = { ...c };
+  o.pinChange = c.pin ? 'set' : (c.clearPin ? 'clear' : null);
+  delete o.pin; delete o.clearPin;
+  return o;
+}
+function badgeState(db){
+  const info = devUsersInfo(db);
+  return { users: info.users, usersAt: info.at, cmds: expireBadgeCmds(db).map(publicBadgeCmd), agent: readMeta(db, 'agent', null) };
+}
+
 function runDeviceEvents(db, st, payload, opts){
   const now = new Date().toISOString();
   const agent = readMeta(db, 'agent', {}) || {};
@@ -631,13 +837,19 @@ function runDeviceEvents(db, st, payload, opts){
     if(rr && rr.state === 'pending' && payload.recoverId === rr.id){ rr.state = 'error'; rr.error = 'Pointeuse injoignable : ' + agent.lastError; writeMeta(db, 'recovery', rr); }
     return { ok: true, heartbeat: true, intervalSec, recover: pendingRecover(db) };
   }
-  if(hb){ writeMeta(db, 'agent', agent); return { ok: true, heartbeat: true, intervalSec, recover: pendingRecover(db) }; }
+  if(hb){
+    writeMeta(db, 'agent', agent);
+    noteDevUsers(db, payload);
+    const done = receiveBadgeResult(db, payload);
+    return { ok: true, heartbeat: true, intervalSec, recover: pendingRecover(db), badge: nextBadgeForAgent(db), badgeDone: done ? publicBadgeCmd(done) : undefined };
+  }
   if(payload && payload.recoverId){
     // Réponse à une demande de récupération : aperçu uniquement, jamais traitée comme une lecture normale.
     if(runtime.running) return { ok: false, busy: true, error: 'Un import TimeMoto est déjà en cours.' };
     runtime.running = true;
     try{
       writeMeta(db, 'agent', agent);
+      noteDevUsers(db, payload);
       receiveRecovery(db, st, payload);
       return { ok: true, recovered: true, intervalSec, recover: pendingRecover(db) };
     }catch(err){
@@ -661,7 +873,8 @@ function runDeviceEvents(db, st, payload, opts){
     Object.assign(s, { lastOkAt: now, lastResult: publicResult(r), lastImportTo: r.to });
     writeMeta(db, 'status', s);
     if(r.added || r.cancelled) console.log(`Pointeuse (auto) : ${r.added} pointage(s) importé(s), ${r.cancelled} annulé(s) (${r.from} → ${r.to}).`);
-    return { ok: true, result: publicResult(r), intervalSec, recover: pendingRecover(db) };
+    noteDevUsers(db, payload);
+    return { ok: true, result: publicResult(r), intervalSec, recover: pendingRecover(db), badge: nextBadgeForAgent(db) };
   }catch(err){
     agent.lastError = String(err && err.message || err).slice(0, 200); agent.lastErrorAt = now;
     writeMeta(db, 'agent', agent);
@@ -702,5 +915,6 @@ async function runSync(db, st, opts){
 
 module.exports = {
   initTimemotoTables, runSync, runDeviceImport, runDeviceEvents, parseAgentEvents, parseDeviceCsv, syncDeviceRows, status, syncOnce, desiredPunches, reconcileDay, expectedEndFor, expectedBoundsFor, ignoredEventsFor, SYSTEM_USER,
-  requestRecovery, applyRecovery, cancelRecovery, recoveryRecord, applyFlagAction, flaggedCount, flagInfo, rowFromEvents, sequenceKinds, sequenceModeFor
+  requestRecovery, applyRecovery, cancelRecovery, recoveryRecord, applyFlagAction, flaggedCount, flagInfo, rowFromEvents, sequenceKinds, sequenceModeFor,
+  badgeState, prepareBadge, confirmBadge, cancelBadge, nextBadgeForAgent, receiveBadgeResult, noteDevUsers, nextDeviceUserId
 };

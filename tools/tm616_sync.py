@@ -10,7 +10,12 @@ Récupération à la demande : si un administrateur demande une période depuis 
 contact (battement de cœur compris) la porte (`recover`) ; l'agent relit alors la pointeuse et renvoie les journées
 entières de cette période avec `recoverId` (aperçu, puis confirmation dans Planning).
 
-LECTURE SEULE : ne vide jamais la mémoire de la pointeuse, ne la désactive jamais (pas de
+Badges (v1.116.0) : si un administrateur a préparé ET confirmé une modification dans Planning (ajout d'un salarié,
+changement de nom ou de badge, suppression), la réponse de Planning à un contact la porte (`badge`). L'agent l'écrit sur la
+pointeuse (set_user / delete_user), RELIT la pointeuse pour vérifier, puis renvoie le résultat (`badgeResult`). Jamais de
+biométrie (ni empreinte ni visage) ; le code (PIN) n'est jamais renvoyé à Planning (seulement « défini » ou non).
+
+Hors modification de badge confirmée, LECTURE SEULE : ne vide jamais la mémoire de la pointeuse, ne la désactive jamais (pas de
 disable_device : une pointeuse « désactivée » refuserait les pointages des salariés pendant la lecture).
 
 Variables d'environnement :
@@ -49,6 +54,18 @@ def kind_of(punch):
     return "other"
 
 
+def user_payload(u):
+    """Un salarié de la pointeuse pour Planning : nom, n° de badge, « code défini » (jamais le code lui-même)."""
+    return {
+        "uid": str(u.user_id),                  # UserID : identifiant des pointages (zk:<UserID> dans Planning)
+        "name": u.name,
+        "slot": getattr(u, "uid", None),                          # emplacement interne de la pointeuse
+        "card": int(getattr(u, "card", 0) or 0),
+        "hasPin": bool(str(getattr(u, "password", "") or "").strip()),
+        "privilege": int(getattr(u, "privilege", 0) or 0),
+    }
+
+
 def build_payload(users, attendances, days, now=None, since_date=None, until_date=None):
     """Événements des `days` derniers jours (journées entières) + liste des salariés.
 
@@ -76,7 +93,7 @@ def build_payload(users, attendances, days, now=None, since_date=None, until_dat
     return {
         "host": socket.gethostname(),
         "deviceRecords": len(attendances),
-        "users": [{"uid": str(u.user_id), "name": u.name} for u in users],
+        "users": [user_payload(u) for u in users],
         "events": events,
     }
 
@@ -168,6 +185,118 @@ def recover_period(ZK, cfg, rec, log=print):
     return False
 
 
+def _name_bytes(name):
+    return str(name or "").encode("utf-8")[:24].decode("utf-8", "ignore")
+
+
+def perform_badge(conn, cmd):
+    """Applique UNE modification de badge sur la pointeuse connectée puis la VÉRIFIE par relecture.
+    Renvoie (ok, erreur, utilisateurs après). Revérifie tout sur la pointeuse avant d'écrire : la liste de Planning
+    peut dater de quelques minutes (n° de badge pris entre-temps, emplacement réutilisé...)."""
+    kind = cmd.get("kind")
+    slot = cmd.get("slot")
+    user_id = str(cmd.get("userId") or "")
+    try:
+        slot = int(slot)
+        card = int(cmd.get("card") or 0)
+    except (TypeError, ValueError):
+        return False, "Demande invalide (emplacement ou n° de badge).", None
+    if kind not in ("add", "edit", "delete") or not user_id:
+        return False, "Demande invalide.", None
+    users = conn.get_users()
+    by_slot = {u.uid: u for u in users}
+    cur = by_slot.get(slot)
+    if kind in ("add", "edit"):
+        name = _name_bytes(cmd.get("name"))
+        if not name:
+            return False, "Nom vide.", None
+        if card:
+            other = next((u for u in users if int(getattr(u, "card", 0) or 0) == card and u.uid != slot), None)
+            if other is not None:
+                return False, f"N° de badge déjà attribué à « {other.name} » sur la pointeuse.", None
+    if kind == "add":
+        if cur is not None:
+            same = str(cur.user_id) == user_id and cur.name == name and int(getattr(cur, "card", 0) or 0) == card
+            if not same:   # emplacement pris entre-temps par quelqu'un d'autre
+                return False, "Emplacement déjà occupé sur la pointeuse : relancez la demande.", None
+        elif any(str(u.user_id) == user_id for u in users):
+            return False, f"Identifiant {user_id} déjà utilisé sur la pointeuse : relancez la demande.", None
+        else:
+            conn.set_user(uid=slot, name=name, privilege=0, password=str(cmd.get("pin") or ""), group_id="", user_id=user_id, card=card)
+    elif kind == "edit":
+        if cur is None or str(cur.user_id) != user_id:
+            return False, "Ce salarié a changé ou disparu de la pointeuse : relancez la demande.", None
+        if cmd.get("pin"):
+            pw = str(cmd["pin"])
+        elif cmd.get("clearPin"):
+            pw = ""
+        else:
+            pw = str(getattr(cur, "password", "") or "")
+        conn.set_user(uid=slot, name=name, privilege=getattr(cur, "privilege", 0), password=pw,
+                      group_id=getattr(cur, "group_id", "") or "", user_id=cur.user_id, card=card)
+    else:  # delete
+        if cur is None:
+            return True, None, users   # déjà absent : rien à faire
+        if str(cur.user_id) != user_id:
+            return False, "Ce salarié a changé de place sur la pointeuse : relancez la demande.", None
+        if getattr(cur, "privilege", 0):
+            return False, "Administrateur de la pointeuse : suppression refusée.", None
+        conn.delete_user(uid=slot)
+    after = conn.get_users()
+    got = {u.uid: u for u in after}.get(slot)
+    if kind == "delete":
+        if got is not None:
+            return False, "La relecture montre que le salarié est toujours sur la pointeuse.", after
+    else:
+        if got is None or got.name != name or int(getattr(got, "card", 0) or 0) != card or str(got.user_id) != (user_id if kind == "add" else str(cur.user_id)):
+            return False, "Écriture non confirmée à la relecture de la pointeuse.", after
+    return True, None, after
+
+
+def run_badge(ZK, cfg, cmd, log=print):
+    """Exécute une modification de badge confirmée dans Planning et renvoie le résultat. Renvoie la réponse de Planning
+    (qui peut porter la modification suivante) ou None."""
+    rid = str((cmd or {}).get("id") or "")
+    if not rid:
+        return None
+    log(f"Badge : modification demandée par Planning ({cmd.get('kind')}, emplacement {cmd.get('slot')}).")
+    res = {"id": rid, "ok": False}
+    conn = None
+    try:
+        zk = ZK(cfg["ip"], port=cfg["port"], timeout=15, password=cfg["commkey"], force_udp=False, ommit_ping=True)
+        conn = zk.connect()
+        ok, err, after = perform_badge(conn, cmd)
+        res["ok"], res["verified"] = ok, ok
+        if err:
+            res["error"] = err
+        if after is not None:
+            res["users"] = [user_payload(u) for u in after]
+    except Exception as e:
+        res["error"] = f"Pointeuse injoignable ou écriture refusée ({cfg['ip']}:{cfg['port']}) : {e}"
+    finally:
+        if conn is not None:
+            try:
+                conn.disconnect()
+            except Exception:
+                pass
+    log(f"Badge : {'écrit et vérifié' if res['ok'] else 'ÉCHEC — ' + res.get('error', '?')}.")
+    try:
+        status, body = post(cfg["url"], cfg["key"], {"host": socket.gethostname(), "interval": cfg["interval"], "badgeResult": res})
+    except Exception as e:
+        log(f"Planning injoignable pour le résultat du badge : {e}")
+        return None
+    return body if status == 200 else None
+
+
+def handle_badge(ZK, cfg, body, log=print):
+    """Traite la modification portée par une réponse de Planning, puis les suivantes (5 au plus par contact)."""
+    for _ in range(5):
+        cmd = (body or {}).get("badge")
+        if not cmd:
+            return
+        body = run_badge(ZK, cfg, cmd, log)
+
+
 def heartbeat(cfg, log=print, ZK=None):
     """Signe de vie sans lecture de la pointeuse : met à jour le voyant, récupère l'intervalle choisi et
     découvre une éventuelle demande de récupération de période."""
@@ -179,6 +308,8 @@ def heartbeat(cfg, log=print, ZK=None):
         adopt_interval(cfg, body, log)
         if ZK is not None and body.get("recover"):
             recover_period(ZK, cfg, body["recover"], log)
+        if ZK is not None and body.get("badge"):
+            handle_badge(ZK, cfg, body, log)
         return True
     return False
 
@@ -211,6 +342,8 @@ def cycle(ZK, cfg, log=print):
             f"{r.get('cancelled', 0)} annulé(s), {r.get('unmapped', 0)} journée(s) sans salarié associé.")
         if body.get("recover"):
             recover_period(ZK, cfg, body["recover"], log)
+        if body.get("badge"):
+            handle_badge(ZK, cfg, body, log)
         return True
     log(f"Refusé par Planning (HTTP {status}) : {body.get('error', '?')}")
     return False
