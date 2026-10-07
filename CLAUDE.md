@@ -2220,6 +2220,34 @@ Demande : ajouter, supprimer ou changer un badge directement depuis l'app. Cadra
   `agent_badge_test.py` (23 assertions avec un faux module `zk` : ajout, modification, suppression, refus sans écriture, relecture, idempotence, enchaînement),
   `badge_ui.js` (Playwright sur serveur réel : liste, doublon à la frappe, préparation, confirmation, livraison à l'agent, résultat, association appliquée, 390 px sans débordement).
 
+### Pause à confirmer / Pause longue (v1.117.0)
+
+Cas réel (Cyril, 07/10) : une pause pointée que personne ne referme (retour non badgé) laissait la personne « En pause » alors qu'une tâche était déjà
+ouverte à son nom. Demande validée sur maquette : **proposer** le retour, jamais le créer seul. Tolérance 15 min, compteur d'en-tête, confirmation **une
+personne à la fois** (pas de « Tout confirmer »).
+
+- **Calcul à la lecture, rien n'est stocké ni pointé automatiquement.** `presencePauseHint(uid, sum, exp, now, st)` (jour courant seulement, jamais pour un salarié
+  au forfait, seulement si le statut du jour est « pause ») renvoie : `{kind:'confirm', time, taskLabel, pauseStart}` si une séance de tâche de CETTE personne
+  (`presenceSessionOwner`) s'est ouverte **strictement après** le début de la pause et avant maintenant (la plus ancienne retenue) ; sinon `{kind:'long', pauseMin,
+  planned, pauseStart}` si la pause dépasse la pause prévue + tolérance ; sinon `null`. Pause prévue = créneau de l'horaire qui contient/précède le début de la pause
+  (`presencePlannedPauseMin`), sinon 15 min (`PAUSE_HORS_CRENEAU_PREVUE_MIN`).
+- **Réglage** `config.pauseLongueTolMin` (15, 0–240 ; `migrateState` en `=== undefined`, `updateConfig` explicite) : Paramètres → Alertes & seuils → « Pauses pointées »
+  (`SETTINGS_HELP.pauseLongue`).
+- **Page Présence** : pastille « Pause à confirmer » (+ ligne « Tâche X ouverte à HH:MM — retour probable ») ou « Pause longue » (« 2 h 41 pour 15 min prévues »), frise
+  (`pr-seg-sug` vert pointillé = retour probable, `pr-seg-longp` hachure rouge), tuiles « À confirmer » / « Pause longue » (« En pause » exclut les pauses à confirmer),
+  boutons **« ✔ Retour à HH:MM »** et « Autre heure… » (`presence-return-open`). L'anomalie « tâche en cours sans présence pointée » est supprimée quand un indice existe
+  (même constat, pas deux alertes).
+- **Confirmation** (`openPresenceReturn` / `renderPresenceReturnModal` / `submitPresenceReturn`, `presenceReturnDraft` transitoire) : heure modifiable, motif (défaut « Oubli de
+  badge »), aperçu « Sera ajouté : Fin de pause à … » ; envoi par `POST /api/presence/correction/batch` (op `add`, `pause_end`, `source:'manuel'`, commentaire « Retour de pause
+  confirmé à HH:MM (tâche … ouverte à cette heure) ») — donc **traçable et annulable** depuis le journal du jour, jamais une modification. Pas de route serveur nouvelle.
+- **Compteur d'en-tête** (`presencePausesToConfirm`, badge « ⏸ N pause(s) à confirmer » → page Présence), affiché même si l'alerte de pointage est désactivée.
+- **Salarié** (« Mon pointage ») : bandeau « Vous semblez être revenu de pause à HH:MM » avec « Demander ce pointage (HH:MM) » (`presenceSelfReturnRequest`, route
+  `/api/presence/correction`, statut `a_valider`, validée par un superviseur ; un superviseur/admin qui le fait pour lui-même est validé d'office) et « Autre heure… » ;
+  masqué si une demande `pause_end` est déjà en attente (note « demande en attente »).
+- Test (scratchpad `pause_ui.js`, `pause_ui2.js`, Playwright sur serveur réel, pause 10:05 + tâche ouverte 10:20) : forfait = aucun indice, pastille/compteur/frise,
+  modale → `pause_end 10:20` avec commentaire, pause longue sans tâche, bandeau salarié + demande envoyée, 390 px sans débordement.
+  `period_test` 17/17 ; `presence_test`, `fiche_pres_test`, `fiche_test` ont chacun 1 échec **déjà présent avant** (données de l'export du 06/10 / date du jour).
+
 ## Onglet « Pointages »
 
 Retour utilisateur réel : jusqu'ici, voir/corriger un pointage demandait de retrouver la bonne
