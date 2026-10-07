@@ -1025,6 +1025,7 @@
   .pc-suggest li{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
   .pc-suggest input[type=time]{width:auto;}
   .rf-ctl{display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-bottom:8px;}
+  .rf-toggle{display:inline-flex; align-items:center; gap:6px; font-size:12px; cursor:pointer;} .rf-toggle input{width:auto; margin:0;}
   .rf-seg{display:inline-flex; border:1px solid var(--line); border-radius:var(--radius); overflow:hidden;}
   .rf-seg button{border:0; border-radius:0; background:var(--panel); padding:5px 12px;}
   .rf-seg button.on{background:var(--accent); color:#fff;}
@@ -1839,7 +1840,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.113.0';
+const APP_VERSION = '1.113.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -11505,7 +11506,10 @@ function risquesSearchMatch(...parts){
 // ---------- Frise des retards et dérives de démarrage (v1.111.0) ----------
 // Remplace les tableaux « retards constatés » / « dérive à venir » (mêmes données, mêmes seuils, mêmes lots comptés une
 // fois). `rdFrise` : état d'affichage purement transitoire (jamais persisté). `anchor` null = aujourd'hui.
-var rdFrise = { mode: '30j', anchor: null, off: {}, open: {} };
+// `derives` (true par défaut) : afficher les dérives (tâches pas encore démarrées dont le début projeté glisse) ; préférence de
+// navigateur (`localStorage`, comme la vue groupée du Kanban) — le choix « masquer » survit au rechargement.
+const RD_DERIVES_KEY = 'planning-atelier-rd-derives';
+var rdFrise = { mode: '30j', anchor: null, off: {}, open: {}, derives: (function(){ try{ return localStorage.getItem(RD_DERIVES_KEY) !== '0'; }catch(e){ return true; } })() };
 function rdDay0(d){ return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
 function rdAddDays(d, n){ return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
 // Lignes unifiées : kind 'reel' (début réel connu) ou 'derive' (début projeté d'une tâche pas encore démarrée).
@@ -11534,8 +11538,13 @@ function rdFriseColor(r){ return r.j >= 3 ? 'var(--red)' : 'var(--amber)'; }
 function renderRetardFriseHtml(constates, derives, now, searchQuery){
   now = now || new Date();
   const q = String(searchQuery || '').trim();
-  const all = rdFriseRows(constates, derives);
+  // Dérives masquées : jamais calculées dans la frise ni dans les indicateurs (un « 0 en dérive » serait trompeur : on retire plutôt
+  // l'indicateur) ; le nombre de dérives écartées reste annoncé sur le bouton.
+  const showDer = rdFrise.derives !== false;
+  const all = rdFriseRows(constates, showDer ? derives : []);
   const [s, e] = rdFriseWindow(all, now, !!q);
+  // Dérives écartées = celles qui seraient visibles dans la période affichée (même compte que les lignes qui réapparaîtraient).
+  const nbDerivesTotal = showDer ? 0 : rdFriseRows([], derives).filter(r => !rdFrise.off[r.poste] && r.e >= s && r.p < e).length;
   const span = e - s, nd = Math.max(1, Math.round(span / 86400000));
   const postesPresents = [...new Set(all.map(r => r.poste))].sort((a, b) => a.localeCompare(b));
   const colorOf = nom => { const m = (state.machines || []).find(mm => mm.nom === nom); return (m && m.couleur) || 'var(--text-faint)'; };
@@ -11549,6 +11558,7 @@ function renderRetardFriseHtml(constates, derives, now, searchQuery){
   const ctl = `<div class="rf-ctl">
       <div class="rf-seg"><button data-action="rd-frise-mode" data-mode="semaine" class="${rdFrise.mode === 'semaine' ? 'on' : ''}" ${q ? 'disabled' : ''}>Semaine</button><button data-action="rd-frise-mode" data-mode="30j" class="${rdFrise.mode === '30j' ? 'on' : ''}" ${q ? 'disabled' : ''}>30 jours</button></div>
       <div style="display:flex; gap:6px; align-items:center;"><button class="small" data-action="rd-frise-nav" data-dir="-1" ${q ? 'disabled' : ''}>‹</button><b style="font-size:12px; text-align:center; min-width:190px;">${escapeHtml(per)}</b><button class="small" data-action="rd-frise-nav" data-dir="1" ${q ? 'disabled' : ''}>›</button><button class="small" data-action="rd-frise-today" ${q ? 'disabled' : ''}>Aujourd'hui</button></div>
+      <label class="rf-toggle" title="Les dérives sont les tâches pas encore démarrées dont le début projeté glisse par rapport à la prévision faite à la création."><input type="checkbox" data-action="rd-frise-derives" ${showDer ? 'checked' : ''}> Afficher les dérives${!showDer && nbDerivesTotal ? ` <span class="footer-note" style="margin:0;">(${nbDerivesTotal} masquée${nbDerivesTotal > 1 ? 's' : ''})</span>` : ''}</label>
     </div>`;
   const chips = postesPresents.length > 1 ? `<div class="rf-chips">${postesPresents.map(p => `<span class="rf-chip ${rdFrise.off[p] ? 'off' : ''}" data-action="rd-frise-poste" data-p="${escapeHtml(p)}" style="--c:${escapeHtml(colorOf(p))}"><i></i>${escapeHtml(p)}</span>`).join('')}</div>` : '';
   const kpis = `<div class="rf-kpis">
@@ -11556,9 +11566,9 @@ function renderRetardFriseHtml(constates, derives, now, searchQuery){
       <div class="rf-kpi"><b>${rdFj(re.length ? sum(re) / re.length : 0)}</b><span>Retard moyen</span></div>
       <div class="rf-kpi"><b>${rdFj(mx(re))}</b><span>Retard maximum</span></div>
       <div class="rf-kpi"><b>${rdFj(sum(re))}</b><span>Retard cumulé</span></div>
-      <div class="rf-kpi"><b>${dr.length}</b><span>En dérive (pas démarrées)</span></div>
+      ${showDer ? `<div class="rf-kpi"><b>${dr.length}</b><span>En dérive (pas démarrées)</span></div>` : ''}
     </div>`;
-  const legend = `<div class="rf-legend"><span><span class="rf-dot p" style="position:static; display:inline-block; margin:0 4px 0 0; vertical-align:middle;"></span>Début prévu (figé à la création)</span><span><span class="rf-dot r" style="--lc:var(--red); position:static; display:inline-block; margin:0 4px 0 0; vertical-align:middle;"></span>Début réel</span><span><span class="rf-dot d" style="--lc:var(--amber); position:static; display:inline-block; margin:0 4px 0 0; vertical-align:middle;"></span>Début projeté (tâche pas encore démarrée)</span><span>Ambre &lt; 3 j · rouge ≥ 3 j</span><span style="color:var(--blue);">▎ Aujourd'hui</span></div>`;
+  const legend = `<div class="rf-legend"><span><span class="rf-dot p" style="position:static; display:inline-block; margin:0 4px 0 0; vertical-align:middle;"></span>Début prévu (figé à la création)</span><span><span class="rf-dot r" style="--lc:var(--red); position:static; display:inline-block; margin:0 4px 0 0; vertical-align:middle;"></span>Début réel</span>${showDer ? `<span><span class="rf-dot d" style="--lc:var(--amber); position:static; display:inline-block; margin:0 4px 0 0; vertical-align:middle;"></span>Début projeté (tâche pas encore démarrée)</span>` : ''}<span>Ambre &lt; 3 j · rouge ≥ 3 j</span><span style="color:var(--blue);">▎ Aujourd'hui</span></div>`;
   let ax = `<div class="rf-axis"><div></div><div class="rf-lane" style="--step:${100 / nd}%">`;
   for(let i = 0; i < nd; i++){
     const d = rdAddDays(s, i);
@@ -20462,6 +20472,7 @@ function dispatchChangeAction(el, action){
     case 'historique-nb-semaines': historiqueNbSemaines = Number(el.value) || 12; historiqueDetailInfo = null; render(); break;
     case 'correct-pointage-field': updateCorrectPointageField(el.dataset.field, el.value); break;
     case 'declare-done-field': updateDeclareDoneField(el.dataset.field, el.value); break;
+    case 'rd-frise-derives': rdFrise.derives = !!el.checked; try{ localStorage.setItem(RD_DERIVES_KEY, rdFrise.derives ? '1' : '0'); }catch(e){ /* valable pour la session */ } render(); break;
     case 'bulk-done-field': updateBulkDoneField(Number(el.dataset.idx), el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
     case 'bulk-done-commande': bulkDoneSetCommande(el.value); break;
     case 'bulk-done-op-all': bulkDoneSetOperatorAll(el.value); break;

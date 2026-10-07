@@ -4812,6 +4812,11 @@ tableaux : mêmes données (`computeRetardDemarrageDetail`, `computeDeriveDemarr
 - **Recherche** : celle de la page Risques (`#risques-search-input`, commande, pièce, étape, poste, n° de ligne) filtre déjà `retardsDemarrageDetail`/`deriveDetail`
   avant la frise ; pas de second champ de recherche (deux champs côte à côte seraient ambigus). Une note rappelle le filtre actif.
 - **Mise en page** : la section passe **sous** les deux colonnes de la page, en pleine largeur (200 px de noms + frise ne tiennent pas dans une demi-colonne).
+- **Bouton « Afficher les dérives » (v1.113.1).** Case à cocher dans la barre de la frise (`rdFrise.derives`, **cochée par défaut**, préférence de navigateur `RD_DERIVES_KEY`
+  comme la vue groupée du Kanban). Décochée : `renderRetardFriseHtml` ne reçoit plus les dérives (lignes, puces de poste et période n'en tiennent plus compte), l'indicateur
+  « En dérive » et l'entrée « Début projeté » de la légende disparaissent (un « 0 en dérive » aurait été trompeur) et le libellé annonce « (N masquées) » — N = celles qui
+  seraient visibles dans la période affichée. Sur l'export du 06/10 : 50 lignes → 19 (retards constatés seuls) ; Mazak, Priminer et Tour disparaissent alors, d'où l'affichage par défaut.
+  Action `rd-frise-derives` dans le dispatcher des **changements** (case à cocher), pas des clics. Test (scratchpad `rd_toggle_ui.js`, Playwright) : 50 → 19 → mémorisé après rechargement → 50.
 - Classes `.rf-*` (jetons du thème), actions `rd-frise-mode|nav|today|poste|row`. Test réel (Playwright sur l'export du 06/10) : 50 lignes (19 retards + 31 dérives) en 30 jours,
   semaine courante 41, semaine précédente 35, puce de poste, détail, recherche « SRMG » (3 lignes), pièce « PJO » (1 ligne), « zzzz » (message), plus aucun `table.rd-table`.
 
