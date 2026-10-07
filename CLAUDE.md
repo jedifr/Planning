@@ -4820,6 +4820,53 @@ tableaux : mêmes données (`computeRetardDemarrageDetail`, `computeDeriveDemarr
 - Classes `.rf-*` (jetons du thème), actions `rd-frise-mode|nav|today|poste|row`. Test réel (Playwright sur l'export du 06/10) : 50 lignes (19 retards + 31 dérives) en 30 jours,
   semaine courante 41, semaine précédente 35, puce de poste, détail, recherche « SRMG » (3 lignes), pièce « PJO » (1 ligne), « zzzz » (message), plus aucun `table.rd-table`.
 
+### Onglet « 🕓 Retards de démarrage » (v1.114.0)
+
+Demande : sortir la frise de la page Risques et lui donner son propre onglet. **Mêmes données, mêmes seuils, même frise** (`renderRetardFriseHtml`,
+`computeRetardDemarrageDetail`, `computeDeriveDemarrageAVenir`, case « Afficher les dérives »…) — seul son emplacement change.
+
+- Clé de menu `retards` (`PAGE_MENU_KEYS`, en fin de liste ; `defaultMenuLayout`/`DEFAULT_MENU_THEMES` la rangent dans le thème « 🏭 Atelier » juste après
+  Risques ; une disposition déjà enregistrée la reçoit via `normalizeMenuLayout` — thème « atelier » s'il existe encore, sinon en fin — sans migration).
+  Visible pour tous les rôles, comme Risques (aucune restriction dans `isPageMenuKeyVisible`). Page `currentPage==='retards'`, `goto-retards`, option « 🕓 Retards
+  de démarrage » dans « Page d'accueil par défaut ». Pas de raccourci sur le bandeau mobile (comme les autres pages d'analyse).
+- `renderRetardsPage()` : barre de recherche **propre** (`#retards-search-input`, `retardsSearchQuery`, `retardsSearchMatch` — commande, pièce, étape, poste, n° de
+  ligne) + panneau avec la frise. Pendant une recherche la fenêtre s'adapte aux lignes trouvées (comportement de la frise, inchangé). Sans aucun retard ni dérive :
+  message explicite. **La recherche de la page Risques ne filtre plus la frise** (elle n'y est plus) ; un bouton « 🕓 Retards de démarrage » (`goto-retards`) est ajouté
+  à sa barre de recherche pour retrouver l'onglet.
+- Retiré de `renderRisquesPage` : le bloc `retardsDemarrageHtml` et ses variables (`derive`, `deriveDetail`…). `computeRetardDemarrageParPoste` reste calculé pour les
+  tuiles de synthèse du haut de la page Risques. `panelCollapsed.retardsDemarrage` n'est plus lu (clé laissée, inoffensive).
+- Test (scratchpad `recap_ui.js`, Playwright sur l'export du 06/10) : entrée de menu, 50 lignes, recherche « SRMG » = 3 lignes avec focus conservé, plus aucune frise sur
+  Risques, bouton Risques → Retards, 390 px sans débordement.
+
+### Pop-up « Terminer » : temps passé face au temps prévu (v1.114.0)
+
+Demande : au clic sur « Terminer » dans le planning visuel, une pop-up qui utilise le système de frise pour montrer le temps passé et le temps prévu. Maquette validée avant
+codage (artefact « Pop-up Terminer »).
+
+- **Déclenchement** : `setOpStatut(cid, oid, 'termine')` — clic droit « ✔ Terminer » (`ctx-finish`, Gantt/Kanban/Liste) et sélecteur de statut du tableau des tâches. Pour une tâche
+  `en_cours`/`en_pause` **avec du temps pointé** uniquement : l'ordre des gardes de `setOpStatut` est `a_faire` → pop-up « temps déclaré » ; temps nul → pop-up « temps
+  déclaré » (`hasNoRecordedTime`) ; **sinon → récapitulatif** (`openTerminerRecap`, `terminerRecapDraft = { cid, oid }`, transitoire). La clôture n'a lieu qu'à la confirmation :
+  `confirmTerminerRecap` rappelle `setOpStatut(…, 'termine', { recapOk:true })` (4e paramètre `opts`), donc **toute la logique de clôture existante est réutilisée telle quelle**
+  (un seul `commit()`, lot fusionné traité en bloc, archivage des séances, `plannedEndsBefore`/`previsionAvantCloture`). Annuler / ✕ / Échap / clic sur le fond : rien n'est modifié. Si la
+  tâche a changé de statut entre-temps : message, rien refait. Les points d'entrée qui ne passent PAS par `setOpStatut` (« Terminer en lot », pointages) ne sont pas concernés.
+- **Réglage** `config.terminerRecapActif` (`true` par défaut, `migrateState` en `=== undefined` : un `false` choisi survit ; `updateConfig` booléen explicite ; Paramètres →
+  Planification → « Terminer une tâche », `SETTINGS_HELP.terminerRecap`). Décoché : « Terminer » clôture directement, comme avant.
+- **`computeTerminerRecap(o, st, now)`** (pur, testable) : prévu = `dureePrevueH(o)` (pour un lot, la somme du lot, portée par `dureeOverrideH`) ; passé = `pieceTempsPasseH`
+  (séances + temps antérieur d'une réouverture) ; écart et %. Séances = `sessions[]` (une séance ouverte court jusqu'à maintenant), découpées **par jour** ; heures comptées =
+  `countedHoursBetween` (règles actuelles : heures ouvrées + exceptions déclarées — la pause n'est pas comptée). **Le prévu est déroulé à partir du démarrage réel** sur les
+  créneaux d'ouverture du poste (`terminerPlanSegments`, `dayIntervals` + `workingHoursBetween`) jusqu'à épuisement de la durée prévue : c'est « le temps qu'on s'était donné », pas
+  le début planifié à l'origine. **Part au-delà du prévu** (rouge) : l'écart est affecté en remontant depuis les séances qui finissent le plus tard (`over`/`overFrom`, coupe par
+  dichotomie sur les heures comptées) — la somme des parts rouges égale l'écart (testé). Pauses en journée = trous entre séances convertis en heures d'ouverture perdues (> 3 min), pas
+  des nuits. Lot : `lot` = nombre de pièces, temps du lot compté une seule fois.
+- **`renderTerminerRecapModal`** : badge d'écart (rouge dépassement / vert en avance / « pile dans le prévu »), 4 tuiles (prévu, passé, écart, poste), jauge passé/prévu (trait = prévu),
+  frise `.tr-*` (une colonne par jour, heures en abscisse, pauses hachurées, ligne « Prévu » en pointillés, **une ligne par personne** avec une couleur, séance ouverte rayée ▶, « maint. »),
+  légende, notes (pauses, temps antérieur à une réouverture, lot, séance ouverte à fermer, jours plus anciens non dessinés). Jours sans contenu et week-ends écartés ; au plus 14 jours
+  dessinés (les totaux incluent tout). **Plage horaire** : horaire du poste, élargie par ce qui est réellement compté entre 4 h et 22 h — une séance oubliée ouverte la nuit est écrêtée,
+  jamais dessinée sur 24 h. Durées en heures/minutes (`terminerH`), jamais en jours (`durationLabel` divise par 8,75 h). Noms via `pointageUserName`.
+- Test (scratchpad `recap_test.js`, 25 assertions : migration, prévu/passé/écart, 2 personnes, jours, somme des parts rouges = écart, segments du prévu = 4 h, lot compté une fois,
+  ouverture sans clôture, annulation, sans temps → pop-up déclaré, à faire → déclaré, option décochée → clôture directe, confirmation = un seul `commit()` et `dureeReelleH` figé,
+  tâche déjà terminée entre-temps ; `recap_ui.js` Playwright : clic droit réel, Échap, 3 cas, 390 px sans débordement). `declare_run_test.js` mis à jour (récap puis confirmation).
+
 ### Pauses de production à risque
 
 Complète « Retard de démarrage » ci-dessus sur un axe différent : celui-ci mesure un retard **avant**

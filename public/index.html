@@ -1064,6 +1064,22 @@
   .rf-clip{position:absolute; top:50%; margin-top:-8px; font-size:11px; color:var(--text-faint); z-index:2;}
   .rf-det{grid-column:1/-1; padding:8px 12px; margin:2px 0 8px; background:var(--panel-2); border-radius:var(--radius); font-size:12px; display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start; cursor:default;}
   .rf-det div{min-width:120px;} .rf-det small{display:block; color:var(--text-faint); font-size:10px; text-transform:uppercase; letter-spacing:.05em;}
+  .tr-lane{position:relative; display:grid; grid-template-columns:repeat(var(--nd),1fr); height:44px;}
+  .tr-lane.tr-axis{height:46px; border-bottom:1px solid var(--line);}
+  .tr-cell{position:relative; border-left:1px solid var(--line-soft); height:100%;}
+  .tr-dlab{font-size:10px; color:var(--text-faint); text-align:center; line-height:1.15; padding-top:3px;} .tr-dlab b{display:block; font-size:11.5px; color:var(--text);}
+  .tr-hours{position:absolute; bottom:1px; left:0; right:0; display:flex; justify-content:space-between; font-size:8.5px; color:var(--text-faint); padding:0 2px;}
+  .tr-lunch{position:absolute; top:0; bottom:0; background:repeating-linear-gradient(45deg,transparent 0 4px,var(--line-soft) 4px 8px);}
+  .tr-bar{position:absolute; top:10px; bottom:10px; border-radius:5px; display:flex; align-items:center; justify-content:center; font-size:10.5px; color:#fff; white-space:nowrap; overflow:hidden; z-index:1; font-variant-numeric:tabular-nums; box-sizing:border-box;}
+  .tr-bar.plan{background:transparent; border:2px dashed var(--text-faint); color:var(--text-dim);}
+  .tr-bar.over{background:var(--red);}
+  .tr-bar.run{background-image:repeating-linear-gradient(135deg,rgba(255,255,255,.25) 0 6px,transparent 6px 12px);}
+  .tr-now{position:absolute; top:0; bottom:0; width:2px; background:var(--blue); z-index:3;} .tr-now span{position:absolute; top:-1px; left:4px; font-size:9px; font-weight:700; color:var(--blue);}
+  .tr-dot{display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle;}
+  .tr-badge{margin:0 12px 0 auto; padding:6px 14px; border-radius:8px; color:#fff; text-align:center; white-space:nowrap;} .tr-badge b{display:block; font-size:20px; line-height:1.1; font-variant-numeric:tabular-nums;} .tr-badge span{font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;}
+  .tr-gauge{margin:4px 0 12px;} .tr-gtrack{position:relative; height:14px; border-radius:7px; background:var(--panel-2); border:1px solid var(--line); overflow:hidden;} .tr-gfill{position:absolute; left:0; top:0; bottom:0;} .tr-gplan{position:absolute; top:0; bottom:0; width:2px; background:var(--text);}
+  .tr-glab{display:flex; justify-content:space-between; font-size:11px; color:var(--text-dim); font-variant-numeric:tabular-nums;}
+  .tr-lg{display:inline-block; width:18px; height:9px; border-radius:3px; margin-right:5px; vertical-align:middle;} .tr-lg.plan{border:2px dashed var(--text-faint); height:11px; width:20px; background:transparent;} .tr-lg.lunch{background:repeating-linear-gradient(45deg,transparent 0 3px,var(--text-faint) 3px 6px);}
   .pointages-ref-link{background:none; border:none; padding:0; font:inherit; color:inherit; font-weight:600; cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px;}
   .pointages-ref-link:hover{color:var(--accent);}
   .temps-prod-pause-row td{color:var(--text-faint); font-style:italic; background:var(--panel-2); text-align:center; font-size:11.5px;}
@@ -1840,7 +1856,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.113.1';
+const APP_VERSION = '1.114.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -2023,6 +2039,7 @@ const SETTINGS_HELP = {
   presenceArrondi: "Règle appliquée à la lecture pour calculer l'heure RETENUE d'un pointage (présence, retard, fiche salarié, exports). Les pointages enregistrés ne sont jamais modifiés : l'heure réelle reste visible à côté. Sans effet pour les salariés au forfait.",
   presenceArrondiEffet: "Les jours avant cette date gardent leurs heures réelles : changer la règle ne réécrit jamais l'historique déjà consulté ou exporté.",
   tmFrequence: "Fréquence à laquelle le conteneur zk-sync relit la pointeuse. Le réglage est repris par l'agent en moins d'une minute, sans redémarrage. « Par défaut » = valeur SYNC_INTERVAL du fichier TM616.env (300 s à défaut). Minimum 1 minute.",
+  terminerRecap: "Au clic sur « Terminer » (clic droit du planning, sélecteur de statut du tableau des tâches), une pop-up montre sur une frise le temps prévu face au temps réellement pointé (par personne, avec l'écart et la part au-delà du prévu) avant de clôturer. Rien n'est modifié tant qu'on ne confirme pas. Sans temps pointé, c'est la pop-up « temps déclaré » habituelle qui s'ouvre. Cochée par défaut ; décochée, « Terminer » clôture directement comme avant.",
   libereAuto: "Une tâche mise en pause à la main réserve son poste jusqu'à la fin du travail restant : pendant ce temps, rien d'autre ne peut y être planifié. Avec une valeur N > 0, une pause manuelle qui dure depuis plus de N heures d'ouverture du poste libère automatiquement ce poste : le temps restant est replanifié comme une tâche à faire, par priorité. Ne concerne jamais les pauses déjeuner ou hors horaires automatiques. 0 = désactivé (valeur par défaut). Chaque tâche peut aussi être libérée à la main (clic droit).",
   urgenceAuto: "Quand l'échéance d'une commande est dépassée (depuis le nombre de jours choisi), le planning la traite comme « Importante » ou « Urgente » : ses tâches passent devant celles des commandes moins prioritaires, et sa carte est colorée en conséquence. Le niveau saisi sur la commande n'est jamais modifié. Désactivé par défaut.",
   dispoAlerte: "Une tâche « À faire » dont toutes les étapes précédentes sont terminées est disponible. Passé ce nombre de jours sans qu'elle soit démarrée, elle est signalée (pastille ambre/rouge sur le Kanban, bloc de la Vue d'ensemble et des Risques de retard, rapport e-mail). 0 = alerte désactivée. Par défaut : 3 jours.",
@@ -2043,7 +2060,7 @@ function saveSettingsUIPrefs(){
 // réinitialisait silencieusement au moindre vidage de cache (retour utilisateur réel) — ici, comme
 // pour la page d'accueil par défaut, la personne retrouve son ordre quel que soit le poste depuis
 // lequel elle se connecte.
-const PAGE_MENU_KEYS = ['conges', 'tempsProd', 'fiche', 'zones', 'risques', 'pointages', 'historique', 'dashboard', 'monPointage', 'presence', 'borne'];
+const PAGE_MENU_KEYS = ['conges', 'tempsProd', 'fiche', 'zones', 'risques', 'pointages', 'historique', 'dashboard', 'monPointage', 'presence', 'borne', 'retards'];
 const PAGE_MENU_LABELS = {
   conges: '🏖 Congés', tempsProd: '⏱ Temps de production', fiche: '📋 Fiche salarié', zones: '📍 Zones de stockage', risques: '⚠️ Risques de retard',
   pointages: '🕘 Pointages', historique: '📈 Historique', dashboard: "📊 Vue d'ensemble",
@@ -2076,7 +2093,7 @@ function isPageMenuKeyVisible(key){
 // un thème est un menu déroulant qui ouvre ses pages. Propre à la personne, synchronisée par commit().
 const MENU_THEME_ICONS = ['🏭', '⏱', '📈', '🏖', '👥', '📍', '📋', '🔧', '📦', '🧰', '⭐', '📁'];
 const DEFAULT_MENU_THEMES = [
-  { id: 'atelier', nom: 'Atelier', icone: '🏭', pages: ['zones', 'risques', 'dashboard', 'historique'] },
+  { id: 'atelier', nom: 'Atelier', icone: '🏭', pages: ['zones', 'risques', 'retards', 'dashboard', 'historique'] },
   { id: 'temps', nom: 'Temps & présence', icone: '⏱', pages: ['tempsProd', 'pointages', 'presence', 'monPointage', 'fiche', 'borne'] }
 ];
 // Ordre enregistré par l'ancien système : clés inconnues/en double ignorées, pages ajoutées depuis complétées EN FIN.
@@ -2592,7 +2609,7 @@ function manualArchiveNow(){
   showToast(`${nb} commande${nb>1?'s':''} archivée${nb>1?'s':''}.`);
 }
 let currentView = 'semaine'; // 'semaine' | 'mois' | 'annee'
-let currentPage = 'planning'; // 'planning' | 'conges' | 'tempsProd' | 'zones' | 'risques' | 'pointages' | 'historique' | 'dashboard'
+let currentPage = 'planning'; // 'planning' | 'conges' | 'tempsProd' | 'zones' | 'risques' | 'retards' | 'pointages' | 'historique' | 'dashboard'
 let congesTab = 'mes-demandes'; // 'mes-demandes' | 'equipe' | 'calendrier' | 'a-valider' | 'soldes'
 let equipeStatutFilter = 'approuve'; // filtre de l'onglet "Congés de l'équipe"
 let leaveImpactPreviewId = null; // id de la demande dont on affiche l'aperçu d'impact, dans "À valider"
@@ -2669,6 +2686,7 @@ let correctOperatorDraft = null;
 // même outil, déjà utilisé et testé tel quel depuis "Temps de production".
 let correctPointageDraft = null;
 let declareDoneDraft = null; // Déclarer terminée une tâche jamais démarrée (voir CLAUDE.md, « Déclarer terminée »)
+let terminerRecapDraft = null; // Récapitulatif « temps passé / temps prévu » avant de terminer une tâche (v1.114.0, voir CLAUDE.md)
 // Filtres de la page "Pointages" — purement transitoires (comme searchQuery), jamais persistés.
 // customFrom/customTo (AAAA-MM-JJ) ne servent qu'en range==='custom' (Plage personnalisée) —
 // voir pointagesRangeBounds().
@@ -2823,6 +2841,7 @@ function migrateState(st){
   // (0 = désactivé) et proposition « libérer le poste ? » à chaque mise en pause manuelle.
   if(st.config.libereAutoApresH === undefined) st.config.libereAutoApresH = 0;
   if(st.config.libereProposerPause === undefined) st.config.libereProposerPause = true;
+  if(st.config.terminerRecapActif === undefined) st.config.terminerRecapActif = true; // v1.114.0 : récapitulatif prévu / passé avant de terminer une tâche (test `=== undefined` : un `false` choisi survit)
   if(!st.config.urgenceAuto || typeof st.config.urgenceAuto !== 'object') st.config.urgenceAuto = { actif:false, niveau:'importante', apresJours:0 };
   if(st.config.archiveApresJours === undefined) st.config.archiveApresJours = 365; // 0 = archivage automatique désactivé
   if(st.config.archiveAutoActive === undefined) st.config.archiveAutoActive = Number(st.config.archiveApresJours) > 0; // préserve le comportement des états déjà enregistrés
@@ -4794,6 +4813,8 @@ function updateConfig(field, value){
     state.config[field] = !!value;
   } else if(field==='libereProposerPause'){
     state.config.libereProposerPause = !!value;
+  } else if(field==='terminerRecapActif'){
+    state.config.terminerRecapActif = !!value;
   } else if(field==='libereAutoApresH'){
     const v = Number(String(value).replace(',','.'));
     state.config.libereAutoApresH = (isFinite(v) && v > 0) ? Math.min(720, Math.round(v*4)/4) : 0; // 0 = désactivé
@@ -7364,7 +7385,7 @@ function applySingleStatusChange(c, o, newStatut, nowStr, plannedEndBefore, prev
   }
   return null;
 }
-function setOpStatut(cid, oid, newStatut){
+function setOpStatut(cid, oid, newStatut, opts){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
   const o = c.pieces.find(o=>o.id===oid); if(!o) return;
   const prev = o.statut;
@@ -7376,6 +7397,9 @@ function setOpStatut(cid, oid, newStatut){
   // même pop-up de temps déclaré, au lieu de l'ancien prompt() prérempli avec le temps PRÉVU — un simple
   // « OK » y inscrivait le prévu comme « réellement passé » (cas réel C026-0727 : 7 h). Voir CLAUDE.md.
   if(newStatut === 'termine' && (prev === 'en_cours' || prev === 'en_pause') && hasNoRecordedTime(o)){ openDeclareDone(cid, oid); return; }
+  // Tâche avec du temps pointé : récapitulatif « passé / prévu » avant de clôturer (v1.114.0) — la
+  // clôture n'a lieu qu'à la confirmation (confirmTerminerRecap rappelle avec recapOk). Désactivable.
+  if(newStatut === 'termine' && (prev === 'en_cours' || prev === 'en_pause') && !(opts && opts.recapOk) && state.config.terminerRecapActif !== false){ openTerminerRecap(cid, oid); return; }
 
   // Une pièce fusionnée (découpée en même temps que d'autres, parfois d'autres commandes) change de
   // statut EN MÊME TEMPS que tout son groupe — physiquement, c'est une seule et même opération.
@@ -8814,6 +8838,7 @@ function renderHeader(){
         fiche: `📋 ${canSupervise()?'Fiche salarié':'Ma fiche'}`,
         zones: '📍 Zones de stockage',
         risques: '⚠️ Risques de retard',
+        retards: '🕓 Retards de démarrage',
         pointages: canSupervise() ? '🕘 Pointages' : null,
         historique: canSupervise() ? '📈 Historique' : null,
         dashboard: canSupervise() ? "📊 Vue d'ensemble" : null,
@@ -8824,7 +8849,7 @@ function renderHeader(){
       // Pastilles de comptage : par page, et additionnées sur le déclencheur d'un thème qui les contient.
       const pageBadgeN = { conges: (canSupervise() && pendingCount > 0) ? pendingCount : 0, risques: nbRisque, presence: presencePendingN };
       const badgeHtml = n => n > 0 ? ` <span class="pending-count-badge">${n}</span>` : '';
-      const gotoAction = { conges:'goto-conges', tempsProd:'goto-temps-prod', fiche:'goto-fiche', zones:'goto-zones', risques:'goto-risques', pointages:'goto-pointages', historique:'goto-historique', dashboard:'goto-dashboard', monPointage:'goto-mon-pointage', presence:'goto-presence', borne:'goto-borne' };
+      const gotoAction = { conges:'goto-conges', tempsProd:'goto-temps-prod', fiche:'goto-fiche', zones:'goto-zones', risques:'goto-risques', retards:'goto-retards', pointages:'goto-pointages', historique:'goto-historique', dashboard:'goto-dashboard', monPointage:'goto-mon-pointage', presence:'goto-presence', borne:'goto-borne' };
       // La clé de menu « fiche » correspond à la page « ficheSalarie » (les autres portent le nom de leur page).
       const isCurrentKey = k => currentPage === (k === 'fiche' ? 'ficheSalarie' : k);
       const layout = getUserMenuLayout(currentUser ? currentUser.id : '');
@@ -11730,27 +11755,6 @@ function renderRisquesPage(){
     </div>`}
   </section>` : '';
   const retardsDemarrage = computeRetardDemarrageParPoste(state);
-  const retardsDemarrageDetail = computeRetardDemarrageDetail(state).filter(r => risquesSearchMatch(r.commandeNom, r.piece, r.etape, r.machineNom, r.numeroLigne));
-  const derive = computeDeriveDemarrageAVenir(state, schedule);
-  const deriveDetail = derive.detail.filter(r => risquesSearchMatch(r.commandeNom, r.piece, r.etape, r.machineNom, r.numeroLigne));
-  const lotTxt = (r) => r.nbPieces > 1 ? ` <span class="footer-note" style="margin:0;">(+${r.nbPieces-1} pièce(s) du même lot)</span>` : '';
-  const commandeLink = (r) => `<button class="temps-prod-commande-link" data-action="isolate-commande-goto-planning" data-cid="${r.commandeId}" style="background:none; border:none; padding:0; color:var(--text);">${escapeHtml(r.commandeNom)}</button>`;
-  const pieceCell = (r) => `${escapeHtml([r.piece, r.etape].filter(Boolean).join(' / ')||'—')}${r.numeroLigne?` <span class="footer-note" style="margin:0;">(n°${escapeHtml(r.numeroLigne)})</span>`:''}${lotTxt(r)}`;
-  const rdColgroup = '<colgroup><col style="width:16%"><col style="width:24%"><col style="width:21%"><col style="width:14%"><col style="width:14%"><col style="width:11%"></colgroup>';
-  const retardsDemarrageHtml = (retardsDemarrage.length || derive.detail.length) ? `
-  <section class="panel">
-    <div class="panel-head">
-      <h2>🕓 Retards et dérives de démarrage</h2>
-      <div style="display:flex; align-items:center; gap:8px;">
-        <span class="footer-note" style="margin:0;">Par poste, jamais par personne</span>
-        <button class="ghost icon-btn collapse-chevron ${isPanelEffectivelyCollapsed('retardsDemarrage')?'collapsed':''}" data-action="toggle-panel-collapse" data-key="retardsDemarrage" title="${isPanelEffectivelyCollapsed('retardsDemarrage')?'Déplier':'Replier'}">▾</button>
-      </div>
-    </div>
-    ${isPanelEffectivelyCollapsed('retardsDemarrage') ? '' : `<div class="panel-body">
-      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Écart entre la date de début que le planning prévoyait <b>à la création</b> d'une tâche (cercle vide) et son démarrage : réel pour une tâche déjà démarrée (point plein), projeté aujourd'hui par le moteur pour une tâche qui n'a pas encore démarré (cercle en pointillé, « dérive »). Un lot fusionné ne compte que pour une tâche. Mesuré uniquement sur les tâches créées depuis l'introduction de ce suivi. Cliquez une ligne pour le détail ; la recherche de la page filtre par commande, pièce, étape ou poste.</div>
-      ${renderRetardFriseHtml(retardsDemarrageDetail, deriveDetail, new Date(), risquesSearchQuery)}
-    </div>`}
-  </section>` : '';
   const disponiblesAll = computeDisponiblesNonDemarrees(state, new Date());
   const disponiblesRows = disponiblesAll.filter(r => risquesSearchMatch(r.commandeNom, r.refClient, r.piece, r.etape, r.machineNom, r.numeroLigne));
   const disponiblesHtml = dispoAlerteJours() > 0 && disponiblesAll.length ? `
@@ -11820,6 +11824,7 @@ function renderRisquesPage(){
   <div class="search-bar" style="margin:0 0 12px;">
     <input type="text" id="risques-search-input" placeholder="🔍 Rechercher une commande, une pièce, une étape, un poste, une référence client..." value="${escapeHtml(risquesSearchQuery)}" style="width:auto; flex:1; min-width:220px;">
     ${risquesSearchQuery.trim() ? `<button class="ghost small" data-action="risques-search-clear">✕ Effacer</button>` : ''}
+    <button class="small" data-action="goto-retards" title="La frise des retards et dérives de démarrage a son propre onglet">🕓 Retards de démarrage</button>
   </div>`;
   return `
   ${summaryHtml}
@@ -11828,7 +11833,43 @@ function renderRisquesPage(){
     <div class="risques-col-left">${risquesHtml}</div>
     <div class="risques-col-right">${disponiblesHtml}${pausesHtml}</div>
   </div>
-  <div style="margin-top:16px;">${retardsDemarrageHtml}</div>`;
+  `;
+}
+
+// ---------- Page « 🕓 Retards de démarrage » (v1.114.0) ----------
+// La frise des retards et dérives de démarrage (v1.111.0) vivait en bas de la page Risques : elle a désormais son
+// propre onglet (menu « Atelier », à côté de Risques) et sa propre recherche (celle de Risques ne la filtre plus).
+// Mêmes données, mêmes seuils, même frise : seule la page d'accueil de la section change.
+var retardsSearchQuery = '';
+function retardsSearchMatch(...parts){
+  const q = String(retardsSearchQuery || '').trim().toLowerCase();
+  if(!q) return true;
+  return parts.some(p => p != null && String(p).toLowerCase().includes(q));
+}
+function renderRetardsPage(){
+  const schedule = getSchedule();
+  const allConstates = computeRetardDemarrageDetail(state);
+  const constates = allConstates.filter(r => retardsSearchMatch(r.commandeNom, r.piece, r.etape, r.machineNom, r.numeroLigne));
+  const derive = computeDeriveDemarrageAVenir(state, schedule);
+  const derives = derive.detail.filter(r => retardsSearchMatch(r.commandeNom, r.piece, r.etape, r.machineNom, r.numeroLigne));
+  const nothing = !allConstates.length && !derive.detail.length;
+  const searchBar = `
+  <div class="search-bar" style="margin:0 0 12px;">
+    <input type="text" id="retards-search-input" placeholder="🔍 Rechercher une commande, une pièce, une étape, un poste, un n° de ligne..." value="${escapeHtml(retardsSearchQuery)}" style="width:auto; flex:1; min-width:220px;">
+    ${retardsSearchQuery.trim() ? `<button class="ghost small" data-action="retards-search-clear">✕ Effacer</button>` : ''}
+  </div>`;
+  return `
+  ${searchBar}
+  <section class="panel">
+    <div class="panel-head">
+      <h2>🕓 Retards et dérives de démarrage</h2>
+      <span class="footer-note" style="margin:0;">Par poste, jamais par personne</span>
+    </div>
+    <div class="panel-body">
+      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Écart entre la date de début que le planning prévoyait <b>à la création</b> d'une tâche (cercle vide) et son démarrage : réel pour une tâche déjà démarrée (point plein), projeté aujourd'hui par le moteur pour une tâche qui n'a pas encore démarré (cercle en pointillé, « dérive »). Un lot fusionné ne compte que pour une tâche. Mesuré uniquement sur les tâches créées depuis l'introduction de ce suivi. Cliquez une ligne pour le détail ; la recherche ci-dessus filtre par commande, pièce, étape ou poste.</div>
+      ${nothing ? `<div class="empty-state"><strong>Aucun retard ni aucune dérive de démarrage</strong>Rien à signaler pour l'instant : toutes les tâches suivies démarrent (ou sont projetées) dans le prévu.</div>` : renderRetardFriseHtml(constates, derives, new Date(), retardsSearchQuery)}
+    </div>
+  </section>`;
 }
 
 /* ---------------- Vue d'ensemble atelier (voir CLAUDE.md « Vue d'ensemble atelier ») ---------------- */
@@ -14988,6 +15029,227 @@ function renderRetardDemarragePopupModal(){
     </div>
   </div>`;
 }
+// ---- Pop-up « Terminer » : temps passé face au temps prévu (v1.114.0, voir CLAUDE.md) ----
+// Chemins parcourus pendant le temps prévu : on le déroule à partir du démarrage réel, sur les créneaux
+// d'ouverture du poste (dayIntervals), jusqu'à épuisement de la durée prévue. Pur, testable.
+function terminerPlanSegments(start, prevuH, cfg){
+  const segs = []; let rem = prevuH;
+  if(!(rem > 1e-6)) return segs;
+  let day = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  for(let g = 0; g < 120 && rem > 1e-6; g++, day = nextDayStart(day)){
+    dayIntervals(day, cfg).forEach(([a, b]) => {
+      if(rem <= 1e-6) return;
+      const sA = a < start ? start : a;
+      if(sA >= b) return;
+      const h = workingHoursBetween(sA, b, cfg);
+      if(h < 1e-6) return; // week-end, férié, poste indisponible
+      const take = Math.min(h, rem);
+      segs.push([sA, new Date(sA.getTime() + take * 3600000)]);
+      rem -= take;
+    });
+  }
+  return segs;
+}
+// Découpe un intervalle en morceaux par jour calendaire (une séance de nuit n'a pas de sens sur une frise horaire).
+function terminerSplitByDay(a, b){
+  const out = []; let cur = a;
+  for(let g = 0; g < 40 && cur < b; g++){
+    const nd = nextDayStart(cur), e = nd < b ? nd : b;
+    out.push([cur, e]); cur = nd;
+  }
+  return out;
+}
+const TERMINER_OP_COLORS = ['#316f98', '#6b7f3a', '#8a5fb0', '#b0683a', '#3a8a8a', '#a0507a'];
+function computeTerminerRecap(o, st, now){
+  now = now || new Date();
+  const cfg = configForPiece(o, st);
+  const wins = exceptionWindowsFor(o);
+  const prevu = dureePrevueH(o) || 0;
+  const passe = pieceTempsPasseH(o, st);
+  const ant = tempsAnterieurH(o);
+  const ecart = passe - prevu;
+  // Séances (heures d'horloge pour le dessin, heures comptées pour l'étiquette)
+  const sessions = (o.sessions || []).filter(x => x.debut).map(x => {
+    const a = new Date(x.debut), b = x.fin ? new Date(x.fin) : now;
+    return { a, b, open: !x.fin, uid: x.operatorUserId || o.operatorUserId || '' };
+  }).filter(x => x.b > x.a);
+  const start = sessions.length ? new Date(Math.min(...sessions.map(x => +x.a))) : (o.debutReel ? new Date(o.debutReel) : now);
+  const plan = terminerPlanSegments(start, prevu, cfg);
+  const pieces = [];
+  sessions.forEach(x => terminerSplitByDay(x.a, x.b).forEach(([a, b]) => {
+    pieces.push({ a, b, uid: x.uid, open: x.open, h: countedHoursBetween(a, b, cfg, wins), over: 0, overFrom: null });
+  }));
+  // Part au-delà du prévu : on remonte depuis les séances qui finissent le plus tard (même principe pour toutes les personnes).
+  let rest = Math.max(0, ecart);
+  pieces.slice().sort((x, y) => y.b - x.b).forEach(pc => {
+    if(rest <= 1e-6) return;
+    if(pc.h <= rest + 1e-6){ pc.over = pc.h; pc.overFrom = pc.a; rest -= pc.h; return; }
+    let lo = pc.a, hi = pc.b; // cherche t tel que heures comptées(t → fin) = rest
+    for(let i = 0; i < 28; i++){ const mid = new Date((+lo + +hi) / 2); if(countedHoursBetween(mid, pc.b, cfg, wins) > rest) lo = mid; else hi = mid; }
+    pc.over = rest; pc.overFrom = hi; rest = 0;
+  });
+  // Jours affichés
+  const keyOf = d => toDateInputValue(d);
+  const hasContent = new Set();
+  plan.forEach(([a]) => hasContent.add(keyOf(a)));
+  pieces.forEach(pc => hasContent.add(keyOf(pc.a)));
+  if(sessions.some(x => x.open)) hasContent.add(keyOf(now));
+  let days = [], hiddenDays = 0;
+  if(hasContent.size){
+    const keys = [...hasContent].sort();
+    let d = new Date(keys[0] + 'T00:00:00'); const last = new Date(keys[keys.length - 1] + 'T00:00:00');
+    for(let g = 0; g < 60 && d <= last; g++, d = nextDayStart(d)){
+      const k = keyOf(d), we = d.getDay() === 0 || d.getDay() === 6;
+      if(hasContent.has(k) || !(we || isFrenchPublicHoliday(d))) days.push(new Date(d));
+    }
+    if(days.length > 14) days = days.filter(x => hasContent.has(keyOf(x)));
+    if(days.length > 14){ hiddenDays = days.length - 14; days = days.slice(-14); }
+  }
+  const dayIdx = {}; days.forEach((d, i) => { dayIdx[keyOf(d)] = i; });
+  const shownPieces = pieces.filter(pc => dayIdx[keyOf(pc.a)] != null);
+  const shownPlan = plan.filter(([a]) => dayIdx[keyOf(a)] != null);
+  // Plage horaire : tout ce qui est dessiné + l'horaire normal du poste
+  const hf = d => d.getHours() + d.getMinutes() / 60;
+  const hfEnd = (a, b) => (keyOf(b) === keyOf(a) ? hf(b) : 24);
+  // Plage horaire : l'horaire du poste, élargi par ce qui est réellement dessiné entre 4 h et 22 h (travail sous exception) ;
+  // une séance oubliée ouverte la nuit est écrêtée à cette plage plutôt que d'étirer toute la frise sur 24 h.
+  let lo = cfg.startHour, hi = cfg.startHour + (cfg.monThuHours || 8) + 1.5;
+  const clampH = h => Math.min(22, Math.max(4, h));
+  shownPieces.forEach(pc => { if(pc.h > 0.05){ lo = Math.min(lo, clampH(hf(pc.a))); hi = Math.max(hi, clampH(hfEnd(pc.a, pc.b))); } });
+  shownPlan.forEach(([a, b]) => { lo = Math.min(lo, clampH(hf(a))); hi = Math.max(hi, clampH(hfEnd(a, b))); });
+  lo = Math.max(0, Math.floor(lo)); hi = Math.min(24, Math.ceil(hi));
+  if(hi - lo < 6) hi = Math.min(24, lo + 6);
+  const lunch = days.map(d => pauseWindowsFor(d, cfg).map(p => [hf(p.start), hf(p.end)]).filter(([a, b]) => b > lo && a < hi));
+  // Par personne
+  const byOpMap = mergeHoursByOp(computeSessionsHoursByOperator(o, st), anterieurParOp(o)) || {};
+  const byOp = Object.keys(byOpMap).map((uid, i) => ({ uid, name: uid ? pointageUserName(uid) : 'Non attribué', h: byOpMap[uid] }))
+    .sort((x, y) => y.h - x.h).map((x, i) => ({ ...x, color: TERMINER_OP_COLORS[i % TERMINER_OP_COLORS.length] }));
+  // Pauses en journée : heures d'ouverture réellement perdues entre deux séances
+  const gaps = pauseGapsForPiece(o, now).map(g => countedHoursBetween(g.debut, g.fin, cfg, wins)).filter(h => h > 0.05);
+  let lot = 0;
+  if(o.fusionGroupId) st.commandes.forEach(cc => cc.pieces.forEach(oo => { if(oo.fusionGroupId === o.fusionGroupId) lot++; }));
+  const todayIdx = dayIdx[keyOf(now)];
+  return { prevu, passe, ecart, pct: prevu > 0 ? Math.round(ecart / prevu * 100) : null, ant, byOp, days, dayIdx, lo, hi, lunch, plan: shownPlan, pieces: shownPieces,
+    pauses: { n: gaps.length, h: gaps.reduce((a, b) => a + b, 0) }, lot, hasSessions: sessions.length > 0, nowIdx: todayIdx != null ? todayIdx : null, nowH: hf(now), start, cfg, wins, hiddenDays };
+}
+// Durées en heures et minutes (« 7 h 15 », « 40 min ») — la frise parle d'heures de travail, jamais de jours.
+function terminerH(h){
+  const mn = Math.max(0, Math.round(h * 60));
+  if(mn < 60) return mn + ' min';
+  return Math.floor(mn / 60) + ' h ' + pad(mn % 60);
+}
+function renderTerminerRecapFriseHtml(m){
+  const nd = m.days.length;
+  if(!nd) return '';
+  const span = m.hi - m.lo, hf = d => d.getHours() + d.getMinutes() / 60;
+  const jours = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
+  const hm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const dayOf = d => m.dayIdx[toDateInputValue(d)];
+  const clip = (h) => Math.min(m.hi, Math.max(m.lo, h));
+  const left = (i, h) => ((i + (clip(h) - m.lo) / span) / nd * 100);
+  const width = (a, b) => ((clip(b) - clip(a)) / span / nd * 100);
+  const cells = (inner) => {
+    let c = '';
+    for(let i = 0; i < nd; i++) c += `<div class="tr-cell">${m.lunch[i].map(([a, b]) => `<div class="tr-lunch" style="left:${(Math.max(a, m.lo) - m.lo) / span * 100}%; width:${(Math.min(b, m.hi) - Math.max(a, m.lo)) / span * 100}%"></div>`).join('')}</div>`;
+    return `<div class="tr-lane" style="--nd:${nd}">${c}${inner}</div>`;
+  };
+  let ax = '';
+  m.days.forEach(d => { ax += `<div class="tr-cell"><div class="tr-dlab"><b>${jours[d.getDay()]}</b>${d.getDate()}/${pad(d.getMonth() + 1)}</div><div class="tr-hours"><span>${m.lo}h</span><span>${Math.round((m.lo + m.hi) / 2)}h</span><span>${m.hi}h</span></div></div>`; });
+  const now = m.nowIdx != null ? `<div class="tr-now" style="left:${left(m.nowIdx, Math.min(m.hi, Math.max(m.lo, m.nowH)))}%"><span>maint.</span></div>` : '';
+  // Créneaux prévus séparés par une simple pause (< 31 min) fusionnés en une barre : l'étiquette somme les heures réellement prévues.
+  const planMerged = [];
+  m.plan.forEach(([a, b]) => {
+    const l = planMerged[planMerged.length - 1], h = (b - a) / 3600000;
+    if(l && toDateInputValue(l.a) === toDateInputValue(a) && (a - l.b) <= 31 * 60000){ l.b = b; l.h += h; } else planMerged.push({ a, b, h });
+  });
+  const planBars = planMerged.map(({ a, b, h }) => { const i = dayOf(a); const w = width(hf(a), hfEnd2(a, b)); if(w <= 0) return ''; return `<div class="tr-bar plan" style="left:${left(i, hf(a))}%; width:${w}%" title="Prévu : ${hm(a)} → ${hm(b)}">${w > 6 ? escapeHtml(terminerH(h)) : ''}</div>`; }).join('');
+  let rows = `<div class="rf-row static"><div class="rf-name"><b>Prévu</b><span>${escapeHtml(terminerH(m.prevu))}</span></div>${cells(planBars + now)}</div>`;
+  m.byOp.forEach(op => {
+    const mine = m.pieces.filter(pc => String(pc.uid) === String(op.uid));
+    const bars = [];
+    mine.forEach(pc => {
+      const i = dayOf(pc.a);
+      const addBar = (a, b, over) => {
+        const h = countedHoursBetween(a, b, m.cfg, m.wins);
+        const w = width(hf(a), hfEnd2(a, b));
+        if(w <= 0) return; // séance entièrement hors de la plage dessinée (nuit) : comptée dans le total, pas dessinée
+        bars.push(`<div class="tr-bar ${over ? 'over' : 'op'} ${pc.open ? 'run' : ''}" style="left:${left(i, hf(a))}%; width:${Math.max(0.4, w)}%; ${over ? '' : `background-color:${op.color}`}" title="${escapeHtml(op.name + ' : ' + hm(a) + ' → ' + (pc.open ? 'en cours' : hm(b)) + ' · ' + terminerH(h) + ' comptées')}">${w > 6 ? escapeHtml(terminerH(h)) + (pc.open ? ' ▶' : '') : ''}</div>`);
+      };
+      if(pc.over > 1e-6 && pc.overFrom){
+        if(pc.overFrom - pc.a > 60000) addBar(pc.a, pc.overFrom, false);
+        addBar(pc.overFrom, pc.b, true);
+      } else addBar(pc.a, pc.b, false);
+    });
+    rows += `<div class="rf-row static"><div class="rf-name"><b><i class="tr-dot" style="background:${op.color}"></i>${escapeHtml(op.name)}</b><span>${escapeHtml(terminerH(op.h))} comptées</span></div>${cells(bars.join('') + now)}</div>`;
+  });
+  return `<div class="rf-scroll"><div class="rf-in" style="min-width:${Math.max(560, 120 + nd * 120)}px;"><div class="rf-axis"><div></div><div class="tr-lane tr-axis" style="--nd:${nd}">${ax}</div></div>${rows}</div></div>`;
+}
+// Petits utilitaires locaux du dessin (fin de morceau le jour même : 24 h si le morceau court jusqu'à minuit)
+function hfEnd2(a, b){ return (b.getHours() === 0 && b.getMinutes() === 0 && b > a) ? 24 : b.getHours() + b.getMinutes() / 60; }
+function openTerminerRecap(cid, oid){
+  const c = state.commandes.find(cc => cc.id === cid); const o = c && c.pieces.find(oo => oo.id === oid);
+  if(!o || (o.statut !== 'en_cours' && o.statut !== 'en_pause')) return;
+  terminerRecapDraft = { cid, oid };
+  render();
+}
+function closeTerminerRecap(){ terminerRecapDraft = null; render(); }
+function confirmTerminerRecap(){
+  const d = terminerRecapDraft; if(!d) return;
+  terminerRecapDraft = null;
+  const c = state.commandes.find(cc => cc.id === d.cid); const o = c && c.pieces.find(oo => oo.id === d.oid);
+  if(!o || (o.statut !== 'en_cours' && o.statut !== 'en_pause')){ showToast("Cette tâche vient d'être modifiée par quelqu'un d'autre : rien n'a été terminé."); render(); return; }
+  setOpStatut(d.cid, d.oid, 'termine', { recapOk: true });
+  render();
+}
+function renderTerminerRecapModal(){
+  const d = terminerRecapDraft; if(!d) return '';
+  const c = state.commandes.find(cc => cc.id === d.cid); const o = c && c.pieces.find(oo => oo.id === d.oid);
+  if(!o) return '';
+  const m = computeTerminerRecap(o, state, new Date());
+  const mach = state.machines.find(mm => mm.id === o.machineId);
+  const label = [o.piece, o.etape].filter(Boolean).join(' / ') || '(sans nom)';
+  const bad = m.ecart > 0.05, ok = m.ecart < -0.05;
+  const col = bad ? 'var(--red)' : (ok ? 'var(--green)' : 'var(--text)');
+  const sign = m.ecart >= 0 ? '+' : '−';
+  const ecTxt = Math.abs(m.ecart) < 0.05 ? 'Dans le prévu' : `${sign}${terminerH(Math.abs(m.ecart))}`;
+  const gMax = Math.max(m.prevu, m.passe, 0.01), planX = m.prevu / gMax * 100;
+  const fill = bad ? `linear-gradient(to right,var(--green) 0 ${m.prevu / m.passe * 100}%,var(--red) ${m.prevu / m.passe * 100}% 100%)` : 'var(--green)';
+  const badgeTxt = Math.abs(m.ecart) < 0.05 ? 'pile dans le prévu' : (bad ? 'dépassement' : 'en avance') + (m.pct != null ? ` · ${m.ecart >= 0 ? '+' : ''}${m.pct} %` : '');
+  const info = [];
+  if(m.pauses.n) info.push(`⏸ ${m.pauses.n} pause${m.pauses.n > 1 ? 's' : ''} en journée · ${terminerH(m.pauses.h)} d'arrêt`);
+  if(m.ant > 1e-6) info.push(`↺ dont ${terminerH(m.ant)} passées avant une réouverture (non dessinées)`);
+  if(m.hiddenDays > 0) info.push(`📅 ${m.hiddenDays} jour(s) plus ancien(s) non dessinés (frise limitée aux 14 derniers jours) ; les totaux, eux, les incluent.`);
+  if(m.lot > 1) info.push(`🔗 Lot de ${m.lot} pièces : temps du lot entier, compté une seule fois.`);
+  if(o.statut === 'en_cours') info.push('▶ Une séance est encore ouverte : elle sera fermée à l\'instant de la clôture.');
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box terminer-recap-box" role="dialog" aria-modal="true" style="max-width:880px; width:min(880px, 96vw);">
+      <div class="modal-head">
+        <div style="min-width:0;"><h2>✔ Terminer cette tâche ?</h2><div class="footer-note" style="margin:0; text-align:left;">${escapeHtml(c.nom)} — ${escapeHtml(label)}${mach ? ' · ' + escapeHtml(mach.nom) : ''}</div></div>
+        <div class="tr-badge" style="background:${col};"><b>${escapeHtml(ecTxt)}</b><span>${escapeHtml(badgeTxt)}</span></div>
+        <button class="ghost icon-btn" data-action="close-terminer-recap" title="Fermer">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="rf-kpis">
+          <div class="rf-kpi"><b>${escapeHtml(terminerH(m.prevu))}</b><span>Temps prévu</span></div>
+          <div class="rf-kpi"><b style="color:${col};">${escapeHtml(terminerH(m.passe))}</b><span>Temps passé</span></div>
+          <div class="rf-kpi"><b style="color:${col};">${escapeHtml(ecTxt)}</b><span>Écart</span></div>
+          <div class="rf-kpi"><b style="font-size:14px;">${mach ? escapeHtml(mach.nom) : '—'}</b><span>Poste</span></div>
+        </div>
+        <div class="tr-gauge"><div class="tr-gtrack"><div class="tr-gfill" style="width:${m.passe / gMax * 100}%; background:${fill};"></div><div class="tr-gplan" style="left:${planX}%"></div></div>
+          <div class="tr-glab"><span>0</span><span>trait = temps prévu (${escapeHtml(terminerH(m.prevu))})</span><span>${escapeHtml(terminerH(gMax))}</span></div></div>
+        ${m.days.length ? renderTerminerRecapFriseHtml(m) : '<div class="footer-note" style="text-align:left;">Aucune séance à dessiner sur la frise.</div>'}
+        <div class="rf-legend" style="margin-top:6px;"><span><span class="tr-lg plan"></span>Prévu (déroulé depuis le démarrage réel)</span><span><span class="tr-lg" style="background:var(--blue);"></span>Pointé (une couleur par personne)</span><span><span class="tr-lg" style="background:var(--red);"></span>Part au-delà du prévu</span><span><span class="tr-lg lunch"></span>Pause (non comptée)</span><span style="color:var(--blue);">▎ Maintenant</span></div>
+        ${info.length ? `<div class="rdp-why">${info.map(escapeHtml).join('<br>')}</div>` : ''}
+        <div class="footer-note" style="text-align:left; margin-top:6px;">« Terminer la tâche » fige ${escapeHtml(terminerH(m.passe))} comme temps réel (répartition par personne conservée). Rien n'est modifié si vous annulez.</div>
+        <div class="form-actions" style="justify-content:flex-end; margin-top:10px;">
+          <button class="ghost" data-action="close-terminer-recap">Annuler</button>
+          <button class="primary" data-action="confirm-terminer-recap">✔ Terminer la tâche</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
 // Pointage rapide (voir openQuickPointage/CLAUDE.md) — formulaire compact, volontairement distinct
 // du formulaire "Nouvelle commande" (multi-lignes, bien plus lourd que nécessaire ici).
 function renderQuickPointageModal(){
@@ -15271,6 +15533,11 @@ function renderSettingsModal(){
         Demander « libérer le poste ? » à chaque mise en pause manuelle
       </label>
       <div class="footer-note" style="text-align:left; padding:6px 0 16px;">Une tâche en pause garde son poste réservé jusqu'à la fin de son travail restant, ce qui repousse les autres tâches du poste. Libérée, elle n'occupe plus rien : son temps restant est replanifié par priorité avec les autres. Elle reste « En pause » et se relance normalement. Jamais appliqué aux pauses déjeuner ou hors horaires automatiques.</div>
+      <div class="modal-section-title">Terminer une tâche</div>
+      <label class="statut-chip" style="margin:8px 0 16px;">
+        <input type="checkbox" ${cfg.terminerRecapActif!==false?'checked':''} data-action="update-config" data-field="terminerRecapActif">
+        Afficher le récapitulatif « temps passé / temps prévu » avant de terminer ${helpTip('terminerRecap')}
+      </label>
       <div class="modal-section-title">Regroupement de pièces</div>
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${state.config.matiereFusionActive?'checked':''} data-action="update-config" data-field="matiereFusionActive">
@@ -15333,6 +15600,7 @@ function renderSettingsModal(){
         <option value="tempsProd" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='tempsProd'?'selected':''}>⏱ ${canSupervise()?'Temps de production':'Mon temps de production'}</option>
         <option value="zones" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='zones'?'selected':''}>📍 Zones de stockage</option>
         <option value="risques" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='risques'?'selected':''}>⚠️ Risques de retard</option>
+        <option value="retards" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='retards'?'selected':''}>🕓 Retards de démarrage</option>
         ${canSupervise() ? `<option value="pointages" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='pointages'?'selected':''}>🕘 Pointages</option>` : ''}
         ${canSupervise() ? `<option value="historique" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='historique'?'selected':''}>📈 Historique / Tendances</option>` : ''}
         ${canSupervise() ? `<option value="dashboard" ${(state.userDefaultPage||{})[String(currentUser?currentUser.id:'')]==='dashboard'?'selected':''}>📊 Vue d'ensemble atelier</option>` : ''}
@@ -19716,6 +19984,18 @@ function render(){
     restoreFocusRef(focusRef);
     return;
   }
+  if(currentPage === 'retards'){
+    appEl.innerHTML = [
+      renderHeader(),
+      renderRetardsPage(),
+      renderSettingsModal(),
+      renderPauseReminderModal(otherModalOpen),
+      renderToast()
+    ].join('');
+    restoreModalScroll(modalScrollTop);
+    restoreFocusRef(focusRef);
+    return;
+  }
   if(currentPage === 'pointages'){
     appEl.innerHTML = [
       renderHeader(),
@@ -19780,6 +20060,7 @@ function render(){
     renderCorrectOperatorModal(),
     renderQuickPointageModal(),
     renderDeclareDoneModal(),
+    renderTerminerRecapModal(),
     renderBulkDoneModal(),
     renderParcoursModal(),
     renderTempsProdSessionModal(),
@@ -19949,7 +20230,7 @@ document.addEventListener('click', (e) => {
     // Pop-up de document ouverte PAR-DESSUS Paramètres : ne referme qu'elle, pas Paramètres.
     if(presenceDocModal){ presenceDocModal = null; render(); return; }
     presenceCorrection = null; presencePunchDraft = null;
-    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; liberePosteDraft = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; bulkDoneDraft = null; parcoursModal = null; closeSettingsModal(); return;
+    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; liberePosteDraft = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; terminerRecapDraft = null; bulkDoneDraft = null; parcoursModal = null; closeSettingsModal(); return;
   }
   if(contextMenu && !e.target.closest('.context-menu')){
     contextMenu = null; render();
@@ -20110,6 +20391,8 @@ function dispatchClickAction(action, el){
     case 'borne-cancel': borneReset(); render(); break;
     case 'borne-exit': exitBorne(); break;
     case 'goto-risques': currentPage = 'risques'; render(); break;
+    case 'goto-retards': currentPage = 'retards'; render(); break;
+    case 'retards-search-clear': retardsSearchQuery = ''; render(); break;
     case 'goto-pointages': currentPage = 'pointages'; render(); break;
     case 'goto-historique': currentPage = 'historique'; render(); break;
     case 'open-historique-detail': openHistoriqueDetail(el.dataset.weekIdx, el.dataset.metric); break;
@@ -20135,6 +20418,8 @@ function dispatchClickAction(action, el){
     case 'bulk-done-poste': submitBulkDone(el.dataset.poste); break;
     case 'bulk-done-select-all': bulkDoneSelectAll(); break;
     case 'close-declare-done': closeDeclareDone(); break;
+    case 'close-terminer-recap': closeTerminerRecap(); break;
+    case 'confirm-terminer-recap': confirmTerminerRecap(); break;
     case 'submit-declare-done': submitDeclareDone(); break;
     case 'validate-declaration': validateDeclaration(el.dataset.cid, el.dataset.oid); break;
     case 'refuse-declaration': refuseDeclaration(el.dataset.cid, el.dataset.oid); break;
@@ -20956,6 +21241,12 @@ document.addEventListener('input', (e) => {
     const el = document.getElementById('zones-search-input');
     if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
   }
+  if(e.target.id === 'retards-search-input'){
+    retardsSearchQuery = e.target.value;
+    render();
+    const el = document.getElementById('retards-search-input');
+    if(el){ el.focus(); const pos = el.value.length; el.setSelectionRange(pos, pos); }
+  }
   if(e.target.id === 'risques-search-input'){
     risquesSearchQuery = e.target.value;
     render();
@@ -20977,6 +21268,7 @@ document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && newCommandeZoneNotice){ newCommandeZoneNotice = null; render(); }
   if(e.key === 'Escape' && retardDemarragePopupInfo){ closeRetardDemarragePopup(); }
   if(e.key === 'Escape' && liberePosteDraft){ closeLiberePostePrompt(); }
+  if(e.key === 'Escape' && terminerRecapDraft){ closeTerminerRecap(); }
   if(e.key === 'Escape' && rebutDraft){ closeRebutDraft(); }
   if(e.key === 'Escape' && historiqueDetailInfo){ closeHistoriqueDetail(); }
   if(e.key === 'Escape' && parcoursModal){ closeParcours(); }
@@ -21300,7 +21592,7 @@ function applyUserDefaultPageOnStart(){
   if((pref === 'pointages' || pref === 'historique' || pref === 'dashboard') && !canSupervise()) return; // rôle rétrogradé depuis (n'est plus superviseur/admin) : page devenue inaccessible, on garde Planning
   if((pref === 'monPointage' || pref === 'presence') && !presenceModuleActive()) return; // module Pointage présentiel désactivé depuis
   if(pref === 'presence' && !canSupervise()) return;
-  if(['conges','tempsProd','zones','risques','pointages','historique','dashboard','monPointage','presence'].includes(pref)) currentPage = pref;
+  if(['conges','tempsProd','zones','risques','retards','pointages','historique','dashboard','monPointage','presence'].includes(pref)) currentPage = pref;
 }
 async function startApp(){
   loadLoginBranding(); // en tâche de fond : alimente l'écran de connexion si la session a expiré
