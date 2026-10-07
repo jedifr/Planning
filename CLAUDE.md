@@ -4939,6 +4939,34 @@ seulement celles à risque. Pop-up retenue (pas de page dédiée), **sans impres
   cartes, présent dans la barre ; pièce tapée → 1 frise + barre de filtre ; numéro de commande → 3 frises ;
   « zzzz » et saisie vide → messages attendus, aucune erreur.
 
+### Parcours en plein écran et analyse de production (v1.120.0)
+
+Demande : rendre la pop-up Parcours « plus complète pour l'analyse de la production ». Constat sur C026-0728 : le Jet d'eau était fini le 17/09 et l'Usinage ne
+démarrait que 11 à 18 jours plus tard — l'information la plus utile n'apparaissait nulle part (la pop-up ne montrait que statut, dates et durée prévue). Maquette
+validée (artefact « Parcours enrichi »), pop-up **plein écran** (`.modal-overlay.settings-fullscreen` + `.modal-box.pcx-box` ; le défilement reste porté par `.modal-box`,
+donc `restoreModalScroll` conserve la position au changement de mode). **Rien n'est stocké, aucune route serveur** : tout se lit sur les pièces et le planning calculé.
+
+- **Calculs purs** (`parcoursAnalyse(chains, now)` → `{pieces, tot, reading}`, testables) : `parcoursStepStats` (prévu, compté, écart, pauses, opérateur réel, rebuts, coût,
+  retard de démarrage), `parcoursWait` (attente entre deux étapes d'une même pièce), `parcoursChainModel` (délai, attente cumulée, part travaillée).
+  Les tuiles et la lecture automatique portent sur les pièces AFFICHÉES (filtre de pièce pris en compte) ; l'export Excel, lui, prend toute la commande.
+- **Attente** : `reel` (fin réelle de l'étape précédente → début réel), `encours` (précédente finie, celle-ci pas démarrée : « en attente depuis N j », continue de croître),
+  `prevu` (dates du planning, en italique, jamais comptée dans les moyennes), `parallele` (même phase ou chevauchement : lots en parallèle, pas une attente). Rouge dès 5 j,
+  ambre dès 1 j. Jours calendaires (`calendarDurationLabel`), pas des heures ouvrées.
+- **Lot fusionné** : chaque membre porte le temps du lot ENTIER (`dureeOverrideH`, `dureeReelleH`, séances identiques) — il n'en reçoit ici que sa part, au prorata de son
+  temps théorique propre (`parcoursLotShare`, même règle que Pointages « Par référence » v1.104.0), pastille « ⚖ part du lot ». Les sommes retombent ainsi sur le total du lot,
+  sans dédoublonnage. Le temps théorique est cherché dans TOUTES les commandes (un lot peut en traverser plusieurs).
+- **Donnée absente = « — » ou rien, jamais 0** : pauses (`pauseN/pauseH` null quand `sessions[]` est archivée), temps d'une tâche clôturée sans temps mesuré (« temps non
+  mesuré »), sous-traitance (temps non compté). L'écart n'est calculé que pour une étape TERMINÉE (une étape en cours affiche « N % du prévu » : son prévu couvre toute la quantité).
+  « Qui » n'affiche l'opérateur réel (`dureeReelleParOperateur`, sinon séances) que s'il diffère de l'assigné. Les pauses sont en horloge murale (nuits comprises), comme Pointages.
+- **Part travaillée** = temps compté ÷ heures d'ouverture du poste écoulées entre le premier début et la dernière fin (ou maintenant si la pièce n'est pas finie), plafonnée à 100 %.
+- **Deux modes** (`parcoursViewMode`, préférence de navigateur `planning-atelier-parcours-mode`) : pastilles détaillées (une carte par pièce, étapes séparées par un trait d'attente) et
+  frise à l'échelle des dates (barre réalisée / en cours rayée / prévue hachurée, pointillés = attente, week-ends grisés, trait « maintenant »). Tri transitoire
+  (`parcoursModal.sort` : fichier, plus d'attente, délai, dépassement). « ⏱ Détail des horaires » ouvre la pop-up existante PAR-DESSUS (Échap et clic sur le fond ne referment
+  que celle-ci ; `renderTempsProdSessionModal()` est désormais aussi composée dans la page Risques). Export `exportParcoursExcel` : feuille « Parcours » (une ligne par étape) + « Synthèse ».
+- Test (scratchpad `parc_test.js`, 36 assertions : attentes réelle/en cours/prévue, sévérité, écart, rebut, opérateur réel, pauses null, lot réparti, totaux sans doublon, coût, lecture
+  automatique, tri, rendu des deux modes, export avec faux XLSX, vraie commande C026-0728 ; `parc_ui.js` Playwright sur serveur réel : plein écran, tuiles, scroll, mode mémorisé, tri,
+  détail par-dessus, Échap, recherche, 390 px sans débordement). `delivery_test` garde son échec déjà présent avant.
+
 ### Frise des retards et dérives de démarrage (v1.111.0)
 
 Demande : remplacer les tableaux « retards constatés » / « dérive des démarrages à venir » par une frise (début prévu → début réel, nombre de

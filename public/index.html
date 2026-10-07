@@ -979,6 +979,108 @@
   .pc-result:hover{background:var(--panel-2);}
   .pc-result-piece{font-size:11px; color:var(--blue); margin-left:8px;}
   .pc-filter-bar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:12px; background:rgba(49,111,152,0.08); border:1px solid rgba(49,111,152,0.3); padding:6px 10px; margin:8px 0 4px;}
+  /* Parcours en plein écran + analyse de production (v1.120.0) */
+  .modal-box.pcx-box{
+    width:100vw; max-width:100vw; height:100vh; max-height:100vh; border-radius:0; border:none; overflow-y:auto;
+  }
+  .pcx-box .modal-head{z-index:5;}
+  .pcx-body{padding:16px 24px 32px; max-width:1760px; margin:0 auto; display:flex; flex-direction:column; gap:12px;}
+  .pcx-sheet-head{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:flex-end;}
+  .pcx-title{font-size:17px;}
+  .pcx-tiles{display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px;}
+  .pcx-tile{background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:10px 12px; min-width:0;}
+  .pcx-tile .k{font-size:10px; text-transform:uppercase; letter-spacing:0.7px; color:var(--text-dim); font-weight:600;}
+  .pcx-tile .v{font-size:22px; font-weight:600; margin-top:3px; font-family:'IBM Plex Mono',monospace;}
+  .pcx-tile .s{font-size:11.5px; color:var(--text-dim); margin-top:1px; overflow-wrap:anywhere;}
+  .pcx-tile.bad{border-color:var(--red); background:rgba(178,58,48,0.07);} .pcx-tile.bad .v{color:var(--red);}
+  .pcx-tile.warn{border-color:var(--amber); background:var(--amber-dim);} .pcx-tile.warn .v{color:var(--amber);}
+  .pcx-tile.good .v{color:var(--green);}
+  .pcx-bar{height:5px; background:var(--line); border-radius:3px; margin-top:7px; overflow:hidden;}
+  .pcx-bar > i{display:block; height:100%; background:var(--green);}
+  .pcx-reading{border-left:3px solid var(--red); background:rgba(178,58,48,0.07); padding:9px 14px; font-size:13px;}
+  .pcx-reading .lbl{display:block; font-size:10px; text-transform:uppercase; letter-spacing:0.7px; color:var(--red); font-weight:700; margin-bottom:2px;}
+  .pcx-controls{display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; padding:8px 12px; background:var(--panel-2); border:1px solid var(--line);}
+  .pcx-controls label{font-size:12.5px; color:var(--text-dim); display:inline-flex; gap:6px; align-items:center;}
+  .pcx-controls select{width:auto; font-size:12.5px; padding:4px 8px;}
+  .pcx-spacer{flex:1;}
+  .pcx-seg{display:inline-flex; border:1px solid var(--line); background:var(--panel);}
+  .pcx-seg button{border:0; background:transparent; font:inherit; font-size:12.5px; padding:6px 12px; cursor:pointer; color:var(--text);}
+  .pcx-seg button + button{border-left:1px solid var(--line);}
+  .pcx-seg button[aria-pressed="true"]{background:var(--blue); color:#fff;}
+  .pcx-pieces{display:flex; flex-direction:column; gap:12px;}
+  .pcx-piece{border:1px solid var(--line); background:var(--panel-2); min-width:0;}
+  .pcx-piece-head{display:flex; flex-wrap:wrap; gap:4px 18px; align-items:baseline; padding:9px 14px; border-bottom:1px solid var(--line);}
+  .pcx-ref{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:13.5px;}
+  .pcx-meta{display:flex; flex-wrap:wrap; gap:3px 16px; font-size:12px; color:var(--text-dim);}
+  .pcx-meta b{color:var(--text); font-family:'IBM Plex Mono',monospace; font-weight:600;}
+  .pcx-meta b.bad{color:var(--red);} .pcx-meta b.warn{color:var(--amber);}
+  .pcx-dim{color:var(--text-faint); font-size:11px;}
+  .pcx-flow{display:flex; align-items:flex-start; padding:14px; overflow-x:auto; gap:0;}
+  .pcx-step{flex:1 1 280px; min-width:240px; display:flex; flex-direction:column; gap:6px;}
+  .pcx-step-top{display:flex; gap:10px; align-items:center;}
+  .pcx-step-id{min-width:0;}
+  .pcx-step-name{font-size:11.5px; text-transform:uppercase; letter-spacing:0.5px; font-weight:600; overflow-wrap:anywhere;}
+  .pcx-step-sub{font-size:12px; color:var(--text-dim);}
+  .pcx-dates{font-size:12px; display:grid; grid-template-columns:auto 1fr; gap:1px 8px;}
+  .pcx-dates .k{color:var(--text-faint); font-size:10px; text-transform:uppercase; letter-spacing:0.4px; align-self:center;}
+  .pcx-metrics{display:flex; flex-direction:column; gap:5px; border-top:1px dashed var(--line); padding-top:7px; margin-top:2px;}
+  .pcx-mrow{display:flex; flex-wrap:wrap; gap:3px 8px; align-items:center; font-size:12px;}
+  .pcx-mrow .lab{color:var(--text-faint); min-width:54px; font-size:10px; text-transform:uppercase; letter-spacing:0.4px;}
+  .pcx-chip{font-size:11.5px; padding:1px 7px; border-radius:9px; background:var(--panel); border:1px solid var(--line); white-space:normal;}
+  .pcx-chip.good{background:rgba(53,117,87,0.12); border-color:transparent; color:var(--green);}
+  .pcx-chip.bad{background:rgba(178,58,48,0.1); border-color:transparent; color:var(--red);}
+  .pcx-chip.warn{background:var(--amber-dim); border-color:transparent; color:var(--amber);}
+  .pcx-pbar{position:relative; height:6px; border-radius:3px; background:var(--line); flex:1 1 120px; min-width:100px;}
+  .pcx-pbar > i{position:absolute; left:0; top:0; bottom:0; border-radius:3px;}
+  .pcx-pbar > u{position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--text); opacity:0.7; text-decoration:none;}
+  .pcx-link{background:none; border:0; padding:0; font:inherit; font-size:12px; color:var(--blue); text-decoration:underline; cursor:pointer;}
+  .pcx-gap{flex:0 1 180px; min-width:120px; display:flex; flex-direction:column; align-items:center; gap:4px; padding:0 10px;}
+  .pcx-gap-line{width:100%; height:34px; display:flex; align-items:center;}
+  .pcx-gap-line i{display:block; width:100%; border-top:3px dashed var(--text-faint);}
+  .pcx-gap.none .pcx-gap-line i{border-top-style:solid; border-color:var(--green);}
+  .pcx-gap.ok .pcx-gap-line i{border-top-style:solid; border-color:var(--green);}
+  .pcx-gap.warn .pcx-gap-line i{border-color:var(--amber);}
+  .pcx-gap.bad .pcx-gap-line i{border-color:var(--red);}
+  .pcx-wait{font-size:12px; font-weight:600; font-family:'IBM Plex Mono',monospace; padding:2px 8px; border-radius:10px; background:var(--panel); border:1px solid var(--line); text-align:center;}
+  .pcx-wait.warn{background:var(--amber-dim); color:var(--amber); border-color:transparent;}
+  .pcx-wait.bad{background:rgba(178,58,48,0.1); color:var(--red); border-color:transparent;}
+  .pcx-wait.plan{font-style:italic; font-weight:400;}
+  .pcx-gap-why{font-size:11px; color:var(--text-faint); text-align:center;}
+  .pcx-tl-wrap{overflow-x:auto; border:1px solid var(--line); background:var(--panel-2); padding:10px 14px 14px;}
+  .pcx-tl-axis{position:relative; height:26px; margin:16px 0 0 150px; border-bottom:1px solid var(--line);}
+  .pcx-tl-axis span{position:absolute; top:6px; font-size:10.5px; color:var(--text-dim); font-family:'IBM Plex Mono',monospace; transform:translateX(-50%); white-space:nowrap;}
+  .pcx-tl-axis span.we{color:var(--red);}
+  .pcx-tl-axis span.now{top:-4px; color:var(--red); font-weight:600; background:var(--panel-2); padding:0 3px; z-index:3;}
+  .pcx-tl-row{display:flex; border-bottom:1px solid var(--line); min-height:76px;}
+  .pcx-tl-label{flex:0 0 150px; padding:10px 8px 0 0;}
+  .pcx-tl-s{font-size:11px; color:var(--text-dim);}
+  .pcx-tl-track{position:relative; flex:1; min-width:0;}
+  .pcx-tl-grid{position:absolute; inset:0; pointer-events:none;}
+  .pcx-tl-grid i{position:absolute; top:0; bottom:0; border-left:1px solid var(--line-soft);}
+  .pcx-tl-grid i.we{border-left:0; background:rgba(0,0,0,0.04);}
+  .pcx-tl-bar{position:absolute; top:16px; height:24px; color:#fff; font-size:11px; font-family:'IBM Plex Mono',monospace; display:flex; align-items:center; justify-content:center; white-space:nowrap; overflow:hidden; border-radius:3px;}
+  .pcx-tl-bar.done{background:var(--green);}
+  .pcx-tl-bar.run{background:repeating-linear-gradient(45deg, var(--blue), var(--blue) 6px, #4a86b0 6px, #4a86b0 12px);}
+  .pcx-tl-bar.todo{background:repeating-linear-gradient(45deg, var(--panel), var(--panel) 5px, var(--line) 5px, var(--line) 10px); border:1px dashed var(--text-faint); color:var(--text-dim);}
+  .pcx-tl-wait{position:absolute; top:27px; height:0; border-top:3px dashed var(--text-faint);}
+  .pcx-tl-wait.warn{border-color:var(--amber);} .pcx-tl-wait.bad{border-color:var(--red);} .pcx-tl-wait.ok{border-color:var(--green); border-top-style:solid;}
+  .pcx-tl-waitlab{position:absolute; top:5px; transform:translateX(-50%); font-size:11px; font-weight:600; font-family:'IBM Plex Mono',monospace; white-space:nowrap; color:var(--text-dim);}
+  .pcx-tl-waitlab.warn{color:var(--amber);} .pcx-tl-waitlab.bad{color:var(--red);}
+  .pcx-tl-cap{position:absolute; top:43px; font-size:10.5px; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .pcx-tl-now{position:absolute; top:0; bottom:0; border-left:2px solid var(--red); z-index:2;}
+  .pcx-legend{display:flex; flex-wrap:wrap; gap:6px 16px; font-size:12px; color:var(--text-dim); margin-top:6px;}
+  .pcx-legend span{display:inline-flex; align-items:center; gap:6px;}
+  .pcx-legend i{display:inline-block; width:22px; height:9px; border-radius:2px;}
+  .pcx-legend i.done{background:var(--green);} .pcx-legend i.run{background:repeating-linear-gradient(45deg, var(--blue), var(--blue) 4px, #4a86b0 4px, #4a86b0 8px);}
+  .pcx-legend i.todo{background:var(--panel); border:1px dashed var(--text-faint);} .pcx-legend i.wait{border-top:3px dashed var(--red); height:0; border-radius:0;}
+  .pcx-legend i.we{background:rgba(0,0,0,0.06); border:1px solid var(--line);}
+  @media (max-width:760px){
+    .pcx-body{padding:12px 14px 24px;}
+    .pcx-flow{flex-direction:column; overflow-x:visible;}
+    .pcx-step{flex:none; width:100%; min-width:0;}
+    .pcx-gap{flex-direction:row; padding:6px 0 6px 16px; width:100%; align-items:center; justify-content:flex-start;}
+    .pcx-gap-line{display:none;}
+  }
   @media (max-width:720px){
     .rc-track{overflow-x:auto;}
   }
@@ -1822,7 +1924,7 @@
   .tmb-cmd{border:1px solid var(--line); border-left:4px solid var(--amber); border-radius:8px; padding:8px 12px; background:var(--panel); display:flex; flex-direction:column; gap:5px; font-size:12.5px;}
   .tmb-cmd.done{border-left-color:var(--green);} .tmb-cmd.err{border-left-color:var(--red);} .tmb-cmd.sent{border-left-color:var(--blue);} .tmb-cmd.off{border-left-color:var(--line); opacity:.75;}
   .tmb-cmd-head{display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between;}
-  .tmb-form{display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:10px;}
+  .tmb-form{display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px;}
   .tmb-err{margin-top:8px; font-size:12.5px; padding:7px 10px; border-radius:8px; border:1px solid var(--red); color:var(--red); background:var(--panel);}
   @media (max-width:720px){ .tm-map-row{grid-template-columns:1fr; gap:3px;} .tm-arrow{display:none;} }
   .pc-checklist{display:flex; flex-direction:column;}
@@ -1940,7 +2042,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.119.0';
+const APP_VERSION = '1.120.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -11492,36 +11594,375 @@ function parcoursSearchResults(schedule, q){
     c.pieces.some(o => (o.piece && o.piece.toLowerCase().includes(needle)) || (o.etape && o.etape.toLowerCase().includes(needle)))
   ).slice(0, 8);
 }
-// Pastille d'une étape du parcours : une couleur par STATUT réel (terminée / en cours / en pause / à faire),
-// l'anneau marque la première étape pas encore terminée de la pièce (celle sur laquelle on en est).
-function parcoursStepHtml(o, chain, idx){
+// ---------------------------------------------------------------------------------------------
+// Parcours en plein écran et analyse de production (v1.120.0) — demande : rendre la pop-up Parcours plus
+// complète pour l'analyse (maquette validée). Rien de stocké, rien de nouveau côté serveur : tout est lu sur
+// les pièces (temps compté, séances, rebuts, taux de poste, prévision à la création) et sur le planning calculé.
+const PARCOURS_MODE_KEY = 'planning-atelier-parcours-mode';
+let parcoursViewMode = (function(){ try{ return localStorage.getItem(PARCOURS_MODE_KEY) === 'frise' ? 'frise' : 'pastilles'; }catch(e){ return 'pastilles'; } })();
+const PARCOURS_DAY_MS = 86400000;
+// Un lot fusionné porte le temps du LOT ENTIER sur chacun de ses membres (dureeOverrideH, dureeReelleH, séances
+// identiques) : chaque membre n'en reçoit que sa part, au prorata de son temps théorique propre — même règle
+// que la vue « Par référence » de Pointages (v1.104.0), pour que la somme des pièces retombe sur le total du lot.
+function parcoursLotShare(o){
+  if(!o.fusionGroupId) return { share:1, n:1 };
+  const members = [];
+  (state.commandes||[]).forEach(cc => (cc.pieces||[]).forEach(p => { if(p.fusionGroupId === o.fusionGroupId) members.push(p); }));
+  if(members.length <= 1) return { share:1, n:1 };
+  const theo = p => ((Number(p.tempsUnitaire)||0) * (Number(p.quantite)||0)) / 60;
+  const tot = members.reduce((s,p) => s + theo(p), 0);
+  return { share: tot > 0 ? theo(o) / tot : 1 / members.length, n: members.length };
+}
+// Chiffres d'UNE étape (pièce × poste) : prévu, compté, écart, pauses, qui, rebuts, coût, retard de démarrage.
+// `null` = donnée absente (jamais 0, qui laisserait croire à « aucune pause » alors que le détail est archivé).
+function parcoursStepStats(o, now){
+  const info = risqueRowDateInfo(o);
+  const lot = parcoursLotShare(o);
+  const started = o.statut !== 'a_faire' || tempsAnterieurH(o) > 1e-6;
+  let reelH = null;
+  if(!o.sousTraitance && started){
+    reelH = pieceTempsPasseH(o, state);
+    if(o.statut === 'termine' && !(reelH > 0)) reelH = null; // clôturée sans temps mesuré
+    if(reelH != null) reelH *= lot.share;
+  }
+  let prevuH = (o.horsPlanning || o.sousTraitance) ? 0 : dureePrevueH(o);
+  if(!(prevuH > 0)) prevuH = 0; else prevuH *= lot.share;
+  const hasSessions = !!(o.sessions && o.sessions.length);
+  const gaps = hasSessions ? pauseGapsForPiece(o, now) : null;
+  let byOp = null;
+  if(o.statut === 'termine' && o.dureeReelleParOperateur && Object.keys(o.dureeReelleParOperateur).length) byOp = o.dureeReelleParOperateur;
+  else byOp = computeSessionsHoursByOperator(o, state);
+  const realIds = byOp ? Object.keys(byOp).filter(k => (Number(byOp[k])||0) > 0.001).sort((a,b) => byOp[b]-byOp[a]) : [];
+  const rebuts = (o.rebuts||[]);
+  const taux = machineTauxHoraire(o.machineId, state);
+  const ecartH = (o.statut === 'termine' && reelH != null && prevuH > 0) ? reelH - prevuH : null;
+  return {
+    o, lot, started,
+    debut: info.debutVal || null, fin: info.finVal || null, debutReel: !!o.debutReel, finReel: !!o.finReel,
+    prevuH, reelH, ecartH, ecartPct: ecartH != null ? ecartH / prevuH * 100 : null,
+    pauseN: gaps ? gaps.length : null, pauseH: gaps ? gaps.reduce((s,g) => s + g.h, 0) : null,
+    assigneId: o.operatorUserId || null, realIds,
+    retardDebut: retardDemarrageJours(o),
+    rebutQty: rebuts.reduce((s,r) => s + (Number(r.quantite)||0), 0),
+    rebutMotifs: rebuts.map(r => String(r.motif||'').trim() || 'Sans motif'),
+    coutE: (taux > 0 && prevuH > 0) ? prevuH * taux : null,
+    coutR: (taux > 0 && reelH != null) ? reelH * taux : null
+  };
+}
+// Attente entre l'étape précédente et celle-ci (même pièce). `reel` : les deux dates sont réelles ; `encours` : la
+// précédente est finie et celle-ci n'a pas démarré (attente qui continue) ; `prevu` : dates du planning ;
+// `parallele` : même phase ou chevauchement (lots en parallèle, pas une attente).
+function parcoursWait(prev, cur, now){
+  if(!prev || !cur) return null;
+  if(Number(cur.phase||1) <= Number(prev.phase||1)) return { kind:'parallele', days:0 };
+  if(cur.sousTraitance || cur.horsPlanning) return null;
+  const prevFinReel = prev.finReel ? new Date(prev.finReel) : null;
+  if(prev.statut === 'termine' && prevFinReel){
+    if(cur.debutReel){ const d = (new Date(cur.debutReel) - prevFinReel) / PARCOURS_DAY_MS; return d < 0 ? { kind:'parallele', days:0 } : { kind:'reel', days:d }; }
+    if(cur.statut === 'a_faire') return { kind:'encours', days: Math.max(0, (now - prevFinReel) / PARCOURS_DAY_MS) };
+    return null;
+  }
+  const pe = prevFinReel || prev.end, cs = cur.debutReel ? new Date(cur.debutReel) : cur.start;
+  if(pe && cs){ const d = (cs - pe) / PARCOURS_DAY_MS; return { kind:'prevu', days: d > 0.05 ? d : 0 }; }
+  return null;
+}
+function parcoursWaitClass(w){
+  if(!w || (w.kind !== 'reel' && w.kind !== 'encours')) return 'plan';
+  return w.days < 1 ? 'ok' : (w.days < 5 ? 'warn' : 'bad');
+}
+function parcoursDurLabel(days){ return calendarDurationLabel(days * 24).replace('.', ','); }
+function parcoursChainModel(chain, now){
+  const steps = chain.rows.map(o => parcoursStepStats(o, now));
+  const waits = chain.rows.map((o, i) => i > 0 ? parcoursWait(chain.rows[i-1], o, now) : null);
+  const debuts = steps.map(s => s.debut).filter(Boolean), fins = steps.map(s => s.fin).filter(Boolean);
+  const first = debuts.length ? new Date(Math.min.apply(null, debuts.map(d => d.getTime()))) : null;
+  const last = fins.length ? new Date(Math.max.apply(null, fins.map(d => d.getTime()))) : null;
+  const measured = waits.filter(w => w && (w.kind === 'reel' || w.kind === 'encours'));
+  const allDone = steps.length > 0 && steps.every(s => s.o.statut === 'termine');
+  const reelH = steps.reduce((s,x) => s + (x.reelH || 0), 0);
+  const termSteps = steps.filter(s => s.ecartH != null);
+  const termPrevu = termSteps.reduce((s,x) => s + x.prevuH, 0), termReel = termSteps.reduce((s,x) => s + x.reelH, 0);
+  let part = null;
+  if(first && reelH > 0){
+    const end = allDone && last ? last : (now > first ? now : last);
+    const openH = end ? workingHoursBetween(first, end, configForPiece(chain.rows[0], state)) : 0;
+    if(openH > 0.05) part = Math.min(100, reelH / openH * 100);
+  }
+  return {
+    chain, steps, waits, first, last, allDone,
+    delaiJ: (first && last && last > first) ? (last - first) / PARCOURS_DAY_MS : null,
+    attenteJ: measured.reduce((s,w) => s + w.days, 0), attenteMaxJ: measured.reduce((m,w) => Math.max(m,w.days), 0),
+    reelH, prevuH: steps.reduce((s,x) => s + x.prevuH, 0),
+    ecartPct: termPrevu > 0 ? (termReel - termPrevu) / termPrevu * 100 : null,
+    part, nDone: steps.filter(s => s.o.statut === 'termine').length
+  };
+}
+function parcoursAnalyse(chains, now){
+  const pieces = chains.map(ch => parcoursChainModel(ch, now));
+  const allSteps = pieces.reduce((a,p) => a.concat(p.steps), []);
+  const waitsList = [];
+  pieces.forEach(p => p.waits.forEach((w, i) => { if(w && (w.kind === 'reel' || w.kind === 'encours')) waitsList.push({ w, step: p.steps[i], piece: p.chain.nom }); }));
+  const termSteps = allSteps.filter(s => s.ecartH != null);
+  const termPrevu = termSteps.reduce((s,x) => s + x.prevuH, 0), termReel = termSteps.reduce((s,x) => s + x.reelH, 0);
+  const motifs = {};
+  allSteps.forEach(s => s.rebutMotifs.forEach(m => { motifs[m] = (motifs[m]||0) + 1; }));
+  const delais = pieces.map(p => p.delaiJ).filter(d => d != null), parts = pieces.map(p => p.part).filter(d => d != null);
+  const avg = a => a.length ? a.reduce((s,x) => s + x, 0) / a.length : null;
+  const withCout = allSteps.filter(s => s.coutE != null || s.coutR != null);
+  const t = {
+    nSteps: allSteps.length, nStepsDone: allSteps.filter(s => s.o.statut === 'termine').length,
+    nPieces: pieces.length, nPiecesDone: pieces.filter(p => p.allDone).length,
+    reelH: allSteps.reduce((s,x) => s + (x.reelH || 0), 0), prevuH: allSteps.reduce((s,x) => s + x.prevuH, 0),
+    termPrevuH: termPrevu, termReelH: termReel,
+    ecartPct: termPrevu > 0 ? (termReel - termPrevu) / termPrevu * 100 : null,
+    delaiMoy: avg(delais), delaiMax: delais.length ? Math.max.apply(null, delais) : null,
+    delaiPrevuInclus: pieces.some(p => !p.allDone && p.delaiJ != null),
+    attMoy: avg(waitsList.map(x => x.w.days)), attMax: waitsList.reduce((m,x) => Math.max(m, x.w.days), 0), nAtt: waitsList.length,
+    partMoy: avg(parts),
+    rebutQty: allSteps.reduce((s,x) => s + x.rebutQty, 0), motifs,
+    hasCout: withCout.length > 0,
+    coutR: withCout.reduce((s,x) => s + (x.coutR || 0), 0), coutE: withCout.reduce((s,x) => s + (x.coutE || 0), 0)
+  };
+  return { pieces, steps: allSteps, waitsList, tot: t, reading: parcoursReading(t, waitsList) };
+}
+// Phrase de synthèse : le poste qui retient le plus de pièces (cumul d'attente), puis ce que cela dit du rapport
+// attente / fabrication. Rien n'est affirmé sans chiffre : sans attente notable (< 2 j), pas de phrase.
+function parcoursReading(t, waitsList){
+  const notable = waitsList.filter(x => x.w.days >= 2);
+  if(!notable.length) return '';
+  const byPoste = {};
+  notable.forEach(x => {
+    const p = risqueStepPosteNom(x.step.o) || risqueStepName(x.step.o);
+    (byPoste[p] = byPoste[p] || { poste:p, n:0, sum:0, prevu:0, current:0, maxCurrent:0 });
+    const g = byPoste[p]; g.n++; g.sum += x.w.days; g.prevu += x.step.prevuH;
+    if(x.w.kind === 'encours'){ g.current++; g.maxCurrent = Math.max(g.maxCurrent, x.w.days); }
+  });
+  const top = Object.values(byPoste).sort((a,b) => b.sum - a.sum)[0];
+  const f1 = x => (Math.round(x*10)/10).toLocaleString('fr-FR');
+  let s = `<b>${escapeHtml(top.poste)} retient ${top.n} pièce${top.n>1?'s':''}</b> : attente moyenne de <b>${f1(top.sum/top.n)} j</b> avant son démarrage` + (top.prevu > 0 ? `, pour ${formatHeures(top.prevu)} de travail prévu` : '') + '. ';
+  if(top.current) s += `${top.current} pièce${top.current>1?'s attendent':' attend'} encore (la plus ancienne depuis ${f1(top.maxCurrent)} j). `;
+  if(t.partMoy != null) s += `Sur la durée, les pièces ne sont travaillées que <b>${Math.round(t.partMoy)} %</b> du temps d'ouverture écoulé. `;
+  if(t.ecartPct != null){
+    s += Math.abs(t.ecartPct) <= 15
+      ? 'Le temps réel reste proche du prévu : le délai vient de la file d\'attente, pas de la fabrication.'
+      : (t.ecartPct > 0 ? `Le temps réel dépasse aussi le prévu de ${Math.round(t.ecartPct)} % sur les étapes terminées.` : `Le temps réel est inférieur de ${Math.abs(Math.round(t.ecartPct))} % au prévu sur les étapes terminées.`);
+  }
+  return s;
+}
+function parcoursSortPieces(pieces, key){
+  const l = pieces.slice();
+  if(key === 'attente') l.sort((a,b) => b.attenteMaxJ - a.attenteMaxJ);
+  else if(key === 'delai') l.sort((a,b) => (b.delaiJ||0) - (a.delaiJ||0));
+  else if(key === 'ecart') l.sort((a,b) => (b.ecartPct == null ? -1e9 : b.ecartPct) - (a.ecartPct == null ? -1e9 : a.ecartPct));
+  return l;
+}
+function parcoursHLabel(h){ return h == null ? '—' : pointageDurLabel(h * 60); }
+function parcoursOpsHtml(s){
+  const ass = s.assigneId ? pointageUserName(s.assigneId) : '';
+  const real = s.realIds.map(pointageUserName);
+  if(!real.length) return ass ? `<span class="pcx-chip">${escapeHtml(ass)}</span>` : '<span class="pcx-chip">—</span>';
+  const same = real.length === 1 && ass && real[0] === ass;
+  if(same) return `<span class="pcx-chip">${escapeHtml(ass)}</span>`;
+  return `<span class="pcx-chip warn" title="${ass ? 'Opérateur assigné : '+escapeHtml(ass) : 'Aucun opérateur assigné'}">${escapeHtml(real.join(', '))}${ass ? ` (assigné : ${escapeHtml(ass)})` : ''}</span>`;
+}
+function parcoursStepCardHtml(s, cid){
+  const o = s.o;
   const st = o.statut === 'termine' ? 'done' : o.statut === 'en_cours' ? 'run' : o.statut === 'en_pause' ? 'pause' : 'todo';
   const icon = st==='done' ? '✓' : st==='run' ? '▶' : st==='pause' ? '⏸' : '●';
-  const info = risqueRowDateInfo(o);
-  const isCurrent = o.id === chain.blockingId;
-  const connector = idx>0 ? `<div class="rc-connector ${chain.rows[idx-1].statut==='termine'?'done':''}"></div>` : '';
-  const fmt = (d, reel) => d ? `<span class="${reel?'pc-reel':'pc-prevu'}">${escapeHtml(formatDT(d))}</span>` : '—';
+  const poste = risqueStepPosteNom(o), nom = risqueStepName(o);
+  const fmt = (d, reel, suffix) => d ? `<span class="${reel?'pc-reel':'pc-prevu'}">${escapeHtml(formatDT(d))}${suffix||''}</span>` : '—';
   let dates;
-  if((o.sousTraitance || o.horsPlanning) && !info.debutVal){
-    dates = o.sousTraitance
-      ? `<div class="pc-date">Sous-traitance${o.sousTraitanceDateRetour?` · retour ${escapeHtml(formatDateFr(o.sousTraitanceDateRetour))}`:''}</div>`
-      : `<div class="pc-date">Hors planning</div>`;
+  if((o.sousTraitance || o.horsPlanning) && !s.debut){
+    dates = o.sousTraitance ? `<div class="pcx-dates"><span>Sous-traitance${o.sousTraitanceDateRetour?` · retour ${escapeHtml(formatDateFr(o.sousTraitanceDateRetour))}`:''}</span></div>` : `<div class="pcx-dates"><span>Hors planning</span></div>`;
   } else {
-    dates = `<div class="pc-date"><span class="pc-k">Début</span> ${fmt(info.debutVal, !!o.debutReel)}</div>
-      <div class="pc-date"><span class="pc-k">Fin</span> ${fmt(info.finVal, !!o.finReel)}</div>`;
+    dates = `<div class="pcx-dates"><span class="k">Début</span><span>${fmt(s.debut, s.debutReel)}</span><span class="k">Fin</span><span>${fmt(s.fin, s.finReel, s.finReel?'':' (prévue)')}</span></div>`;
   }
-  const poste = risqueStepPosteNom(o);
-  const op = o.operatorUserId ? usersList.find(u => String(u.id) === String(o.operatorUserId)) : null;
-  const dureeH = dureePrevueH(o);
-  const meta = [dureeH>0 ? durationLabel(dureeH) : '', op ? '👤 '+op.username : ''].filter(Boolean).join(' · ');
-  return `${connector}<div class="rc-step pc-step"><div class="rc-dot pc-${st} ${isCurrent?'pc-current':''}" title="${escapeHtml(opStatutLabel(o.statut))}">${icon}</div>
-    <div class="rc-label ${isCurrent?'pc-label-current':''}" title="${escapeHtml(risqueStepName(o))}">${escapeHtml(risqueStepName(o))}</div>
-    ${(o.etape && poste && poste!==o.etape)?`<div class="rc-label-sub">${escapeHtml(poste)}</div>`:''}
-    <div class="rc-label-sub pc-status-${st}">${escapeHtml(opStatutLabel(o.statut))}</div>
+  let timeRows = '';
+  if(o.sousTraitance){
+    timeRows = `<div class="pcx-mrow"><span class="lab">Temps</span><span class="pcx-chip">non compté (sous-traitance)</span></div>`;
+  } else if(s.prevuH > 0 || s.reelH != null){
+    const chips = [];
+    if(s.prevuH > 0) chips.push(`<span class="pcx-chip">prévu ${parcoursHLabel(s.prevuH)}</span>`);
+    if(s.reelH != null){
+      let cls = '';
+      if(s.ecartH != null) cls = s.ecartPct > 10 ? 'bad' : (s.ecartPct > 0 ? 'warn' : 'good');
+      else if(s.prevuH > 0 && s.reelH > s.prevuH) cls = 'bad';
+      chips.push(`<span class="pcx-chip ${cls}">compté ${parcoursHLabel(s.reelH)}${o.statut==='termine'?'':' (en cours)'}</span>`);
+      if(s.ecartH != null) chips.push(`<span class="pcx-chip ${cls}">${s.ecartH>=0?'+':'−'}${parcoursHLabel(Math.abs(s.ecartH))} (${s.ecartPct>=0?'+':'−'}${Math.abs(Math.round(s.ecartPct))} %)</span>`);
+      else if(s.prevuH > 0) chips.push(`<span class="pcx-chip ${cls}">${Math.round(s.reelH/s.prevuH*100)} % du prévu</span>`);
+    } else if(o.statut === 'termine'){
+      chips.push('<span class="pcx-chip" title="La tâche a été clôturée sans temps mesuré">temps non mesuré</span>');
+    }
+    timeRows = `<div class="pcx-mrow"><span class="lab">Temps</span>${chips.join('')}</div>`;
+    if(s.prevuH > 0 && s.reelH != null){
+      const maxv = Math.max(s.reelH, s.prevuH) * 1.15 || 1;
+      const col = (s.ecartH != null ? s.ecartPct > 10 : s.reelH > s.prevuH) ? 'var(--red)' : (s.ecartPct > 0 ? 'var(--amber)' : 'var(--green)');
+      timeRows += `<div class="pcx-mrow"><span class="lab"></span><span class="pcx-pbar" title="Temps compté face au prévu (trait noir = prévu)"><i style="width:${Math.min(100, s.reelH/maxv*100)}%;background:${col}"></i><u style="left:${s.prevuH/maxv*100}%"></u></span></div>`;
+    }
+    if(s.lot.n > 1) timeRows += `<div class="pcx-mrow"><span class="lab"></span><span class="pcx-chip" title="Lot fusionné : le temps du lot entier est réparti entre ses pièces au prorata de leur temps théorique">⚖ part du lot (${s.lot.n} pièces)</span></div>`;
+  }
+  let extra = '';
+  if(s.pauseN != null && !o.sousTraitance){
+    extra += `<div class="pcx-mrow"><span class="lab">Pauses</span><span>${s.pauseN ? `${s.pauseN} · ${parcoursDurLabel(s.pauseH/24)} <span class="pcx-dim">(horloge, nuits comprises)</span>` : 'aucune'}</span></div>`;
+  }
+  // Pauses inconnues (séances archivées) : rien n'est affiché plutôt qu'un « — » répété sur toutes les tâches anciennes
+  // (la note de bas de page l'explique) ; jamais un 0 trompeur.
+  if(!o.sousTraitance && (s.realIds.length || s.assigneId)) extra += `<div class="pcx-mrow"><span class="lab">Qui</span>${parcoursOpsHtml(s)}</div>`;
+  if(s.retardDebut != null && s.retardDebut >= 0.5) extra += `<div class="pcx-mrow"><span class="lab">Début</span><span class="pcx-chip bad" title="Le planning prévoyait un démarrage le ${o.previsionAuDemarrage ? escapeHtml(formatDT(new Date(o.previsionAuDemarrage.debut))) : ''}">+${(Math.round(s.retardDebut*10)/10).toLocaleString('fr-FR')} j vs prévision à la création</span></div>`;
+  if(s.rebutQty > 0) extra += `<div class="pcx-mrow"><span class="lab">Rebut</span><span class="pcx-chip warn">${s.rebutQty} · ${escapeHtml(Array.from(new Set(s.rebutMotifs)).join(', '))}</span></div>`;
+  if(s.coutR != null) extra += `<div class="pcx-mrow"><span class="lab">Coût</span><span class="pcx-chip">${escapeHtml(parcoursEuros(s.coutR))}${s.coutE != null ? ` / ${escapeHtml(parcoursEuros(s.coutE))} estimé` : ''}</span></div>`;
+  const detail = s.started ? `<div class="pcx-mrow"><span class="lab"></span><button class="pcx-link" data-action="show-temps-prod-sessions" data-cid="${escapeHtml(cid)}" data-oid="${escapeHtml(o.id)}">⏱ Détail des horaires</button></div>` : '';
+  return `<div class="pcx-step">
+    <div class="pcx-step-top"><div class="rc-dot pc-${st}" title="${escapeHtml(opStatutLabel(o.statut))}">${icon}</div>
+      <div class="pcx-step-id"><div class="pcx-step-name" title="${escapeHtml(nom)}">${escapeHtml(nom)}</div>
+        <div class="pcx-step-sub">${poste && poste !== nom ? escapeHtml(poste)+' · ' : ''}<span class="pcx-st pc-status-${st}">${escapeHtml(opStatutLabel(o.statut))}</span></div></div></div>
     ${dates}
-    ${meta?`<div class="rc-label-sub">${escapeHtml(meta)}</div>`:''}
+    <div class="pcx-metrics">${timeRows}${extra}${detail}</div>
   </div>`;
 }
+function parcoursEuros(v){ return Math.round(v).toLocaleString('fr-FR') + ' €'; }
+function parcoursGapHtml(w){
+  if(!w) return '<div class="pcx-gap none"><div class="pcx-gap-line"><i></i></div></div>';
+  if(w.kind === 'parallele') return '<div class="pcx-gap none"><div class="pcx-gap-line"><i></i></div><span class="pcx-gap-why">↔ en parallèle</span></div>';
+  const cls = parcoursWaitClass(w);
+  if(w.kind === 'prevu') return `<div class="pcx-gap plan"><div class="pcx-gap-line"><i></i></div>${w.days >= 0.05 ? `<span class="pcx-wait plan">attente prévue ${parcoursDurLabel(w.days)}</span>` : '<span class="pcx-gap-why">enchaîne</span>'}</div>`;
+  const lab = w.kind === 'encours'
+    ? `⏳ en attente depuis ${parcoursDurLabel(w.days)}`
+    : (w.days < 0.04 ? '✓ enchaîné' : `⏳ attente ${parcoursDurLabel(w.days)}`);
+  return `<div class="pcx-gap ${cls}"><div class="pcx-gap-line"><i></i></div><span class="pcx-wait ${cls}">${lab}</span><span class="pcx-gap-why">${w.kind === 'encours' ? 'pas encore démarrée' : 'avant le démarrage de l\'étape'}</span></div>`;
+}
+function parcoursPieceHeadHtml(pm){
+  const cls = (v, a, b) => v >= b ? 'bad' : (v >= a ? 'warn' : '');
+  const parts = [`<span>${pm.nDone}/${pm.steps.length} étape(s) terminée(s)</span>`];
+  if(pm.delaiJ != null) parts.push(`<span>Délai <b>${parcoursDurLabel(pm.delaiJ)}</b>${pm.allDone ? '' : ' <span class="pcx-dim">(prévu inclus)</span>'}</span>`);
+  if(pm.attenteJ > 0.04) parts.push(`<span>Attente <b class="${cls(pm.attenteMaxJ,1,5)}">${parcoursDurLabel(pm.attenteJ)}</b></span>`);
+  if(pm.part != null) parts.push(`<span>Travaillé <b class="${pm.part < 10 ? 'warn' : ''}">${Math.round(pm.part)} %</b></span>`);
+  if(pm.reelH > 0 || pm.prevuH > 0) parts.push(`<span>Temps <b class="${pm.ecartPct != null && pm.ecartPct > 10 ? 'bad' : ''}">${parcoursHLabel(pm.reelH)} / ${parcoursHLabel(pm.prevuH)}</b></span>`);
+  if(pm.last && !pm.allDone) parts.push(`<span>fin prévue ${escapeHtml(formatDT(pm.last))}</span>`);
+  return `<div class="pcx-piece-head"><span class="pcx-ref">${escapeHtml(pm.chain.nom)}</span><span class="pcx-meta">${parts.join('')}</span></div>`;
+}
+function parcoursPastillesHtml(pieces, cid){
+  return `<div class="pcx-pieces">${pieces.map(pm => {
+    let flow = '';
+    pm.steps.forEach((s, i) => { if(i > 0) flow += parcoursGapHtml(pm.waits[i]); flow += parcoursStepCardHtml(s, cid); });
+    return `<div class="pcx-piece">${parcoursPieceHeadHtml(pm)}<div class="pcx-flow">${flow}</div></div>`;
+  }).join('')}</div>`;
+}
+// Frise à l'échelle des dates : une ligne par pièce, une barre par étape (pleine = réalisée, rayée = en cours,
+// hachurée claire = prévue), pointillés entre deux étapes = attente, trait rouge = maintenant.
+function parcoursFriseHtml(pieces, now){
+  const dts = [];
+  pieces.forEach(pm => pm.steps.forEach(s => { if(s.debut) dts.push(s.debut.getTime()); if(s.fin) dts.push(s.fin.getTime()); }));
+  if(!dts.length) return '<div class="footer-note" style="text-align:left;">Aucune date à afficher pour ces pièces.</div>';
+  const day0 = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const T0 = day0(new Date(Math.min.apply(null, dts)));
+  const T1 = new Date(day0(new Date(Math.max(Math.max.apply(null, dts), now.getTime()))).getTime() + 2*PARCOURS_DAY_MS);
+  const span = T1 - T0, nDays = Math.round(span / PARCOURS_DAY_MS);
+  const pct = d => Math.max(0, Math.min(100, (d - T0) / span * 100));
+  const every = nDays <= 26 ? 1 : (nDays <= 56 ? 2 : Math.ceil(nDays / 28));
+  let ticks = '', grid = '';
+  for(let i = 0; i < nDays; i++){
+    const d = new Date(T0.getTime() + i*PARCOURS_DAY_MS), w = d.getDay();
+    const left = i / nDays * 100;
+    if(i % every === 0) ticks += `<span class="${(w===0||w===6)?'we':''}" style="left:${left + 50/nDays}%">${escapeHtml(d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}))}</span>`;
+    grid += (w===0||w===6) ? `<i class="we" style="left:${left}%;width:${100/nDays}%"></i>` : `<i style="left:${left}%"></i>`;
+  }
+  const nowIn = now >= T0 && now <= T1;
+  const rows = pieces.map(pm => {
+    let inner = `<div class="pcx-tl-grid">${grid}</div>`;
+    let prevEnd = null;
+    pm.steps.forEach((s, i) => {
+      if(!s.debut || !s.fin) return;
+      const l = pct(s.debut), w = Math.max(0.5, pct(s.fin) - l);
+      const st = s.o.statut === 'termine' ? 'done' : (s.finReel ? 'done' : (s.o.statut === 'a_faire' ? 'todo' : 'run'));
+      const wt = pm.waits[i];
+      if(prevEnd != null && wt && wt.kind !== 'parallele'){
+        const cls = parcoursWaitClass(wt);
+        const wl = pct(prevEnd), ww = Math.max(0, l - wl);
+        if(ww > 0){
+          inner += `<div class="pcx-tl-wait ${cls}" style="left:${wl}%;width:${ww}%"></div>`;
+          if(wt.days >= 0.5) inner += `<div class="pcx-tl-waitlab ${cls}" style="left:${wl + ww/2}%">${wt.kind==='prevu'?'':'⏳ '}${parcoursDurLabel(wt.days)}</div>`;
+        }
+      }
+      const lab = (s.reelH != null ? parcoursHLabel(s.reelH) : '') + (s.reelH != null && s.prevuH > 0 && s.o.statut !== 'termine' ? ' / ' + parcoursHLabel(s.prevuH) : '');
+      const tip = `${risqueStepName(s.o)} (${risqueStepPosteNom(s.o)}) · ${formatDT(s.debut)} → ${formatDT(s.fin)}${s.finReel?'':' (prévue)'} · prévu ${parcoursHLabel(s.prevuH)} · compté ${parcoursHLabel(s.reelH)}`;
+      inner += `<div class="pcx-tl-bar ${st}" style="left:${l}%;width:${w}%" title="${escapeHtml(tip)}">${w > 5 ? escapeHtml(lab) : ''}</div>`;
+      if(w > 4) inner += `<div class="pcx-tl-cap" style="left:${l}%;max-width:${Math.max(w, 9)}%">${escapeHtml(risqueStepPosteNom(s.o) || risqueStepName(s.o))}</div>`;
+      prevEnd = s.fin;
+    });
+    if(nowIn) inner += `<div class="pcx-tl-now" style="left:${pct(now)}%"></div>`;
+    const sub = [pm.delaiJ != null ? 'délai ' + parcoursDurLabel(pm.delaiJ) : '', pm.part != null ? 'travaillé ' + Math.round(pm.part) + ' %' : ''].filter(Boolean).join(' · ');
+    return `<div class="pcx-tl-row"><div class="pcx-tl-label"><div class="pcx-ref">${escapeHtml(pm.chain.nom)}</div><div class="pcx-tl-s">${escapeHtml(sub)}</div></div><div class="pcx-tl-track">${inner}</div></div>`;
+  }).join('');
+  return `<div class="pcx-tl-wrap"><div class="pcx-tl" style="min-width:${Math.max(900, nDays*32 + 160)}px"><div class="pcx-tl-axis">${ticks}${nowIn ? `<span class="now" style="left:${pct(now)}%">maintenant</span>` : ''}</div>${rows}</div></div>
+    <div class="pcx-legend"><span><i class="done"></i>Réalisée</span><span><i class="run"></i>En cours</span><span><i class="todo"></i>Prévue</span><span><i class="wait"></i>Attente entre deux étapes</span><span><i class="we"></i>Week-end</span></div>`;
+}
+function parcoursTilesHtml(t){
+  const f1 = x => (Math.round(x*10)/10).toLocaleString('fr-FR');
+  const tile = (cls, k, v, s, extra) => `<div class="pcx-tile ${cls||''}"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s||''}</div>${extra||''}</div>`;
+  const ecartCls = t.ecartPct == null ? '' : (t.ecartPct > 10 ? 'bad' : (t.ecartPct > 0 ? 'warn' : 'good'));
+  const ecartTxt = t.ecartPct == null ? 'écart : aucune étape terminée mesurée' : `écart sur terminées ${t.ecartPct>=0?'+':'−'}${Math.abs(Math.round(t.ecartPct))} %`;
+  const attCls = t.attMoy == null ? '' : (t.attMoy >= 5 ? 'bad' : (t.attMoy >= 1 ? 'warn' : 'good'));
+  const motifs = Object.keys(t.motifs).map(m => m + (t.motifs[m] > 1 ? ' ×' + t.motifs[m] : '')).join(', ');
+  return [
+    tile('good', 'Avancement', `${t.nStepsDone} / ${t.nSteps}`, `étapes terminées · ${t.nPiecesDone} pièce(s) sur ${t.nPieces} finie(s)`, `<div class="pcx-bar"><i style="width:${t.nSteps ? t.nStepsDone/t.nSteps*100 : 0}%"></i></div>`),
+    tile(ecartCls, 'Temps compté', formatHeures(t.reelH), `pour ${formatHeures(t.prevuH)} prévues · ${ecartTxt}`),
+    tile('', 'Délai de réalisation', t.delaiMoy != null ? f1(t.delaiMoy) + ' j' : '—', t.delaiMax != null ? `moyen par pièce · max ${f1(t.delaiMax)} j${t.delaiPrevuInclus ? ' (étapes prévues incluses)' : ''}` : 'aucune date'),
+    tile(attCls, 'Attente entre étapes', t.attMoy != null ? f1(t.attMoy) + ' j' : '—', t.attMoy != null ? `moyenne · max ${f1(t.attMax)} j · ${t.nAtt} attente(s) mesurée(s)` : 'aucune attente mesurable'),
+    tile(t.partMoy != null && t.partMoy < 10 ? 'warn' : '', 'Part travaillée', t.partMoy != null ? Math.round(t.partMoy) + ' %' : '—', 'du temps d\'ouverture écoulé, par pièce'),
+    tile(t.rebutQty ? 'warn' : '', 'Rebuts', String(t.rebutQty), t.rebutQty ? escapeHtml(motifs) : 'aucun rebut déclaré'),
+    tile('', 'Coût réel / estimé', t.hasCout ? parcoursEuros(t.coutR) : '—', t.hasCout ? `estimé ${parcoursEuros(t.coutE)} · taux des postes` : 'aucun taux horaire renseigné (Paramètres → Postes)')
+  ].join('');
+}
+// Export Excel de la commande : une ligne par étape, mêmes chiffres que l'écran (hors filtre de pièce).
+function exportParcoursExcel(cid){
+  if(typeof XLSX === 'undefined'){ alert("La bibliothèque Excel n'a pas pu se charger (connexion internet requise pour cette fonction)."); return; }
+  const c = getSchedule().find(cc => cc.id === cid);
+  if(!c){ alert('Commande introuvable parmi les commandes actives.'); return; }
+  const now = new Date();
+  const an = parcoursAnalyse(pieceChainsForCommande(c), now);
+  const headers = ['Pièce','Phase','Étape','Poste','Statut','Début','Début (réel/prévu)','Fin','Fin (réel/prévu)','Attente avant (j)','Type d\'attente','Prévu (h)','Compté (h)','Écart (h)','Écart (%)','Pauses (nb)','Pauses (h, horloge)','Opérateur assigné','Réalisé par','Début vs prévision création (j)','Rebuts','Motifs rebut','Coût estimé (€)','Coût réel (€)','Lot fusionné (nb pièces)'];
+  const r1 = x => x == null ? '' : Math.round(x*100)/100;
+  const kindLbl = { reel:'réelle', encours:'en cours', prevu:'prévue', parallele:'parallèle' };
+  const rows = [];
+  an.pieces.forEach(pm => pm.steps.forEach((s, i) => {
+    const w = pm.waits[i];
+    rows.push([
+      pm.chain.nom, s.o.phase||1, risqueStepName(s.o), risqueStepPosteNom(s.o), opStatutLabel(s.o.statut),
+      s.debut ? formatDT(s.debut) : '', s.debut ? (s.debutReel ? 'réel' : 'prévu') : '', s.fin ? formatDT(s.fin) : '', s.fin ? (s.finReel ? 'réel' : 'prévu') : '',
+      w && w.kind !== 'parallele' ? r1(w.days) : '', w ? kindLbl[w.kind]||'' : '',
+      r1(s.prevuH||null), r1(s.reelH), r1(s.ecartH), s.ecartPct != null ? Math.round(s.ecartPct) : '',
+      s.pauseN != null ? s.pauseN : '', s.pauseH != null ? r1(s.pauseH) : '',
+      s.assigneId ? pointageUserName(s.assigneId) : '', s.realIds.map(pointageUserName).join(', '),
+      s.retardDebut != null ? r1(s.retardDebut) : '', s.rebutQty || '', Array.from(new Set(s.rebutMotifs)).join(', '),
+      r1(s.coutE), r1(s.coutR), s.lot.n > 1 ? s.lot.n : ''
+    ]);
+  }));
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  ws['!cols'] = headers.map((h, i) => ({ wch: i < 5 ? 22 : 14 }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Parcours');
+  const t = an.tot;
+  const sum = [
+    ['Commande', c.nom], ['Réf. client', c.refClient||''], ['Échéance', c.dateBesoin ? formatDateFr(c.dateBesoin) : ''],
+    ['Livraison théorique', c.finEstimee ? formatDT(c.finEstimee) : ''],
+    ['Étapes terminées', `${t.nStepsDone} / ${t.nSteps}`], ['Temps compté (h)', r1(t.reelH)], ['Temps prévu (h)', r1(t.prevuH)],
+    ['Écart sur étapes terminées (%)', t.ecartPct != null ? Math.round(t.ecartPct) : ''],
+    ['Délai moyen par pièce (j)', r1(t.delaiMoy)], ['Attente moyenne entre étapes (j)', r1(t.attMoy)], ['Attente maximale (j)', r1(t.attMax)],
+    ['Part travaillée moyenne (%)', t.partMoy != null ? Math.round(t.partMoy) : ''], ['Rebuts', t.rebutQty],
+    ['Coût réel (€)', t.hasCout ? r1(t.coutR) : ''], ['Coût estimé (€)', t.hasCout ? r1(t.coutE) : ''],
+    ['Exporté le', formatDT(now)]
+  ];
+  const ws2 = XLSX.utils.aoa_to_sheet(sum); ws2['!cols'] = [{ wch: 34 }, { wch: 30 }];
+  XLSX.utils.book_append_sheet(wb, ws2, 'Synthèse');
+  XLSX.writeFile(wb, `parcours_${String(c.nom).split(/\s+/)[0].replace(/[^A-Za-z0-9_-]/g,'')}_${toDateInputValue(now)}.xlsx`);
+}
+function setParcoursMode(mode){
+  parcoursViewMode = mode === 'frise' ? 'frise' : 'pastilles';
+  try{ localStorage.setItem(PARCOURS_MODE_KEY, parcoursViewMode); }catch(e){ /* valable pour la session */ }
+  render();
+}
+function setParcoursSort(key){ if(parcoursModal){ parcoursModal.sort = key; render(); } }
 function renderParcoursModal(){
   if(!parcoursModal) return '';
   const schedule = getSchedule();
@@ -11536,6 +11977,7 @@ function renderParcoursModal(){
   if(!c){
     bodyHtml = `<div class="footer-note" style="text-align:left;">${parcoursModal.cid ? 'Commande introuvable parmi les commandes actives (archivée ou supprimée). ' : ''}Tapez ci-dessus un numéro de commande, une référence client, une pièce ou une étape.</div>`;
   } else {
+    const now = new Date();
     const urgenceTxt = c.urgence==='urgente' ? 'Urgente' : c.urgence==='importante' ? 'Importante' : 'Normale';
     const allChains = pieceChainsForCommande(c);
     // Filtre actif : la saisie en cours si elle désigne une pièce de CETTE commande (effet immédiat à la frappe),
@@ -11547,37 +11989,52 @@ function renderParcoursModal(){
     const chains = filtered.length ? filtered : allChains;
     const filterBar = (fl && filtered.length && filtered.length < allChains.length)
       ? `<div class="pc-filter-bar">🔎 Pièce « <strong>${escapeHtml(activeFilter)}</strong> » — ${filtered.length} sur ${allChains.length} pièce(s) de la commande <button class="small" data-action="parcours-clear-piece">Afficher toutes les pièces</button></div>` : '';
-    const chainsHtml = filterBar + chains.map(chain => {
-      const finPiece = chain.rows.map(o => risqueRowDateInfo(o).finVal).filter(Boolean).reduce((m, d) => (!m || d > m) ? d : m, null);
-      const nbDone = chain.rows.filter(o => o.statut === 'termine').length;
-      return `<div class="rc-chain-block">
-        <div class="rc-chain-piece-lbl">${escapeHtml(chain.nom)} <span class="pc-chain-sum">· ${nbDone}/${chain.rows.length} étape(s) terminée(s)${finPiece?` · fin prévue ${escapeHtml(formatDT(finPiece))}`:''}</span></div>
-        <div class="rc-track pc-track">${chain.rows.map((o, i) => parcoursStepHtml(o, chain, i)).join('')}</div>
-      </div>`;
-    }).join('');
+    const an = parcoursAnalyse(chains, now);
+    const sortKey = parcoursModal.sort || 'file';
+    const sortedPieces = parcoursSortPieces(an.pieces, sortKey);
+    const sortOpt = (v, l) => `<option value="${v}" ${sortKey===v?'selected':''}>${l}</option>`;
+    const view = !chains.length
+      ? `<div class="footer-note" style="text-align:left;">Cette commande n'a aucune étape.</div>`
+      : (parcoursViewMode === 'frise' ? parcoursFriseHtml(sortedPieces, now) : parcoursPastillesHtml(sortedPieces, c.id));
     bodyHtml = `
-      <div class="pc-head">
-        <div><strong style="font-size:15px;">${escapeHtml(c.nom)}</strong>${c.refClient?` <span class="footer-note" style="margin:0;">(${escapeHtml(c.refClient)})</span>`:''}
+      <div class="pcx-sheet-head">
+        <div><strong class="pcx-title">${escapeHtml(c.nom)}</strong>${c.refClient?` <span class="footer-note" style="margin:0;">(${escapeHtml(c.refClient)})</span>`:''}
           <div class="footer-note" style="margin:2px 0 0; text-align:left;">Échéance : ${escapeHtml(formatDateFr(c.dateBesoin))} · Urgence : ${urgenceTxt}</div></div>
         <div class="pc-verdict">${c.finEstimee ? `📦 livraison théorique : <strong>${escapeHtml(formatDT(c.finEstimee))}</strong> ${deliveryVerdictHtml(c.finEstimee, c.dateBesoin)}` : ''}</div>
       </div>
-      ${chainsHtml || `<div class="footer-note" style="text-align:left;">Cette commande n'a aucune étape.</div>`}
-      <div class="footer-note" style="text-align:left; margin-top:8px;">Dates en gras = réalisées ; en italique = prévues par le planning, recalculées à chaque modification. L'anneau marque l'étape sur laquelle on en est.</div>`;
+      ${filterBar}
+      ${chains.length ? `<div class="pcx-tiles">${parcoursTilesHtml(an.tot)}</div>` : ''}
+      ${an.reading ? `<div class="pcx-reading"><span class="lbl">Lecture automatique</span>${an.reading}</div>` : ''}
+      <div class="pcx-controls">
+        <div class="pcx-seg" role="group" aria-label="Mode d'affichage">
+          <button data-action="parcours-mode" data-mode="pastilles" aria-pressed="${parcoursViewMode==='pastilles'}">Pastilles détaillées</button>
+          <button data-action="parcours-mode" data-mode="frise" aria-pressed="${parcoursViewMode==='frise'}">Frise à l'échelle</button>
+        </div>
+        <label>Trier
+          <select data-action="parcours-sort">
+            ${sortOpt('file','Ordre du fichier')}${sortOpt('attente',"Plus d'attente d'abord")}${sortOpt('delai','Délai le plus long d\'abord')}${sortOpt('ecart','Plus gros dépassement de temps d\'abord')}
+          </select>
+        </label>
+        <span class="pcx-spacer"></span>
+        <button class="small" data-action="parcours-export" data-cid="${escapeHtml(c.id)}">⬇ Exporter la commande (.xlsx)</button>
+      </div>
+      ${view}
+      <div class="footer-note" style="text-align:left; margin-top:10px;">${parcoursViewMode==='frise'
+        ? 'Une colonne par jour, week-ends grisés ; survolez une barre pour les dates et temps exacts. Les pointillés entre deux barres sont des attentes (ambre dès 1 j, rouge dès 5 j).'
+        : 'Dates en gras = réalisées ; en italique = prévues par le planning, recalculées à chaque modification. L\'anneau marque l\'étape sur laquelle on en est. Le trait entre deux étapes est pointillé dès qu\'il y a de l\'attente (ambre dès 1 j, rouge dès 5 j). Sur la barre de temps, le trait noir marque le prévu.'}
+        Temps compté = heures d'ouverture du poste (plus les exceptions déclarées) ; « — » quand le détail des séances n'est plus disponible.</div>`;
   }
   return `
-  <div class="modal-overlay">
-    <div class="modal-box modal-box-wide" role="dialog" aria-modal="true">
+  <div class="modal-overlay settings-fullscreen">
+    <div class="modal-box pcx-box" role="dialog" aria-modal="true">
       <div class="modal-head">
         <h2>🧭 Parcours d'une commande</h2>
-        <button class="ghost icon-btn" data-action="close-parcours" title="Fermer">✕</button>
+        <button class="ghost icon-btn" data-action="close-parcours" title="Fermer (Échap)">✕ Fermer</button>
       </div>
-      <div class="modal-body">
+      <div class="pcx-body">
         <input type="text" id="parcours-search-input" placeholder="🔍 Autre commande : numéro, réf. client, pièce, étape..." value="${escapeHtml(parcoursModal.search)}" autocomplete="off">
         ${resultsHtml}
         ${bodyHtml}
-        <div class="form-actions" style="margin-top:16px;">
-          <button class="ghost" data-action="close-parcours">Fermer</button>
-        </div>
       </div>
     </div>
   </div>`;
@@ -20700,6 +21157,7 @@ function render(){
       renderHeader(),
       renderRisquesPage(),
       renderParcoursModal(),
+      renderTempsProdSessionModal(),
       renderSettingsModal(),
       renderPauseReminderModal(otherModalOpen),
       renderToast()
@@ -20956,6 +21414,7 @@ document.addEventListener('click', (e) => {
     if(presenceDocModal){ presenceDocModal = null; render(); return; }
     if(tmBadgeForm){ tmBadgeForm = null; render(); return; }
     if(presenceReturnDraft){ presenceReturnDraft = null; render(); return; }
+    if(parcoursModal && tempsProdSessionModal){ tempsProdSessionModal = null; render(); return; } // le détail des horaires ouvert PAR-DESSUS le parcours ne referme que lui
     presenceCorrection = null; presencePunchDraft = null;
     excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; liberePosteDraft = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; terminerRecapDraft = null; bulkDoneDraft = null; parcoursModal = null; closeSettingsModal(); return;
   }
@@ -21160,6 +21619,8 @@ function dispatchClickAction(action, el){
     case 'close-parcours': closeParcours(); break;
     case 'parcours-pick': pickParcours(el.dataset.cid); break;
     case 'parcours-clear-piece': clearParcoursPieceFilter(); break;
+    case 'parcours-mode': setParcoursMode(el.dataset.mode); break;
+    case 'parcours-export': exportParcoursExcel(el.dataset.cid); break;
     case 'ctx-declare-done': contextMenu = null; openDeclareDone(el.dataset.cid, el.dataset.oid); break;
     case 'ctx-bulk-done': contextMenu = null; openBulkDone(el.dataset.cid); break;
     case 'open-bulk-done': openBulkDone(el.dataset.cid); break;
@@ -21511,6 +21972,7 @@ function dispatchChangeAction(el, action){
     case 'quick-pointage-select': updateQuickPointageField(el.dataset.field, el.value); break;
     case 'correct-operator-select': updateCorrectOperatorField(el.dataset.field, el.value); break;
     case 'pointages-filter': updatePointagesFilter(el.dataset.field, el.value); break;
+    case 'parcours-sort': setParcoursSort(el.value); break;
     case 'historique-nb-semaines': historiqueNbSemaines = Number(el.value) || 12; historiqueDetailInfo = null; render(); break;
     case 'correct-pointage-field': updateCorrectPointageField(el.dataset.field, el.value); break;
     case 'declare-done-field': updateDeclareDoneField(el.dataset.field, el.value); break;
@@ -22042,6 +22504,7 @@ document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && terminerRecapDraft){ closeTerminerRecap(); }
   if(e.key === 'Escape' && rebutDraft){ closeRebutDraft(); }
   if(e.key === 'Escape' && historiqueDetailInfo){ closeHistoriqueDetail(); }
+  if(e.key === 'Escape' && parcoursModal && tempsProdSessionModal){ closeTempsProdSessions(); return; }
   if(e.key === 'Escape' && parcoursModal){ closeParcours(); }
   if(e.key === 'Escape' && quickPointageDraft){ closeQuickPointage(); }
   if(e.key === 'Escape' && declareDoneDraft){ closeDeclareDone(); }
