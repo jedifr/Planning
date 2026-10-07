@@ -1880,7 +1880,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.117.0';
+const APP_VERSION = '1.118.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -19490,6 +19490,57 @@ function setTimemotoUserMap(tmId, uid){
   if(uid) t.userMap[tmId] = String(uid); else delete t.userMap[tmId];
   commit();
 }
+// Regroupement d'affichage des salariés de la pointeuse (v1.118.0) : le même salarié peut figurer deux fois dans la liste (identifiant TimeMoto Cloud ET
+// « zk:N » de la pointeuse) et la pointeuse retire les accents (« Sébastien » → « Sbastien »). Une clé sans accent ET une clé « ASCII seul » (lettres
+// accentuées supprimées, comme le fait la pointeuse) rapprochent ces entrées. Purement visuel : aucun identifiant n'est supprimé ni fusionné dans les
+// données (userMap, timemoto_punch_refs et ordreIds gardent chaque id), seules les actions de la ligne s'appliquent à tous ses identifiants.
+function timemotoNameKeys(name){
+  const raw = String(name || '').toLowerCase();
+  const k1 = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  const k2 = raw.replace(/[^\x00-\x7f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  return [k1, k2].filter(Boolean);
+}
+function timemotoIdSourceLabel(id){
+  return String(id).startsWith('zk:') ? `pointeuse n° ${String(id).slice(3)}` : 'TimeMoto Cloud';
+}
+function timemotoGroupUsers(allTm, userMap){
+  const parent = allTm.map((_, i) => i);
+  const find = i => { while(parent[i] !== i){ parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+  const owner = new Map();
+  allTm.forEach((t, i) => {
+    if(/^\(salarié TimeMoto /.test(t.name)) return;
+    timemotoNameKeys(t.name).forEach(k => {
+      if(owner.has(k)){
+        const a = find(owner.get(k)), b = find(i);
+        // Deux homonymes déjà associés à des salariés Planning DIFFÉRENTS ne sont jamais regroupés.
+        const ua = userMap[allTm[owner.get(k)].id], ub = userMap[t.id];
+        if(ua && ub && String(ua) !== String(ub)) return;
+        if(a !== b) parent[b] = a;
+      } else owner.set(k, i);
+    });
+  });
+  const groups = new Map();
+  allTm.forEach((t, i) => { const r = find(i); if(!groups.has(r)) groups.set(r, []); groups.get(r).push(t); });
+  return [...groups.values()].map(list => {
+    const best = list.slice().sort((a, b) => (/[^\x00-\x7f]/.test(b.name) ? 1 : 0) - (/[^\x00-\x7f]/.test(a.name) ? 1 : 0) || b.name.length - a.name.length)[0];
+    return { id: list[0].id, ids: list.map(t => t.id), name: best.name, names: list.map(t => t.name), matchName: list.map(t => t.name).join(' ') };
+  });
+}
+function setTimemotoUserMapMany(ids, uid){
+  if(!state.config.presence) state.config.presence = {};
+  const t = state.config.presence.timemoto || (state.config.presence.timemoto = {});
+  t.userMap = { ...(t.userMap || {}) };
+  ids.forEach(id => { if(uid) t.userMap[id] = String(uid); else delete t.userMap[id]; });
+  commit();
+}
+function setTimemotoOrdreMany(ids, on){
+  if(!state.config.presence) state.config.presence = {};
+  const t = state.config.presence.timemoto || (state.config.presence.timemoto = {});
+  const set = new Set(Array.isArray(t.ordreIds) ? t.ordreIds : []);
+  ids.forEach(id => { if(on) set.add(id); else set.delete(id); });
+  t.ordreIds = [...set];
+  commit();
+}
 function timemotoNameKey(s){ return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
 function timemotoNameMatches(tmName, username){
   const words = timemotoNameKey(tmName).split(' ').filter(Boolean);
@@ -19511,7 +19562,8 @@ function applyTimemotoSuggestions(){
   const tmUsers = ((timemotoStatusCache && timemotoStatusCache.data) || {}).users || [];
   const map = { ...tm.userMap };
   let n = 0;
-  tmUsers.forEach(t => { if(map[t.id]) return; const uid = timemotoSuggestUid(t, tmUsers, map); if(uid){ map[t.id] = uid; n++; } });
+  const groups = timemotoGroupUsers(tmUsers, map).map(g => ({ ...g, name: g.matchName }));
+  groups.forEach(g => { if(g.ids.some(id => map[id])) return; const uid = timemotoSuggestUid(g, groups, map); if(uid){ g.ids.forEach(id => { map[id] = uid; }); n++; } });
   if(!n){ showToast('Aucune suggestion à appliquer.'); return; }
   state.config.presence.timemoto.userMap = map;
   commit();
@@ -20015,7 +20067,9 @@ function renderTimemotoImportPanel(){
   const mappedIds = Object.keys(tm.userMap);
   const allTm = [...tmUsers, ...mappedIds.filter(id => !tmUsers.some(t => t.id === id)).map(id => ({ id, name: `(salarié TimeMoto ${id.slice(0, 8)}…)` }))];
   const users = (usersList || []).slice().sort((a, b) => String(a.username).localeCompare(String(b.username), 'fr'));
-  const suggestions = allTm.filter(t => !tm.userMap[t.id] && timemotoSuggestUid(t, allTm, tm.userMap)).length;
+  const tmGroups = timemotoGroupUsers(allTm, tm.userMap);
+  const tmGroupsM = tmGroups.map(g => ({ ...g, name: g.matchName }));
+  const suggestions = tmGroupsM.filter(g => !g.ids.some(id => tm.userMap[id]) && timemotoSuggestUid(g, tmGroupsM, tm.userMap)).length;
   const lastImport = st && st.lastOkAt ? `Dernier import : <b>${escapeHtml(timemotoDateTime(st.lastOkAt))}</b>${st.lastImportTo ? ` (jusqu’au ${escapeHtml(st.lastImportTo.slice(8,10) + '/' + st.lastImportTo.slice(5,7))})` : ''}.` : 'Aucun import effectué pour l’instant.';
   const bmHref = TIMEMOTO_BOOKMARKLET.replace(/&/g, '&amp;');
   return `
@@ -20081,15 +20135,17 @@ function renderTimemotoImportPanel(){
       <div class="modal-section-title" style="margin-top:12px;">Association des salariés</div>
       ${allTm.length ? `
       <div class="tm-map">
-        ${allTm.map(t => {
-          const cur = tm.userMap[t.id] || '';
-          const sug = cur ? null : timemotoSuggestUid(t, allTm, tm.userMap);
-          return `<div class="tm-map-row"><span>${escapeHtml(t.name)}</span><span class="tm-arrow">→</span>
-            <select data-action="tm-user-map" data-tm-id="${escapeHtml(t.id)}" aria-label="Utilisateur Planning pour ${escapeHtml(t.name)}">
+        ${tmGroups.map((g, gi) => {
+          const cur = g.ids.map(id => tm.userMap[id]).find(Boolean) || '';
+          const sug = cur ? null : timemotoSuggestUid(tmGroupsM[gi], tmGroupsM, tm.userMap);
+          const idsAttr = escapeHtml(g.ids.join('|'));
+          const src = g.ids.map(timemotoIdSourceLabel).join(' + ');
+          return `<div class="tm-map-row"><span>${escapeHtml(g.name)}${g.ids.length > 1 ? `<span class="footer-note" title="Même salarié lu sous plusieurs identifiants : le choix s'applique à tous (rien n'est supprimé)"> · ${escapeHtml(src)}</span>` : (/^zk:/.test(g.id) ? `<span class="footer-note"> · ${escapeHtml(src)}</span>` : '')}</span><span class="tm-arrow">→</span>
+            <select data-action="tm-user-map" data-tm-ids="${idsAttr}" aria-label="Utilisateur Planning pour ${escapeHtml(g.name)}">
               <option value="">— ne pas importer —</option>
               ${users.map(u => `<option value="${u.id}" ${String(u.id) === String(cur) ? 'selected' : ''}>${escapeHtml(u.username)}</option>`).join('')}
             </select>
-            ${sug ? `<span class="footer-note">suggestion : ${escapeHtml(presenceUserName(sug))}</span>` : (cur ? (tm.ordreTous ? '<span class="footer-note">lu par ordre de passage</span>' : `<label class="tm-inline" style="font-size:12px;" title="Ignore la touche appuyée : chaque passage bascule présent / absent"><input type="checkbox" ${tm.ordreIds.includes(t.id) ? 'checked' : ''} data-action="tm-ordre-user" data-tm-id="${escapeHtml(t.id)}" style="width:auto;"> par ordre</label>`) : '<span class="tm-err-txt" style="font-size:12px;">non importé</span>')}</div>`;
+            ${sug ? `<span class="footer-note">suggestion : ${escapeHtml(presenceUserName(sug))}</span>` : (cur ? (tm.ordreTous ? '<span class="footer-note">lu par ordre de passage</span>' : `<label class="tm-inline" style="font-size:12px;" title="Ignore la touche appuyée : chaque passage bascule présent / absent"><input type="checkbox" ${g.ids.some(id => tm.ordreIds.includes(id)) ? 'checked' : ''} data-action="tm-ordre-user" data-tm-ids="${idsAttr}" style="width:auto;"> par ordre</label>`) : '<span class="tm-err-txt" style="font-size:12px;">non importé</span>')}</div>`;
         }).join('')}
       </div>
       ${suggestions ? `<button class="small" data-action="tm-apply-suggestions" style="margin-top:6px;">Appliquer les ${suggestions} suggestion${suggestions > 1 ? 's' : ''} par le nom</button>` : ''}`
@@ -21056,8 +21112,8 @@ function dispatchChangeAction(el, action){
     case 'presence-arrondi': updatePresenceArrondi(el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
     case 'presence-config': updatePresenceConfig(el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
     case 'tm-config': updateTimemotoConfig(el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
-    case 'tm-user-map': setTimemotoUserMap(el.dataset.tmId, el.value); break;
-    case 'tm-ordre-user': setTimemotoOrdre(el.dataset.tmId, el.checked); break;
+    case 'tm-user-map': setTimemotoUserMapMany((el.dataset.tmIds || el.dataset.tmId).split('|'), el.value); break;
+    case 'tm-ordre-user': setTimemotoOrdreMany((el.dataset.tmIds || el.dataset.tmId).split('|'), el.checked); break;
     case 'tm-csv-file': loadTimemotoCsvFile(el.files && el.files[0]); break;
     case 'tm-recover-field': tmRecoverFormGet()[el.dataset.field] = el.value; break;
     case 'dup-field': presenceDupInit(); presenceDup[el.dataset.field] = el.dataset.field === 'minutes' ? (Number(el.value) || 5) : el.value; break;

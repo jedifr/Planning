@@ -2248,6 +2248,22 @@ personne à la fois** (pas de « Tout confirmer »).
   modale → `pause_end 10:20` avec commentaire, pause longue sans tâche, bandeau salarié + demande envoyée, 390 px sans débordement.
   `period_test` 17/17 ; `presence_test`, `fiche_pres_test`, `fiche_test` ont chacun 1 échec **déjà présent avant** (données de l'export du 06/10 / date du jour).
 
+### Salariés de la pointeuse regroupés par nom (v1.118.0)
+
+Constat (capture) : dans Présence → ⏱ TimeMoto → « Association des salariés », chaque salarié apparaissait deux fois, et « Sbastien » / « Sébastien » comme deux
+personnes. Cause : `timemoto_meta.users` mélange deux sources — les identifiants **TimeMoto Cloud** (uuid) et ceux de la **pointeuse** (`zk:N`, nom sans accent : le
+firmware supprime « é ») — et une même personne figure sous les deux. L'ancienne suggestion par le nom se bloquait d'ailleurs (« ambiguïté » : deux entrées pour le même salarié).
+
+- **Regroupement d'affichage uniquement, rien n'est fusionné dans les données** : `userMap`, `ordreIds` et `timemoto_punch_refs` gardent CHAQUE identifiant (supprimer ou
+  renommer un id rattacherait un historique au mauvais salarié). `timemotoGroupUsers(allTm, userMap)` rapproche les entrées par deux clés (`timemotoNameKeys` : nom sans
+  accent, et nom « ASCII seul » où les lettres accentuées sont supprimées comme le fait la pointeuse) — « Sébastien » = « Sbastien » = « SEBASTIEN ». Deux homonymes déjà
+  associés à des salariés Planning **différents** ne sont jamais regroupés. Les entrées « (salarié TimeMoto xxxx…) » (id sans nom) ne sont jamais regroupées.
+- Une ligne par personne : nom retenu = celui avec accents, sinon le plus long ; mention « · TimeMoto Cloud + pointeuse n° 10 » ; le choix du salarié Planning
+  (`setTimemotoUserMapMany`) et la case « par ordre » (`setTimemotoOrdreMany`) s'appliquent à **tous** les identifiants de la ligne (`data-tm-ids`, séparés par `|`).
+- **Suggestions par le nom** (`timemotoSuggestUid`, `applyTimemotoSuggestions`) calculées sur les groupes (noms concaténés) : elles fonctionnent enfin pour un salarié présent
+  sous deux identifiants, y compris sans accent côté pointeuse.
+- Test (scratchpad `merge_test.js`, 13 assertions ; `merge_ui.js` Playwright : 5 entrées → 3 lignes, suggestions appliquées aux 2 identifiants, « par ordre » sur les 2, 390 px sans débordement).
+
 ## Onglet « Pointages »
 
 Retour utilisateur réel : jusqu'ici, voir/corriger un pointage demandait de retrouver la bonne
