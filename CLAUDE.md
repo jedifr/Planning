@@ -1809,9 +1809,9 @@ défaut les pointages manquants à la correction des présences.
   déjà une sortie ; (2) deux pointages retenus de même sens à la suite (deux entrées → début de pause ; deux sorties → fin de pause/arrivée) ; (3) première
   pointage qui n'est pas une arrivée → arrivée à l'heure de début d'horaire ; (4) **journée passée** terminée sur une entrée/fin de pause/début de pause → départ à la
   fin d'horaire (jamais proposé pour aujourd'hui). `approx:true` = heure estimée, à confirmer. Une journée normale ne produit rien ; un manque comblé disparaît.
-- **`GET /api/presence/missing?userId&date`** (superviseur) : pointages retenus du jour + `timemoto.ignoredEventsFor` + `timemoto.expectedBoundsFor` (même règle d'horaire que
+- **`GET /api/presence/missing?userId&date`** (superviseur ; **salarié depuis la v1.113.0, pour LUI SEUL** — l'identifiant demandé est ignoré et remplacé par celui de la session, jamais le détail d'un collègue) : pointages retenus du jour + `timemoto.ignoredEventsFor` + `timemoto.expectedBoundsFor` (même règle d'horaire que
   `expectedEndFor`, qui en dérive). Lecture seule.
-- **Pop-up « Corriger un pointage »** (superviseur uniquement ; le salarié garde sa demande unique) : `presenceCorrection.suggestions` chargé après les pointages ; bloc
+- **Pop-up « Corriger un pointage »** (superviseur ; pour le salarié, voir « Même suggestion côté salarié » ci-dessous) : `presenceCorrection.suggestions` chargé après les pointages ; bloc
   ambre « ⚠ Pointages manquants probables (N) » : type, **champ heure modifiable**, explication, « ＋ Ajouter » (empile un `add` dans la liste en attente) et « ＋ Tout ajouter
   à la liste ». **Jamais ajouté tout seul** : rien n'est enregistré avant « Enregistrer N modifications » ; une suggestion déjà empilée (même type + heure) disparaît du bloc.
   Les heures éditées sont relues dans le DOM avant tout redessin (`presenceSyncCorrectionForm`, classe `.pc-sug-time`).
@@ -1832,6 +1832,36 @@ Demande : la même frise que la page Risques dans la pop-up affichée au démarr
   le détail est archivé) `debutReel → finReel` en hachuré (`approx`, 3 jours max). 6 lignes au plus, « … et N autre(s) ». Les commandes archivées ne sont pas lues. Synthèse sous la frise : « Entre-temps,
   {poste} a travaillé sur : C026-… » (numéros de commande uniques) ou « Aucune autre séance enregistrée… » — jamais attribué à une personne.
 - Test (scratchpad `rdp_test.js`, 9 assertions sur l'export du 06/10 ; Playwright `corr_ui.js`) : Ajustage C026-0759, 4 occupants (C026-0755, C026-0668, C026-0712 ×2), bloc masquable, 30 jours.
+
+### Même suggestion côté salarié, « Demander ce pointage » (v1.113.0)
+
+Demande : « garde-le aussi pour les salariés ». Le salarié garde sa logique de **demande unique** (`POST /api/presence/correction`, statut `a_valider`, validée ensuite par un superviseur) : pas de liste
+en attente. `openPresenceCorrection` charge désormais les suggestions dans les deux modes ; en mode `self`, `presenceOpenSuggestions` les renvoie toutes (pas d'empilement à déduire) et le bloc ambre
+« ⚠ Il manque peut-être un pointage (N) » propose, par ligne, l'heure modifiable et **« Demander ce pointage »** (`presenceSugUse`) : il **pré-remplit** le formulaire (type, heure, motif « Oubli de badge » par défaut,
+`cancelsId` remis à `null`) sans rien envoyer — c'est au salarié de confirmer l'heure puis d'envoyer. Une seule demande à la fois. Test réel (serveur + Playwright, compte employé) : route 403 → 200 avec
+`userId` forcé sur soi, 2 suggestions, formulaire pré-rempli (début de pause 15:30), envoi OK.
+
+### Terminer des tâches en lot (v1.113.0, superviseur/admin)
+
+Demande : des salariés oublient de pointer ; choisir une commande, voir ses tâches non terminées **groupées par poste**, le temps réel prérempli avec le prévu, et terminer d'un coup (par poste ou toute la sélection).
+Maquette validée avant codage. **Entrées** : bouton « ✔ Terminer en lot » du pied de carte commande (`open-bulk-done`, `canSupervise()` et au moins une tâche non terminée), menu contextuel
+`ctx-bulk-done` (clic droit sur une tâche non terminée). Pop-up `renderBulkDoneModal` (`bulkDoneDraft = { cid, fin, commentaire, rows:[{oid, sel, reel, uid}] }`, transitoire, composée dans la page Planning).
+
+- **Deux circuits, décidés par ligne (`bulkDoneInfo`)** : `declare` = tâche À FAIRE ou démarrée **sans aucun temps enregistré** (tous les membres du lot) → même circuit que « Déclarer terminée » : mutation commune
+  `applyDeclaredDone(group, p, scheduleBefore)` (extraite de `submitDeclareDone`, comportement identique — `declare_test.js` 28 et `declare_run_test.js` 22 inchangés), temps compté tout de suite, déclaration **validée
+  d'office** (`statut:'validee'`, commentaire « Terminé en lot (oubli de pointage) » par défaut) ; `normal` = tâche avec du **temps déjà pointé** → clôture habituelle `applySingleStatusChange(…,'termine', fin choisie)` :
+  séances conservées puis archivées (`archiveOldSessions` après le commit), répartition par opérateur réelle. **Écart assumé avec la maquette** : le temps pointé n'est PAS éditable (case « reprendre le temps pointé » abandonnée,
+  « Temps réel » affiche le pointé) — l'écraser fausserait temps de production et Pointages ; une correction passe ensuite par Pointages → ✎ Corriger.
+- **Lot fusionné = UNE ligne** (temps du lot entier, tous les membres terminés, compté une fois) ; sous-traitance : 0 h par défaut, aucune personne exigée, `dureeReelleH:0`, aucune déclaration (comme la pop-up unitaire).
+  Début d'une tâche `declare` = `debutReel` si elle était démarrée, sinon `fin − temps réel` en heures ouvrées (`declareStartBefore`).
+- **Validations avant toute écriture** (une seule erreur bloque tout, message listant les lignes) : fin renseignée et pas dans le futur, au moins une ligne, temps réel valide, personne choisie (sauf sous-traitance à 0),
+  début < fin, fin postérieure à l'ouverture d'une séance en cours. Avertissement `confirm()` récapitulatif (nombre déclarées/normales, temps total, écarts > 50 % du prévu). **Un seul `commit()`** pour toute l'action.
+  « ✔ Terminer les N tâche(s) de ce poste » ne termine QUE ce poste (toutes ses lignes, avec les temps affichés) ; le bouton global ne termine que la sélection.
+- **Pas de `render()` pendant la saisie** (`bulkDoneRefreshLive` : totaux, écarts, surlignage mis à jour dans le DOM) : un redessin entre le `change` (perte de focus) et le clic suivant remplaçait le bouton visé et
+  faisait **perdre le clic**. Pour la même raison, le bouton « Terminer la sélection » n'est jamais désactivé (la saisie d'un temps sélectionne la ligne au `change`, qui survient après le `mousedown`) ; sans sélection : alerte.
+  Barre de totaux sticky **opaque** (fond `--panel` + calque `--accent-dim`) — translucide, elle laissait voir le texte dessous ; statique sous 720 px.
+- Tests (scratchpad `bulk_test.js`, 29 assertions sur l'export du 06/10 : lot compté une fois, refus (aucune sélection, fin future, temps invalide), un seul commit, poste unique, lot terminé en entier, sous-traitance,
+  clôture normale d'une tâche pointée non éditable, employé refusé) ; Playwright (`bulk_ui.js` : saisie + Tab + validation, Échap, mobile 390 px sans débordement).
 
 ### Salarié masqué du temps de production mais doté d'un badge (v1.101.1)
 

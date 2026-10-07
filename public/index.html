@@ -1008,6 +1008,18 @@
   .rf-occ{position:absolute; top:6px; bottom:6px; border-radius:5px; background:var(--green); opacity:.75; z-index:1; display:flex; align-items:center; padding-left:6px; font-size:10px; color:#fff; white-space:nowrap; overflow:hidden;}
   .rf-occ.approx{background:repeating-linear-gradient(135deg,var(--green) 0 6px,transparent 6px 10px); color:var(--text);}
   .rdp-why{font-size:12px; background:var(--panel-2); border-radius:var(--radius); padding:8px 12px; margin-top:10px;}
+  .bd-top{display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; align-items:end;}
+  .bd-poste{border:1px solid var(--line); border-radius:var(--radius); margin-top:10px; overflow:hidden;}
+  .bd-poste-h{display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:8px 12px; background:var(--panel-2); border-left:5px solid var(--c);}
+  .bd-poste-t{font-weight:700; display:flex; gap:8px; align-items:baseline; flex-wrap:wrap;}
+  .bd-scroll{overflow-x:auto;}
+  table.bd-table{min-width:760px;} table.bd-table td{vertical-align:middle;} table.bd-table input[type=text]{width:84px; text-align:right;} table.bd-table select{min-width:130px;}
+  table.bd-table .bd-n{text-align:right; font-variant-numeric:tabular-nums;} table.bd-table tr.bd-sel td{background:var(--accent-dim);}
+  .bd-tag{font-size:10.5px; padding:1px 7px; border-radius:6px; background:var(--panel-2); color:var(--text-dim);}
+  .bd-dev{font-size:11px; font-weight:700; white-space:nowrap;} .bd-dev.ok{color:var(--green);} .bd-dev.warn{color:var(--amber);} .bd-dev.bad{color:var(--red);}
+  .bd-bar{display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:10px 14px; margin-top:12px; border-radius:var(--radius); background-color:var(--panel); background-image:linear-gradient(var(--accent-dim),var(--accent-dim)); border:1px solid var(--line); position:sticky; bottom:0; z-index:2;}
+  .bd-sum{display:flex; gap:16px; flex-wrap:wrap; font-size:12.5px;}
+  @media(max-width:720px){.bd-top{grid-template-columns:1fr;} .bd-bar{position:static;}}
   .pc-suggest{border:1px solid var(--amber); background:var(--amber-dim); border-radius:var(--radius); padding:2px 12px 10px; margin-top:12px;}
   .pc-suggest ul{margin:6px 0 8px; padding-left:0; list-style:none; display:flex; flex-direction:column; gap:6px;}
   .pc-suggest li{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
@@ -1827,7 +1839,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.112.0';
+const APP_VERSION = '1.113.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -10158,6 +10170,32 @@ function updateDeclareDoneField(field, value){
   }
   render();
 }
+// Mutation commune « tâche déclarée terminée » (pop-up unitaire ET « Terminer en lot »), SANS commit : l'appelant n'en
+// émet qu'un seul pour toute l'action. `group` = les membres du lot fusionné (ou la pièce seule) ; chaque membre garde
+// sa propre copie de la déclaration, jamais une référence partagée.
+function applyDeclaredDone(group, p, scheduleBefore){
+  group.forEach(({ cc, oo }) => {
+    const cB = scheduleBefore.find(x => x.id === cc.id);
+    const opB = cB && cB.pieces.find(pp => pp && pp.id === oo.id);
+    if(opB && opB.start && opB.end) oo.previsionAvantCloture = { debut: toInputValue(opB.start), fin: toInputValue(opB.end) };
+    oo.statut = 'termine';
+    oo.debutReel = p.debut;
+    oo.finReel = p.fin;
+    oo.manualStart = null;
+    oo.sessions = [];
+    oo.autoPaused = false; oo.autoPausedOutOfHours = false; oo.posteLibere = false;
+    oo.autoPausedUntil = null; oo.autoPausedOperators = null;
+    if(p.sansTemps){
+      // Sous-traitance revenue, aucun temps salarié : rien à compter ni à valider.
+      oo.dureeReelleH = 0; oo.dureeReelleParOperateur = null; oo.declaration = null;
+      return;
+    }
+    oo.dureeReelleH = p.dureeH; // lot fusionné : même valeur sur chaque membre, dédupliquée par fusionGroupId partout
+    oo.dureeReelleParOperateur = { [p.operatorUserId]: p.dureeH };
+    if(!oo.operatorUserId) oo.operatorUserId = p.operatorUserId;
+    oo.declaration = { ...p.declaration, demarree: !!p.demarree };
+  });
+}
 function submitDeclareDone(){
   const d = declareDoneDraft; if(!d) return;
   const c = state.commandes.find(cc => cc.id === d.cid);
@@ -10187,33 +10225,224 @@ function submitDeclareDone(){
     statut: autoValide ? 'validee' : 'a_valider',
     valideePar: autoValide && currentUser ? currentUser.id : null, valideeLe: autoValide ? nowStr : null
   };
-  const scheduleBefore = getSchedule();
-  const group = declareDoneGroup(o) || [{ cc: c, oo: o }];
-  group.forEach(({ cc, oo }) => {
-    const cB = scheduleBefore.find(x => x.id === cc.id);
-    const opB = cB && cB.pieces.find(p => p && p.id === oo.id);
-    if(opB && opB.start && opB.end) oo.previsionAvantCloture = { debut: toInputValue(opB.start), fin: toInputValue(opB.end) };
-    oo.statut = 'termine';
-    oo.debutReel = d.debut;
-    oo.finReel = d.fin;
-    oo.manualStart = null;
-    oo.sessions = [];
-    oo.autoPaused = false; oo.autoPausedOutOfHours = false; oo.posteLibere = false;
-    oo.autoPausedUntil = null; oo.autoPausedOperators = null;
-    if(sansTemps){
-      // Sous-traitance revenue, aucun temps salarié : rien à compter ni à valider.
-      oo.dureeReelleH = 0; oo.dureeReelleParOperateur = null; oo.declaration = null;
-      return;
-    }
-    oo.dureeReelleH = dureeH; // lot fusionné : même valeur sur chaque membre, dédupliquée par fusionGroupId partout
-    oo.dureeReelleParOperateur = { [d.operatorUserId]: dureeH };
-    if(!oo.operatorUserId) oo.operatorUserId = d.operatorUserId;
-    oo.declaration = { ...declaration, demarree: !!d.demarree };
-  });
+  applyDeclaredDone(declareDoneGroup(o) || [{ cc: c, oo: o }], { debut: d.debut, fin: d.fin, dureeH, operatorUserId: d.operatorUserId, sansTemps, demarree: !!d.demarree, declaration }, getSchedule());
   declareDoneDraft = null;
   commit();
   if(sansTemps){ showToast('Sous-traitance marquée terminée — aucun temps compté.'); return; }
   showToast(autoValide ? 'Tâche déclarée terminée (validée).' : 'Tâche déclarée terminée — en attente de validation par un superviseur.');
+}
+// ---------- Terminer des tâches en lot (v1.113.0, superviseur/admin) ----------
+// Demande : certains salariés oublient de pointer ; choisir une commande et terminer ses tâches d'un coup, par poste, avec le
+// temps réel à remplir (prérempli avec le prévu). Maquette validée. Deux circuits, jamais de saisie du temps sur une tâche
+// qui a déjà du temps MESURÉ :
+//  - « declare » : tâche À FAIRE, ou démarrée sans aucun temps enregistré → même circuit que « Déclarer terminée » (temps compté
+//    tout de suite, déclaration VALIDÉE d'office car faite par un superviseur, `applyDeclaredDone`) ;
+//  - « normal » : tâche démarrée avec du temps pointé (tous les membres d'un lot) → clôture habituelle (`applySingleStatusChange`) :
+//    séances conservées et archivées, répartition par opérateur réelle, temps pointé inchangé (une correction passe ensuite par
+//    Pointages → ✎ Corriger).
+// Un lot fusionné compte pour UNE ligne (temps du lot entier, tous ses membres terminés) ; un seul commit() pour toute l'action.
+let bulkDoneDraft = null; // { cid, fin, commentaire, rows:[{ oid, sel, reel, uid }] }
+function bulkDoneHoursStr(h){ return String(Math.round(h * 100) / 100).replace('.', ','); }
+function bulkDoneParseH(v){ const n = Number(String(v == null ? '' : v).trim().replace(',', '.')); return isNaN(n) ? NaN : n; }
+function bulkDoneBuildRows(c){
+  const seen = new Set(), rows = [];
+  (c.pieces || []).forEach(o => {
+    if(o.statut === 'termine') return;
+    const gk = o.fusionGroupId ? 'g' + o.fusionGroupId : o.id;
+    if(seen.has(gk)) return; seen.add(gk);
+    const planned = dureePrevueH(o) || 0;
+    rows.push({ oid: o.id, sel: false, reel: o.sousTraitance ? '0' : bulkDoneHoursStr(planned), uid: o.operatorUserId ? String(o.operatorUserId) : '' });
+  });
+  return rows;
+}
+function openBulkDone(cid){
+  if(!canSupervise()) return;
+  const c = state.commandes.find(cc => cc.id === cid); if(!c) return;
+  const rows = bulkDoneBuildRows(c);
+  if(!rows.length){ showToast('Toutes les tâches de cette commande sont déjà terminées.'); return; }
+  bulkDoneDraft = { cid, fin: toInputValue(new Date()), commentaire: '', rows };
+  render();
+}
+function closeBulkDone(){ bulkDoneDraft = null; render(); }
+function bulkDoneSetCommande(cid){
+  const c = state.commandes.find(cc => cc.id === cid); if(!c || !bulkDoneDraft) return;
+  bulkDoneDraft.cid = cid; bulkDoneDraft.rows = bulkDoneBuildRows(c);
+  render();
+}
+// Informations dérivées d'une ligne (jamais stockées dans le brouillon : toujours relues dans `state`).
+function bulkDoneInfo(row){
+  const c = bulkDoneDraft && state.commandes.find(cc => cc.id === bulkDoneDraft.cid);
+  const o = c && c.pieces.find(oo => oo.id === row.oid);
+  if(!o) return null;
+  const members = declareDoneGroup(o) || [{ cc: c, oo: o }];
+  const measured = oo => opElapsedHours(oo, state) + tempsAnterieurH(oo);
+  const measuredH = measured(o);
+  const allMeasured = members.every(({ oo }) => measured(oo) > 1e-6);
+  const mode = allMeasured ? 'normal' : 'declare';
+  const m = state.machines.find(mm => mm.id === o.machineId);
+  return { c, o, members, mode, measuredH, plannedH: dureePrevueH(o) || 0, st: !!o.sousTraitance,
+    started: o.statut === 'en_cours' || o.statut === 'en_pause',
+    posteKey: o.machineId || '', posteNom: m ? m.nom : 'Sans poste', posteColor: (m && m.couleur) || '#868c92',
+    label: [o.piece, o.etape].filter(Boolean).join(' / ') || '(sans nom)' };
+}
+function updateBulkDoneField(idx, field, value){
+  const d = bulkDoneDraft; if(!d) return;
+  if(field === 'fin' || field === 'commentaire'){ d[field] = value; }
+  else if(d.rows[idx]){
+    if(field === 'sel') d.rows[idx].sel = !!value;
+    else if(field === 'reel'){ d.rows[idx].reel = String(value); d.rows[idx].sel = true; }
+    else if(field === 'uid') d.rows[idx].uid = String(value);
+  }
+  // Aucun render() complet : un redessin entre le « change » (perte de focus) et le clic qui suit remplacerait le bouton visé
+  // et ferait perdre ce clic (« Terminer… » juste après avoir tapé un temps). On rafraîchit seulement totaux, écarts et surlignage.
+  bulkDoneRefreshLive();
+}
+function bulkDoneSumHtml(infos){
+  let nSel = 0, sumP = 0, sumR = 0;
+  infos.forEach(({ r, i }) => { if(!r.sel) return; nSel++; sumP += i.plannedH; sumR += i.mode === 'declare' ? (bulkDoneParseH(r.reel) || 0) : i.measuredH; });
+  return { nSel, html: `<span>Sélection : <b>${nSel}</b> tâche(s)</span><span>Prévu : <b>${bulkDoneHoursStr(sumP)}</b> h</span><span>Réel : <b>${bulkDoneHoursStr(sumR)}</b> h</span><span>Écart : <b>${sumR - sumP >= 0 ? '+' : ''}${bulkDoneHoursStr(sumR - sumP)}</b> h</span>` };
+}
+function bulkDoneEcartHtml(h, planned){
+  if(!(planned > 0) || isNaN(h)) return '';
+  const dv = (h - planned) / planned * 100, cls = Math.abs(dv) > 50 ? 'bad' : Math.abs(dv) > 10 ? 'warn' : 'ok';
+  return `<span class="bd-dev ${cls}">${dv >= 0 ? '+' : ''}${Math.round(dv)} %</span>`;
+}
+function bulkDoneRefreshLive(){
+  const d = bulkDoneDraft; if(!d || typeof document === 'undefined') return;
+  const infos = d.rows.map((r, idx) => ({ r, idx, i: bulkDoneInfo(r) })).filter(e => e.i);
+  const sum = bulkDoneSumHtml(infos);
+  const box = document.querySelector('.bd-sum'); if(box) box.innerHTML = sum.html;
+  infos.forEach(({ r, idx, i }) => {
+    const cell = document.getElementById('bd-ecart-' + idx);
+    if(cell) cell.innerHTML = bulkDoneEcartHtml(i.mode === 'normal' ? i.measuredH : bulkDoneParseH(r.reel), i.plannedH);
+    const cb = document.querySelector('input[data-action="bulk-done-field"][data-field="sel"][data-idx="' + idx + '"]');
+    if(cb){ cb.checked = !!r.sel; const tr = cb.closest('tr'); if(tr) tr.classList.toggle('bd-sel', !!r.sel); }
+  });
+}
+function bulkDoneSelectAll(){
+  const d = bulkDoneDraft; if(!d) return;
+  const all = d.rows.every(r => r.sel);
+  d.rows.forEach(r => { r.sel = !all; });
+  bulkDoneRefreshLive();
+}
+function bulkDoneSetOperatorAll(uid){
+  const d = bulkDoneDraft; if(!d || !uid) return;
+  d.rows.forEach(r => { const i = bulkDoneInfo(r); if(i && i.mode === 'declare' && !i.st) r.uid = String(uid); });
+  render();
+}
+function submitBulkDone(onlyPoste){
+  const d = bulkDoneDraft; if(!d || !canSupervise()) return;
+  const nowStr = toInputValue(new Date());
+  if(!d.fin){ alert('Merci de renseigner la date et l\'heure de fin.'); return; }
+  if(d.fin > nowStr){ alert('La fin ne peut pas être dans le futur : on ne termine que du travail déjà fait.'); return; }
+  const entries = d.rows.map(r => ({ r, i: bulkDoneInfo(r) })).filter(e => e.i && (onlyPoste != null ? e.i.posteKey === onlyPoste : e.r.sel));
+  if(!entries.length){ alert('Aucune tâche sélectionnée.'); return; }
+  const errors = [], warnings = [], plans = [];
+  entries.forEach(({ r, i }) => {
+    const tag = `${i.c.nom} — ${i.label}`;
+    if(i.o.statut === 'termine'){ errors.push(`${tag} : déjà terminée.`); return; }
+    if(i.mode === 'normal'){
+      const lateOpen = i.members.some(({ oo }) => (oo.sessions || []).some(x => !x.fin && String(x.debut) > d.fin));
+      if(lateOpen){ errors.push(`${tag} : la fin choisie est antérieure au démarrage de sa séance en cours.`); return; }
+      plans.push({ r, i, mode: 'normal' });
+      return;
+    }
+    const h = bulkDoneParseH(r.reel);
+    const sansTemps = i.st && !isNaN(h) && h === 0;
+    if(isNaN(h) || h < 0 || (!sansTemps && h <= 0)){ errors.push(`${tag} : temps réel à renseigner (en heures).`); return; }
+    if(!sansTemps && !r.uid){ errors.push(`${tag} : choisir la personne qui l'a réalisée.`); return; }
+    const cfg = configForPiece(i.o, state);
+    const demarre = i.started && i.o.debutReel && i.o.debutReel < d.fin;
+    const debut = demarre ? i.o.debutReel : toInputValue(declareStartBefore(new Date(d.fin), h > 0 ? h : i.plannedH, cfg));
+    if(!(d.fin > debut)){ errors.push(`${tag} : le démarrage réel est postérieur à la fin choisie.`); return; }
+    if(i.plannedH > 0 && !sansTemps && Math.abs(h - i.plannedH) > i.plannedH * 0.5) warnings.push(`${i.label} : ${durationLabel(h)} saisis pour ${durationLabel(i.plannedH)} prévus`);
+    plans.push({ r, i, mode: 'declare', h, sansTemps, debut });
+  });
+  if(errors.length){ alert('Impossible de terminer en lot :\n\n' + errors.slice(0, 12).join('\n') + (errors.length > 12 ? `\n… et ${errors.length - 12} autre(s).` : '')); return; }
+  const nDecl = plans.filter(p => p.mode === 'declare').length, nNorm = plans.length - nDecl;
+  const totalH = plans.reduce((a, p) => a + (p.mode === 'declare' ? (p.h || 0) : p.i.measuredH), 0);
+  const msg = `Terminer ${plans.length} tâche(s) ?\n\nFin : ${d.fin.replace('T', ' à ')} · temps total ${durationLabel(totalH)}\n${nDecl ? `• ${nDecl} déclarée(s) (temps saisi, validé d'office)\n` : ''}${nNorm ? `• ${nNorm} avec temps déjà pointé (clôture normale)\n` : ''}${warnings.length ? `\n⚠ Écart de plus de 50 % du prévu :\n${warnings.slice(0, 8).join('\n')}\n` : ''}\nLes lots fusionnés sont terminés en entier.`;
+  if(!confirm(msg)) return;
+
+  const scheduleBefore = getSchedule();
+  const declaration = { parUserId: currentUser ? currentUser.id : null, le: nowStr, commentaire: (d.commentaire || '').trim() || 'Terminé en lot (oubli de pointage)', statut: 'validee', valideePar: currentUser ? currentUser.id : null, valideeLe: nowStr };
+  plans.forEach(pl => {
+    if(pl.mode === 'declare'){
+      applyDeclaredDone(pl.i.members, { debut: pl.debut, fin: d.fin, dureeH: pl.h, operatorUserId: pl.r.uid, sansTemps: pl.sansTemps, demarree: pl.i.started, declaration }, scheduleBefore);
+    } else {
+      pl.i.members.forEach(({ cc, oo }) => {
+        const cB = scheduleBefore.find(x => x.id === cc.id);
+        const opB = cB && cB.pieces.find(pp => pp && pp.id === oo.id);
+        const prev = opB && opB.start && opB.end ? { start: opB.start, end: opB.end } : null;
+        applySingleStatusChange(cc, oo, 'termine', d.fin, (oo.statut === 'en_cours' || oo.statut === 'en_pause') && opB && opB.end ? opB.end : undefined, prev);
+      });
+    }
+  });
+  const cid = d.cid;
+  commit();
+  if(nNorm) archiveOldSessions(state).then(changed => { if(changed) queueSilentSave(); });
+  showToast(`${plans.length} tâche(s) terminée(s) en lot${nDecl ? ' — temps déclaré validé d\'office' : ''}.`);
+  const c = state.commandes.find(cc => cc.id === cid);
+  const rows = c ? bulkDoneBuildRows(c) : [];
+  if(rows.length){ bulkDoneDraft = { ...d, rows }; } else { bulkDoneDraft = null; }
+  render();
+}
+function renderBulkDoneModal(){
+  const d = bulkDoneDraft; if(!d) return '';
+  const c = state.commandes.find(cc => cc.id === d.cid); if(!c){ return ''; }
+  const infos = d.rows.map((r, idx) => ({ r, idx, i: bulkDoneInfo(r) })).filter(e => e.i);
+  const nowStr = toInputValue(new Date());
+  const activeCmds = state.commandes.filter(cc => cc.pieces.length && !cc.pieces.every(o => o.statut === 'termine')).slice().sort((a, b) => a.nom.localeCompare(b.nom));
+  // Totaux de la sélection : temps saisi (déclaré) ou temps pointé (clôture normale).
+  const sumInfo = bulkDoneSumHtml(infos), nSel = sumInfo.nSel;
+  const postes = [];
+  infos.forEach(e => { let g = postes.find(x => x.key === e.i.posteKey); if(!g){ g = { key: e.i.posteKey, nom: e.i.posteNom, color: e.i.posteColor, list: [] }; postes.push(g); } g.list.push(e); });
+  const machineOrder = state.machines.map(m => m.id);
+  postes.sort((a, b) => (machineOrder.indexOf(a.key) + 1 || 999) - (machineOrder.indexOf(b.key) + 1 || 999));
+  const postesHtml = postes.map(g => `
+    <div class="bd-poste">
+      <div class="bd-poste-h" style="--c:${escapeHtml(g.color)}"><div class="bd-poste-t">${escapeHtml(g.nom)} <span class="footer-note" style="margin:0;">${g.list.length} tâche(s) à terminer</span></div>
+        <button class="small" data-action="bulk-done-poste" data-poste="${escapeHtml(g.key)}" title="Termine uniquement les tâches de ce poste, avec les temps affichés">✔ Terminer les ${g.list.length} tâche(s) de ce poste</button></div>
+      <div class="bd-scroll"><table class="ops-table bd-table">
+        <thead><tr><th></th><th>Pièce / étape</th><th>Statut</th><th>Réalisé par</th><th class="bd-n">Prévu (h)</th><th class="bd-n">Pointé (h)</th><th class="bd-n">Temps réel (h)</th><th>Écart</th></tr></thead>
+        <tbody>${g.list.map(({ r, idx, i }) => {
+          const lot = i.members.length > 1;
+          const opNames = i.mode === 'normal' ? Object.keys(computeSessionsHoursByOperator(i.o, state) || {}).map(presenceUserName).join(', ') : '';
+          const who = i.st && i.mode === 'declare' ? '<span class="footer-note" style="margin:0;">sous-traité — aucun temps salarié par défaut</span>'
+            : i.mode === 'normal' ? `<span class="footer-note" style="margin:0;">${escapeHtml(opNames || 'pointé')}</span>`
+            : `<select data-action="bulk-done-field" data-field="uid" data-idx="${idx}"><option value="">— choisir —</option>${usersList.map(u => `<option value="${u.id}" ${String(r.uid) === String(u.id) ? 'selected' : ''}>${escapeHtml(u.username)}</option>`).join('')}</select>`;
+          const reelCell = i.mode === 'normal' ? `<span title="Temps déjà pointé : conservé tel quel (à corriger ensuite dans Pointages si besoin)">${bulkDoneHoursStr(i.measuredH)}</span>`
+            : `<input type="text" inputmode="decimal" value="${escapeHtml(r.reel)}" data-action="bulk-done-field" data-field="reel" data-idx="${idx}">`;
+          const reelH = i.mode === 'normal' ? i.measuredH : bulkDoneParseH(r.reel);
+          return `<tr class="${r.sel ? 'bd-sel' : ''}">
+            <td><input type="checkbox" ${r.sel ? 'checked' : ''} data-action="bulk-done-field" data-field="sel" data-idx="${idx}"></td>
+            <td><b>${escapeHtml(i.label)}</b>${i.o.numeroLigne ? ` <span class="footer-note" style="margin:0;">(n°${escapeHtml(i.o.numeroLigne)})</span>` : ''}${lot ? `<br><span class="bd-tag" title="Le lot est terminé en entier, son temps est compté une seule fois">🔗 lot de ${i.members.length} pièces</span>` : ''}</td>
+            <td>${opStatutPillHtml(i.o.statut)}</td><td>${who}</td>
+            <td class="bd-n">${bulkDoneHoursStr(i.plannedH)}</td><td class="bd-n">${i.measuredH > 1e-6 ? bulkDoneHoursStr(i.measuredH) : '—'}</td>
+            <td class="bd-n">${reelCell}</td><td id="bd-ecart-${idx}">${bulkDoneEcartHtml(reelH, i.plannedH)}</td></tr>`;
+        }).join('')}</tbody></table></div>
+    </div>`).join('');
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box modal-box-wide bulk-done-box" role="dialog" aria-modal="true">
+      <div class="modal-head"><h2>✔ Terminer des tâches en lot</h2><button class="ghost icon-btn" data-action="close-bulk-done" title="Fermer">✕</button></div>
+      <div class="modal-body">
+        <div class="bd-top">
+          <div><label class="field">Commande</label><select data-action="bulk-done-commande">${activeCmds.map(cc => `<option value="${cc.id}" ${cc.id === d.cid ? 'selected' : ''}>${escapeHtml(cc.nom)}</option>`).join('')}</select></div>
+          <div><label class="field">Terminées le</label><input type="datetime-local" value="${escapeHtml(d.fin)}" max="${nowStr}" data-action="bulk-done-field" data-field="fin"></div>
+          <div><label class="field">Réalisé par (appliquer à toutes)</label><select data-action="bulk-done-op-all"><option value="">— choisir —</option>${usersList.map(u => `<option value="${u.id}">${escapeHtml(u.username)}</option>`).join('')}</select></div>
+        </div>
+        <div class="footer-note" style="text-align:left; margin:6px 0 10px;"><b>${escapeHtml(c.nom)}</b>${c.refClient ? ' · réf. client ' + escapeHtml(c.refClient) : ''} · échéance ${escapeHtml(c.dateBesoin || '—')} · ${infos.length} tâche(s) non terminée(s)</div>
+        ${postesHtml}
+        <div style="margin-top:8px;"><label class="field">Commentaire (facultatif, ajouté à chaque déclaration)</label><input type="text" placeholder="ex : oubli de pointage, travail terminé cette semaine" value="${escapeHtml(d.commentaire || '')}" data-action="bulk-done-field" data-field="commentaire"></div>
+        <div class="footer-note" style="text-align:left; padding-top:8px;"><b>Règles</b> — Temps réel prérempli avec le temps prévu ; <b>une tâche qui a déjà du temps pointé garde ce temps</b> (clôture habituelle, séances conservées). Pour les autres, le temps saisi est compté tout de suite et la déclaration est <b>validée d'office</b> (vous êtes superviseur) ; début = démarrage réel s'il existe, sinon fin − temps réel (heures ouvrées). Un lot fusionné est terminé en entier et compté une fois. Tout est enregistré en une seule fois, après confirmation.</div>
+        <div class="bd-bar">
+          <div class="bd-sum">${sumInfo.html}</div>
+          <div style="display:flex; gap:8px;"><button data-action="bulk-done-select-all">Tout sélectionner</button><button class="primary" data-action="submit-bulk-done">✔ Terminer la sélection</button></div>
+        </div>
+      </div>
+    </div>
+  </div>`;
 }
 function renderDeclareDoneModal(){
   const d = declareDoneDraft; if(!d) return '';
@@ -14862,6 +15091,7 @@ function renderContextMenu(){
   // Une tâche jamais démarrée n'a encore aucun temps passé à détailler.
   items.push({action:'ctx-time-detail', label: o.statut==='a_faire' ? '⏱ Historique des temps passés (avant réouverture)' : '⏱ Détail des temps passés'});
   items.push({action:'ctx-parcours', label:'🧭 Parcours de la commande'});
+  if(canSupervise() && o.statut !== 'termine') items.push({action:'ctx-bulk-done', label:'✔ Terminer des tâches en lot (cette commande)'});
   const label = [c.nom, o.piece, o.etape].filter(Boolean).join(' · ');
   const left = Math.min(contextMenu.x, window.innerWidth - 220);
   const top = Math.min(contextMenu.y, window.innerHeight - (items.length*38+50));
@@ -16918,6 +17148,7 @@ function renderCommandeCard(c, idx, total){
     ${doneBlock}
     <div class="commande-footer">
       <button class="small add-op-btn" data-action="add-op" data-cid="${c.id}">+ Ajouter une ligne pièce / étape</button>
+      ${canSupervise() && c.pieces.some(o => o.statut !== 'termine') ? `<button class="small" data-action="open-bulk-done" data-cid="${c.id}" title="Terminer plusieurs tâches de cette commande d'un coup, par poste (oubli de pointage)">✔ Terminer en lot</button>` : ''}
       <button class="danger-ghost small delete-cmd" data-action="delete-commande" data-id="${c.id}">Supprimer la commande</button>
     </div>
   </div>`;
@@ -17948,9 +18179,9 @@ async function openPresenceCorrection(userId, day, preset){
     else { presenceCorrection.status = 'error'; presenceCorrection.error = json.error || 'Chargement impossible.'; }
   }catch(e){ if(presenceCorrection){ presenceCorrection.status = 'error'; presenceCorrection.error = 'Serveur injoignable.'; } }
   presenceRenderIfIdle();
-  // Pointages manquants probables (superviseur seulement) : proposés dans la pop-up, jamais ajoutés tout seuls. Un échec
-  // (route absente, réseau) ne gêne en rien la correction : la liste reste simplement vide.
-  if(mode === 'sup' && presenceCorrection && presenceCorrection.userId === uid && presenceCorrection.day === day && presenceCorrection.status === 'ok'){
+  // Pointages manquants probables : proposés dans la pop-up, jamais ajoutés tout seuls (le superviseur les empile, le salarié
+  // pré-remplit sa demande). Un échec (route absente, réseau) ne gêne en rien la correction : la liste reste simplement vide.
+  if(presenceCorrection && presenceCorrection.userId === uid && presenceCorrection.day === day && presenceCorrection.status === 'ok'){
     try{
       const r2 = await fetch(`/api/presence/missing?userId=${encodeURIComponent(uid)}&date=${day}`, { credentials: 'include' });
       const j2 = await r2.json().catch(() => ({}));
@@ -17963,6 +18194,7 @@ async function openPresenceCorrection(userId, day, preset){
 }
 // Suggestions encore à proposer : celles dont le même pointage (type + heure) n'est pas déjà dans la liste en attente.
 function presenceOpenSuggestions(d){
+  if(d.mode === 'self') return (d.suggestions || []).map((x, i) => ({ ...x, idx: i }));
   const staged = (d.staged || []).filter(op => op.kind === 'add');
   return (d.suggestions || []).map((x, i) => ({ ...x, idx: i })).filter(x => !staged.some(op => op.type === x.type && op.time === x.time));
 }
@@ -17972,6 +18204,16 @@ function presenceSugAdd(idx){
   const x = (d.suggestions || [])[idx]; if(!x || !/^\d{2}:\d{2}$/.test(x.time)){ alert("Indiquez l'heure du pointage."); return; }
   presenceStage({ kind: 'add', type: x.type, time: x.time });
   render();
+}
+// Salarié : une demande à la fois — « Demander » pré-remplit le formulaire (type + heure + motif) sans rien envoyer.
+function presenceSugUse(idx){
+  const d = presenceCorrection; if(!d) return;
+  presenceSyncCorrectionForm();
+  const x = (d.suggestions || [])[idx]; if(!x || !/^\d{2}:\d{2}$/.test(x.time)){ alert("Indiquez l'heure du pointage."); return; }
+  d.cancelsId = null; d.type = x.type; d.time = x.time;
+  if(!d.motif || d.motif === PRESENCE_MOTIFS[0] || d.motif === PRESENCE_MOTIFS[3]) d.motif = PRESENCE_MOTIFS[0];
+  render();
+  if(typeof document !== 'undefined' && document.getElementById){ const f = document.getElementById('pc-comment'); if(f && f.scrollIntoView) f.scrollIntoView({ block: 'nearest' }); }
 }
 function presenceSugAddAll(){
   const d = presenceCorrection; if(!d) return;
@@ -18175,8 +18417,13 @@ function renderPresenceCorrectionModal(){
         return `<li>${escapeHtml(txt)} <button class="pr-link" data-action="presence-unstage" data-idx="${i}">Retirer</button></li>`;
       }).join('')}</ul>
     </div>` : '';
-  const sugs = sup && d.status === 'ok' ? presenceOpenSuggestions(d) : [];
-  const sugHtml = sugs.length ? `
+  const sugs = d.status === 'ok' ? presenceOpenSuggestions(d) : [];
+  const sugHtml = (sugs.length && !sup) ? `
+    <div class="pc-suggest">
+      <div class="modal-section-title" style="margin-top:14px;">⚠ Il manque peut-être un pointage (${sugs.length}) — cliquez sur « Demander » pour le pré-remplir</div>
+      <ul>${sugs.map(x => `<li><b>${escapeHtml(typeLbl(x.type))}</b> <input class="pc-sug-time" type="time" value="${escapeHtml(x.time)}" data-sug="${x.idx}" ${x.approx ? 'title="Heure estimée : à confirmer"' : ''}> <span class="footer-note" style="margin:0;">${x.approx ? '≈ ' : ''}${escapeHtml(x.why)}</span> <button class="small" data-action="presence-sug-use" data-idx="${x.idx}">Demander ce pointage</button></li>`).join('')}</ul>
+      <div class="footer-note" style="text-align:left;">Vérifiez l'heure (c'est à vous de la confirmer), puis envoyez la demande : un superviseur la validera. Une demande à la fois.</div>
+    </div>` : sugs.length ? `
     <div class="pc-suggest">
       <div class="modal-section-title" style="margin-top:14px;">⚠ Pointages manquants probables (${sugs.length}) — proposés d'après la pointeuse et l'enchaînement de la journée</div>
       <ul>${sugs.map(x => `<li><b>${escapeHtml(typeLbl(x.type))}</b> <input class="pc-sug-time" type="time" value="${escapeHtml(x.time)}" data-sug="${x.idx}" ${x.approx ? 'title="Heure estimée : à confirmer"' : ''}> <span class="footer-note" style="margin:0;">${x.approx ? '≈ ' : ''}${escapeHtml(x.why)}</span> <button class="small" data-action="presence-sug-add" data-idx="${x.idx}">＋ Ajouter</button></li>`).join('')}</ul>
@@ -19523,6 +19770,7 @@ function render(){
     renderCorrectOperatorModal(),
     renderQuickPointageModal(),
     renderDeclareDoneModal(),
+    renderBulkDoneModal(),
     renderParcoursModal(),
     renderTempsProdSessionModal(),
     renderContextMenu(),
@@ -19691,7 +19939,7 @@ document.addEventListener('click', (e) => {
     // Pop-up de document ouverte PAR-DESSUS Paramètres : ne referme qu'elle, pas Paramètres.
     if(presenceDocModal){ presenceDocModal = null; render(); return; }
     presenceCorrection = null; presencePunchDraft = null;
-    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; liberePosteDraft = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; parcoursModal = null; closeSettingsModal(); return;
+    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; liberePosteDraft = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; bulkDoneDraft = null; parcoursModal = null; closeSettingsModal(); return;
   }
   if(contextMenu && !e.target.closest('.context-menu')){
     contextMenu = null; render();
@@ -19806,6 +20054,7 @@ function dispatchClickAction(action, el){
     case 'presence-edit-cancel': if(presenceCorrection){ presenceCorrection.editId = null; render(); } break;
     case 'presence-stage-cancel': if(presenceCorrection){ presenceSyncCorrectionForm(); presenceStage({ kind: 'cancel', id: Number(el.dataset.id) }); if(presenceCorrection.motif === PRESENCE_MOTIFS[0]) presenceCorrection.motif = 'Erreur de pointage'; render(); } break;
     case 'presence-stage-add': presenceStageAdd(); break;
+    case 'presence-sug-use': presenceSugUse(Number(el.dataset.idx)); break;
     case 'presence-sug-add': presenceSugAdd(Number(el.dataset.idx)); break;
     case 'presence-sug-add-all': presenceSugAddAll(); break;
     case 'presence-invert-day': presenceInvertDay(); break;
@@ -19869,6 +20118,12 @@ function dispatchClickAction(action, el){
     case 'parcours-pick': pickParcours(el.dataset.cid); break;
     case 'parcours-clear-piece': clearParcoursPieceFilter(); break;
     case 'ctx-declare-done': contextMenu = null; openDeclareDone(el.dataset.cid, el.dataset.oid); break;
+    case 'ctx-bulk-done': contextMenu = null; openBulkDone(el.dataset.cid); break;
+    case 'open-bulk-done': openBulkDone(el.dataset.cid); break;
+    case 'close-bulk-done': closeBulkDone(); break;
+    case 'submit-bulk-done': submitBulkDone(null); break;
+    case 'bulk-done-poste': submitBulkDone(el.dataset.poste); break;
+    case 'bulk-done-select-all': bulkDoneSelectAll(); break;
     case 'close-declare-done': closeDeclareDone(); break;
     case 'submit-declare-done': submitDeclareDone(); break;
     case 'validate-declaration': validateDeclaration(el.dataset.cid, el.dataset.oid); break;
@@ -20207,6 +20462,9 @@ function dispatchChangeAction(el, action){
     case 'historique-nb-semaines': historiqueNbSemaines = Number(el.value) || 12; historiqueDetailInfo = null; render(); break;
     case 'correct-pointage-field': updateCorrectPointageField(el.dataset.field, el.value); break;
     case 'declare-done-field': updateDeclareDoneField(el.dataset.field, el.value); break;
+    case 'bulk-done-field': updateBulkDoneField(Number(el.dataset.idx), el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
+    case 'bulk-done-commande': bulkDoneSetCommande(el.value); break;
+    case 'bulk-done-op-all': bulkDoneSetOperatorAll(el.value); break;
     case 'rebut-field': updateRebutField(el.dataset.field, el.value); break;
     case 'correct-session-field': updateCorrectSessionField(Number(el.dataset.idx), el.dataset.field, el.value); break;
     case 'user-machines': {
@@ -20713,6 +20971,7 @@ document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && parcoursModal){ closeParcours(); }
   if(e.key === 'Escape' && quickPointageDraft){ closeQuickPointage(); }
   if(e.key === 'Escape' && declareDoneDraft){ closeDeclareDone(); }
+  if(e.key === 'Escape' && bulkDoneDraft){ closeBulkDone(); }
   if(e.key === 'Escape' && correctOperatorDraft){ closeCorrectOperator(); }
   if(e.key === 'Escape' && continuedDrag){ cancelContinuedDrag(); }
 });

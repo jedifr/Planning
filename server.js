@@ -576,11 +576,12 @@ app.get('/api/presence/timemoto/status', requireAuth, requireLicense, requirePre
   if(!isSupervisorReq(req)) return res.status(403).json({ error: 'Réservé aux superviseurs.' });
   res.json(timemoto.status(db, readStateFull()));
 });
-// Pointages manquants probables d'une journée (pop-up de correction, superviseur) : entrées écartées à
-// l'import, enchaînements incohérents, journée passée sans départ — voir presence.suggestMissing.
+// Pointages manquants probables d'une journée (pop-up de correction) : entrées écartées à l'import,
+// enchaînements incohérents, journée passée sans départ — voir presence.suggestMissing. Un superviseur
+// peut interroger n'importe qui ; un salarié UNIQUEMENT lui-même (l'identifiant demandé est ignoré et
+// remplacé par celui de sa session : jamais le détail d'un collègue).
 app.get('/api/presence/missing', requireAuth, requireLicense, requirePresence, (req, res) => {
-  if(!isSupervisorReq(req)) return res.status(403).json({ error: 'Réservé aux superviseurs.' });
-  const userId = String(req.query.userId || '');
+  const userId = isSupervisorReq(req) ? String(req.query.userId || '') : String(req.session.userId || '');
   const date = String(req.query.date || '');
   if(!userId || !presence.DATE_RE.test(date)) return res.status(400).json({ error: 'Paramètres "userId" et "date" (AAAA-MM-JJ) requis.' });
   const st = readStateFull();
