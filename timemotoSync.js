@@ -177,7 +177,7 @@ function reconcileDay(db, tmUserId, day, uid, desired, dryRun){
     added++;
     if(dryRun) return;
     const edited = p.orig && p.orig !== p.ts;
-    const punch = presence.insertPunch(db, { userId: uid, type: p.type, ts: p.ts, source: 'timemoto', createdBy: SYSTEM_USER, commentaire: edited ? `Heure modifiée dans TimeMoto (heure d'origine ${p.orig.slice(11, 19)}).` : '' });
+    const punch = presence.insertPunch(db, { userId: uid, type: p.type, ts: p.ts, source: 'timemoto', createdBy: SYSTEM_USER, commentaire: p.byHand ? 'Passage ajouté à la main lors du tri des pointages (oubli de badge).' : edited ? `Heure modifiée dans TimeMoto (heure d'origine ${p.orig.slice(11, 19)}).` : '' });
     db.prepare('INSERT OR REPLACE INTO timemoto_punch_refs (punch_id, tm_user_id, tm_day, orig_ts) VALUES (?, ?, ?, ?)').run(punch.id, tmUserId, day, p.orig || null);
   });
   return { added, cancelled, respected };
@@ -419,6 +419,33 @@ function sequenceKinds(events, antiMin){
   });
   return { events: kept.map((e, i) => ({ ts: e.ts, kind: i % 2 === 0 ? 'in' : 'out' })), dropped };
 }
+// ---------- Tri des pointages avant import (v1.119.0) ----------
+// Deux mémoires, en meta, appliquées à TOUTES les lectures de la pointeuse (agent, CSV, récupération) par syncDeviceRows :
+//  - `excluded` : passages que l'administrateur a décochés au tri. Ils sont filtrés avant toute interprétation, donc jamais
+//    réimportés ; la journée reste réconciliée (un pointage déjà importé qui n'a plus de passage derrière lui est annulé,
+//    ligne d'annulation tracée, rien n'est supprimé). Rétablir = rouvrir le tri sur la période et recocher.
+//  - `added` : passages manquants ajoutés à la main (oubli de badge). Injectés comme de vrais passages DANS la séquence de la
+//    journée : en lecture « par ordre », ils décalent la parité comme un passage réel ; en lecture « selon la touche », leur
+//    sens se déduit de l'état de présence juste avant (présent → sortie, absent → entrée).
+const evKey = (uid, ts) => `${uid}|${ts}`;
+function triageMeta(db){ return { excluded: readMeta(db, 'excluded', {}) || {}, added: readMeta(db, 'added', {}) || {} }; }
+function assignAddedKinds(events){
+  const sorted = events.slice().sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0);
+  let present = false;
+  return sorted.map(e => {
+    const x = e.added ? { ...e, kind: present ? 'out' : 'in' } : e;
+    if(x.kind === 'in') present = true; else if(x.kind === 'out') present = false;
+    return x;
+  });
+}
+// Interprétation d'UNE journée d'un salarié de la pointeuse : même code pour l'import et pour l'écran de tri.
+function deviceGroupInterpret(st, tmCfg, tmId, uid, day, events, antiMin, now, flip){
+  let evs, dropped = [];
+  if(sequenceModeFor(tmCfg, tmId)){ const sq = sequenceKinds(events, antiMin); evs = sq.events; dropped = sq.dropped; }
+  else evs = assignAddedKinds(events).filter(e => e.kind === 'in' || e.kind === 'out'); // lecture selon la touche : les touches pause/heures sup restent ignorées
+  const d = desiredPunches(rowFromEvents(day, evs), uid, st, now, flip);
+  return { d, dropped, evs };
+}
 function syncDeviceRows(db, st, parsed, opts){
   const o = opts || {};
   const tmCfg = ((st.config || {}).presence || {}).timemoto || {};
@@ -429,27 +456,31 @@ function syncDeviceRows(db, st, parsed, opts){
   let from = presence.DATE_RE.test(String(o.since || '')) ? o.since : addDays(today, -(jours - 1));
   if(from > today) from = today;
   const until = presence.DATE_RE.test(String(o.until || '')) ? o.until : null;
+  const inRange = day => !(day < from || (until && day > until));
   const byDay = new Map();
+  const group = (uid, day) => { const k = `${uid}|${day}`; if(!byDay.has(k)) byDay.set(k, { uid, day, events: [] }); return byDay.get(k); };
+  const tri = triageMeta(db);
+  let excludedN = 0;
   parsed.events.forEach(ev => {
-    if(ev.day < from || (until && ev.day > until)) return;
-    const k = `${ev.uid}|${ev.day}`;
-    if(!byDay.has(k)) byDay.set(k, { uid: ev.uid, day: ev.day, events: [] });
-    byDay.get(k).events.push(ev);
+    if(!inRange(ev.day)) return;
+    const g = group(ev.uid, ev.day); // la journée existe même si tous ses passages sont écartés : l'import déjà fait est alors réconcilié
+    if(tri.excluded[evKey(ev.uid, ev.ts)]){ excludedN++; return; }
+    g.events.push(ev);
   });
+  Object.values(tri.added).forEach(a => { if(a && inRange(a.day)) group(a.uid, a.day).events.push({ uid: a.uid, day: a.day, ts: a.ts, kind: 'in', added: true }); });
   const antiMin = antiDoubleMinOf(tmCfg);
-  const res = { device: true, from, to: until || today, rows: byDay.size, complete: true, doubles: 0, added: 0, cancelled: 0, respected: 0, autoOut: 0, ignored: 0, unmapped: 0, noUser: parsed.noUser, otherAction: parsed.otherAction, badDate: parsed.badDate, dryRun: !!o.dryRun, byUser: {} };
+  const res = { device: true, from, to: until || today, rows: byDay.size, complete: true, doubles: 0, added: 0, cancelled: 0, respected: 0, autoOut: 0, ignored: 0, unmapped: 0, excluded: excludedN, noUser: parsed.noUser, otherAction: parsed.otherAction, badDate: parsed.badDate, dryRun: !!o.dryRun, byUser: {} };
   const flags = loadFlags(db);
   const apply = () => {
     byDay.forEach(g => {
       const tmId = ZK_PREFIX + g.uid;
       const uid = userMap[tmId] ? String(userMap[tmId]) : '';
       if(!uid){ res.unmapped++; return; }
-      // Même forme que la réponse TimeMoto Cloud : un « pair » par événement (entrée ou sortie seule).
-      let evs;
-      if(sequenceModeFor(tmCfg, tmId)){ const sq = sequenceKinds(g.events, antiMin); evs = sq.events; res.doubles += sq.dropped.length; }
-      else evs = g.events.filter(e => e.kind === 'in' || e.kind === 'out'); // lecture selon la touche : les touches pause/heures sup restent ignorées
-      const row = rowFromEvents(g.day, evs);
-      const d = desiredPunches(row, uid, st, now, !!flags.flips[`${tmId}|${g.day}`]);
+      const gi = deviceGroupInterpret(st, tmCfg, tmId, uid, g.day, g.events, antiMin, now, !!flags.flips[`${tmId}|${g.day}`]);
+      res.doubles += gi.dropped.length;
+      const d = gi.d;
+      const addedTs = new Set(g.events.filter(e => e.added).map(e => e.ts));
+      d.punches.forEach(pn => { if(addedTs.has(pn.ts)) pn.byHand = true; });
       res.autoOut += d.anomalies.autoOut; res.ignored += d.anomalies.ignored;
       noteDayFlags(flags, tmId, uid, g.day, d, res);
       const r = reconcileDay(db, tmId, g.day, uid, d.punches, o.dryRun);
@@ -485,6 +516,186 @@ function runDeviceImport(db, st, csvText, opts){
     runtime.running = false;
   }
 }
+
+// ---------- Écran « Trier avant d'importer » (v1.119.0) ----------
+// Prend les événements d'une lecture déjà faite (fichier CSV, ou aperçu d'une « récupération de période ») au lieu de les
+// importer d'un bloc : l'administrateur voit chaque passage brut, décoche ceux qu'il ne veut pas, ajoute un passage oublié,
+// et le résultat de la journée est recalculé par le MÊME code que l'import (deviceGroupInterpret). Les événements restent
+// en réserve côté serveur (meta `triage`, 1 h) : seules les décisions (écarté / ajouté) reviennent du navigateur, validées
+// contre ces événements. La lecture automatique de l'agent n'est pas triée, mais respecte les décisions déjà prises.
+const TRIAGE_KEEP_MS = 60 * 60 * 1000;
+const TRIAGE_MAX_GROUPS = 3000;
+const PUNCH_LABEL = { 2: 'Pause (sortie)', 3: 'Pause (entrée)', 4: 'Heures sup. (entrée)', 5: 'Heures sup. (sortie)' };
+function eventLabelDir(ev){
+  if(ev.added) return { label: 'Ajouté', dir: null };
+  if(ev.kind === 'in') return { label: 'Entrée', dir: 'in' };
+  if(ev.kind === 'out') return { label: 'Sortie', dir: 'out' };
+  return { label: PUNCH_LABEL[ev.punch] || 'Autre touche', dir: (ev.punch === 3 || ev.punch === 4) ? 'in' : 'out' };
+}
+function triageStash(db){
+  const t = readMeta(db, 'triage', null);
+  if(!t) return null;
+  if(Date.now() - new Date(t.at).getTime() > TRIAGE_KEEP_MS){ writeMeta(db, 'triage', null); return null; }
+  return t;
+}
+function triageInterpretGroup(db, st, flags, stash, uid, day, keepTs, addedTs){
+  const tmCfg = ((st.config || {}).presence || {}).timemoto || {};
+  const tmId = ZK_PREFIX + uid;
+  const planning = (tmCfg.userMap || {})[tmId] ? String((tmCfg.userMap || {})[tmId]) : '';
+  if(!planning) return null;
+  const keep = new Set(keepTs);
+  const events = stash.events.filter(e => e.uid === uid && e.day === day && keep.has(e.ts)).concat(addedTs.map(ts => ({ uid, day, ts, kind: 'in', added: true })));
+  const now = new Date();
+  const gi = deviceGroupInterpret(st, tmCfg, tmId, planning, day, events, antiDoubleMinOf(tmCfg), now, !!flags.flips[`${tmId}|${day}`]);
+  return {
+    punches: gi.d.punches.map(p => ({ type: p.type, ts: p.ts })),
+    dropped: gi.dropped.map(e => e.ts),
+    ignored: (gi.d.ignoredEvents || []).map(e => ({ ts: e.ts, reason: e.reason })),
+    autoOut: gi.d.anomalies.autoOut
+  };
+}
+// Démarre un tri : `parsed` (événements lus) est mis en réserve et l'aperçu complet est renvoyé.
+function triageStart(db, st, parsed, o){
+  const tmCfg = ((st.config || {}).presence || {}).timemoto || {};
+  const userMap = tmCfg.userMap || {};
+  const now = new Date();
+  const today = presence.localTs(now).slice(0, 10);
+  const jours = Math.max(1, Math.min(31, Number(tmCfg.joursSynchro) || 7));
+  let from = presence.DATE_RE.test(String(o.since || '')) ? o.since : addDays(today, -(jours - 1));
+  if(from > today) from = today;
+  const to = presence.DATE_RE.test(String(o.until || '')) ? o.until : today;
+  const dbl = Math.max(0, Math.min(30, o.dbl != null ? Number(o.dbl) : (antiDoubleMinOf(tmCfg) || 3)));
+  const tri = triageMeta(db);
+  const flags = loadFlags(db);
+  const byDay = new Map();
+  parsed.events.forEach(ev => {
+    if(ev.day < from || ev.day > to) return;
+    const k = `${ev.uid}|${ev.day}`;
+    if(!byDay.has(k)) byDay.set(k, { uid: ev.uid, day: ev.day, events: [] });
+    byDay.get(k).events.push(ev);
+  });
+  Object.values(tri.added).forEach(a => { if(a && a.day >= from && a.day <= to){ const k = `${a.uid}|${a.day}`; if(!byDay.has(k)) byDay.set(k, { uid: a.uid, day: a.day, events: [] }); } });
+  const groups = [];
+  let unmappedDays = 0, unmappedEvents = 0;
+  byDay.forEach(g => {
+    const tmId = ZK_PREFIX + g.uid;
+    const planning = userMap[tmId] ? String(userMap[tmId]) : '';
+    if(!planning){ unmappedDays++; unmappedEvents += g.events.length; return; }
+    const raw = g.events.slice().sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0);
+    const events = [];
+    raw.forEach((e, i) => {
+      const prev = i > 0 ? raw[i - 1] : null;
+      const isDouble = !!prev && dbl > 0 && (Date.parse(e.ts) - Date.parse(prev.ts)) < dbl * 60000;
+      const prevExcluded = !!tri.excluded[evKey(g.uid, e.ts)];
+      const ld = eventLabelDir(e);
+      events.push({ ts: e.ts, kind: e.kind, punch: e.punch == null ? null : e.punch, label: ld.label, dir: ld.dir, keep: !prevExcluded && !isDouble, prevExcluded, double: isDouble });
+    });
+    const added = Object.values(tri.added).filter(a => a && a.uid === g.uid && a.day === g.day).map(a => a.ts).sort();
+    const keepTs = events.filter(e => e.keep).map(e => e.ts);
+    const stashLike = { events: parsed.events };
+    const r = triageInterpretGroup(db, st, flags, stashLike, g.uid, g.day, keepTs, added);
+    groups.push({ key: `${g.uid}|${g.day}`, uid: g.uid, day: g.day, userId: planning, today: g.day === today, events, added, result: r });
+  });
+  groups.sort((a, b) => a.day < b.day ? 1 : a.day > b.day ? -1 : (a.userId < b.userId ? -1 : 1));
+  if(groups.length > TRIAGE_MAX_GROUPS) return { ok: false, error: `Trop de journées (${groups.length}) : choisissez une période plus courte.` };
+  writeMeta(db, 'triage', { events: parsed.events.filter(e => e.day >= from && e.day <= to), source: o.source || 'csv', recoveryId: o.recoveryId || null, from, to, at: new Date().toISOString() });
+  return { ok: true, triage: { source: o.source || 'csv', from, to, dbl, antiMin: antiDoubleMinOf(tmCfg), sequence: tmCfg.ordreTous ? 'tous' : null, groups, unmapped: { days: unmappedDays, events: unmappedEvents }, totalEvents: parsed.events.filter(e => e.day >= from && e.day <= to).length } };
+}
+function triageBegin(db, st, o){
+  if(runtime.running) return { ok: false, error: 'Un import TimeMoto est déjà en cours.' };
+  if(o.source === 'recovery'){
+    const r = recoveryRecord(db);
+    if(!r || r.state !== 'received') return { ok: false, error: 'Aucun aperçu de récupération à trier (relancez la demande).' };
+    const stash = readMeta(db, 'recoveryEvents', null);
+    if(!stash || !Array.isArray(stash.events)) return { ok: false, error: 'Aperçu expiré : relancez la demande.' };
+    const parsed = { events: stash.events, names: new Map(stash.names || []), noUser: 0, otherAction: 0, badDate: 0 };
+    return triageStart(db, st, parsed, { source: 'recovery', recoveryId: r.id, since: r.from, until: r.to, dbl: o.dbl });
+  }
+  try{
+    const parsed = parseDeviceCsv(o.csv);
+    return triageStart(db, st, parsed, { source: 'csv', since: o.since || null, dbl: o.dbl });
+  }catch(err){
+    return { ok: false, error: String(err && err.message || err).slice(0, 300) };
+  }
+}
+// Recalcule le résultat de journées pour des cases cochées (une requête par action de l'écran, pas par case).
+function triageInterpret(db, st, days){
+  const stash = triageStash(db);
+  if(!stash) return { ok: false, error: 'Le tri a expiré (plus d’une heure) : relancez la lecture.' };
+  const flags = loadFlags(db);
+  const results = {};
+  (Array.isArray(days) ? days : []).slice(0, TRIAGE_MAX_GROUPS).forEach(d => {
+    const uid = String((d && d.uid) == null ? '' : d.uid), day = String((d && d.day) || '');
+    if(!uid || !presence.DATE_RE.test(day)) return;
+    const added = (Array.isArray(d.added) ? d.added : []).map(String).filter(t => t.slice(0, 10) === day && presence.TS_RE.test(t)).map(presence.normTs).slice(0, 20);
+    const r = triageInterpretGroup(db, st, flags, stash, uid, day, (Array.isArray(d.keep) ? d.keep : []).map(String), added);
+    if(r) results[`${uid}|${day}`] = r;
+  });
+  return { ok: true, results };
+}
+function triageApply(db, st, payload, by){
+  if(runtime.running) return { ok: false, error: 'Un import TimeMoto est déjà en cours.' };
+  const stash = triageStash(db);
+  if(!stash) return { ok: false, error: 'Le tri a expiré (plus d’une heure) : relancez la lecture.' };
+  const tmCfg = ((st.config || {}).presence || {}).timemoto || {};
+  const userMap = tmCfg.userMap || {};
+  const groups = Array.isArray(payload && payload.groups) ? payload.groups : [];
+  if(groups.length > TRIAGE_MAX_GROUPS) return { ok: false, error: 'Trop de journées.' };
+  const limit = Date.now() + FUTURE_TOLERANCE_MS;
+  const rawByKey = new Map();
+  stash.events.forEach(e => { const k = `${e.uid}|${e.day}`; if(!rawByKey.has(k)) rawByKey.set(k, new Set()); rawByKey.get(k).add(e.ts); });
+  const tri = triageMeta(db);
+  const nowIso = new Date().toISOString();
+  let dropped = 0, restored = 0, added = 0;
+  // Validation AVANT toute écriture : un seul ajout invalide rejette tout.
+  for(const g of groups){
+    const uid = String((g && g.uid) == null ? '' : g.uid), day = String((g && g.day) || '');
+    if(!uid || !presence.DATE_RE.test(day)) return { ok: false, error: 'Journée invalide.' };
+    if(day < stash.from || day > stash.to) return { ok: false, error: 'Journée hors de la période triée.' };
+    if(!userMap[ZK_PREFIX + uid]) return { ok: false, error: `Le salarié n° ${uid} de la pointeuse n’est associé à personne.` };
+    for(const t of (Array.isArray(g.added) ? g.added : [])){
+      const ts = String(t);
+      if(!presence.TS_RE.test(ts) || ts.slice(0, 10) !== day) return { ok: false, error: `Pointage ajouté invalide (${ts}).` };
+      if(new Date(presence.normTs(ts)).getTime() > limit) return { ok: false, error: 'Un pointage ajouté est dans le futur.' };
+    }
+  }
+  groups.forEach(g => {
+    const uid = String(g.uid), day = String(g.day);
+    const known = rawByKey.get(`${uid}|${day}`) || new Set();
+    (Array.isArray(g.drop) ? g.drop : []).forEach(t => { const ts = String(t); if(!known.has(ts)) return; if(!tri.excluded[evKey(uid, ts)]) dropped++; tri.excluded[evKey(uid, ts)] = { uid, day, ts, at: nowIso, by: String(by || '') }; });
+    (Array.isArray(g.keep) ? g.keep : []).forEach(t => { const ts = String(t); if(known.has(ts) && tri.excluded[evKey(uid, ts)]){ delete tri.excluded[evKey(uid, ts)]; restored++; } });
+    Object.keys(tri.added).forEach(k => { const a = tri.added[k]; if(a && a.uid === uid && a.day === day) delete tri.added[k]; });
+    (Array.isArray(g.added) ? g.added : []).slice(0, 20).forEach(t => { const ts = presence.normTs(String(t)); tri.added[evKey(uid, ts)] = { uid, day, ts, at: nowIso, by: String(by || '') }; added++; });
+  });
+  const cut = presence.localTs(new Date(Date.now() - 400 * 86400000)).slice(0, 10);
+  [tri.excluded, tri.added].forEach(m => Object.keys(m).forEach(k => { if((m[k].day || '') < cut) delete m[k]; }));
+  writeMeta(db, 'excluded', tri.excluded);
+  writeMeta(db, 'added', tri.added);
+  runtime.running = true;
+  try{
+    const parsed = { events: stash.events, names: new Map(), noUser: 0, otherAction: 0, badDate: 0, lines: stash.events.length };
+    (readMeta(db, 'users', []) || []).forEach(u => { if(String(u.id).startsWith(ZK_PREFIX)) parsed.names.set(String(u.id).slice(ZK_PREFIX.length), u.name); });
+    const res = syncDeviceRows(db, st, parsed, { dryRun: false, since: stash.from, until: stash.to });
+    const s = readMeta(db, 'status', {}) || {};
+    Object.assign(s, { lastOkAt: new Date().toISOString(), lastResult: publicResult(res), lastImportTo: res.to });
+    writeMeta(db, 'status', s);
+    if(stash.source === 'recovery' && stash.recoveryId){
+      const r = readMeta(db, 'recovery', null);
+      if(r && r.id === stash.recoveryId && r.state === 'received'){ r.state = 'applied'; r.appliedAt = nowIso; r.result = publicResult(res); r.result.flagged = res.flagged || []; writeMeta(db, 'recovery', r); }
+      writeMeta(db, 'recoveryEvents', null);
+    }
+    writeMeta(db, 'triage', null);
+    console.log(`Pointeuse (tri ${stash.from} → ${stash.to}) : ${res.added} pointage(s) importé(s), ${res.cancelled} annulé(s), ${dropped} passage(s) écarté(s), ${restored} rétabli(s), ${added} ajouté(s) à la main.`);
+    return { ok: true, result: res, counts: { dropped, restored, added } };
+  }catch(err){
+    return { ok: false, error: String(err && err.message || err).slice(0, 300) };
+  }finally{
+    runtime.running = false;
+  }
+}
+function triageCancel(db){ writeMeta(db, 'triage', null); return { ok: true }; }
+// Passages actuellement écartés (nombre), pour information dans le panneau TimeMoto.
+function triageExcludedCount(db){ return Object.keys(readMeta(db, 'excluded', {}) || {}).length; }
 
 // ---------- Lecture automatique (conteneur annexe tools/tm616_sync.py) ----------
 // L'agent lit la pointeuse en réseau local toutes les N minutes et envoie les événements des derniers
@@ -915,6 +1126,7 @@ async function runSync(db, st, opts){
 
 module.exports = {
   initTimemotoTables, runSync, runDeviceImport, runDeviceEvents, parseAgentEvents, parseDeviceCsv, syncDeviceRows, status, syncOnce, desiredPunches, reconcileDay, expectedEndFor, expectedBoundsFor, ignoredEventsFor, SYSTEM_USER,
+  triageBegin, triageStart, triageInterpret, triageApply, triageCancel, triageExcludedCount, deviceGroupInterpret, triageMeta,
   requestRecovery, applyRecovery, cancelRecovery, recoveryRecord, applyFlagAction, flaggedCount, flagInfo, rowFromEvents, sequenceKinds, sequenceModeFor,
   badgeState, prepareBadge, confirmBadge, cancelBadge, nextBadgeForAgent, receiveBadgeResult, noteDevUsers, nextDeviceUserId
 };

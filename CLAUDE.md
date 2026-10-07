@@ -2264,6 +2264,39 @@ firmware supprime « é ») — et une même personne figure sous les deux. L'an
   sous deux identifiants, y compris sans accent côté pointeuse.
 - Test (scratchpad `merge_test.js`, 13 assertions ; `merge_ui.js` Playwright : 5 entrées → 3 lignes, suggestions appliquées aux 2 identifiants, « par ordre » sur les 2, 390 px sans débordement).
 
+### Trier les pointages avant de les importer (v1.119.0)
+
+Demande : importer tous les pointages de la pointeuse et choisir ceux à garder ou non. Maquette validée avant codage (artefact « Tri des pointages avant import »),
+puis « Valide » : bouton à côté d'« Importer » (la lecture automatique de l'agent n'est pas triée), passage écarté mémorisé, tout coché sauf les doubles.
+
+- **Deux entrées** (page Présence → ⏱ TimeMoto, administrateur) : « 🔀 Trier avant d'importer » à côté d'Importer pour le **fichier CSV** (période = derniers jours, ou depuis la date du
+  champ « Reprendre l'historique depuis le »), et « 🔀 Trier avant d'appliquer » sur l'aperçu d'une **récupération de période**. Pas de tri pour l'import TimeMoto Cloud (autres identifiants).
+- **Serveur** (`timemotoSync.js`, route `POST /api/presence/timemoto/triage`, `requireAdmin`, actions `start | interpret | apply | cancel`) :
+  `triageBegin/triageStart` rangent les événements en réserve (meta `triage`, 1 h) et renvoient une carte par (salarié associé, jour) : passages bruts (touche lue, sens, case cochée), résultat
+  calculé, passages déjà écartés (`prevExcluded`), ajouts déjà faits. Les journées de salariés non associés sont comptées à part, jamais listées ni importées.
+  **`deviceGroupInterpret`** (extrait de `syncDeviceRows`) est le MÊME code pour l'import et pour l'écran : `triageInterpret` recalcule le résultat de chaque journée avec les cases
+  courantes (une requête par action, pas par case) — le navigateur n'interprète jamais lui-même les passages (pas de seconde copie de la logique arrivée/pause/départ).
+  `triageApply` valide tout AVANT d'écrire (journée dans la période triée, salarié associé, ajout sur le bon jour et pas dans le futur, passages inconnus de la réserve ignorés), mémorise les
+  décisions puis lance `syncDeviceRows` sur la période de la réserve : un seul chemin d'écriture, idempotent, annulations tracées. Une récupération triée passe à l'état `applied`.
+- **Deux mémoires** (meta, purgées au-delà de 400 jours), appliquées à **toutes** les lectures de la pointeuse par `syncDeviceRows` (agent, CSV, récupération) :
+  `excluded` (clé `uid|ts`) — passage filtré avant interprétation, jamais réimporté ; la journée reste réconciliée, donc un pointage déjà importé qui n'a plus de passage derrière lui est
+  **annulé** (ligne `cancel`, rien n'est supprimé) ; `added` — passage manquant ajouté à la main, injecté DANS la séquence de la journée : en lecture « par ordre » il décale la parité comme un
+  vrai passage, en lecture « selon la touche » son sens se déduit de l'état de présence juste avant (`assignAddedKinds` : présent → sortie, absent → entrée). Il est enregistré comme pointage de
+  source `timemoto` avec le commentaire « Passage ajouté à la main lors du tri des pointages (oubli de badge) » (il doit rester rattaché à la journée pour être réconcilié si on le retire).
+- **Rétablir un passage écarté** : rouvrir le tri sur la même période — il apparaît décoché « écarté avant » ; le recocher le rétablit (pas de liste dédiée dans le journal de la journée :
+  ces passages ne sont pas des pointages).
+- **Écran** (`renderTmTriageModal`, `tmTriage` transitoire) : compteurs (lus / retenus / écartés / journées à vérifier), filtres « À vérifier » et salarié, « Double si moins de N min »
+  (marqueur et bouton « Écarter les doubles probables » ; réglage local au tri), « Tout retenir », une carte par journée (40 d'abord, « Afficher plus ») avec cases, note par passage (touche
+  différente du sens lu, double, non utilisé), frise et résultat (arrivée, départ, présence, pauses), « ＋ Ajouter un pointage manquant » (heure modifiable). **Par défaut tout est coché sauf les
+  doubles** (moins de N min après le précédent, N = réglage anti-double, 3 par défaut) et les passages écartés lors d'un tri précédent. Pour un salarié lu « par ordre de passage », un double
+  gardé coché est tout de même ignoré par le moteur (règle `antiDoubleMin`) : la ligne l'indique (« double ignoré ») plutôt que de promettre l'inverse. Fermeture par ✕/Annuler/Échap avec
+  confirmation si des décisions ont été prises ; un clic à côté ne ferme pas (le travail serait perdu).
+- Aucun nouveau fichier serveur (Dockerfile inchangé).
+- Tests (scratchpad `triage_test.js`, 30 assertions sur un vrai SQLite : aperçu sans écriture, double décoché d'office, journée impaire puis complétée par un ajout, application = ce qu'affichait l'écran,
+  idempotence et décisions conservées aux lectures suivantes, rétablissement, refus (hors période, autre jour, non associé), réserve expirée, journée entièrement écartée = annulations tracées, lecture selon la
+  touche ; `tri_ui.js` et `tri_rec.js` Playwright sur serveur réel : CSV et récupération de période, recalcul à chaque case, filtres, 390 px sans débordement). `seq_test` 14, `recover_test` 37, `missing_test` 13,
+  `badge_test` 41 inchangés.
+
 ## Onglet « Pointages »
 
 Retour utilisateur réel : jusqu'ici, voir/corriger un pointage demandait de retrouver la bonne

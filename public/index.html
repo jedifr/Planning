@@ -1750,6 +1750,66 @@
   .tm-bookmarklet:active{cursor:grabbing;}
   .tm-panel-head{display:flex; justify-content:space-between; align-items:center; gap:10px;}
   .pr-tm-panel{margin:0 0 14px;}
+  /* Tri des pointages avant import (v1.119.0) */
+  .tri-box{width:min(1180px, 97vw); max-height:94vh; display:flex; flex-direction:column; overflow:hidden;}
+  .tri-scroll{overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:12px; min-height:0;}
+  .tri-src{display:flex; flex-wrap:wrap; gap:4px 16px; font-size:12.5px; color:var(--text-dim);}
+  .tri-src b{color:var(--text);}
+  .tri-tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px;}
+  .tri-tile{border:1px solid var(--line); border-radius:8px; padding:8px 11px; background:var(--panel-2); display:flex; flex-direction:column;}
+  .tri-tile small{font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--text-dim);}
+  .tri-tile b{font-size:22px; line-height:1.15; font-variant-numeric:tabular-nums;}
+  .tri-tile span{font-size:11.5px; color:var(--text-dim);}
+  .tri-tile.green{background:#e2efe8; border-color:transparent;} .tri-tile.green b{color:var(--green);}
+  .tri-tile.red{background:#f8e6e3; border-color:transparent;} .tri-tile.red b{color:var(--red);}
+  .tri-tile.amber{background:var(--amber-dim); border-color:transparent;} .tri-tile.amber b{color:var(--amber);}
+  .tri-bar{display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center;}
+  .tri-bar .grow{flex:1;}
+  .tri-bar label{display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text-dim);}
+  .tri-bar input[type=number]{width:58px;}
+  .tri-bar select{width:auto; max-width:220px;}
+  .tri-day{background:var(--panel); border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column;}
+  .tri-day.check{border-color:var(--amber);}
+  .tri-dh{display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; padding:9px 14px; border-bottom:1px solid var(--line);}
+  .tri-dh .when{color:var(--text-dim); font-size:12.5px;}
+  .tri-dh .st{margin-left:auto; display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-dim);}
+  .tri-body{display:grid; grid-template-columns:minmax(0,1.55fr) minmax(240px,1fr);}
+  .tri-list{display:flex; flex-direction:column; padding:4px 8px 10px 14px; min-width:0;}
+  .tri-row{display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; padding:6px 0; border-bottom:1px solid var(--line-soft);}
+  .tri-row input[type=checkbox]{width:18px; height:18px; flex:none; margin:0; accent-color:var(--green);}
+  .tri-row .t{font-family:'IBM Plex Mono',monospace; font-size:13px; width:74px; flex:none;}
+  .tri-row .key{font-size:11.5px; color:var(--text-dim); width:130px; flex:none;}
+  .tri-row .key.diff{color:var(--amber); font-weight:600;}
+  .tri-row .ty{width:112px; flex:none;}
+  .tri-row .note{flex:1 1 170px; font-size:11.5px; color:var(--text-dim); min-width:0;}
+  .tri-row .note.warn{color:var(--amber);} .tri-row .note.bad{color:var(--red);}
+  .tri-row.off .t{text-decoration:line-through; color:var(--text-dim);}
+  .tri-row.off{background:var(--panel-2);}
+  .tri-row.flag{background:var(--amber-dim);}
+  .tri-row input[type=time]{width:auto;}
+  .tri-pill{display:inline-block; font-size:11.5px; font-weight:600; padding:2px 9px; border-radius:999px; white-space:nowrap;}
+  .tri-pill.arr{background:#e2efe8; color:var(--green);} .tri-pill.dp{background:var(--amber-dim); color:var(--amber);}
+  .tri-pill.fp{background:#e3edf4; color:var(--blue);} .tri-pill.dep{background:var(--panel-2); color:var(--text); border:1px solid var(--line);}
+  .tri-pill.off{background:var(--panel-2); color:var(--text-dim); font-weight:500;} .tri-pill.add{background:var(--accent-dim); color:var(--accent);}
+  .tri-pill.ok{background:#e2efe8; color:var(--green);} .tri-pill.warn{background:var(--amber-dim); color:var(--amber);}
+  .tri-res{border-left:1px solid var(--line); padding:12px 14px; display:flex; flex-direction:column; gap:10px; background:var(--panel-2); border-radius:0 0 10px 0; min-width:0;}
+  .tri-res h3{margin:0; font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim); font-weight:600;}
+  .tri-kv{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 12px;}
+  .tri-kv div{display:flex; flex-direction:column;} .tri-kv small{font-size:10.5px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em;}
+  .tri-kv b{font-size:15px; font-variant-numeric:tabular-nums;}
+  .tri-frise{position:relative; height:26px; border-radius:6px; background:var(--panel); border:1px solid var(--line);}
+  .tri-frise .seg{position:absolute; top:6px; height:12px; border-radius:3px;}
+  .tri-frise .here{background:var(--green);}
+  .tri-frise .hatch{background:repeating-linear-gradient(45deg,var(--amber) 0 4px,transparent 4px 8px); border:1px solid var(--amber);}
+  .tri-frise .open{border:2px dashed var(--green); background:rgba(53,117,87,0.18);}
+  .tri-tick{position:absolute; top:2px; bottom:2px; width:2px; background:var(--text); border-radius:1px;}
+  .tri-tick.off{background:transparent; border:1px solid var(--text-dim); width:3px; opacity:.7;}
+  .tri-axis{display:flex; justify-content:space-between; font-size:9.5px; color:var(--text-dim); margin-top:3px;}
+  .tri-issue{font-size:12px; color:var(--amber);}
+  .tri-foot{display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; padding:10px 16px; border-top:1px solid var(--line); background:var(--panel);}
+  .tri-foot .sum{flex:1 1 240px; font-size:13px;}
+  .tri-loading{opacity:.55; pointer-events:none;}
+  @media (max-width:760px){ .tri-body{grid-template-columns:1fr;} .tri-res{border-left:0; border-top:1px solid var(--line); border-radius:0 0 10px 10px;} .tri-dh .st{margin-left:0; width:100%;} .tri-row .key{width:auto;} }
   .tmb-scroll{overflow-x:auto; margin-top:6px;}
   table.tmb-table{width:100%; border-collapse:collapse; font-size:13px; min-width:640px;}
   table.tmb-table th{font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-dim); text-align:left; padding:6px 8px; border-bottom:1px solid var(--line);}
@@ -1880,7 +1940,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.118.0';
+const APP_VERSION = '1.119.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -19697,6 +19757,236 @@ function timemotoAgentHtml(agent){
 // Récupération À LA DEMANDE d'une période par le conteneur zk-sync (administrateur) : demande → l'agent relit
 // la pointeuse au contact suivant (≤ 1 min) → aperçu → confirmation. État côté serveur (timemotoStatusCache
 // .data.recovery) ; ici seulement le formulaire (transitoire) et le rafraîchissement tant que la demande attend.
+// ---------- Trier les pointages avant de les importer (v1.119.0) ----------
+// Écran de tri sur une lecture déjà faite (fichier CSV de la pointeuse, ou aperçu d'une « récupération de période ») : chaque passage
+// est coché, on décoche ce qu'on ne veut pas, on ajoute un passage oublié, et le résultat de CHAQUE journée est recalculé par le
+// serveur (même code que l'import : tmTriageRefresh) — le navigateur n'interprète jamais lui-même les passages. Seules les décisions
+// (écarté / ajouté) sont enregistrées, voir timemotoSync.js « Écran de tri ». La lecture automatique de l'agent n'est pas triée mais
+// respecte ces décisions. Rien n'est écrit avant « Importer la sélection ».
+let tmTriage = null;   // { source, from, to, dbl, groups:[{key,uid,day,userId,today,events,added,result,loading}], filter, user, shown, busy, error, touched }
+const TRI_PAGE = 40;
+const TRI_TYPE = { in: ['Arrivée', 'arr'], pause_start: ['Début de pause', 'dp'], pause_end: ['Fin de pause', 'fp'], out: ['Départ', 'dep'] };
+const triSecs = ts => Number(ts.slice(11, 13)) * 3600 + Number(ts.slice(14, 16)) * 60 + Number(ts.slice(17, 19) || 0);
+const triHM = sec => `${String(Math.floor(sec / 3600)).padStart(2, '0')}:${String(Math.floor(sec % 3600 / 60)).padStart(2, '0')}`;
+const triDur = sec => { const m = Math.round(sec / 60), h = Math.floor(m / 60); return h ? `${h} h ${String(m % 60).padStart(2, '0')}` : `${m} min`; };
+const triNorm = ts => ts.length === 16 ? ts + ':00' : ts;
+async function triCall(body){
+  const res = await fetch('/api/presence/timemoto/triage', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const json = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, json };
+}
+async function tmTriageStart(source){
+  if(timemotoBusy || (tmTriage && tmTriage.busy)) return;
+  const body = { action: 'start', source };
+  if(source === 'csv'){
+    if(!timemotoCsv){ showToast('Choisissez d’abord le fichier CSV de la pointeuse.'); return; }
+    body.csv = timemotoCsv.text;
+    const el = document.getElementById('tm-since-input');
+    if(el && el.value) body.since = el.value;
+  }
+  timemotoBusy = true; render();
+  try{
+    const r = await triCall(body);
+    if(!r.ok) timemotoLastResult = { error: r.json.error || `Erreur HTTP ${r.status}.` };
+    else {
+      timemotoLastResult = null;
+      const t = r.json.triage;
+      t.groups.forEach(g => { g.loading = false; });
+      Object.assign(t, { filter: 'all', user: '', shown: TRI_PAGE, busy: false, error: '', touched: false });
+      tmTriage = t;
+    }
+  }catch(e){ timemotoLastResult = { error: 'Serveur injoignable.' }; }
+  timemotoBusy = false; render();
+}
+function triGroup(key){ return tmTriage && tmTriage.groups.find(g => g.key === key); }
+// Recalcule (côté serveur) le résultat des journées demandées, avec leurs cases actuelles.
+async function tmTriageRefresh(keys){
+  const t = tmTriage; if(!t) return;
+  const gs = keys.map(triGroup).filter(Boolean);
+  if(!gs.length) return;
+  gs.forEach(g => { g.loading = true; });
+  t.touched = true; render();
+  try{
+    const r = await triCall({ action: 'interpret', days: gs.map(g => ({ uid: g.uid, day: g.day, keep: g.events.filter(e => e.keep).map(e => e.ts), added: g.added })) });
+    if(!r.ok){ t.error = r.json.error || 'Recalcul impossible.'; }
+    else { t.error = ''; gs.forEach(g => { if(r.json.results[g.key]) g.result = r.json.results[g.key]; }); }
+  }catch(e){ t.error = 'Serveur injoignable : le résultat affiché n’est plus à jour.'; }
+  gs.forEach(g => { g.loading = false; });
+  if(tmTriage === t) render();
+}
+function tmTriageToggle(key, ts, checked){
+  const g = triGroup(key); if(!g) return;
+  const ev = g.events.find(e => e.ts === ts); if(!ev) return;
+  ev.keep = checked; tmTriageRefresh([key]);
+}
+function tmTriageAdd(key){
+  const g = triGroup(key); if(!g) return;
+  const A = triAnalyse(g);
+  const kept = g.events.filter(e => e.keep).map(e => e.ts).concat(g.added).sort();
+  let t = '08:00:00';
+  if(kept.length && triSecs(kept[0]) < 9.5 * 3600) t = triHM(triSecs(kept[kept.length - 1]) + 600) + ':00';
+  let ts = `${g.day}T${t}`;
+  while(g.added.includes(ts) || g.events.some(e => e.ts === ts)) ts = `${g.day}T${triHM(triSecs(ts) + 60)}:00`;
+  g.added.push(ts); g.added.sort();
+  tmTriageRefresh([key]);
+}
+function tmTriageDelAdded(key, ts){
+  const g = triGroup(key); if(!g) return;
+  g.added = g.added.filter(x => x !== ts); tmTriageRefresh([key]);
+}
+function tmTriageTime(key, oldTs, value){
+  const g = triGroup(key); if(!g || !/^\d{2}:\d{2}$/.test(value || '')) return;
+  const ts = `${g.day}T${value}:00`;
+  if(ts === oldTs) return;
+  if(g.added.includes(ts) || g.events.some(e => e.ts === ts)){ showToast('Un passage existe déjà à cette heure.'); render(); return; }
+  if(new Date(ts) > new Date()){ showToast('Un passage ajouté ne peut pas être dans le futur.'); render(); return; }
+  g.added = g.added.map(x => x === oldTs ? ts : x).sort(); tmTriageRefresh([key]);
+}
+// Un passage est « double » s'il suit le précédent (retenu ou non) de moins de `dbl` minutes.
+function triIsDouble(g, i){ const t = tmTriage; if(!t || !(t.dbl > 0) || i <= 0) return false; return triSecs(g.events[i].ts) - triSecs(g.events[i - 1].ts) < t.dbl * 60; }
+function tmTriageDoubles(){
+  const t = tmTriage; if(!t) return;
+  const keys = [];
+  t.groups.forEach(g => { let ch = false; g.events.forEach((e, i) => { if(e.keep && triIsDouble(g, i)){ e.keep = false; ch = true; } }); if(ch) keys.push(g.key); });
+  if(!keys.length){ showToast('Aucun double probable à écarter.'); return; }
+  tmTriageRefresh(keys);
+}
+function tmTriageAll(){
+  const t = tmTriage; if(!t) return;
+  const keys = [];
+  t.groups.forEach(g => { let ch = false; g.events.forEach(e => { if(!e.keep){ e.keep = true; ch = true; } }); if(ch) keys.push(g.key); });
+  if(keys.length) tmTriageRefresh(keys);
+}
+function tmTriageClose(){
+  const t = tmTriage; if(!t || t.busy) return;
+  if(t.touched && !confirm('Fermer sans importer ? Les cases cochées et les passages ajoutés seront perdus.')) return;
+  tmTriage = null; render();
+  triCall({ action: 'cancel' }).catch(() => {});
+}
+async function tmTriageApply(){
+  const t = tmTriage; if(!t || t.busy) return;
+  const nKeep = t.groups.reduce((n, g) => n + g.events.filter(e => e.keep).length + g.added.length, 0);
+  const nOff = t.groups.reduce((n, g) => n + g.events.filter(e => !e.keep).length, 0);
+  t.busy = true; t.error = ''; render();
+  try{
+    const groups = t.groups.map(g => ({ uid: g.uid, day: g.day, keep: g.events.filter(e => e.keep).map(e => e.ts), drop: g.events.filter(e => !e.keep).map(e => e.ts), added: g.added }));
+    const r = await triCall({ action: 'apply', groups });
+    if(!r.ok){ t.busy = false; t.error = r.json.error || `Erreur HTTP ${r.status}.`; render(); return; }
+    if(r.json.status) timemotoStatusCache = { status: 'ok', data: r.json.status };
+    tmTriage = null;
+    timemotoLastResult = null;
+    invalidatePresenceCaches(); loadPresenceDay(toDateInputValue(new Date()), { force: true, noRender: true });
+    const res = r.json.result || {}, c = r.json.counts || {};
+    showToast(`Tri enregistré : ${res.added || 0} pointage(s) importé(s), ${res.cancelled || 0} annulé(s), ${nOff} passage(s) écarté(s)${c.added ? `, ${c.added} ajouté(s) à la main` : ''}.`);
+    render();
+  }catch(e){ t.busy = false; t.error = 'Serveur injoignable — rien n’a été enregistré.'; render(); }
+}
+// Lecture d'une journée triée : pointages calculés par le serveur → présence, pauses, frise, anomalies.
+function triAnalyse(g){
+  const punches = (g.result && g.result.punches) || [];
+  const dropped = new Set((g.result && g.result.dropped) || []);
+  const ignored = {}; ((g.result && g.result.ignored) || []).forEach(x => { ignored[x.ts] = x.reason; });
+  const typeAt = {}; punches.forEach(p => { typeAt[p.ts] = p.type; });
+  let start = null, pauseStart = null, presence = 0, pauses = 0, pauseTot = 0;
+  const segs = [], nowS = triSecs(`${g.day}T${triHM(new Date().getHours() * 3600 + new Date().getMinutes() * 60)}:00`);
+  punches.forEach(p => {
+    const s = triSecs(p.ts);
+    if(p.type === 'in' || p.type === 'pause_end'){ if(p.type === 'pause_end' && pauseStart !== null){ pauses++; pauseTot += s - pauseStart; segs.push({ a: pauseStart, b: s, pause: true }); pauseStart = null; } start = s; }
+    else { if(start !== null){ presence += s - start; segs.push({ a: start, b: s }); start = null; } if(p.type === 'pause_start') pauseStart = s; }
+  });
+  if(start !== null && g.today && nowS > start){ presence += nowS - start; segs.push({ a: start, b: nowS, open: true }); }
+  const issues = [];
+  if(!punches.length) issues.push('Aucun pointage retenu');
+  else if(!g.today && punches[punches.length - 1].type !== 'out') issues.push(punches[punches.length - 1].type === 'pause_start' ? 'Retour de pause non pointé' : 'Départ non pointé');
+  const unused = g.events.filter(e => e.keep && !typeAt[e.ts] && !dropped.has(e.ts) && ignored[e.ts]);
+  unused.forEach(e => issues.push(`Passage de ${e.ts.slice(11, 16)} inutilisé (${ignored[e.ts] === 'doubleIn' ? 'entrée alors que la personne est déjà présente' : 'sortie sans entrée'})`));
+  const arr = punches.find(p => p.type === 'in'), outs = punches.filter(p => p.type === 'out');
+  return { punches, dropped, ignored, typeAt, presence, pauses, pauseTot, segs, issues, nowS,
+    arrivee: arr ? arr.ts.slice(11, 16) : null, depart: outs.length ? outs[outs.length - 1].ts.slice(11, 16) : null };
+}
+function triDayLabel(g){
+  const d = new Date(g.day + 'T12:00:00');
+  return d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }) + (g.today ? ' (aujourd’hui)' : '');
+}
+function triRowHtml(g, A, e, i){
+  const dbl = triIsDouble(g, i);
+  const type = A.typeAt[e.ts];
+  const dirOf = t => (t === 'in' || t === 'pause_end') ? 'in' : 'out';
+  const diff = e.keep && type && e.dir && dirOf(type) !== e.dir;
+  let note = '', cls = 'note', pill;
+  if(!e.keep){ pill = `<span class="tri-pill off">${e.prevExcluded ? 'écarté avant' : 'écarté'}</span>`; if(dbl){ const gap = triSecs(e.ts) - triSecs(g.events[i - 1].ts); note = `Double probable : ${Math.floor(gap / 60)} min ${String(gap % 60).padStart(2, '0')} s après ${g.events[i - 1].ts.slice(11, 19)}`; cls = 'note warn'; } else if(e.prevExcluded){ note = 'Écarté lors d’un tri précédent : recochez pour le rétablir.'; } }
+  else if(A.dropped.has(e.ts)){ pill = '<span class="tri-pill off">double ignoré</span>'; note = `Ignoré par la lecture « par ordre de passage » (moins de ${tmTriage.antiMin} min après le précédent)`; cls = 'note warn'; }
+  else if(type){ pill = `<span class="tri-pill ${TRI_TYPE[type][1]}">${TRI_TYPE[type][0]}</span>`; if(diff){ note = `Touche « ${e.label} » mais passage lu comme ${TRI_TYPE[type][0].toLowerCase()}`; cls = 'note warn'; } else if(dbl){ note = 'Double probable encore retenu'; cls = 'note bad'; } }
+  else { pill = '<span class="tri-pill off">non utilisé</span>'; const r = A.ignored[e.ts]; note = r === 'doubleIn' ? 'Entrée alors que la personne est déjà présente' : r === 'outSansEntree' ? 'Sortie sans entrée' : 'Touche ignorée en lecture « selon la touche »'; cls = 'note warn'; }
+  const flag = e.keep && cls !== 'note';
+  return `<div class="tri-row${e.keep ? '' : ' off'}${flag ? ' flag' : ''}">
+    <input type="checkbox" ${e.keep ? 'checked' : ''} data-action="tri-keep" data-key="${escapeHtml(g.key)}" data-ts="${escapeHtml(e.ts)}" aria-label="Garder le passage de ${escapeHtml(e.ts.slice(11, 16))}">
+    <span class="t">${escapeHtml(e.ts.slice(11, 19))}</span><span class="key${diff ? ' diff' : ''}">${diff ? '≠ ' : ''}Touche : ${escapeHtml(e.label)}</span>
+    <span class="ty">${pill}</span><span class="${cls}">${escapeHtml(note)}</span></div>`;
+}
+function triAddedRowHtml(g, A, ts){
+  const type = A.typeAt[ts];
+  return `<div class="tri-row">
+    <span style="width:18px;flex:none;"></span><input type="time" value="${escapeHtml(ts.slice(11, 16))}" data-action="tri-time" data-key="${escapeHtml(g.key)}" data-ts="${escapeHtml(ts)}" aria-label="Heure du passage ajouté">
+    <span class="key"><span class="tri-pill add">ajouté</span></span><span class="ty">${type ? `<span class="tri-pill ${TRI_TYPE[type][1]}">${TRI_TYPE[type][0]}</span>` : '<span class="tri-pill off">non utilisé</span>'}</span>
+    <span class="note">Ajouté à la main : enregistré comme pointage de la pointeuse, avec la mention « ajouté au tri »</span>
+    <button class="small" data-action="tri-del" data-key="${escapeHtml(g.key)}" data-ts="${escapeHtml(ts)}" aria-label="Retirer ce passage ajouté">×</button></div>`;
+}
+function triDayHtml(g){
+  const A = triAnalyse(g);
+  const pct = s => Math.max(0, Math.min(100, (s - 6 * 3600) / (12 * 3600) * 100));
+  const check = A.issues.length > 0;
+  const nKept = g.events.filter(e => e.keep).length + g.added.length;
+  const rows = g.events.map((e, i) => triRowHtml(g, A, e, i)).join('') + g.added.map(ts => triAddedRowHtml(g, A, ts)).join('');
+  const ticks = g.events.map(e => `<div class="tri-tick${e.keep ? '' : ' off'}" style="left:calc(${pct(triSecs(e.ts))}% - 1px)"></div>`).join('') + g.added.map(ts => `<div class="tri-tick" style="left:calc(${pct(triSecs(ts))}% - 1px)"></div>`).join('');
+  const segs = A.segs.map(s => `<div class="seg ${s.pause ? 'hatch' : (s.open ? 'open' : 'here')}" style="left:${pct(s.a)}%;width:${Math.max(0.8, pct(s.b) - pct(s.a))}%"></div>`).join('');
+  const name = presenceUserName(g.userId);
+  return `<section class="tri-day${check ? ' check' : ''}${g.loading ? ' tri-loading' : ''}" aria-label="${escapeHtml(name)}, ${escapeHtml(triDayLabel(g))}">
+    <div class="tri-dh"><div class="pr-user">${renderAvatar(name)}<b>${escapeHtml(name)}</b></div><span class="when">${escapeHtml(triDayLabel(g))} · pointeuse n° ${escapeHtml(g.uid)}</span>
+      <div class="st">${check ? '<span class="tri-pill warn">À vérifier</span>' : '<span class="tri-pill ok">Normale</span>'}<span>${nKept} retenu${nKept > 1 ? 's' : ''} sur ${g.events.length + g.added.length}</span></div></div>
+    <div class="tri-body"><div class="tri-list">${rows}<div style="padding-top:6px;"><button class="small" data-action="tri-add" data-key="${escapeHtml(g.key)}">＋ Ajouter un pointage manquant</button></div></div>
+      <div class="tri-res"><h3>Résultat si importé</h3>
+        <div><div class="tri-frise">${segs}${ticks}</div><div class="tri-axis"><span>6h</span><span>9h</span><span>12h</span><span>15h</span><span>18h</span></div></div>
+        <div class="tri-kv"><div><small>Arrivée</small><b>${A.arrivee || '—'}</b></div><div><small>Départ</small><b>${A.depart || (g.today ? 'en cours' : '—')}</b></div>
+          <div><small>Présence</small><b>${A.presence ? triDur(A.presence) : '—'}</b></div><div><small>Pauses</small><b>${A.pauses ? `${A.pauses} · ${triDur(A.pauseTot)}` : 'aucune'}</b></div></div>
+        ${A.issues.map(m => `<div class="tri-issue">⚠ ${escapeHtml(m)}</div>`).join('')}</div></div></section>`;
+}
+function renderTmTriageModal(){
+  const t = tmTriage; if(!t) return '';
+  const all = t.groups.map(g => ({ g, A: triAnalyse(g) }));
+  let read = 0, kept = 0, off = 0, added = 0, toCheck = 0;
+  all.forEach(({ g, A }) => { read += g.events.length; g.events.forEach(e => { if(e.keep) kept++; else off++; }); added += g.added.length; kept += g.added.length; if(A.issues.length) toCheck++; });
+  const users = [...new Set(t.groups.map(g => g.userId))];
+  const visible = all.filter(({ g, A }) => (!t.user || g.userId === t.user) && (t.filter === 'all' || A.issues.length > 0));
+  const shown = visible.slice(0, t.shown);
+  const srcLabel = t.source === 'recovery' ? 'Récupération de période (agent zk-sync)' : 'Fichier CSV de la pointeuse';
+  const seqNote = t.sequence === 'tous' ? 'par ordre de passage (tous)' : 'selon réglage de chaque salarié';
+  return `<div class="modal-overlay"><div class="modal-box tri-box" role="dialog" aria-label="Trier les pointages avant import">
+    <div class="modal-head"><div class="pc-title">Trier les pointages avant de les importer</div><button class="ghost icon-btn" data-action="tri-close" aria-label="Fermer">✕</button></div>
+    <div class="tri-scroll">
+      <div class="tri-src"><span><b>${escapeHtml(srcLabel)}</b></span><span>Période : <b>${tmFrDay(t.from)} → ${tmFrDay(t.to)}</b></span><span>Lecture : <b>${escapeHtml(seqNote)}</b></span></div>
+      <div class="tri-tiles">
+        <div class="tri-tile"><small>Passages lus</small><b>${read}</b><span>${t.groups.length} journée${t.groups.length > 1 ? 's' : ''}</span></div>
+        <div class="tri-tile green"><small>Retenus</small><b>${kept}</b><span>${added ? `${added} ajouté${added > 1 ? 's' : ''} à la main` : 'seront importés'}</span></div>
+        <div class="tri-tile${off ? ' red' : ''}"><small>Écartés</small><b>${off}</b><span>jamais réimportés</span></div>
+        <div class="tri-tile${toCheck ? ' amber' : ' green'}"><small>Journées à vérifier</small><b>${toCheck}</b><span>${toCheck ? 'départ manquant ou passage inutilisé' : 'rien à signaler'}</span></div></div>
+      <div class="tri-bar">
+        <div class="view-tabs"><button class="${t.filter === 'all' ? 'active' : ''}" data-action="tri-filter" data-f="all">Toutes les journées</button><button class="${t.filter === 'check' ? 'active' : ''}" data-action="tri-filter" data-f="check">À vérifier (${toCheck})</button></div>
+        <label>Salarié <select data-action="tri-user"><option value="">Tous</option>${users.map(u => `<option value="${escapeHtml(u)}" ${t.user === u ? 'selected' : ''}>${escapeHtml(presenceUserName(u))}</option>`).join('')}</select></label>
+        <label>Double si moins de <input type="number" min="0" max="30" value="${t.dbl}" data-action="tri-dbl"> min</label>
+        <span class="grow"></span>
+        <button class="small" data-action="tri-doubles">Écarter les doubles probables</button><button class="small" data-action="tri-all">Tout retenir</button></div>
+      ${t.error ? `<div class="tmb-err">${escapeHtml(t.error)}</div>` : ''}
+      ${shown.length ? shown.map(({ g }) => triDayHtml(g)).join('') : '<div class="footer-note" style="text-align:left;">Aucune journée à afficher avec ces filtres.</div>'}
+      ${visible.length > shown.length ? `<button class="small" data-action="tri-more">Afficher ${Math.min(TRI_PAGE, visible.length - shown.length)} journées de plus (${visible.length - shown.length} restantes)</button>` : ''}
+      ${t.unmapped.days ? `<div class="footer-note" style="text-align:left;"><b>${t.unmapped.days}</b> journée${t.unmapped.days > 1 ? 's' : ''} (${t.unmapped.events} événement${t.unmapped.events > 1 ? 's' : ''}) de salariés de la pointeuse sans salarié Planning associé : non listée${t.unmapped.days > 1 ? 's' : ''}, jamais importée${t.unmapped.days > 1 ? 's' : ''}. Associez-les d’abord (« Association des salariés »).</div>` : ''}
+      <div class="footer-note" style="text-align:left;">Un passage décoché est mémorisé comme écarté : les lectures suivantes ne le réimportent pas, et un pointage déjà importé qui n’a plus de passage derrière lui est annulé (ligne d’annulation tracée, rien n’est supprimé). Pour le rétablir, rouvrez le tri sur la même période et recochez-le.</div>
+    </div>
+    <div class="tri-foot"><div class="sum"><b>${kept}</b> pointage${kept > 1 ? 's' : ''} retenu${kept > 1 ? 's' : ''} · <b>${off}</b> écarté${off > 1 ? 's' : ''}${toCheck ? ` · <span style="color:var(--amber);">${toCheck} journée${toCheck > 1 ? 's' : ''} encore à vérifier</span>` : ''}</div>
+      <button data-action="tri-close" ${t.busy ? 'disabled' : ''}>Annuler</button>
+      <button class="primary" data-action="tri-apply" ${t.busy ? 'disabled' : ''}>${t.busy ? 'Import…' : 'Importer la sélection'}</button></div>
+  </div></div>`;
+}
 let tmRecoverForm = null;       // { from, to } — dates saisies (transitoire)
 let tmRecoverPollTimer = null;
 function tmRecoverDefaults(){
@@ -19753,7 +20043,7 @@ function renderTmRecoverHtml(st){
     status = `<div class="tm-box" style="margin-top:8px;">⏳ <b>Demande envoyée</b> (${tmFrDay(rec.from)} → ${tmFrDay(rec.to)}) — en attente de l’agent zk-sync (moins d’une minute en général). <button class="small" data-action="tm-recover-cancel">Annuler la demande</button></div>`;
   } else if(rec && rec.state === 'received'){
     status = `<div class="tm-box" style="margin-top:8px;"><div>🔍 <b>Aperçu prêt</b> pour ${tmFrDay(rec.from)} → ${tmFrDay(rec.to)} (${rec.deviceEvents || 0} événement(s) lus sur la pointeuse) : ${tmRecoverResultLine(rec.preview)}.</div>
-      <div class="tm-actions" style="margin-top:6px;"><button class="small primary" data-action="tm-recover-apply">✓ Appliquer</button><button class="small" data-action="tm-recover-cancel">Annuler</button></div></div>`;
+      <div class="tm-actions" style="margin-top:6px;"><button class="small primary" data-action="tm-recover-apply">✓ Appliquer</button><button class="small" data-action="tm-triage" data-source="recovery" title="Choisir passage par passage ce qui sera importé">🔀 Trier avant d’appliquer</button><button class="small" data-action="tm-recover-cancel">Annuler</button></div></div>`;
   } else if(rec && rec.state === 'applied'){
     status = `<div class="footer-note" style="text-align:left; margin-top:8px;">✓ Dernière récupération appliquée (${tmFrDay(rec.from)} → ${tmFrDay(rec.to)}) : ${tmRecoverResultLine(rec.result)}.</div>`;
   } else if(rec && rec.state === 'error'){
@@ -20103,6 +20393,7 @@ function renderTimemotoImportPanel(){
         <button class="small" data-action="tm-csv-sync" data-mode="preview" ${timemotoBusy || !timemotoCsv ? 'disabled' : ''} title="Lit le fichier sans rien enregistrer">🔍 Aperçu</button>
         <button class="small primary" data-action="tm-csv-sync" data-mode="import" ${timemotoBusy || !timemotoCsv ? 'disabled' : ''}>${timemotoBusy ? 'Import…' : '⬇ Importer'}</button>
         <button class="small" data-action="tm-csv-sync" data-mode="since" ${timemotoBusy || !timemotoCsv ? 'disabled' : ''} title="Importe depuis la date saisie dans « Reprendre l’historique depuis le » (plus bas)">Importer depuis la date…</button>
+        <button class="small" data-action="tm-triage" data-source="csv" ${timemotoBusy || !timemotoCsv ? 'disabled' : ''} title="Affiche chaque passage de la période (derniers jours, ou depuis la date saisie plus bas) pour choisir ceux à garder avant d’importer">🔀 Trier avant d’importer</button>
       </div>
       <div class="footer-note" style="text-align:left; padding-top:4px;">${timemotoCsv ? `Fichier prêt : <b>${escapeHtml(timemotoCsv.name)}</b> (${Math.round(timemotoCsv.text.length / 1024)} Ko).` : 'Aucun fichier choisi.'}</div>
       ${timemotoLastResult && timemotoLastResult.device ? timemotoResultHtml(timemotoLastResult) : ''}
@@ -20340,6 +20631,7 @@ function render(){
       renderPresencePunchModal(),
       renderPresenceReturnModal(),
       renderTmBadgeModal(),
+      renderTmTriageModal(),
       renderSettingsModal(),
       renderPauseReminderModal(otherModalOpen),
       renderToast()
@@ -20659,6 +20951,7 @@ function updateHighlightClasses(){
 })();
 document.addEventListener('click', (e) => {
   if(e.target.classList && e.target.classList.contains('modal-overlay')){
+    if(tmTriage) return; // le tri se ferme par ✕ / Annuler / Échap (un clic à côté ferait perdre des décisions)
     // Pop-up de document ouverte PAR-DESSUS Paramètres : ne referme qu'elle, pas Paramètres.
     if(presenceDocModal){ presenceDocModal = null; render(); return; }
     if(tmBadgeForm){ tmBadgeForm = null; render(); return; }
@@ -20814,6 +21107,15 @@ function dispatchClickAction(action, el){
     case 'presence-tm-goto': closeSettingsModal(); currentPage = 'presence'; presenceTmOpen = true; invalidatePresenceCaches(); render(); break;
     case 'tm-sync': runTimemotoSync(el.dataset.mode); break;
     case 'tm-csv-sync': runTimemotoCsvImport(el.dataset.mode); break;
+    case 'tm-triage': tmTriageStart(el.dataset.source); break;
+    case 'tri-close': tmTriageClose(); break;
+    case 'tri-apply': tmTriageApply(); break;
+    case 'tri-filter': if(tmTriage){ tmTriage.filter = el.dataset.f; tmTriage.shown = TRI_PAGE; render(); } break;
+    case 'tri-doubles': tmTriageDoubles(); break;
+    case 'tri-all': tmTriageAll(); break;
+    case 'tri-add': tmTriageAdd(el.dataset.key); break;
+    case 'tri-del': tmTriageDelAdded(el.dataset.key, el.dataset.ts); break;
+    case 'tri-more': if(tmTriage){ tmTriage.shown += TRI_PAGE; render(); } break;
     case 'tm-recover-request': tmRecoverRequest(); break;
     case 'tm-recover-apply': tmRecoverApply(); break;
     case 'tm-recover-cancel': tmRecoverCall({ action: 'cancel' }); break;
@@ -21115,6 +21417,10 @@ function dispatchChangeAction(el, action){
     case 'tm-user-map': setTimemotoUserMapMany((el.dataset.tmIds || el.dataset.tmId).split('|'), el.value); break;
     case 'tm-ordre-user': setTimemotoOrdreMany((el.dataset.tmIds || el.dataset.tmId).split('|'), el.checked); break;
     case 'tm-csv-file': loadTimemotoCsvFile(el.files && el.files[0]); break;
+    case 'tri-keep': tmTriageToggle(el.dataset.key, el.dataset.ts, el.checked); break;
+    case 'tri-time': tmTriageTime(el.dataset.key, el.dataset.ts, el.value); break;
+    case 'tri-user': if(tmTriage){ tmTriage.user = el.value; tmTriage.shown = TRI_PAGE; render(); } break;
+    case 'tri-dbl': if(tmTriage){ tmTriage.dbl = Math.max(0, Math.min(30, Number(el.value) || 0)); render(); } break;
     case 'tm-recover-field': tmRecoverFormGet()[el.dataset.field] = el.value; break;
     case 'dup-field': presenceDupInit(); presenceDup[el.dataset.field] = el.dataset.field === 'minutes' ? (Number(el.value) || 5) : el.value; break;
     case 'mon-pointage-date-input': setMonPointageDay(el.value); break;
@@ -21723,6 +22029,7 @@ document.addEventListener('input', (e) => {
   }
 });
 document.addEventListener('keydown', (e) => {
+  if(e.key === 'Escape' && tmTriage){ tmTriageClose(); return; }
   if(e.key === 'Escape' && presenceDocModal){ presenceDocModal = null; render(); return; }
   if(e.key === 'Escape' && presenceReturnDraft){ presenceReturnDraft = null; render(); return; }
   if(e.key === 'Escape' && tmBadgeForm){ tmBadgeForm = null; render(); return; }

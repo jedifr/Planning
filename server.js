@@ -609,6 +609,32 @@ app.post('/api/presence/timemoto/recover', requireAdmin, requireLicense, require
   if(!r.ok) return res.status(400).json({ error: r.error });
   res.json({ ok: true, status: timemoto.status(db, readStateFull()) });
 });
+// Tri des pointages avant import (v1.119.0, administrateurs) : lecture déjà faite (CSV ou aperçu de récupération) → l'écran
+// montre chaque passage, recalcule le résultat de chaque journée, puis n'enregistre que la sélection. Voir timemotoSync.js.
+app.post('/api/presence/timemoto/triage', requireAdmin, requireLicense, requirePresence, (req, res) => {
+  const b = req.body || {};
+  const action = String(b.action || 'start');
+  const st = readStateFull();
+  if(action === 'start'){
+    if(b.since != null && b.since !== '' && !presence.DATE_RE.test(String(b.since))) return res.status(400).json({ error: 'Date de reprise invalide.' });
+    if(b.source !== 'recovery' && (typeof b.csv !== 'string' || !b.csv.trim())) return res.status(400).json({ error: 'Aucun fichier CSV fourni.' });
+    const r = timemoto.triageBegin(db, st, { source: b.source === 'recovery' ? 'recovery' : 'csv', csv: b.csv, since: b.since || null, dbl: b.dbl });
+    if(!r.ok) return res.status(400).json({ error: r.error });
+    return res.json({ ok: true, triage: r.triage });
+  }
+  if(action === 'interpret'){
+    const r = timemoto.triageInterpret(db, st, b.days);
+    if(!r.ok) return res.status(410).json({ error: r.error });
+    return res.json({ ok: true, results: r.results });
+  }
+  if(action === 'apply'){
+    const r = timemoto.triageApply(db, st, { groups: b.groups }, String(req.session.userId || ''));
+    if(!r.ok) return res.status(400).json({ error: r.error });
+    return res.json({ ok: true, result: { added: r.result.added, cancelled: r.result.cancelled, respected: r.result.respected, from: r.result.from, to: r.result.to }, counts: r.counts, status: timemoto.status(db, readStateFull()) });
+  }
+  if(action === 'cancel'){ timemoto.triageCancel(db); return res.json({ ok: true }); }
+  res.status(400).json({ error: 'Action inconnue.' });
+});
 // Badges de la pointeuse gérés depuis l'application (v1.116.0, administrateurs) : préparer → confirmer → l'agent
 // zk-sync écrit sur la pointeuse et relit pour vérifier. Voir timemotoSync.js (section « Badges de la pointeuse »).
 function requireTimemotoActif(req, res, next){
