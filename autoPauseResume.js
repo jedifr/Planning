@@ -154,6 +154,12 @@ function dayIntervals(date, cfg){
 // basculerait à tort en pause déjeuner — avec reprise automatique à 13h alors que c'est le week-end
 // tout entier qui aurait dû la mettre en pause, sans reprise, dès la sortie du vendredi.
 function pauseKindForRunningTask(op, now, st){
+  // Options Paramètres → Horaires & pauses (voir CLAUDE.md, « Pauses automatiques paramétrables ») : l'état
+  // lu ici n'est pas passé par migrateState (client) — un champ absent (`undefined`) vaut « activé », seul un
+  // `false` explicite désactive.
+  const sc = (st && st.config) || {};
+  const lunchOn = sc.autoPauseDejeuner !== false;
+  const outOfHoursOn = sc.autoPauseHorsHoraires !== false;
   const cfg = configForPiece(op, st);
   const dow = now.getDay();
   const isWorkDay = dow !== 0 && dow !== 6 && !isDateBlocked(now, cfg);
@@ -166,7 +172,9 @@ function pauseKindForRunningTask(op, now, st){
     // contrairement à cette dernière, la pause déjeuner a un mirroir CLIENT (applyAutoPauseResume,
     // public/index.html) qui doit vérifier ce même champ, sous peine de divergence (voir CLAUDE.md).
     if(op.lunchExceptionUntil && now < new Date(op.lunchExceptionUntil)) return null;
-    return 'lunch';
+    // Pause auto désactivée : la tâche reste en cours, sans basculer non plus en « hors horaires » (on est
+    // bien dans un jour ouvré, simplement dans la pause).
+    return lunchOn ? 'lunch' : null;
   }
   const withinSegment = isWorkDay && dayIntervals(now, cfg).some(([s,e]) => now >= s && now < e);
   if(withinSegment) return null;
@@ -177,7 +185,7 @@ function pauseKindForRunningTask(op, now, st){
   // laquelle ce garde-fou redevient inactif de lui-même, sans qu'aucun code n'ait besoin de le
   // réinitialiser explicitement.
   if(op.workHoursExceptionUntil && now < new Date(op.workHoursExceptionUntil)) return null;
-  return 'outOfHours';
+  return outOfHoursOn ? 'outOfHours' : null;
 }
 
 // Identique à applyAutoPauseResume (public/index.html) — voir là-bas pour le détail des choix déjà
@@ -226,8 +234,54 @@ function applyAutoPauseResume(st, now){
   return changed;
 }
 
+// Mise en pause au DÉPART pointé (voir CLAUDE.md, « Pause automatique au départ pointé »). `lastOutByUser`
+// = { [userId]: "AAAA-MM-JJTHH:mm" } : l'heure du dernier pointage retenu de chaque salarié, SEULEMENT si ce
+// dernier pointage est un départ (jamais une pause pointée : une sortie courte n'est pas un départ). Pour chaque
+// pièce en cours, les séances ouvertes de cette personne sont fermées À L'HEURE DU DÉPART (jamais à l'heure du
+// contrôle) ; la pièce ne passe en pause que s'il ne reste plus personne dessus (travail à plusieurs). Une
+// séance ouverte APRÈS le départ (la personne est revenue sans repointer) n'est jamais touchée. Aucune reprise
+// automatique. Réutilise `autoPausedOutOfHours` (pause « expliquée », visible dans la bannière du lendemain,
+// jamais reprise toute seule) plutôt qu'un second drapeau : tous les lecteurs existants la traitent déjà bien.
+// Ignorés : option décochée (`autoPauseDepart === false`), salarié au forfait (pointage facultatif), exception
+// « 🕐 Je travaille maintenant » active sur la pièce.
+function applyDepartPause(st, now, lastOutByUser){
+  now = now || new Date();
+  if(((st && st.config) || {}).autoPauseDepart === false) return false;
+  if(!lastOutByUser) return false;
+  const forfait = new Set(((st && st.presenceForfaitUserIds) || []).map(String));
+  const nowStr = toInputValue(now);
+  let changed = false;
+  (st.commandes||[]).forEach(c => {
+    (c.pieces||[]).forEach(o => {
+      if(o.statut !== 'en_cours') return;
+      if(o.workHoursExceptionUntil && now < new Date(o.workHoursExceptionUntil)) return;
+      let closed = false;
+      (o.sessions||[]).forEach(s => {
+        if(s.fin) return;
+        const uid = String(s.operatorUserId || o.operatorUserId || '');
+        const out = lastOutByUser[uid];
+        if(!out || forfait.has(uid) || out > nowStr) return;
+        if(String(s.debut) > out) return; // reprise après le départ : jamais fermée
+        s.fin = out;
+        closed = true;
+      });
+      if(!closed) return;
+      changed = true;
+      if(!(o.sessions||[]).some(s => !s.fin)){
+        o.statut = 'en_pause';
+        o.autoPaused = false;
+        o.autoPausedOutOfHours = true;
+        o.autoPausedOperators = null;
+        o.autoPausedUntil = null;
+      }
+    });
+  });
+  return changed;
+}
+
 module.exports = {
   applyAutoPauseResume,
+  applyDepartPause,
   isInPauseWindow,
   pauseKindForRunningTask,
   configForPiece,

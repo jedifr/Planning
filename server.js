@@ -570,11 +570,126 @@ function timemotoSummary(){
   const tm = presenceConfig().timemoto || {};
   if(!tm.actif) return { actif: false };
   const s = timemoto.status(db);
-  return { actif: true, lastOkAt: s.lastOkAt, lastImportTo: s.lastImportTo };
+  return { actif: true, lastOkAt: s.lastOkAt, lastImportTo: s.lastImportTo, nFlagged: timemoto.flaggedCount(db) };
 }
 app.get('/api/presence/timemoto/status', requireAuth, requireLicense, requirePresence, (req, res) => {
   if(!isSupervisorReq(req)) return res.status(403).json({ error: 'Réservé aux superviseurs.' });
-  res.json(timemoto.status(db));
+  res.json(timemoto.status(db, readStateFull()));
+});
+// Pointages manquants probables d'une journée (pop-up de correction) : entrées écartées à l'import,
+// enchaînements incohérents, journée passée sans départ — voir presence.suggestMissing. Un superviseur
+// peut interroger n'importe qui ; un salarié UNIQUEMENT lui-même (l'identifiant demandé est ignoré et
+// remplacé par celui de sa session : jamais le détail d'un collègue).
+app.get('/api/presence/missing', requireAuth, requireLicense, requirePresence, (req, res) => {
+  const userId = isSupervisorReq(req) ? String(req.query.userId || '') : String(req.session.userId || '');
+  const date = String(req.query.date || '');
+  if(!userId || !presence.DATE_RE.test(date)) return res.status(400).json({ error: 'Paramètres "userId" et "date" (AAAA-MM-JJ) requis.' });
+  const st = readStateFull();
+  const punches = presence.effectivePunches(presence.getPunchesBetween(db, date + 'T00:00:00', date + 'T99', userId));
+  const b = timemoto.expectedBoundsFor(st, userId, date);
+  const hmOfDate = d => d ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : null;
+  res.json({ suggestions: presence.suggestMissing({
+    punches, ignored: timemoto.ignoredEventsFor(db, userId, date),
+    expectedStart: b ? hmOfDate(b.start) : null, expectedEnd: b ? hmOfDate(b.end) : null,
+    isPast: date < localDateKey(new Date())
+  }) });
+});
+// Récupération d'une période à la demande par l'agent zk-sync (voir timemotoSync.js) : l'administrateur
+// demande, l'agent répond au contact suivant (≤ 1 min) avec un aperçu, l'administrateur confirme.
+app.post('/api/presence/timemoto/recover', requireAdmin, requireLicense, requirePresence, (req, res) => {
+  const b = req.body || {};
+  const action = String(b.action || 'request');
+  if(action === 'apply'){
+    const r = timemoto.applyRecovery(db, readStateFull());
+    if(!r.ok) return res.status(400).json({ error: r.error });
+    return res.json({ ok: true, status: timemoto.status(db, readStateFull()) });
+  }
+  if(action === 'cancel'){ timemoto.cancelRecovery(db); return res.json({ ok: true, status: timemoto.status(db, readStateFull()) }); }
+  const r = timemoto.requestRecovery(db, { from: b.from, to: b.to, by: req.session.userId });
+  if(!r.ok) return res.status(400).json({ error: r.error });
+  res.json({ ok: true, status: timemoto.status(db, readStateFull()) });
+});
+// Tri des pointages avant import (v1.119.0, administrateurs) : lecture déjà faite (CSV ou aperçu de récupération) → l'écran
+// montre chaque passage, recalcule le résultat de chaque journée, puis n'enregistre que la sélection. Voir timemotoSync.js.
+app.post('/api/presence/timemoto/triage', requireAdmin, requireLicense, requirePresence, (req, res) => {
+  const b = req.body || {};
+  const action = String(b.action || 'start');
+  const st = readStateFull();
+  if(action === 'start'){
+    if(b.since != null && b.since !== '' && !presence.DATE_RE.test(String(b.since))) return res.status(400).json({ error: 'Date de reprise invalide.' });
+    if(b.source !== 'recovery' && (typeof b.csv !== 'string' || !b.csv.trim())) return res.status(400).json({ error: 'Aucun fichier CSV fourni.' });
+    const r = timemoto.triageBegin(db, st, { source: b.source === 'recovery' ? 'recovery' : 'csv', csv: b.csv, since: b.since || null, dbl: b.dbl });
+    if(!r.ok) return res.status(400).json({ error: r.error });
+    return res.json({ ok: true, triage: r.triage });
+  }
+  if(action === 'interpret'){
+    const r = timemoto.triageInterpret(db, st, b.days);
+    if(!r.ok) return res.status(410).json({ error: r.error });
+    return res.json({ ok: true, results: r.results });
+  }
+  if(action === 'apply'){
+    const r = timemoto.triageApply(db, st, { groups: b.groups }, String(req.session.userId || ''));
+    if(!r.ok) return res.status(400).json({ error: r.error });
+    return res.json({ ok: true, result: { added: r.result.added, cancelled: r.result.cancelled, respected: r.result.respected, from: r.result.from, to: r.result.to }, counts: r.counts, status: timemoto.status(db, readStateFull()) });
+  }
+  if(action === 'cancel'){ timemoto.triageCancel(db); return res.json({ ok: true }); }
+  res.status(400).json({ error: 'Action inconnue.' });
+});
+// Badges de la pointeuse gérés depuis l'application (v1.116.0, administrateurs) : préparer → confirmer → l'agent
+// zk-sync écrit sur la pointeuse et relit pour vérifier. Voir timemotoSync.js (section « Badges de la pointeuse »).
+function requireTimemotoActif(req, res, next){
+  const tm = presenceConfig().timemoto || {};
+  if(!tm.actif) return res.status(403).json({ error: 'Le suivi TimeMoto est désactivé (page Présence → TimeMoto → case d\'activation).' });
+  next();
+}
+app.get('/api/presence/timemoto/badges', requireAdmin, requireLicense, requirePresence, requireTimemotoActif, (req, res) => {
+  res.json(timemoto.badgeState(db));
+});
+app.post('/api/presence/timemoto/badges', requireAdmin, requireLicense, requirePresence, requireTimemotoActif, (req, res) => {
+  const b = req.body || {};
+  const action = String(b.action || '');
+  const who = (db.prepare('SELECT username FROM users WHERE id = ?').get(req.session.userId) || {}).username || String(req.session.userId || '');
+  let r;
+  if(action === 'prepare') r = timemoto.prepareBadge(db, readStateFull(), { ...b, by: who });
+  else if(action === 'confirm') r = timemoto.confirmBadge(db, String(b.id || ''), who);
+  else if(action === 'cancel') r = timemoto.cancelBadge(db, String(b.id || ''), who);
+  else return res.status(400).json({ error: 'Action inconnue.' });
+  if(!r.ok) return res.status(400).json({ error: r.error });
+  res.json({ ok: true, cmd: r.cmd || null, badges: timemoto.badgeState(db) });
+});
+// Association Planning d'un salarié ajouté sur la pointeuse (choisie au moment de la demande) : appliquée une fois
+// l'écriture vérifiée, directement dans l'état (même schéma que les jobs serveur : lecture/écriture synchrones).
+function applyBadgeAssociation(cmd){
+  try{
+    if(!cmd || cmd.kind !== 'add' || cmd.state !== 'done' || !cmd.planningUserId) return;
+    const row = db.prepare('SELECT data, version FROM app_state WHERE id = 1').get();
+    const data = JSON.parse(row.data);
+    const tm = (((data.config || (data.config = {})).presence || (data.config.presence = {})).timemoto || (data.config.presence.timemoto = {}));
+    if(!tm.userMap) tm.userMap = {};
+    if(tm.userMap['zk:' + cmd.userId]) return;
+    tm.userMap['zk:' + cmd.userId] = cmd.planningUserId;
+    db.prepare('UPDATE app_state SET data = ?, version = ?, updated_at = ? WHERE id = 1').run(JSON.stringify(data), row.version + 1, nowIso());
+  }catch(e){ console.error('Association du badge ajouté impossible :', e.message); }
+}
+// Journées dont le premier pointage de la pointeuse est une sortie : correction proposée (inverser
+// entrées et sorties de la journée) ou ignorée, par un superviseur.
+app.post('/api/presence/timemoto/flag', requireAuth, requireLicense, requirePresence, (req, res) => {
+  if(!isSupervisorReq(req)) return res.status(403).json({ error: 'Réservé aux superviseurs.' });
+  const b = req.body || {};
+  try{
+    const r = timemoto.applyFlagAction(db, readStateFull(), String(b.key || ''), String(b.action || ''));
+    res.json({ ok: true, result: r, status: timemoto.status(db, readStateFull()) });
+  }catch(e){
+    res.status(400).json({ error: String(e && e.message || e).slice(0, 200) });
+  }
+});
+// Contrôle des doublons à la demande (voir presence.findDuplicates) — lecture seule.
+app.get('/api/presence/duplicates', requireAuth, requireLicense, requirePresence, (req, res) => {
+  if(!isSupervisorReq(req)) return res.status(403).json({ error: 'Réservé aux superviseurs.' });
+  const from = String(req.query.from || ''), to = String(req.query.to || '');
+  if(!presence.DATE_RE.test(from) || !presence.DATE_RE.test(to) || from > to) return res.status(400).json({ error: 'Période invalide.' });
+  if((new Date(to) - new Date(from)) / 86400000 > 400) return res.status(400).json({ error: 'Période trop longue (400 jours maximum).' });
+  res.json({ duplicates: presence.findDuplicates(db, from, to, Number(req.query.minutes) || 5) });
 });
 // Import déclenché par l'administrateur (pas d'automatisme : la connexion à TimeMoto passe par un
 // reCAPTCHA que seul un humain franchit — voir timemotoSync.js). `token` est OBLIGATOIRE : le jeton
@@ -587,8 +702,50 @@ app.post('/api/presence/timemoto/sync', requireAdmin, requireLicense, requirePre
   if(token.length > 10000) return res.status(400).json({ error: 'Jeton invalide.' });
   if(b.since != null && b.since !== '' && !presence.DATE_RE.test(String(b.since))) return res.status(400).json({ error: 'Date de reprise invalide.' });
   const r = await timemoto.runSync(db, readStateFull(), { since: b.since || null, token, dryRun: !!b.dryRun });
-  if(!r.ok) return res.status(502).json({ error: r.error, status: timemoto.status(db) });
-  res.json({ ok: true, result: r.result, status: timemoto.status(db) });
+  if(!r.ok) return res.status(502).json({ error: r.error, status: timemoto.status(db, readStateFull()) });
+  res.json({ ok: true, result: r.result, status: timemoto.status(db, readStateFull()) });
+});
+
+// Import du CSV produit par tools/tm616_export.py (lecture directe de la pointeuse en réseau local,
+// sans TimeMoto Cloud ni jeton). Même niveau d'accès que l'import cloud : administrateur.
+app.post('/api/presence/timemoto/device-import', requireAdmin, requireLicense, requirePresence, (req, res) => {
+  const b = req.body || {};
+  if(typeof b.csv !== 'string' || !b.csv.trim()) return res.status(400).json({ error: 'Aucun fichier CSV fourni.' });
+  if(b.since != null && b.since !== '' && !presence.DATE_RE.test(String(b.since))) return res.status(400).json({ error: 'Date de reprise invalide.' });
+  const r = timemoto.runDeviceImport(db, readStateFull(), b.csv, { since: b.since || null, dryRun: !!b.dryRun });
+  if(!r.ok) return res.status(400).json({ error: r.error, status: timemoto.status(db, readStateFull()) });
+  res.json({ ok: true, result: r.result, status: timemoto.status(db, readStateFull()) });
+});
+
+// Lecture automatique de la pointeuse : le conteneur annexe `zk-sync` (tools/tm616_sync.py) envoie les
+// événements lus en réseau local. Authentification MACHINE par clé partagée (DEVICE_SYNC_KEY, en-tête
+// X-Device-Key) — aucune session. Désactivée tant que la variable est absente ou trop courte (< 16
+// caractères). Comparaison en temps constant, blocage 5 min par adresse après 10 clés fausses.
+const DEVICE_KEY = String(process.env.DEVICE_SYNC_KEY || '').trim();
+const deviceKeyHash = DEVICE_KEY.length >= 16 ? crypto.createHash('sha256').update(DEVICE_KEY).digest() : null;
+const deviceKeyFailures = new Map();
+function deviceKeyOk(req){
+  if(!deviceKeyHash) return false;
+  const got = crypto.createHash('sha256').update(String(req.get('x-device-key') || '')).digest();
+  return crypto.timingSafeEqual(got, deviceKeyHash);
+}
+app.post('/api/presence/device-sync', requireLicense, requirePresence, (req, res) => {
+  const ip = req.ip || 'unknown';
+  if(!deviceKeyHash) return res.status(503).json({ error: 'Lecture automatique non configurée (variable DEVICE_SYNC_KEY absente ou de moins de 16 caractères).' });
+  const f = deviceKeyFailures.get(ip);
+  if(f && f.until > Date.now()) return res.status(429).json({ error: 'Trop de tentatives — réessayez dans quelques minutes.' });
+  if(!deviceKeyOk(req)){
+    const n = ((f && f.n) || 0) + 1;
+    deviceKeyFailures.set(ip, { n, until: n >= 10 ? Date.now() + 5 * 60 * 1000 : 0 });
+    return res.status(401).json({ error: 'Clé invalide.' });
+  }
+  deviceKeyFailures.delete(ip);
+  const tm = presenceConfig().timemoto || {};
+  if(!tm.actif) return res.status(403).json({ error: 'Le suivi TimeMoto est désactivé (page Présence → TimeMoto → case d\'activation).' });
+  const r = timemoto.runDeviceEvents(db, readStateFull(), req.body || {}, {});
+  if(!r.ok) return res.status(r.busy ? 409 : 400).json({ error: r.error });
+  if(r.badgeDone){ applyBadgeAssociation(r.badgeDone); delete r.badgeDone; }
+  res.json(r);
 });
 
 // Sortie du mode borne : mot de passe du compte connecté sur la tablette.
@@ -750,7 +907,22 @@ function checkAutoPauseResume(){
   try{
     const row = db.prepare('SELECT data, version FROM app_state WHERE id = 1').get();
     const data = JSON.parse(row.data);
-    const changed = autoPauseResume.applyAutoPauseResume(data, new Date());
+    const now = new Date();
+    // Départs pointés (module Pointage présentiel actif) : dernier pointage retenu d'hier/aujourd'hui, seulement
+    // s'il s'agit d'un départ — voir autoPauseResume.applyDepartPause. Exécuté AVANT la pause « hors horaires »
+    // pour que les séances soient fermées à l'heure réelle du départ plutôt qu'à celle du contrôle.
+    let departs = null;
+    if(data.config && data.config.modules && data.config.modules.presence){
+      const today = localDateKey(now);
+      const all = presence.getPunchesBetween(db, addDaysKey(today, -1) + 'T00:00:00', today + 'T99');
+      const lastBy = {};
+      presence.effectivePunches(all).forEach(p => { lastBy[p.userId] = p; });
+      departs = {};
+      Object.keys(lastBy).forEach(u => { if(lastBy[u].type === 'out') departs[u] = lastBy[u].ts.slice(0, 16); });
+    }
+    const c1 = autoPauseResume.applyDepartPause(data, now, departs);
+    const c2 = autoPauseResume.applyAutoPauseResume(data, now);
+    const changed = c1 || c2;
     if(!changed) return;
     // Entièrement synchrone (better-sqlite3) : aucune requête client ne peut s'intercaler entre
     // cette lecture et cette écriture, donc jamais de conflit de version pour CE job lui-même. Un

@@ -178,6 +178,32 @@ function applyCorrections(db, o){
   return { ok: true, count: plan.length, punches: written };
 }
 
+// Contrôle des doublons (v1.102.0), À LA DEMANDE : parcourt les pointages RETENUS d'une période et
+// signale deux pointages consécutifs du même salarié, le même jour, de même type —
+//  - 'doublon' : à moins de `minutes` minutes l'un de l'autre (double badgeage, pointage manuel ajouté à
+//                côté d'un pointage de la pointeuse...) ;
+//  - 'repete'  : plus espacés mais enchaînement incohérent (deux arrivées de suite, deux départs...).
+// Ne modifie rien : le traitement se fait par annulation (applyCorrections), l'original reste lisible.
+function findDuplicates(db, from, to, minutes){
+  const m = Math.max(1, Math.min(120, Number(minutes) || 5));
+  const end = new Date(to + 'T12:00:00'); end.setDate(end.getDate() + 1);
+  const rows = getPunchesBetween(db, from + 'T00:00:00', localTs(end).slice(0, 10) + 'T00:00:00');
+  const eff = effectivePunches(rows);
+  const groups = new Map();
+  eff.forEach(p => { const k = p.userId + '|' + p.ts.slice(0, 10); if(!groups.has(k)) groups.set(k, []); groups.get(k).push(p); });
+  const short = p => ({ id: p.id, ts: p.ts, source: p.source, createdBy: p.createdBy, motif: p.motif });
+  const out = [];
+  groups.forEach(list => {
+    for(let i = 1; i < list.length; i++){
+      const a = list[i - 1], b = list[i];
+      if(a.type !== b.type) continue;
+      const gapMin = Math.round((new Date(b.ts) - new Date(a.ts)) / 60000);
+      out.push({ userId: a.userId, day: a.ts.slice(0, 10), type: a.type, kind: gapMin <= m ? 'doublon' : 'repete', gapMin, a: short(a), b: short(b) });
+    }
+  });
+  return out.sort((x, y) => x.day < y.day ? 1 : x.day > y.day ? -1 : (x.userId < y.userId ? -1 : 1));
+}
+
 function decidePunch(db, id, decision, byUserId){
   if(decision !== 'valide' && decision !== 'refuse') return { ok: false, error: 'Décision invalide.' };
   const p = getPunch(db, id);
@@ -237,8 +263,56 @@ function ipAllowed(ip, reseaux){
   return list.some(p => v === p || v.startsWith(p));
 }
 
+// Pointages manquants PROBABLES d'une journée (superviseur, pop-up de correction) — jamais enregistrés tout seuls : la
+// pop-up les propose, prérenseignés, avec un bouton « ajouter ». Trois sources :
+//  1. entrées écartées à l'import (`ignored`, reason 'doubleIn' : la pointeuse a une entrée alors que la personne était
+//     déjà présente → une sortie n'a pas été badgée avant) : fin de pause à l'heure lue + début de pause à confirmer ;
+//  2. deux pointages retenus de même sens à la suite (deux entrées, deux sorties) ;
+//  3. journée passée restée ouverte (dernier pointage = entrée/fin de pause/début de pause) : départ à la fin d'horaire.
+// `punches` = pointages retenus de la journée ; `expectedStart/End` = « HH:MM » de l'horaire de la personne (ou null).
+// Un manque déjà comblé (pointage à la même minute) n'est plus proposé. `approx` = heure à vérifier.
+function suggestMissing(o){
+  const hm = ts => String(ts).slice(11, 16);
+  const mn = h => { const a = String(h).split(':'); return Number(a[0]) * 60 + Number(a[1]); };
+  const hmOf = m => { m = Math.max(0, Math.min(1439, Math.round(m))); return pad(Math.floor(m / 60)) + ':' + pad(m % 60); };
+  const isIn = p => p.type === 'in' || p.type === 'pause_end';
+  const P = (o.punches || []).slice().sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : (a.id || 0) - (b.id || 0));
+  const have = new Set(P.map(p => hm(p.ts)));
+  const out = [];
+  const add = (type, time, why, approx) => { if(!out.some(x => x.type === type && x.time === time)) out.push({ type, time, why, approx: !!approx }); };
+  (o.ignored || []).forEach(ev => {
+    if(ev.reason !== 'doubleIn') return;
+    const t = hm(ev.ts);
+    if(have.has(t)) return;
+    const prev = P.filter(p => p.ts < ev.ts).slice(-1)[0];
+    add('pause_end', t, `La pointeuse a une entrée à ${t} sans sortie avant : retour de pause ou de sortie.`, false);
+    if(!prev || isIn(prev)){
+      const lo = prev ? mn(hm(prev.ts)) + 1 : 0;
+      add('pause_start', hmOf(Math.max(lo, mn(t) - 10)), `Sortie non pointée avant l'entrée de ${t} — heure à confirmer.`, true);
+    }
+  });
+  if(P.length && P[0].type !== 'in' && o.expectedStart){
+    add('in', hmOf(Math.min(mn(o.expectedStart), mn(hm(P[0].ts)) - 1)), `Aucune arrivée pointée avant « ${hm(P[0].ts)} » — heure à confirmer.`, true);
+  }
+  for(let i = 1; i < P.length; i++){
+    const a = P[i - 1], b = P[i];
+    if(isIn(a) && isIn(b)){
+      add('pause_start', hmOf(Math.max(mn(hm(a.ts)) + 1, mn(hm(b.ts)) - 10)), `Deux entrées de suite (${hm(a.ts)} puis ${hm(b.ts)}) : une sortie manque probablement — heure à confirmer.`, true);
+    } else if(!isIn(a) && !isIn(b)){
+      add(a.type === 'pause_start' ? 'pause_end' : 'in', hmOf(Math.min(mn(hm(b.ts)) - 1, mn(hm(a.ts)) + 10)), `Deux sorties de suite (${hm(a.ts)} puis ${hm(b.ts)}) : un retour manque probablement — heure à confirmer.`, true);
+    }
+  }
+  if(o.isPast && P.length){
+    const last = P[P.length - 1], lm = mn(hm(last.ts));
+    const endT = o.expectedEnd && mn(o.expectedEnd) > lm ? o.expectedEnd : hmOf(lm + 1);
+    if(isIn(last)) add('out', endT, `Journée passée sans départ pointé (dernier pointage : ${hm(last.ts)}) — heure à confirmer.`, true);
+    else if(last.type === 'pause_start') add('out', endT, `Journée passée terminée sur un début de pause (${hm(last.ts)}) : départ non pointé — heure à confirmer.`, true);
+  }
+  return out.sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
+}
 module.exports = {
+  suggestMissing,
   PUNCH_TYPES, TS_RE, DATE_RE, initPresenceTables, localTs, normTs, effectivePunches, getPunchesBetween,
-  getPunch, dayEffective, checkTransition, insertPunch, applyCorrections, decidePunch, purgeOlderThan, getAllPunches,
+  getPunch, dayEffective, checkTransition, insertPunch, applyCorrections, findDuplicates, decidePunch, purgeOlderThan, getAllPunches,
   setPin, clearPin, usersWithPin, verifyPin, normIp, ipAllowed
 };

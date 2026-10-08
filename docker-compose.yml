@@ -32,6 +32,29 @@ services:
       # ici. L'import se fait à la main avec un jeton que l'utilisateur récupère lui-même dans sa
       # session TimeMoto (la page de connexion TimeMoto est protégée par un reCAPTCHA, franchi par un
       # humain). Le jeton n'est jamais stocké côté serveur.
+    # Lecture automatique de la pointeuse (service zk-sync ci-dessous) : la clé partagée
+    # DEVICE_SYNC_KEY est lue dans le fichier TM616.env (modèle : TM616.env.example, jamais versionné).
+    # Le fichier doit exister : deploy.sh le crée vide s'il manque (route d'envoi alors désactivée).
+    env_file:
+      - TM616.env
+    restart: unless-stopped
+
+  # Lecture automatique de la pointeuse TimeMoto TM-616 en réseau local (protocole ZK, lecture seule).
+  # Inactif tant que ZK_IP et DEVICE_SYNC_KEY ne sont pas dans `TM616.env` (il attend sans rien faire).
+  # Voir CLAUDE.md « Lecture automatique de la pointeuse ».
+  zk-sync:
+    build:
+      context: ./tools
+      dockerfile: Dockerfile.zk-sync
+    container_name: planning-zk-sync
+    environment:
+      TZ: "Europe/Paris"
+      PLANNING_URL: "http://planning-atelier:3000"
+    # ZK_IP, ZK_PORT, ZK_COMMKEY, DEVICE_SYNC_KEY, SYNC_INTERVAL, SYNC_DAYS : voir TM616.env.example.
+    env_file:
+      - TM616.env
+    depends_on:
+      - planning-atelier
     restart: unless-stopped
 
 volumes:

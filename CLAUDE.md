@@ -109,8 +109,8 @@ Tout l'état applicatif est un seul objet JSON (`state`) :
   `debutReel`, `finReel`, `sessions[]`, `operatorUserId`, `matiere`, `epaisseur`,
   `fusionGroupId`, `fusionPinned`, `sousTraitance`, `dateDebutPossible`,
   `autoPausedOperators`, `autoPausedUntil`, `pauseReminderSnoozeUntil`, `numeroLigne`,
-  `previsionAvantCloture`, `horsPlanning`, `dureeReelleH`, `dureeReelleParOperateur` (voir sections
-  dédiées plus bas)
+  `previsionAvantCloture`, `horsPlanning`, `dureeReelleH`, `dureeReelleParOperateur`, `posteLibere`, `tempsAnterieurH`,
+  `tempsAnterieurParOp`, `reouvertures[]` (voir sections dédiées plus bas)
   - `sousTraitance` se coche **automatiquement** (jamais décoché automatiquement) dès que le poste
     choisi pour la ligne a un nom contenant "sous-traitance"/"sous traitance"
     (`machineNameLooksLikeSousTraitance`) — dans `updateOpField` (ligne d'une commande existante) et
@@ -211,7 +211,7 @@ Démarrer/Reprendre (import déjà terminé, temps saisi à la main), ou clôtur
 ce champ. `backfillDureeReelle` (rattrapage de pièces déjà terminées avec `sessions[]` encore
 peuplé, legacy) fige la même répartition en même temps que `dureeReelleH`. Remis à `null` en même
 temps que `dureeReelleH` à la réouverture (`↺ Rouvrir`) — la répartition, comme le total, sera
-reconstituée à la prochaine clôture. **Ne recouvre pas rétroactivement les pièces déjà closes avant
+reconstituée à la prochaine clôture (depuis la v1.109.0 le temps déjà passé est conservé dans `tempsAnterieurH`, voir « Réouverture d'une tâche »). **Ne recouvre pas rétroactivement les pièces déjà closes avant
 ce correctif** : leur `sessions[]` étant déjà vide, l'opérateur réel n'y est plus récupérable — seuls
 les temps de production comptés à partir de ce correctif sont concernés.
 
@@ -418,6 +418,32 @@ juste au-dessus) — et remplacée par une confirmation explicite de l'opérateu
   tout chevauchement avec la pop-up le jour même : une pause déjeuner du jour reste seulement dans
   `pendingPauseReminders`, jamais aussi dans cette bannière tant que minuit n'est pas passé.
 
+#### Pauses automatiques paramétrables (v1.95.0)
+
+Demande : « mettre les pauses et la reprise automatique en option paramétrable ». Précision donnée à
+l'utilisateur : il n'existe plus de reprise AUTOMATIQUE (retirée après le cas des sessions dupliquées) — ce
+qu'on appelle « reprise » est la pop-up de confirmation de retour de pause. Les trois mécanismes ont donc
+chacun leur case, dans Paramètres → Horaires & pauses → « Pauses automatiques des tâches en cours ».
+
+- `config.autoPauseDejeuner` (mise en pause à l'heure de la pause déjeuner), `config.autoPauseHorsHoraires`
+  (mise en pause le soir/nuit/week-end/poste indisponible), `config.pauseRappelRetour` (pop-up de retour) :
+  **`true` par défaut** (`migrateState`, test `=== undefined` — un `false` choisi survit), comportement inchangé
+  pour qui n'y touche pas. `updateConfig` a son branchement booléen explicite (sinon conversion en nombre).
+- **Client** : `applyAutoPauseResume(st)` retourne tout de suite si `autoPauseDejeuner===false` ;
+  `pendingPauseReminders()` renvoie `[]` si `pauseRappelRetour===false` (une pause déjà posée reste alors en
+  pause, à relancer à la main). La case « pop-up de retour » est grisée quand la pause déjeuner automatique
+  est décochée (sans objet).
+- **Serveur** (`autoPauseResume.js`, `pauseKindForRunningTask`) : **l'état lu par `checkAutoPauseResume` n'est
+  jamais passé par `migrateState`** → champ absent = activé, seul `=== false` désactive (`sc.x !== false`).
+  Pause déjeuner désactivée : la tâche reste `en_cours` pendant la pause (on est un jour ouvré, elle ne bascule
+  donc PAS en « hors horaires » pour autant). Hors horaires désactivé : une tâche oubliée reste `en_cours` et
+  continue de compter du temps — avertissement dans l'infobulle ⓘ.
+- Les exceptions « 🕐 Je travaille maintenant »/« 🍽 Je travaille pendant la pause » restent possibles et sans
+  objet quand l'option correspondante est décochée.
+- Test (scratchpad `opt_test.js`, 10 assertions sur le module serveur : défaut, option off, croisements midi/
+  soir/samedi, `applyAutoPauseResume`) + Playwright (migration, `false` conservé, rappel et pause client coupés,
+  cases réelles, grisage).
+
 #### Mise en pause automatique « hors horaires » (soir, nuit, week-end) — sans reprise automatique
 
 Retour utilisateur réel : une tâche `en_cours` restait affichée telle quelle tout un week-end si
@@ -599,6 +625,64 @@ séance de Sébastien le 21/09 de 05h57 à 07h56 comptée 0,93 h ; une soirée 1
 - Pas de rattrapage rétroactif : les séances hors horaires antérieures au correctif (sans fenêtre)
   restent filtrées — les corriger passe par la page Pointages.
 - Côté serveur (`autoPauseResume.js`) rien ne change : il ne compte pas d'heures.
+
+### Lancement de tâche simplifié : boutons sur la carte, « ⋯ Plus » et question hors horaires (v1.121.0)
+
+Retour réel : des salariés (qui viennent plus tôt ou travaillent pendant la pause, et que le serveur remet alors en pause) se
+sentent perdus face à trop de choix au lancement d'une tâche — le clic droit, seul accès aux gestes courants, mêlait une dizaine
+d'entrées dont les deux exceptions « 🕐 / 🍽 », introuvables. Maquette validée (artefact « Lancement de tâche simplifié »), décisions
+de l'utilisateur : **mode simple pour tous** (admin et superviseurs inclus, avec le bouton Plus), **une personne pointée présente reste
+soumise à la pause automatique** (elle décale peut-être sa pause : la question lui est posée comme aux autres), **toutes les options non
+simplifiées restent dans « ⋯ Plus »**. Pas de réglage par personne : le mode est le fonctionnement normal.
+
+- **Carte Kanban** (`.kc-actions`, masquée en mode Compact) : À faire « ▶ Démarrer », En pause « ▶ Reprendre », En cours « ⏸ Pause » +
+  « ✔ Terminer », plus « ⋯ Plus » (Terminée : rien). `kc-do` appelle `setOpStatut` ; `kc-more` ouvre le menu contextuel déjà déplié à
+  l'emplacement du bouton. Sur téléphone (pas de clic droit) c'est désormais le seul accès à ces gestes.
+- **Menu contextuel** (`renderContextMenu`) : geste(s) principal(aux) d'abord (démarrer / pause + terminer / reprendre + terminer /
+  rouvrir), puis « ⋯ Plus » (`ctx-more`, `contextMenu.more`) qui déplie TOUT le reste (figer, déclarer terminée, travailler aussi dessus,
+  libérer le poste, les deux exceptions, détail des temps, parcours, terminer en lot…). Aucune entrée supprimée.
+- **Question « Tu travailles maintenant ? »** : `setOpStatut(…,'en_cours')` depuis `a_faire` ou `en_pause`, si `startContextNow(o, now)`
+  (même règle que `pauseKindForRunningTask` du serveur : pause déjeuner un jour ouvré → `lunch` ; hors segment de travail, week-end ou
+  poste indisponible → `horsHoraires`) renvoie un contexte, ouvre `workCtxDraft` (pop-up `renderWorkCtxModal`) et **ne change rien**
+  avant la réponse. Elle est posée AVANT les confirmations « phase inférieure / poste occupé » (sinon redemandées au rappel). « Oui »
+  rappelle `setOpStatut(…, { workCtx: kind })` qui pose l'exception par `applyWorkException` (mutation sans commit, extraite de
+  `setWorkHoursException`/`setLunchException`, qui l'utilisent aussi) puis démarre : **un seul `commit()`**. Annuler/✕/Échap : rien.
+  Pas de question si l'option `autoPauseDejeuner`/`autoPauseHorsHoraires` correspondante est décochée, ni si une exception est déjà
+  active, ni pour une tâche sous-traitée/hors planning. L'heure vient de l'horloge du navigateur, rien à saisir.
+- Non traité : la reprise via la pop-up de retour de pause déjeuner (`resumeFromPauseReminder`) ne pose pas la question (heure de
+  retour théorique, donc en horaires) ; la liste/Gantt n'ont pas de boutons de carte (le clic droit y reste, avec « ⋯ Plus »).
+- Test (scratchpad `simple_ui.js`, Playwright, horloge simulée samedi 06:30 puis mardi 10:00) : 37 cartes avec boutons, question
+  « en week-end », annulation sans effet, « Oui » = en cours + exception + fenêtre comptée, menu Plus, clic droit principal puis Plus,
+  mardi 10h sans question, mobile sans débordement, aucune erreur.
+
+### Étape « Colonnes » de l'import personnalisé, champ par champ (v1.123.0)
+
+Demande : améliorer l'import à partir de la première étape. Maquette validée (variante A). **Présentation seulement** : mêmes `data-action` (`custom-import-map-field`, `custom-import-duree-mode`, `custom-import-split-slash`, `custom-import-ref2-sep`, cases de phase, défauts), mêmes champs de `cs.map`, même validation (`proceedFromMapping`).
+
+- Carte « Champs obligatoires n / 5 » (Référence, Poste, Pièce, Quantité, Temps unitaire ou Durée totale) : une ligne par champ = colonne + **valeur de la 1ère ligne du fichier** + pastille ✓/!. « Continuer » est **désactivé** tant qu'un obligatoire manque ; le pied dit « Il manque : … ».
+- Colonnes facultatives (10) et valeurs par défaut dans deux `<details class="imc-fold">` repliés (`openMiniDropdowns`, clés `imc-opt`/`imc-def`) ; sous-options conservées (découpage sur « / », séparateur de la référence complétée, numérotation automatique des phases).
+- À droite : aperçu des 4 premières lignes du fichier, colonnes associées surlignées avec leur rôle.
+- **« ✨ Reconnaître les colonnes »** (`autoDetectImportColumns`) : associe par mots-clés dans les titres, **sans jamais toucher un champ déjà choisi**, une colonne n'est prise qu'une fois ; un toast donne le nombre trouvé (toujours à vérifier).
+- Test (scratchpad `col_ui.js`, Playwright) : bouton désactivé, détection (8 colonnes), 5/5, passage à l'étape Postes, aucune erreur.
+
+### Fusion de lignes de postes différents sur une commande déjà importée (v1.123.0)
+
+Demande : « fusionner de l'ajustage et de la chaudronnerie » **après** l'import. Même règle que le regroupement à l'import (v1.106.0) : un lot est planifié sur UN poste hôte = celui qui totalise le plus de temps (Σ T.U. × quantité) parmi les lignes choisies ; durée du lot = somme des durées PROPRES (jamais `dureeOverrideH`) ; `etape` vide = nom du poste d'origine ; dépendances de phase internes plus imposées.
+
+- Entrées (`canSupervise()`, commande avec ≥ 2 postes parmi ses lignes éligibles — `crossLotCanOffer`) : bouton « 🔗 Fusionner des postes » du pied de carte commande et entrée « ⋯ Plus » du menu contextuel (`ctx-cross-lot`).
+- `crossLotEligible(o)` : `a_faire`, ni sous-traitée, ni hors planning, ni déjà en lot, avec un poste. Les autres lignes sont affichées mais cases désactivées (motif indiqué) ; une ligne déjà en lot montre « 🔗 Lot · sur {poste} » + « Dissocier » (`dissociateFusionGroup`, qui laisse chaque ligne sur le poste hôte).
+- Pop-up `renderCrossLotModal` (`crossLotDraft = { cid, sel[] }`, transitoire, composée dans `render()`, remise à `null` par le clic sur le fond et Échap) : lignes groupées par pièce, barre collante avant/après (« Ajustage 2 h + Chaudronnerie 5 h = 7 h → lot sur Chaudronnerie »), avertissements (phases différentes, plusieurs pièces), « Fusionner » désactivé sans ≥ 2 postes ; confirmation puis **un seul `commit()`** (`submitCrossLot`).
+- Vérifié (Playwright, export du 06/10, C026-0744) : bouton désactivé, activé après 2 lignes de postes différents, les 2 lignes sur le même poste avec un même `fusionGroupId`, durée = somme, aucune erreur.
+
+### Aperçu de l'import personnalisé refait (v1.124.0)
+
+Demande : améliorer l'aperçu (tableau à 9 colonnes toujours visibles, alertes dispersées, lignes ignorées tout en bas). Maquette validée (artefact « Aperçu import personnalisé »). **Présentation seulement** : mêmes données (`cs.preview`), mêmes actions `update-import-preview-*` / `remove-import-preview-piece`, même simulation (`simulateImportStarts`), même confirmation.
+
+- **Bilan collant** (`.pv-bilan`) : commandes (nouvelles/fusions), lignes, retirées, ignorées, lots, « en retard probable » + « Recommencer » et « Confirmer l'import » toujours visibles.
+- **Une carte repliable par commande** (`.pv-card`) : nom, étiquette nouvelle/fusion, urgence (sélecteur conservé, « urgence conservée » pour une fusion), échelle échéance/livraison au plus tôt commune à toutes les cartes (aujourd'hui → dernière date + 3 j), pastilles (Dans les temps / Retard probable / lots / phases mêlées). `info[ref].check` = retard (livraison > `effectiveDueDate`), lot à phases mêlées ou ligne sans début projeté : ces cartes sont **dépliées d'office**. État transitoire dans `cs` : `pvOpen` (par commande), `pvDefaultOpen` (recalculé à chaque rendu, sert au basculement), `pvAllOpen`, `pvOnlyCheck` (filtre « À vérifier »), `pvRowOpen`, `pvFixOpen`.
+- **Tableau allégé** : étape, poste, durée, début → fin ; « ⋯ » (`pv-row-more`) ouvre phase, opérateur et départ possible ; pastille « 🔗 lot → hôte » conservée. Alertes (retard, lot et ses temps par poste, phases mêlées) en bandeaux en tête de carte.
+- **Carte « À corriger » en tête** : lignes ignorées et doublons avec motif et valeurs brutes (ligne, pièce/étape, poste, opérateur, qté × T.U.) + bouton « ← Revoir la correspondance ». **Pas d'actions par ligne** (« Associer ce poste », « Importer quand même ») : elles changeraient le comportement de l'import (reconstruction des groupes), hors périmètre ; la correction passe par le retour à la correspondance.
+- Test (scratchpad `pv_ui.js`, Playwright) : bilan, 2 cartes dont 1 dépliée, filtre, tout déplier, « ⋯ », carte À corriger, confirmation = commandes créées, aucune erreur.
 
 ## Historique des prévisions avant clôture (`prevision_history`)
 
@@ -1236,6 +1320,162 @@ validé avant codage : pastille de couleur + texte, « À faire » pour une piè
   faire) · fin prévue mar 06 oct., 08:56 » ; filtre actif sur tout le Kanban : 83 cartes disponibles,
   35 masquées ; vue groupée cohérente ; aucune erreur.
 
+### Tâches disponibles mais pas démarrées — pastille « depuis N j », bloc, badge, e-mail (v1.100.0)
+
+Constat réel (export du 06/10, affaire C026-0744 KH-SK) : cinq tâches Ajustage dont les étapes précédentes étaient
+terminées depuis le 18/09 n'avaient toujours pas démarré 18 jours plus tard. Le planning les classait pourtant devant
+d'autres affaires (même urgence, échéance plus proche) : **personne ne les prenait** — l'opérateur choisit librement sa
+tâche, et rien ne montrait l'attente. Proposition validée : points 1 à 5 (le 6, « pause qui libère le poste », est à part).
+
+- **« Disponible »** = pièce `a_faire`, ni sous-traitée, ni hors planning, ni sur un poste de sous-traitance, dont toutes les
+  étapes précédentes (`resolveEffectiveDeps` : même pièce, phases inférieures, lot fusionné compris) sont terminées — les
+  états `free`/`ready` de `kanbanWaitInfoFor`. `pieceDisponibleDepuis(c, o, w)` : fin RÉELLE de la dernière étape précédente
+  (`ready`) ou création de la commande (`free`, seulement si `dateCreation` est connue — rien d'inventé sinon) ; une
+  `dateDebutPossible` plus tardive prime, et dans le futur la tâche n'est pas encore disponible. **Jours calendaires**
+  (`dispoJoursDepuis` : « terminée le 18/09 » = 18 j le 06/10, quelle que soit l'heure — pas des périodes de 24 h).
+- **Seuil** `config.dispoAlerteJours` (3 par défaut, **0 = désactivé**, `migrateState` en `=== undefined`) : Paramètres → Alertes &
+  seuils → « Tâche disponible mais pas démarrée » (`dispoAlerte` dans `SETTINGS_HELP`).
+- **1. Pastille Kanban** : `kanbanWaitInfoMap` pose `since` sur chaque info d'attente ; `kanbanWaitPillHtml` ajoute
+  `.kb-since` « depuis 18 j » (neutre dès 1 j, ambre au seuil, rouge au double). Vue groupée : `kanbanWaitInfoForGroup` prend le
+  DERNIER membre disponible et ne dit rien si l'un n'a pas de date.
+- **2. Bloc** `computeDisponiblesNonDemarrees(st, now, seuil)` (commandes ACTIVES du `state`, pas de moteur) : une ligne par
+  lot fusionné (disponible seulement si TOUS ses membres le sont, depuis le plus tardif), triée **échéance dépassée d'abord**
+  (la plus ancienne en tête) puis par échéance puis par attente. `renderDisponiblesNonDemarreesHtml` (partagé) : pastilles par
+  poste (nombre, plus ancienne attente, « ⚠ sans salarié rattaché ») + tableau. Vue d'ensemble : bloc `disponibles` (12 lignes
+  max, renvoi vers Risques) et tuile `disponibles` (rouge si une échéance est dépassée) — nouvelles clés de
+  `DASHBOARD_BLOCKS`/`DASHBOARD_TILES`, ajoutées EN FIN des dispositions personnalisées par `dashboardLayoutFor`. Page Risques :
+  section repliable (`panelCollapsed.disponibles`) en tête de la colonne de droite, avec la recherche de la page.
+- **Badge d'en-tête** (`renderPointageHeaderBadges`, superviseurs) : « ⏳ N à démarrer (échéance dépassée) » — seules les tâches
+  d'une commande à l'échéance dépassée font un badge (la liste complète, bien plus longue, reste dans les blocs). Indépendant
+  de l'alerte « pointage de l'équipe » : il s'affiche même si celle-ci est désactivée (`dispoAlerteJours=0` le coupe).
+- **3. Rapport e-mail** (`reportEmail.js`, `tachesDisponiblesNonDemarrees`, section « ⏳ Tâches disponibles depuis plus de N j… ») :
+  **portage simplifié** (même règle, `resolveEffectiveDeps` recopié, aucun moteur) — à reporter si la règle client change. Sur
+  l'export réel, client et serveur donnent les mêmes 28 lignes dont 9 à l'échéance dépassée.
+- **4. Poste sans salarié rattaché** : `posteSansOperateur(st, machineId)` (`userMachines`) — signalé dans les pastilles de poste.
+  Le rattachement se fait dans Paramètres → Utilisateurs (postes de chaque personne). **Attention, ce n'est pas neutre pour le
+  planning** : `effectiveConfig` rend un poste indisponible les jours où TOUS ses salariés rattachés sont en congé — rattacher
+  une seule personne à Ajustage bloquerait Ajustage pendant ses congés ; en rattacher plusieurs évite ce blocage.
+- Tests (scratchpad `dispo_test.js`, 31 assertions sur l'export du 06/10 ; `report_dispo_test.js` ; `dispo_ui.js` Playwright) :
+  C026-0744 = 5 lignes Ajustage « depuis 18 j », échéance dépassée, en tête ; seuil 0 = rien ; date de début possible future =
+  non disponible ; lot compté une fois ; pastille rouge « depuis 18 j » ; tuile, bloc, section Risques, badge d'en-tête.
+
+### Urgence automatique à l'échéance dépassée (v1.100.0, Paramètres → Planification)
+
+Point 5 de la même demande. **Calcul à la lecture, jamais une modification de `commande.urgence`** : le niveau saisi reste intact
+et réapparaît dès que l'option est décochée, l'échéance repoussée ou la commande terminée.
+
+- `config.urgenceAuto` `{ actif:false, niveau:'importante'|'urgente', apresJours:0 }` (`migrateState`, désactivé par défaut) —
+  « Relever automatiquement l'urgence d'une commande dont l'échéance est dépassée », « traiter comme », « une fois l'échéance
+  dépassée de N jours » (0 = dès le lendemain de la date de besoin). `updateConfig('urgenceAuto.*')` fait un `commit()` complet :
+  l'urgence effective change l'ordre du planning, le cache doit être recalculé.
+- `effectiveUrgence(cmd, st)` ne fait que **relever** (une commande déjà « Urgente » le reste ; « Importante » relevée en
+  « Urgente » si c'est le niveau choisi), ignore une commande terminée ou sans échéance. `computeSchedule` pose `urg` sur chaque
+  élément de la phase 3 (`pendingVolante`, lot fusionné compris) et `comparePriorityItems` le lit à la place de `cmd.urgence` ;
+  `sortByPriority` utilise le même critère. Les **tâches déjà démarrées** (phases 1 et 2) ne bougent pas.
+- Affichage : listes d'opérations (Kanban/Gantt/Liste, bordure d'urgence) via `effectiveUrgence`, carte commande (bordure +
+  pastille « ⬆ traitée comme Importante » `.urg-auto-badge`, le `<select>` garde le niveau saisi), page Risques (« Normale →
+  traitée comme Importante (échéance dépassée) »).
+- Effet réel vérifié sur l'export : une commande « Importante » à échéance plus tardive (C026-0777) passait devant C026-0744
+  (Normale, échéance dépassée) sur Ajustage ; avec l'option, C026-0744 repasse devant. Si toutes les commandes en retard sont
+  déjà classées par échéance (cas de C026-0693/0751/0744), l'ordre ne change pas : le gain est face aux commandes d'urgence
+  supérieure à échéance plus tardive.
+
+### Pause qui libère le poste (v1.101.0)
+
+Constat réel (export du 06/10) : C026-0766 CRISTEL, en pause depuis le 05/10 (9 h 05 prévues, 1 h pointée), était
+verrouillée dans le planning comme un **bloc continu sur Ajustage** jusqu'à « maintenant + temps restant » (07/10 09:20) —
+alors que l'atelier travaillait d'autres tâches pendant la pause. Les cinq tâches de C026-0744 étaient donc planifiées le
+07/10 au lieu d'aujourd'hui. Demande validée : option **manuelle** par tâche + libération **automatique réglable** + pop-up
+« libérer le poste ? » à la mise en pause.
+
+- **Calcul à la lecture, jamais une modification des données.** `isPosteLibere(o, st, now)` : tâche `en_pause` avec poste,
+  ni sous-traitée ni hors planning, ET (`o.posteLibere` — seul champ stocké, `migrateState` → `false` — OU réglage
+  automatique `config.libereAutoApresH` > 0 et pause **manuelle** — `isUnexplainedPause`, donc jamais pause déjeuner ni
+  hors horaires — durant depuis au moins N **heures d'ouverture du poste** : `pauseWorkedHoursSince` =
+  `workingHoursBetween` sur la pause en cours, une pause posée le soir ne « vieillit » pas la nuit). Le choix manuel prime.
+- **Moteur** (`computeSchedule`, `posteLibereNow` : libération effective seulement s'il reste > 0,01 h de travail) : phase 1
+  ne pose plus d'intervalle ni de `machineFree` ; phase 2 envoie la tâche dans `pendingVolante` (`released:true`) avec le
+  **temps restant** (`dureeH − opElapsedHours`), **sans dépendances** (déjà commencée : une dépendance non terminée l'aurait
+  rendue impossible à planifier) et plancher = maintenant ; elle concourt par priorité (`urg` compris) avec les autres.
+  Résultat : `start` = début réel conservé, `end` = fin du créneau replanifié (alimente `computedEnd` pour les phases
+  suivantes de la même pièce), `dureeH` = durée totale, `posteLibereEff:true`, `libereStart` = début du créneau.
+  `runningTaskSegments` y démarre le segment « restant » à `libereStart`. Lot fusionné : chaque membre porte sa copie des
+  champs, le candidat groupé les écrit tous (`mm.released`).
+- **Remise à `false`** à la reprise (`applySingleStatusChange` en_cours, pointage `pause_end`), à « ↺ Rouvrir » et à la
+  déclaration terminée. **Propagation au lot** par `propagateFusionGroupFields`.
+- **Manuel** : clic droit sur une tâche `en_pause` → « 🔓 Libérer le poste pendant la pause » / « 🔒 Réserver de nouveau le
+  poste » (`ctx-libere-poste`, `setPosteLibere` : un `commit()`). **Pop-up** (`liberePosteDraft`, `renderLiberePosteModal`) ouverte
+  par `setOpStatut` APRÈS l'enregistrement d'une mise en pause manuelle (jamais les pauses automatiques, qui ne passent pas
+  par là) : nombre de tâches « À faire » qui attendent le poste, temps restant ; « Oui » libère, « Non »/✕/Échap garde la
+  réservation. Réglable : case « Demander « libérer le poste ? » à chaque mise en pause manuelle » (`config.libereProposerPause`,
+  `true` par défaut).
+- **Réglage** : Paramètres → Planification → « Pause qui libère le poste » (`libereAutoApresH`, 0 = jamais, **0 par défaut**,
+  pas de 0,25 h ; ajouté à `CONFIG_FIELDS_AFFECTING_SCHEDULE` car lu par le moteur ; `SETTINGS_HELP.libereAuto`).
+- **Badge** « 🔓 Poste libéré » (« (auto) » si automatique) sur le tableau des tâches et les cartes Kanban (`posteLibereBadgeHtml`,
+  lit `posteLibereEff` de l'opération planifiée, jamais de la pièce brute).
+- **Limite assumée** : libérer ne fait pas disparaître la tâche, elle repasse **derrière** les tâches plus prioritaires — sa fin
+  projetée peut donc reculer (CRISTEL : 07/10 08:30 → 08/10) alors que celle des autres avance (C026-0744 : 07/10 09:13 →
+  06/10 09:53). C'est le but.
+- Tests (scratchpad `libere_test.js`, 32 assertions sur l'export du 06/10 ; `libere_render.js` ; `libere_ui.js` Playwright) :
+  migration, planning avant/après (aucun chevauchement, aucune tâche devenue non planifiée, retour exact à l'état d'origine en
+  réservant de nouveau), seuil automatique, pauses automatiques jamais libérées, lot fusionné (13 membres), reprise, pop-up,
+  badge, segment du Gantt, menu contextuel, réglage rendu.
+
+### Cartes Kanban à 4 lignes, séparateurs par jour et mode Compact (v1.92.0)
+
+Demande utilisateur (capture du Kanban) : meilleur affichage des tâches. Proposition validée avant codage
+(artefact de maquette) puis retenue **en entier, options comprises**. Kanban uniquement : Gantt/Liste/Parcours
+inchangés.
+
+- **Carte = 4 lignes fixes**, toujours au même endroit : (1) `.kc-r1` commande en police fixe, client tronqué
+  (nom complet en infobulle), casier en pastille colorée ; (2) `.kc-r2` **l'étape en gras** (ce que fait
+  l'opérateur), puis pièce et n° de ligne en gris (repli : poste, puis pièce, si l'étape est vide) ; (3) `.kc-r3`
+  poste, opérateur(s) en avatars (`avatarColorFor`/`initialsForName` — mêmes que Temps de production) et durée
+  prévue ; (4) `.kc-r4` quand + échéance. Puis, selon la colonne : pastille de disponibilité (À faire), barre
+  « Passé X sur Y · N % » (En cours/En pause, `renderPrevuPasseBar`, mêmes seuils vert/ambre/rouge que Temps de
+  production), « ✓ jour · heure » et « X sur Y prévues » (Terminée, ambre/rouge au-delà de +5 %/+50 %).
+  Les anciennes classes `kanban-card-main/title/meta/times/time/planned/due/elapsed/zone/fusion-list` sont
+  supprimées. **Conservés tels quels** : `data-action="card-isolate"`, `data-cid/oid/fusion-group`, `hlClsK`
+  (spotlight/dimmed), bordure gauche d'urgence, infobulle (liste des pièces d'un lot fusionné ajoutée).
+- **Dates courtes** (`fmtDayK`/`fmtHourK`) : « Mer 7/10 · 07:54 → 11:16 » ; le jour n'est répété que si la tâche
+  chevauche deux jours, et omis quand le séparateur de jour est actif. En pause : « En pause depuis … » (début de
+  la pause en cours, `pieceCurrentPauseGap`, repli sur la fin de la dernière session). Sous-traitée/hors planning :
+  libellés d'origine.
+- **Échéance en pastille** (`.kc-due`) : rouge si dépassée (« · dépassée ») ou si la fin prévue dépasse l'échéance
+  effective (`effectiveDueDate`, marge comprise), grise sinon ; absente en Terminée (info sans objet).
+- **Pastille de disponibilité** (`kanbanWaitPillHtml`) : date en forme courte à droite (« fin mer 7/10 07:54 »),
+  forme complète en infobulle ; le texte passe à la ligne plutôt que d'être tronqué.
+- **Colonnes égales** : `repeat(4, minmax(0,1fr))` (et `.kanban-col{min-width:0}`) — une colonne vide ne rétrécit
+  plus et un contenu long n'élargit plus une colonne. Vérifié : 344 px × 4 à 1500 px.
+- **Séparateurs par jour** (`kanbanDaySeparators`, `KANBAN_DAY_SEP_KEY`, **activé par défaut**, case « 📅
+  Séparateurs par jour ») : dans « À faire » seulement, une ligne « Lundi 5 octobre » (`.kanban-day`) par journée de
+  début prévu (liste déjà triée) ; tâches sans début prévu regroupées sous « Sans date prévue » en fin de colonne.
+- **Mode Compact** (`kanbanCompact`, `KANBAN_COMPACT_KEY`, **désactivé par défaut**, case « Compact ») : classe
+  `.kanban-compact` sur le plateau (et sur le conteneur mobile) — lignes 1, 2 et pastille seulement (r3/r4, barre
+  et badges masqués en CSS, rien n'est recalculé). Les deux options sont des préférences de navigateur
+  (`localStorage`, chargées par `loadKanbanGroupedViewPref`), comme la vue groupée.
+- **Tri de « À faire » corrigé au passage** : une tâche sans début prévu (sous-traitée, hors planning) avait un début
+  « 0 » et passait en TÊTE, occupant seule le haut de la colonne et la limite d'affichage ; elle passe désormais
+  après les tâches planifiées.
+- Vue groupée : titre « 🔗 N pièces » + étapes distinctes (« LASER 2D + EBAVURAGE ») ; commande ou « N commandes ».
+- Vérifié (Playwright, export réel du 05/10) : 4 colonnes égales, séparateurs Lundi/Mardi, Compact masque r3,
+  séparateurs désactivables, vue groupée, mobile 390 px sans débordement (onglets de statut conservés), aucune erreur.
+
+- **Ascenseur horizontal dans les colonnes et troncature (v1.94.1).** Retour (capture) : une barre de défilement
+  horizontale apparaissait en bas des colonnes « À faire »/« Terminée » et le casier disparaissait des cartes.
+  Cause : `commandeNom` contient déjà le client (« C026-0753 FR68 FAURECIA HYDROGEN SOLUTIONS FRANCE »), or `.kc-cmd`
+  était en `nowrap` sans pouvoir se tronquer — la ligne 1 débordait de la carte et poussait le casier hors champ.
+  Corrigé : le **numéro** (premier mot du nom) reste seul en police fixe (`.kc-cmd`, `flex:0 0 auto`, `max-width:60%`) ;
+  le **reste du nom + la réf. client** passent dans `.kc-cli` (`flex:1 1 0`, ellipsis, nom complet en infobulle), seule
+  zone à se tronquer ; `.kc-zone{flex:0 0 auto}` ne disparaît donc plus. `.kanban-col-body` reçoit en plus
+  `overflow-x:hidden` (filet de sécurité : `overflow-y:auto` seul force `overflow-x:auto`). Barre d'options du Kanban
+  (`.kanban-limit-toolbar`) : `flex-wrap:wrap`, alignée à gauche sous 900 px — elle était en `justify-content:flex-end`
+  sans retour à la ligne et débordait **à gauche** (cases coupées) sur téléphone.
+  Vérifié (Playwright, export réel, vue groupée) à 1500/1280/1100/900/800/720/390 px : aucun ascenseur horizontal de
+  colonne, casier visible sur 100 % des cartes. **Non traité (hors Kanban)** : entre ~721 et ~850 px, la page entière
+  déborde de ~12 px à cause de l'en-tête (`.page-switcher`, `.title-block`) et du tableau « Tâches en cours »
+  (`table.ops-table`) — pas lié aux cartes.
+
 ### Déclarer terminée une tâche jamais démarrée (oubli de démarrage)
 
 Demande utilisateur réelle : classer « Terminée » une tâche du Kanban « À faire » qu'on a oublié de
@@ -1305,6 +1545,21 @@ et l'ancien `prompt()` « minutes » remplacé partout par la même pop-up.
   corrigeable, correction = validation, réouverture, lot fusionné (objets distincts, compté une fois,
   validation propagée), tuile. Rendu vérifié (Playwright).
 
+- **Terminer une tâche démarrée sans aucun temps enregistré (v1.103.0).** Cas réel (C026-0727, lot de 2 lignes en chaudronnerie) :
+  démarrée puis aussitôt arrêtée (séances de 0 min), clôturée le lendemain — l'ancien `prompt()` de `applySingleStatusChange`
+  proposait le temps **prévu** (420 min) comme temps réellement passé : un simple « OK » enregistrait 7 h (`dureeReelleParOperateur` vide
+  → crédité à l'opérateur assigné) alors que rien n'était mesuré. Désormais `setOpStatut(…, 'termine')` sur une pièce `en_cours`/`en_pause`
+  dont **toutes les pièces du lot** ont un temps enregistré nul (`hasNoRecordedTime`, `opElapsedHours ≤ 1e-6`) ouvre la **même pop-up de
+  temps déclaré** (`openDeclareDone`, `declareDoneDraft.demarree:true`) et ne change rien tant qu'elle n'est pas validée. Différences avec
+  l'oubli de démarrage : début = `debutReel` (démarrage réel), fin = maintenant, **temps passé NON prérempli** (champ « à saisir », refus si
+  vide — le prévu n'est jamais repris tout seul), titre « Terminer — aucun temps enregistré » et avertissement. Même circuit ensuite
+  (temps compté tout de suite, « à valider » ou validé d'office pour un superviseur, un seul `commit()`, lot fusionné traité en bloc,
+  `declaration.demarree:true` → infobulle « tâche clôturée sans temps enregistré »). `submitDeclareDone` vérifie que le temps est toujours
+  nul (sinon « Du temps vient d'être enregistré… » et la pop-up se ferme) et remet `autoPausedUntil/autoPausedOperators` à `null`. Une tâche
+  avec du temps mesuré se clôture comme avant ; le `prompt()` n'est plus atteint que si le temps est nul pour la pièce cliquée seulement
+  (autres membres du lot non nuls) — cas marginal. **Ne corrige pas rétroactivement** les clôtures déjà faites (✎ Corriger dans Pointages).
+  Test (scratchpad `declare_run_test.js`, 22 assertions sur l'export du 06/10 ; `declare_ui.js` Playwright).
+
 ## Fiche salarié
 
 Question utilisateur réelle : *« si je souhaite obtenir une synthèse complète d'un salarié (temps de
@@ -1354,6 +1609,10 @@ salarié pour **sa propre** fiche, export **Excel et impression A4**.
   infobulle par segment. Excel (`exportFicheSalarieExcel`) : feuilles Synthèse, Jours, Séances,
   Tâches. Impression : `window.print()` ; la règle d'impression générale masque tout `#app` sauf le
   planning — `#app > #fiche-salarie-page` y est ajouté, `.fiche-noprint` masqué (vérifié : 2 pages A4).
+- **Depuis la page Présence (v1.106.1).** Le prénom de chaque ligne (vues Jour et Semaine) est un lien « 📋 » vers la fiche
+  (`open-fiche-salarie`, `data-from="presence"`). Contrairement aux autres points d'entrée (semaine en cours), la fiche s'ouvre sur
+  **la semaine du jour affiché** (`data-day` = jour de la vue Jour, ou lundi de la semaine affichée) : `openFicheSalarie(uid, from,
+  dayKey)` ancre la période dessus, pour qu'un jour passé consulté sur Présence mène à la bonne semaine. « ← Retour » revient sur Présence.
 - **Dans le menu « Plus ▾ »** (v1.74.0) : clé `fiche` de `PAGE_MENU_KEYS` (« 📋 Fiche salarié »,
   « 📋 Ma fiche » pour un employé), épinglable comme les autres, page `ficheSalarie`
   (`isCurrentKey` fait le lien pour l'état actif). `goto-fiche` → `openFicheSalarie(defaultFicheUid(),
@@ -1476,6 +1735,17 @@ Distinct des séances sur les tâches (`sessions[]`) : ici on mesure la PRÉSENC
   des pointages et le lien « Demander une correction » portent sur le jour affiché (`data-day`). `goto-mon-pointage`
   remet le jour à aujourd'hui. Vérifié (Playwright, serveur réel, pointages semés sur la veille) : clic sur un jour,
   ‹ ›, sélecteur de date, retour à aujourd'hui, aucune erreur.
+- **Vues Mois et Entre dates de la page Présence (v1.107.0).** Onglets « Jour / Semaine / Mois / Entre dates » (`presenceView`).
+  Les trois vues multi-jours partagent **un seul calcul de bornes**, `presencePeriodBounds()` (`{from,to,label,nDays}`) — chargement
+  (`loadPresenceRange`, `refreshPresenceVisible`), tableau et export Excel — et le même tableau (`renderPresenceWeek`, nom conservé,
+  `presenceWeekModel(st, punches, from, now, nDays)` généralisé) : pointé par jour et par salarié, total, théorique, écart. Mois = mois
+  calendaire du jour affiché (‹ › d'un mois, « Mois en cours ») ; Entre dates = deux champs `presenceRangeFrom/To` (transitoires ;
+  défaut : 1er du mois → aujourd'hui ; fin ramenée au début si antérieure ; **400 jours max**, limite de `/api/presence/range`). Week-ends
+  masqués tant qu'aucun pointage n'y tombe (règle de la semaine, désormais par jour réel et non « 6e/7e colonne »). **Au-delà de 62 jours,
+  plus de colonne par jour** (totaux seulement, note affichée) : 400 colonnes seraient illisibles. Cliquer un jour ramène à la vue Jour.
+  Le prénom ouvre la fiche salarié **sur la même période** (`openFicheSalarie(uid, from, dayKey, {mode,from,to})` : mode `mois` ou
+  `plage` de la fiche, sinon semaine du jour). Test (scratchpad `period_test.js`, 17 assertions) : bornes (fév., plafond, inversion), modèle
+  14 jours, week-end, rendu des trois vues, mode compact, fiche.
 - **Conformité** (liste de contrôle des Paramètres) : note d'information (L1222-4, art. 13 RGPD) et
   fiche du registre (art. 30) générées par `presenceDocText` (champs entre crochets à compléter, à
   faire relire), consultation du CSE ≥ 50 salariés (L2312-38) ou « non concerné », conservation
@@ -1539,6 +1809,129 @@ données sans avoir à enregistrer la correction ? ». Oui : **liste de modifica
   un seul envoi, heures d'origine conservées) ; `batch_ui.js` (Playwright sur serveur réel, scénario
   complet + capture).
 
+### Pause automatique au départ pointé (v1.110.0)
+
+Constat réel (page Présence du 06/10, Louka « Parti » à 16:21) : une tâche restait `en_cours` chez quelqu'un qui avait pointé son
+départ — alerte « Tâche en cours sans présence pointée ». Un pointage importé de la pointeuse (ou fait à la borne) ne touchait
+jamais aux tâches : seule la case « fermer mes séances » d'un pointage fait DANS l'application le faisait (`applyPresenceTaskLinkage`).
+Proposition validée : départ seulement, pas les pauses pointées.
+
+- **`autoPauseResume.applyDepartPause(st, now, lastOutByUser)`** (`lastOutByUser` = `{ userId: "AAAA-MM-JJTHH:mm" }`, seulement quand le
+  DERNIER pointage retenu de la personne est un départ — jamais `pause_start`, une sortie courte n'est pas un départ). Pour chaque pièce
+  `en_cours`, ferme les séances ouvertes de cette personne **à l'heure du départ**, pas à celle du contrôle ; la pièce ne passe `en_pause`
+  que s'il ne reste personne dessus (travail à plusieurs). Une séance ouverte APRÈS le départ (retour sans repointer) n'est jamais fermée ;
+  un départ « dans le futur » est ignoré. Aucune reprise automatique. Réutilise `autoPausedOutOfHours = true` (pause « expliquée »,
+  affichée dans la bannière du lendemain, jamais reprise toute seule) plutôt qu'un second drapeau : tous les lecteurs existants la traitent déjà bien.
+- **`checkAutoPauseResume`** (`server.js`, 60 s) : si `config.modules.presence`, lit les pointages d'hier et d'aujourd'hui
+  (`presence.getPunchesBetween` + `effectivePunches`), garde le dernier par personne s'il est de type `out`, appelle `applyDepartPause`
+  **avant** `applyAutoPauseResume` (la fin de séance garde l'heure réelle du départ plutôt que celle du contrôle « hors horaires »).
+  Idempotent. Aucun nouveau fichier serveur (Dockerfile inchangé).
+- **Option** `config.autoPauseDepart` (`true` par défaut, `migrateState` en `=== undefined` ; côté serveur seul `=== false` désactive), case dans
+  Paramètres → Horaires & pauses (avec `SETTINGS_HELP.autoPauseDepart`, mention « nécessite le module Pointage présentiel »).
+- **Ignorés** : salarié au forfait (`presenceForfaitUserIds`, pointage facultatif), exception « 🕐 Je travaille maintenant » active sur la pièce.
+- **Pas de miroir client** : le job serveur suffit (le client resynchronise l'état au poll).
+- **« Laurine est en pause » (06/10) n'est pas un bug** : `desiredPunches` classe la dernière sortie du jour en **pause** tant que la fin
+  d'horaire de la personne (`expectedEndFor`) n'est pas passée ; elle est reclassée en départ à la lecture suivante, sans nouveau pointage.
+  Une sortie anticipée définitive se corrige à la main (voir ci-dessous).
+- Tests (scratchpad `depart_test.js`, 13 assertions ; `it_depart.js` sur serveur réel : séance fermée à 06:38 = heure du départ, pas celle du contrôle).
+
+### Inverser entrées et sorties d'une journée dans la pop-up de correction (v1.110.0)
+
+Demande : « corriger dans la pointeuse l'état, entrée vers sortie ou inversement ». La pointeuse (agent en lecture seule, jamais
+d'écriture) n'est pas modifiable ; la correction se fait dans Planning, avec l'historique conservé. Jusque-là : « Changer le type » pointage par pointage
+et l'inversion proposée pour une journée dont le premier événement est une SORTIE (`flip`, `applyFlagAction`). Nouveau, pour **n'importe quelle** journée
+et n'importe quelle source : bouton « ⇄ Inverser entrées et sorties de la journée » (superviseur, `presence-invert-day`).
+
+- `presenceInvertDayPlan(effPunches)` — pur : prend le SENS brut de chaque pointage retenu (arrivée/fin de pause = entrée, début de pause/départ = sortie),
+  l'inverse, puis reclasse avec la règle de l'import (1re entrée = arrivée, sortie suivie d'une entrée = début de pause, entrée après pause = fin de pause,
+  dernière sortie = départ). Renvoie les `retype` à empiler ; `ok:false` + message si l'inversion donne une suite impossible (sortie sans entrée, deux entrées
+  de suite) — dans ce cas rien n'est empilé. `presenceInvertDay()` les empile dans `presenceCorrection.staged` (heures d'origine, secondes comprises, jamais celles
+  arrondies : `effectivePresencePunches(…, { raw:true })`) : rien n'est enregistré avant « Enregistrer N modifications », le lot reste atomique
+  (`/api/presence/correction/batch`) et réversible (« Retirer »/« Rétablir »). Motif passé à « Erreur de pointage » s'il était au défaut.
+- Compatible avec l'import TimeMoto (voir « Corriger plusieurs pointages d'un coup ») : un original annulé par un humain n'est jamais réimporté.
+- Test (scratchpad `invert_test.js`, 12 assertions) : journée décalée in/out/in/out → arrivée, début de pause, fin de pause, départ ; journée normale = refus
+  motivé ; sortie isolée → arrivée ; bouton absent en mode salarié.
+
+### Pointages manquants proposés dans la pop-up de correction (v1.112.0)
+
+Cas réel (Cyril, 06/10) : début de pause de 15h30 jamais badgé (retour à 15h40). La pointeuse a donc enregistré une ENTRÉE alors que la personne était
+déjà présente ; `desiredPunches` l'ignorait (« double entrée », simple compteur `anomalies.ignored`) et rien ne signalait le manque. Demande : proposer par
+défaut les pointages manquants à la correction des présences.
+
+- **Événements écartés conservés** : `desiredPunches` renvoie `ignoredEvents` (`{kind, ts, reason:'doubleIn'|'outSansEntree'}`) ; `noteDayFlags` les mémorise dans la
+  meta `gapEvents` (par `tmId|jour`, remplacés à chaque lecture, effacés dès qu'il n'y en a plus, purgés à 400 jours). Un aperçu (`dryRun`) n'écrit rien.
+  Valable pour les trois voies (agent `zk-sync`, CSV, TimeMoto Cloud) : elles passent toutes par `noteDayFlags`. **Les jours déjà importés se remplissent à la
+  lecture suivante** (3 derniers jours) ou par « Récupérer une période ».
+- **`presence.suggestMissing({punches, ignored, expectedStart, expectedEnd, isPast})`** (pur) : (1) `doubleIn` non encore comblé (aucun pointage retenu à la même
+  minute) → fin de pause à l'heure lue (exacte) + début de pause 10 min avant (estimée, jamais avant le pointage précédent) si le pointage précédent n'est pas
+  déjà une sortie ; (2) deux pointages retenus de même sens à la suite (deux entrées → début de pause ; deux sorties → fin de pause/arrivée) ; (3) première
+  pointage qui n'est pas une arrivée → arrivée à l'heure de début d'horaire ; (4) **journée passée** terminée sur une entrée/fin de pause/début de pause → départ à la
+  fin d'horaire (jamais proposé pour aujourd'hui). `approx:true` = heure estimée, à confirmer. Une journée normale ne produit rien ; un manque comblé disparaît.
+- **`GET /api/presence/missing?userId&date`** (superviseur ; **salarié depuis la v1.113.0, pour LUI SEUL** — l'identifiant demandé est ignoré et remplacé par celui de la session, jamais le détail d'un collègue) : pointages retenus du jour + `timemoto.ignoredEventsFor` + `timemoto.expectedBoundsFor` (même règle d'horaire que
+  `expectedEndFor`, qui en dérive). Lecture seule.
+- **Pop-up « Corriger un pointage »** (superviseur ; pour le salarié, voir « Même suggestion côté salarié » ci-dessous) : `presenceCorrection.suggestions` chargé après les pointages ; bloc
+  ambre « ⚠ Pointages manquants probables (N) » : type, **champ heure modifiable**, explication, « ＋ Ajouter » (empile un `add` dans la liste en attente) et « ＋ Tout ajouter
+  à la liste ». **Jamais ajouté tout seul** : rien n'est enregistré avant « Enregistrer N modifications » ; une suggestion déjà empilée (même type + heure) disparaît du bloc.
+  Les heures éditées sont relues dans le DOM avant tout redessin (`presenceSyncCorrectionForm`, classe `.pc-sug-time`).
+- Tests (scratchpad `missing_test.js`, 13 assertions : le cas Cyril exact → 15:30 estimée + 15:40, comblé → rien, seul le début ajouté, deux entrées, deux sorties, départ
+  manquant, aujourd'hui, journée normale, arrivée manquante ; API de bout en bout sur serveur réel via `device-sync` → `missing` ; Playwright `corr_ui.js` : 2 suggestions,
+  heure modifiée, « Tout ajouter », liste en attente, suggestions vidées) ; `recover_test.js` (37) inchangé.
+
+### Frise dans la pop-up de démarrage tardif (v1.112.0)
+
+Demande : la même frise que la page Risques dans la pop-up affichée au démarrage d'une tâche en retard, **avec** le bloc « ce qui occupait le poste » (gardé après la maquette).
+
+- `retardDemarragePopupInfo` gagne `machineId`, `fusionGroupId`, `mode` (`'autour'` par défaut | `'30j'`), `occ` (true). `renderRetardDemarragePopupModal` : en-tête rouge (commande, pièce,
+  poste) avec « N j de retard », dates prévu/démarré, puis `renderRetardDemarrageFriseHtml(info, now)` — mêmes classes `.rf-*` que la page Risques : ligne « Cette tâche » (cercle vide prévu →
+  point plein réel, « +N j », heures), axe en jours (week-ends, « maintenant »), fenêtre « Autour de la tâche » (début prévu − 1 j → début réel + 2 j, 5 jours au moins) ou « 30 jours »
+  (`retardDemarrageWindow`), boutons `rdp-mode`/`rdp-occ`.
+- **`computePosteOccupants(st, machineId, from, to, {oid, fusionGroupId})`** : autres pièces ACTIVES du même poste, une ligne par pièce (un lot fusionné une seule fois ; la tâche qui démarre et
+  son lot exclus), séances (`sessions[]`) recoupant [prévu, réel], séparées de moins de 90 min fusionnées (la pause déjeuner ne coupe pas la barre) ; à défaut de séances (pièce close dont
+  le détail est archivé) `debutReel → finReel` en hachuré (`approx`, 3 jours max). 6 lignes au plus, « … et N autre(s) ». Les commandes archivées ne sont pas lues. Synthèse sous la frise : « Entre-temps,
+  {poste} a travaillé sur : C026-… » (numéros de commande uniques) ou « Aucune autre séance enregistrée… » — jamais attribué à une personne.
+- Test (scratchpad `rdp_test.js`, 9 assertions sur l'export du 06/10 ; Playwright `corr_ui.js`) : Ajustage C026-0759, 4 occupants (C026-0755, C026-0668, C026-0712 ×2), bloc masquable, 30 jours.
+
+### Même suggestion côté salarié, « Demander ce pointage » (v1.113.0)
+
+Demande : « garde-le aussi pour les salariés ». Le salarié garde sa logique de **demande unique** (`POST /api/presence/correction`, statut `a_valider`, validée ensuite par un superviseur) : pas de liste
+en attente. `openPresenceCorrection` charge désormais les suggestions dans les deux modes ; en mode `self`, `presenceOpenSuggestions` les renvoie toutes (pas d'empilement à déduire) et le bloc ambre
+« ⚠ Il manque peut-être un pointage (N) » propose, par ligne, l'heure modifiable et **« Demander ce pointage »** (`presenceSugUse`) : il **pré-remplit** le formulaire (type, heure, motif « Oubli de badge » par défaut,
+`cancelsId` remis à `null`) sans rien envoyer — c'est au salarié de confirmer l'heure puis d'envoyer. Une seule demande à la fois. Test réel (serveur + Playwright, compte employé) : route 403 → 200 avec
+`userId` forcé sur soi, 2 suggestions, formulaire pré-rempli (début de pause 15:30), envoi OK.
+
+### Terminer des tâches en lot (v1.113.0, superviseur/admin)
+
+Demande : des salariés oublient de pointer ; choisir une commande, voir ses tâches non terminées **groupées par poste**, le temps réel prérempli avec le prévu, et terminer d'un coup (par poste ou toute la sélection).
+Maquette validée avant codage. **Entrées** : bouton « ✔ Terminer en lot » du pied de carte commande (`open-bulk-done`, `canSupervise()` et au moins une tâche non terminée), menu contextuel
+`ctx-bulk-done` (clic droit sur une tâche non terminée). Pop-up `renderBulkDoneModal` (`bulkDoneDraft = { cid, fin, commentaire, rows:[{oid, sel, reel, uid}] }`, transitoire, composée dans la page Planning).
+
+- **Deux circuits, décidés par ligne (`bulkDoneInfo`)** : `declare` = tâche À FAIRE ou démarrée **sans aucun temps enregistré** (tous les membres du lot) → même circuit que « Déclarer terminée » : mutation commune
+  `applyDeclaredDone(group, p, scheduleBefore)` (extraite de `submitDeclareDone`, comportement identique — `declare_test.js` 28 et `declare_run_test.js` 22 inchangés), temps compté tout de suite, déclaration **validée
+  d'office** (`statut:'validee'`, commentaire « Terminé en lot (oubli de pointage) » par défaut) ; `normal` = tâche avec du **temps déjà pointé** → clôture habituelle `applySingleStatusChange(…,'termine', fin choisie)` :
+  séances conservées puis archivées (`archiveOldSessions` après le commit), répartition par opérateur réelle. **Écart assumé avec la maquette** : le temps pointé n'est PAS éditable (case « reprendre le temps pointé » abandonnée,
+  « Temps réel » affiche le pointé) — l'écraser fausserait temps de production et Pointages ; une correction passe ensuite par Pointages → ✎ Corriger.
+- **Lot fusionné = UNE ligne** (temps du lot entier, tous les membres terminés, compté une fois) ; sous-traitance : 0 h par défaut, aucune personne exigée, `dureeReelleH:0`, aucune déclaration (comme la pop-up unitaire).
+  Début d'une tâche `declare` = `debutReel` si elle était démarrée, sinon `fin − temps réel` en heures ouvrées (`declareStartBefore`).
+- **Validations avant toute écriture** (une seule erreur bloque tout, message listant les lignes) : fin renseignée et pas dans le futur, au moins une ligne, temps réel valide, personne choisie (sauf sous-traitance à 0),
+  début < fin, fin postérieure à l'ouverture d'une séance en cours. Avertissement `confirm()` récapitulatif (nombre déclarées/normales, temps total, écarts > 50 % du prévu). **Un seul `commit()`** pour toute l'action.
+  « ✔ Terminer les N tâche(s) de ce poste » ne termine QUE ce poste (toutes ses lignes, avec les temps affichés) ; le bouton global ne termine que la sélection.
+- **Pas de `render()` pendant la saisie** (`bulkDoneRefreshLive` : totaux, écarts, surlignage mis à jour dans le DOM) : un redessin entre le `change` (perte de focus) et le clic suivant remplaçait le bouton visé et
+  faisait **perdre le clic**. Pour la même raison, le bouton « Terminer la sélection » n'est jamais désactivé (la saisie d'un temps sélectionne la ligne au `change`, qui survient après le `mousedown`) ; sans sélection : alerte.
+  Barre de totaux sticky **opaque** (fond `--panel` + calque `--accent-dim`) — translucide, elle laissait voir le texte dessous ; statique sous 720 px.
+- Tests (scratchpad `bulk_test.js`, 29 assertions sur l'export du 06/10 : lot compté une fois, refus (aucune sélection, fin future, temps invalide), un seul commit, poste unique, lot terminé en entier, sous-traitance,
+  clôture normale d'une tâche pointée non éditable, employé refusé) ; Playwright (`bulk_ui.js` : saisie + Tab + validation, Échap, mobile 390 px sans débordement).
+
+### Salarié masqué du temps de production mais doté d'un badge (v1.101.1)
+
+Constat réel (06/10) : « Laurine » avait « Afficher dans le temps de production » décoché ; la page Présence ne listait que les
+salariés non masqués (+ ceux ayant déjà un pointage) : sans pointage, **aucune ligne** — ni « Non arrivé », ni retard — jusqu'à ce
+qu'elle pointe (arrivée 12:02, « +4 h 03 » vu seulement après avoir recoché la case). `presenceExpectedUserIds(st)` = non masqués
+**plus** tout salarié associé à un badge de la pointeuse (`config.presence.timemoto.userMap`) ; utilisé par `computePresenceRows`,
+`presenceWeekModel` et `borneTiles` (un salarié masqué mais doté d'un badge apparaît aussi sur la borne). Qui ne doit pas pointer se
+règle par « Au forfait » (`isForfaitUser`) ; la case « Afficher dans le temps de production » reste réservée au temps de production.
+Si un compte de test/admin est associé à un badge, il apparaîtra désormais « Non arrivé » : le mettre « Au forfait » ou « ne pas
+importer ». Test scratchpad `pres_exp_test.js`.
+
 ### Salariés au forfait — non tenus de pointer
 
 Retour utilisateur réel : « j'ai aussi des salariés au forfait qui ne sont pas tenus de pointer » —
@@ -1563,6 +1956,49 @@ sans réglage, ils remontaient en permanence en « Non arrivé »/« Aucun point
   alertes « sans pointage » (`computeTeamPointage`) mesurent les SÉANCES sur tâches, pas la présence :
   pour qu'un forfait qui ne travaille pas sur tâches n'y figure pas, décocher « Afficher dans le temps de
   production » (même exclusion que pour un compte admin).
+
+### Arrondi des pointages (v1.98.0)
+
+Demande : un réglage « Type d'arrondi » comme celui de TimeMoto (Pas d'arrondi / Intervalle / Arrondis à heures fixes).
+Proposition validée avant codage : réglage **global**, **pas d'arrondi par défaut**, **pauses non arrondies sauf option**.
+
+- **Un calcul à la lecture, jamais une modification.** Les lignes de `presence_punches` (et le serveur, `presence.js`, qui ne
+  connaît pas l'arrondi) restent celles de la pointeuse/du serveur — infalsifiables, exigence du module. `effectivePresencePunches`
+  applique `applyPresenceRounding` aux pointages retenus et renvoie, pour un pointage arrondi, une **copie** `{...p, ts: heure
+  retenue, rawTs: heure réelle, rounded:true}` (un pointage inchangé est renvoyé tel quel). Un seul point d'application pour tous les
+  consommateurs (page Présence jour/semaine, Mon pointage, Fiche salarié, exports) : `presenceDaySummary` voit donc l'heure
+  retenue, et conserve `arriveeReelle`/`departReelle`. `effectivePresencePunches(punches, { raw:true })` court-circuite l'arrondi.
+- **Réglage** `config.presence.arrondi` (lu par `presenceArrondiCfg`, normalisé : valeurs hors liste → défaut) :
+  `mode` (`aucun` par défaut | `intervalle` | `fixe`), `dateEffet` (`AAAA-MM-JJ`), `pauses` (bool), `intervalle {minutes 5/10/15/30,
+  arrivee, depart}` (règle `proche` | `suivant` | `precedent`), `fixe {debutAvant, debutApres, finAvant, finApres, pauseTolMin}`.
+  Valeurs par défaut **neutres** (fourchettes à 0, tolérance de pause 5) : rien ne change tant qu'on ne règle rien. Paramètres →
+  Pointage présentiel → « Arrondi des pointages » (`renderPresenceArrondiSettings`, trois cartes `.pa-card`, champs selon le mode,
+  exemple chiffré recalculé en direct `presenceArrondiExample`). Écriture : `updatePresenceArrondi` (`data-action="presence-arrondi"`
+  pour les champs, `presence-arrondi-mode` pour les cartes) ; un `commit()`, pas de rechargement des pointages (calcul local).
+- **Date d'effet** : posée à aujourd'hui à la première activation (modifiable). Les jours antérieurs gardent leurs heures réelles :
+  changer la règle ne réécrit jamais l'historique déjà consulté ou exporté. Question des totaux déjà vus / exportés tranchée ainsi.
+- **Ce qui est arrondi** : la **première entrée** du jour (`in`) et la **dernière sortie** (`out`, seulement si aucune entrée ne la
+  suit — une sortie intermédiaire n'est pas un départ). Les pauses seulement si `pauses` est coché. Jamais pour un salarié au
+  forfait (`isForfaitUser`), jamais avant `dateEffet`, jamais si l'arrondi changerait de jour (`target` hors 0–1439 min).
+  - *Intervalle* : `proche` (arrondi classique), `suivant` (heure ronde suivante), `precedent` ; pauses toujours « au plus proche ».
+  - *Heures fixes* : horaire de la PERSONNE (`expectedDayFor` : horaire perso, vendredi, congé, demi-journée) ; arrivée comprise
+    entre `début − debutAvant` et `début + debutApres` → heure de début ; départ entre `fin − finAvant` et `fin + finApres` → heure
+    de fin. Comparaison à la minute (secondes ignorées). Pauses : alignées sur la borne de pause prévue la plus proche si l'écart
+    ≤ `pauseTolMin`. Jour sans horaire attendu (week-end, férié, congé) : aucun arrondi.
+  - **Garde d'ordre** : un pointage arrondi est borné par le précédent (déjà retenu) et le suivant (heure réelle) — l'arrondi ne
+    peut jamais inverser l'ordre de la journée ni le sens des paires entrée/sortie (cas d'une double entrée, d'une pause à 2 min
+    de l'arrivée) ; l'arrondi est alors réduit, voire annulé.
+- **Affichage** : page Présence, colonnes Arrivée/Départ = heure retenue + sous-ligne grise « réel hh:mm » (`presenceRealSubHtml`) ;
+  note de légende « Arrondi actif à partir du … » (`presenceArrondiNote`, jour et semaine) ; Mon pointage : « → retenu hh:mm » à côté
+  de l'heure réelle ; Fiche salarié : alerte bleue « ARRONDI » ; Excel : colonne « Heure retenue » dans les pointages bruts, la
+  synthèse utilise l'heure retenue. Retard, présence, pauses, écarts et temps hors présence sont calculés sur l'heure retenue.
+- **Avertissement juridique affiché dans Paramètres** : un arrondi qui retire du temps de travail effectif au salarié est risqué
+  (le temps à disposition de l'employeur est dû) — règle à faire relire, comme la note d'information.
+- Non fait (pistes) : réglage par salarié ; arrondi des demandes de correction à valider ; règle par jour de la semaine.
+- Test (scratchpad `arrondi_test.js`, 26 assertions : défaut, intervalle proche/suivant/précédent, pauses, date d'effet, forfait,
+  heures fixes (dans/hors fourchette, 0 = neutre, favorable), pauses fixes, sortie intermédiaire, minuit, double entrée, borne par
+  le pointage suivant, résumé retenu/réel, `raw`, réglages rendus et bornés) ; navigateur (`arrondi_ui.js`, Playwright sur serveur
+  réel : cartes, champs par mode, 07:41 → « 07:45 · réel 07:41 », note de légende, aucune erreur).
 
 ### Pointeuse TimeMoto TM-616 (`timemotoSync.js`) — import manuel par jeton
 
@@ -1633,6 +2069,291 @@ l'utilisateur récupère lui-même dans sa propre session TimeMoto (reCAPTCHA fr
 - **Non testé automatiquement** : pas de faux serveur TimeMoto (génération bloquée). La lecture par
   jeton collé a été validée en réel par l'utilisateur (liste des salariés + pointages remontés) ; la
   connexion serveur, elle, était impossible (reCAPTCHA) et a été retirée.
+
+#### Lecture directe de la pointeuse en réseau local — import du CSV (v1.96.0)
+
+Retour utilisateur réel : le TM-616 se lit **directement sur le réseau de l'atelier** (protocole ZK, port 4370, bibliothèque
+Python `pyzk`, mot de passe de communication 0 par défaut) — sans TimeMoto Cloud, sans reCAPTCHA, sans jeton. Validé en réel
+par l'utilisateur (script `test_tm616.py` → CSV de 9 420 pointages, 03/10/2024 → 06/10/2026, 11 identifiants).
+
+- **`tools/tm616_export.py`** : le script de l'utilisateur, paramétré (`--ip`, `--port`, `--commkey`, `--out`), même CSV
+  (`UID;UserID;Nom;Badge;Date;Heure;Action;Status`, `;`, UTF-8 BOM, dates `JJ/MM/AAAA`). **Lecture seule** : ne vide jamais la
+  mémoire de la pointeuse. Testé avec un faux module `zk` (pas de pointeuse accessible depuis le cloud).
+- **`POST /api/presence/timemoto/device-import`** (admin, `{ csv, since?, dryRun? }`, `timemoto.runDeviceImport`) : le CSV est lu
+  dans le navigateur puis envoyé (jamais conservé). **Même moteur que l'import cloud** : `parseDeviceCsv` → pour chaque
+  (salarié, jour) un `row.clockData` synthétique → `desiredPunches` → `reconcileDay` (1re entrée = arrivée, sortie suivie d'une
+  entrée = pause, dernière sortie = départ — ou pause si c'est aujourd'hui avant la fin d'horaire ; doubles entrées/sorties sans
+  entrée ignorées ; rien n'est jamais modifié ni supprimé ; annulation humaine respectée ; idempotent). Heure = celle de la
+  pointeuse (**la mettre à l'heure** : l'heure du serveur n'intervient pas ici, contrairement au pointage borne/téléphone).
+- **Identifiants `zk:<UserID>`** dans `config.presence.timemoto.userMap` et dans `timemoto_punch_refs.tm_user_id` : aucune collision
+  possible avec les identifiants TimeMoto Cloud ; la liste des salariés de la pointeuse (`timemoto_meta.users`) alimente la **même**
+  zone « Association des salariés » (suggestions par le nom). Un salarié supprimé de la pointeuse (ses pointages restent, nom
+  « INCONNU » — constaté : UserID 11, 480 pointages) apparaît « Pointeuse n° 11 (nom absent…) » : à laisser « ne pas importer ».
+- **Ignorés et comptés** : événements sans UserID (6 « Punch 255 » + 1 entrée, status 3 : porte/alarme), actions autres que
+  Entrée/Sortie, dates illisibles. `Status` (4, 12, 16, 3) n'est pas exploité.
+- **Période** : comme l'import cloud — les `joursSynchro` derniers jours (7 par défaut), ou `since` (bouton « Importer depuis la
+  date… » + champ « Reprendre l'historique depuis le »). Seuls les jours présents dans le fichier sont réconciliés (jamais
+  d'annulation d'une journée absente du fichier).
+- Interface : page Présence → « ⏱ TimeMoto » → **A. Fichier CSV de la pointeuse** (Aperçu / Importer / Importer depuis la date),
+  **B. Via TimeMoto Cloud** inchangé. `timemotoCsv` (transitoire), `loadTimemotoCsvFile`, `runTimemotoCsvImport`.
+- Test (scratchpad `zk_test.js`, 11 assertions sur le vrai CSV et un vrai SQLite) : 9 420 lignes, 7 sans salarié ignorées,
+  05/10/2026 d'un salarié = `in 07:49 · 3 pauses · out 16:29`, relance = 0 ajout, annulation humaine respectée, historique complet
+  (2 827 pointages pour 2 salariés associés, 9 incohérences ignorées), fichier invalide refusé ; Playwright (`zk_ui.js`) : boutons
+  désactivés sans fichier, aperçu, liste des 10 salariés.
+#### Lecture automatique de la pointeuse — conteneur annexe `zk-sync` (v1.97.0)
+
+Demande : « mets en place la lecture automatique » (suite de l'import CSV ci-dessus ; la nouvelle voie d'authentification
+machine a été validée par l'utilisateur). Même moteur que l'import CSV (`syncDeviceRows` : réconciliation par (salarié, jour),
+idempotent, annulation humaine respectée) — seul le **transport** change.
+
+- **`tools/tm616_sync.py`** (+ `tools/Dockerfile.zk-sync`, `pyzk==0.9` — la 0.9.1 n'existe pas sur PyPI) : boucle toutes les
+  `SYNC_INTERVAL` s (300, minimum 60 ; remplacé par le réglage de l'interface dès le premier contact, voir plus bas) ; lit la pointeuse (`get_users`, `get_attendance`), garde les `SYNC_DAYS` derniers jours
+  (3, **journées entières** : la réconciliation annule ce qui a disparu d'une journée, il ne faut donc jamais envoyer une journée
+  partielle), envoie un JSON `{host, deviceRecords, users[], events[{uid, ts, kind in|out|other}]}`. **Lecture seule, jamais
+  `disable_device`** (une pointeuse désactivée refuserait les pointages pendant la lecture). Pointeuse injoignable → envoie
+  `{deviceError}` (voyant rouge côté Planning) ; Planning injoignable → réessaie au passage suivant. Aucun « saut de lecture si
+  rien n'a changé » : la dernière sortie du jour est classée pause tant que l'horaire n'est pas fini, puis départ — ce
+  reclassement se fait **sans nouveau pointage**, un envoi systématique est donc nécessaire. Sans `ZK_IP`/`DEVICE_SYNC_KEY`, le
+  conteneur le dit une fois puis dort (pas de boucle de redémarrage de `restart: unless-stopped`).
+- **`POST /api/presence/device-sync`** (`server.js`) : authentification **machine**, pas de session — en-tête `X-Device-Key` comparé
+  en temps constant (empreintes SHA-256, `crypto.timingSafeEqual`) à `DEVICE_SYNC_KEY` (variable d'environnement, **≥ 16
+  caractères sinon la route répond 503** — désactivée par défaut). 10 clés fausses depuis une adresse → blocage 5 min (en mémoire,
+  même pendant ce temps la bonne clé est refusée). Exige licence valide, module Pointage présentiel **et** suivi TimeMoto actif
+  (`config.presence.timemoto.actif`). `timemoto.runDeviceEvents` : événement daté de plus de 5 min dans le futur (horloge
+  de la pointeuse déréglée) **écarté** (`future`), uid vide/`0` = `noUser`, `kind:'other'` = `otherAction`, 20 000 événements max ;
+  corps sans `events` = simple battement de cœur. Partage le verrou `runtime.running` avec les imports manuels (409 si occupé).
+- **Statut** : `timemoto_meta.agent` (`lastSeenAt`, `lastSyncAt`, `lastError`, `lastResult`, `deviceRecords`) exposé dans
+  `GET /api/presence/timemoto/status` ; `timemotoAgentHtml` affiche en tête du panneau « ⏱ TimeMoto » de la page Présence un
+  voyant : vert (< 15 min), ambre (> 15 min), rouge (pointeuse injoignable ou aucun signe de vie). Un envoi réussi met aussi à
+  jour `lastOkAt` (le rappel « import à faire » de la page Présence ne se déclenche donc que si l'agent s'arrête > 24 h).
+- **Mise en route (NAS)** : `openssl rand -hex 24` ; créer `TM616.env` à côté de `docker-compose.yml` (modèle `TM616.env.example`, `TM616.env`
+  est ignoré par git) avec `DEVICE_SYNC_KEY=` et `ZK_IP=192.168.1.37` ; `bash deploy.sh` (construit aussi `zk-sync`) ; dans la page
+  Présence → « ⏱ TimeMoto » : activer le suivi et **associer les salariés de la pointeuse** (sinon leurs journées sont comptées
+  « sans salarié associé », jamais importées). Le conteneur doit pouvoir joindre la pointeuse (port 4370) : réseau bridge Docker
+  par défaut, NAT vers le LAN — à vérifier dans `docker logs planning-zk-sync`.
+- **Fichier `TM616.env` et non `.env` (v1.97.1).** Choix de l'utilisateur. Docker Compose ne lit automatiquement que `.env`
+  (substitution `${VAR}`) : un fichier d'un autre nom est ignoré sauf à le déclarer. Les deux services le chargent donc par
+  `env_file: [TM616.env]` (variables injectées dans le conteneur, plus de `${...}` dans `docker-compose.yml`). **Le fichier doit
+  exister** sinon `docker compose build/up` échoue pour TOUT le projet : `deploy.sh` le crée vide s'il manque (lecture automatique
+  alors inactive : route 503, `zk-sync` en attente). Sans `deploy.sh`, `touch TM616.env` avant `docker compose up`. Format :
+  `VARIABLE=valeur`, sans guillemets ni espaces ; `.gitignore` l'exclut.
+- **« can't reach device (ping …) » alors que la pointeuse répond (v1.97.2).** Constat réel : le voyant de la page Présence
+  (agent bien vivant, clé acceptée) affichait « Pointeuse injoignable : can't reach device (ping 192.168.1.37) ». Cause : pyzk
+  teste d'abord la machine avec la commande système `ping` (`ZK(..., ommit_ping=False)`, valeur par défaut), absente de l'image
+  `python:3.11-slim` → échec immédiat, avant toute tentative sur le port 4370. `tm616_sync.py` passe `ommit_ping=True` (c'est bien
+  l'orthographe de pyzk) ; une pointeuse réellement éteinte/injoignable échoue de toute façon à `connect()` (délai de 15 s). Réflexe :
+  une erreur « ping » d'une bibliothèque dans un conteneur minimal peut venir de l'absence de l'outil, pas du réseau. `tm616_export.py`
+  (lancé sur un PC) garde le ping, qui y existe.
+- **Fréquence de lecture réglable dans l'interface (v1.99.0).** Demande : « peut-on ajouter ce paramètre dans l'interface ? »
+  (`SYNC_INTERVAL` exigeait de modifier `TM616.env` puis de relancer le conteneur). `config.presence.timemoto.intervalleMin`
+  (minutes entières 1–60, `null` = pas de réglage) se choisit dans la page Présence → « ⏱ TimeMoto » → « Fréquence de lecture »
+  (1, 2, 5, 10, 15, 30 min, 1 h, ou « Par défaut »). **L'agent est tiré, pas poussé** : aucune connexion du serveur vers
+  `zk-sync`. Chaque réponse de `POST /api/presence/device-sync` (lecture, battement de cœur, erreur de pointeuse) porte
+  `intervalSec` (`agentIntervalSec` dans `timemotoSync.js`, `null` sans réglage) ; `adopt_interval` (`tm616_sync.py`) le reprend,
+  borné à 60 s – 3600 s, et ne touche à rien si la valeur est absente → `SYNC_INTERVAL` reste la valeur de départ et le repli.
+  - **Prise en compte en moins d'une minute.** La boucle ne dort plus un intervalle entier : elle ticke toutes les 5 s
+    (`TICK_S`), relit la pointeuse quand l'intervalle est écoulé, et sinon envoie un **battement de cœur** par minute
+    (`HEARTBEAT_S`, `{host, interval}` sans `events`, déjà géré par le serveur : met à jour le voyant sans réconcilier). Sans cela,
+    passer de 30 min à 1 min aurait demandé d'attendre la fin des 30 min en cours. Un intervalle réduit s'applique donc même à
+    mi-attente (l'échéance se compare à la dernière lecture, pas à une date fixée à l'avance).
+  - L'agent annonce l'intervalle qu'il applique (`interval` dans ses envois → `agent.intervalSec`), affiché sous le voyant
+    (« intervalle appliqué par l'agent : 5 min ») — permet de voir tout de suite si un réglage n'a pas été repris (agent
+    arrêté, ancienne image non reconstruite). **Le voyant parle maintenant de « dernier contact »** (le battement de cœur met
+    `lastSeenAt` à jour chaque minute) et une ligne distincte donne « Dernière lecture de la pointeuse : il y a N min »
+    (`lastSyncAt`). Seuil ambre du voyant inchangé (15 min sans contact).
+  - Piège : l'agent doit être **reconstruit** (`bash deploy.sh`) une fois pour embarquer ce comportement ; sans cela l'ancienne
+    version ignore `intervalSec` et reste sur `SYNC_INTERVAL`.
+- Tests (scratchpad) : API sur serveur réel (sans clé/mauvaise clé 401, battement de cœur, envoi, renvoi idempotent, événements du
+  futur écartés, blocage 429, 503 sans clé) ; agent Python avec faux module `zk` (envoi, relance sans doublon, mauvaise clé,
+  pointeuse/Planning injoignables, filtrage des jours, config invalide) ; régression `zk_test.js` (11 assertions) ; rendu du voyant
+  (Playwright, 4 états). **Non testé sur la vraie pointeuse** (inaccessible depuis le cloud) : seule la lecture `pyzk` du script
+  `tm616_export.py` a été validée en réel par l'utilisateur, `tm616_sync.py` en réutilise les appels à l'identique.
+
+### Récupération d'une période, journées décalées et contrôle des doublons (v1.102.0)
+
+Demande (06/10) : récupérer les pointages de jours/périodes précédents « sur demande », en contrôlant les doublons ; et
+cas réel de Laurine — un pointage de la veille mal passé fait enregistrer le pointage du matin en « Sortie » : l'import
+l'**ignorait** (une sortie ne vaut qu'après une entrée), l'arrivée était donc comptée à 12:02. Choix : les deux
+fonctions, **signalement simple** des journées décalées avec **correction proposée** (jamais automatique).
+
+- **Récupération à la demande** (page Présence → ⏱ TimeMoto → « 🕓 Récupérer une période », administrateur). Agent **tiré,
+  pas poussé** (comme la fréquence de lecture) : `POST /api/presence/timemoto/recover {from,to}` (`requestRecovery` : dates
+  valides, pas dans le futur, 400 j max, une seule demande à la fois) met la demande en attente (meta `recovery`) ; chaque
+  réponse de `device-sync` (battement de cœur, lecture, erreur) porte `recover:{id,from,to}` tant qu'elle attend ; `tm616_sync.py`
+  (`recover_period`) relit la pointeuse (lecture seule), renvoie les **journées entières** de la période (`build_payload(...,
+  since_date, until_date)`) avec `recoverId`. Le serveur (`receiveRecovery`) fait un **aperçu** (`syncDeviceRows` en `dryRun`, borne
+  `until`) et garde les événements (meta `recoveryEvents`) ; l'administrateur confirme (`action:'apply'` → `applyRecovery`, **sans
+  nouvelle lecture** de la pointeuse) ou annule. Garde-fous : demande sans réponse > 10 min → erreur explicite (agent arrêté **ou
+  ancienne image à reconstruire**) ; aperçu non confirmé oublié après 1 h ; > 20 000 événements refusé (une journée partielle ferait
+  annuler des pointages) ; mauvais `recoverId` ignoré ; pointeuse injoignable → erreur. L'interface rafraîchit l'état toutes les 4 s
+  tant que la demande attend (`tmRecoverSchedulePoll`). Même moteur que la lecture automatique : idempotent, annulation humaine respectée.
+- **Journées décalées** (`timemotoSync.js`) : `desiredPunches` signale `anomalies.startsWithOut` (premier événement hors sortie
+  automatique = Sortie) et renvoie les événements bruts. Mémoire en meta : `flagged` (à vérifier), `flips` (corrigées, avec leurs
+  événements bruts), `flagIgnored`. `noteDayFlags` les met à jour à chaque lecture (un aperçu ne persiste rien) ; une journée dont le
+  premier événement n'est plus une sortie sort de `flagged`/`flips`. **Correction** (`applyFlagAction`, superviseur, `POST
+  /api/presence/timemoto/flag`) : `flip` = inverser entrées/sorties de CETTE journée (règle mémorisée dans `flips`, réappliquée à chaque
+  lecture, donc stable) et réconcilier tout de suite — les pointages mal classés sont **annulés** (ligne `cancel`), les bons ajoutés,
+  rien n'est supprimé ; `ignore` ; `unflip` (rétablit l'état lu sur la pointeuse, la journée est de nouveau signalée). L'hypothèse
+  « la pointeuse alterne strictement » n'est pas garantie : d'où la validation humaine, avec les séquences brute / actuelle / proposée
+  affichées (`describeFlag`). Bannière sur la page Présence pour les superviseurs (`renderTmFlagsHtml`, déclenchée par
+  `data.timemoto.nFlagged`), liste des journées corrigées (avec annulation) dans le panneau d'import. Si un pointage a déjà été ajouté à
+  la main pour la journée, la correction peut créer un doublon : le contrôle ci-dessous le repère.
+- **Contrôle des doublons** (page Présence → « 🔎 Doublons », superviseur, `GET /api/presence/duplicates?from&to&minutes`,
+  `presence.findDuplicates`, lecture seule) : deux pointages **retenus** consécutifs, même salarié, même jour, même type — `doublon`
+  si l'écart ≤ seuil (5 min par défaut, réglable), `repete` sinon (« enchaînement incohérent » : deux arrivées de suite… souvent un
+  pointage manquant, à corriger plutôt qu'à annuler). Chaque pointage a son bouton « Annuler celui-ci » (`correction/batch`, op `cancel`,
+  motif « Doublon ») ; un pointage de la pointeuse annulé à la main n'est jamais réimporté.
+- Mise à jour : `bash deploy.sh` (l'agent doit être **reconstruit** pour comprendre `recover`) ; aucun nouveau fichier serveur.
+- Tests (scratchpad) : `recover_test.js` (37 assertions sur un vrai SQLite : signalement, aperçu sans écriture, correction, stabilité
+  à la relance, annulation de la correction, ignorer, demande/aperçu/application/idempotence, mauvais id, erreur pointeuse, expiration,
+  doublons), `agent_recover_test.py` (plage, battement de cœur → récupération, dates invalides, pointeuse injoignable),
+  `recover_ui.js` (Playwright sur serveur réel : bannière, correction, panneau, récupération, doublons).
+
+### Lecture « par ordre de passage » : un salarié qui n'appuie pas sur la bonne touche (v1.115.0)
+
+Cas réel (Cyril, 07/10, page Présence « En pause » alors qu'il travaillait) : pointages bruts de la TM-616 — 07:40:58 `Punch=1` (Sortie, à l'ARRIVÉE), 10:05:57 `Punch=0` (Entrée, au départ en
+pause), 10:14:16 `Punch=2` (touche Pause-sortie), 10:17:06 `Punch=3` (Pause-entrée). Codes de la pointeuse : 0 entrée, 1 sortie, **2/3 pause sortie/entrée**, 4/5 heures sup, 255 porte.
+Deux causes cumulées : (1) le premier passage étant une Sortie, la journée était « décalée » ; le bouton « corriger » (inversion de la journée, `flip`) donnait *arrivée 07:40 / début de pause 10:05* ;
+(2) l'agent classait 2/3 en `other` et **les jetait** — le retour de 10:14 n'existait donc pas, Cyril restait en pause « → en cours » indéfiniment. Même en lisant 2/3 comme sortie/entrée, la lecture selon
+la touche ne le sauve pas (inversée, elle finit encore en pause à 10:17) : son problème est le choix de touche, pas leur interprétation.
+
+- **Réglage** (page Présence → ⏱ TimeMoto → « Lecture des pointages : selon la touche ou par ordre de passage », `SETTINGS_HELP.tmOrdre`) : `config.presence.timemoto.ordreTous` (`false`),
+  `ordreIds` (ids de `userMap`, ex. `zk:10` — case « par ordre » sur chaque ligne de « Association des salariés ») et `antiDoubleMin` (3 min, 0–30, `0` = désactivé) ; `migrateState` en `=== undefined`,
+  et côté serveur (état jamais migré) `sequenceModeFor`/`antiDoubleMinOf` ont leurs propres défauts. **Rien ne change tant qu'on ne coche rien** (lecture selon la touche, comme avant).
+- **`timemotoSync.sequenceKinds(events, antiMin)`** (pur) : la touche est IGNORÉE — chaque passage (touches 0 à 5) bascule présent/absent (1er = entrée, 2e = sortie, 3e = entrée…) ; deux passages à moins
+  de `antiMin` minutes comptent pour un seul (le PREMIER est gardé : double appui ou touche corrigée aussitôt — test exact : 2 min 59 = double, 3 min 01 = passage distinct). Le classement
+  arrivée/pause/départ reste celui de `desiredPunches` (dernière sortie = pause tant que la fin d'horaire n'est pas passée). Appliqué dans `syncDeviceRows` par (salarié, jour) : donc aussi à l'import CSV et à
+  la récupération d'une période ; `res.doubles` compte les écartés (affiché dans le résultat). Une journée en mode ordre ne commence jamais par une sortie → plus de « journée décalée » signalée pour lui.
+  Cyril, mêmes pointages : *arrivée 07:40, pause 10:05 → 10:14, départ* (le 10:17 est un double).
+- **Touches 2 à 5 désormais transmises** : `tm616_sync.py` ajoute `punch` (code brut) à chaque événement ; `parseAgentEvents`/`parseDeviceCsv` (« Punch 2 »…) gardent les événements `other` de code 2 à 5
+  (porte/alarme 255 toujours écartés) mais `syncDeviceRows` ne les lit qu'en mode ordre : **lecture selon la touche inchangée**. **L'agent doit être reconstruit** (`bash deploy.sh`) pour envoyer `punch` ;
+  un ancien agent ne les envoie pas (Cyril resterait alors « en pause »). Un jour déjà importé se corrige à la lecture suivante (3 derniers jours) ou via « Récupérer une période » ; les pointages posés à la main
+  ne sont jamais écrasés, ceux de la pointeuse sont annulés/remplacés (ligne tracée).
+- Limite assumée : un passage **oublié** décale la parité du reste de la journée (retour de pause non badgé → « présent » devient « absent »). Il reste visible (départ non pointé, alerte « tâche en cours sans
+  présence », pointage manquant proposé) et se corrige en un clic ; piste non faite : proposer « fin de pause à l'heure théorique » quand une tâche est ouverte pendant une pause.
+- **Badges (non fait, étude)** : `pyzk` 0.9 sait `set_user(uid, name, privilege, password, group_id, user_id, card)` (créer/modifier), `delete_user(uid)`, `enroll_user` (déclenche l'enrôlement d'un doigt sur la
+  pointeuse) et `get_users()` (nom, n° de badge `card`, PIN) — l'agent ne lit aujourd'hui que `user_id` et `name`. Gérer les badges depuis l'app suppose un canal « agent tiré » comme `recover` (file de commandes
+  validée par un admin, exécutée par l'agent, résultat renvoyé) ; première écriture sur la pointeuse, jusqu'ici strictement en lecture seule.
+- Test (scratchpad `seq_test.js`, 14 assertions sur un vrai SQLite : touches inchangées par défaut, Cyril par ordre, Romain non concerné, relance idempotente, tous + anti-double 0, seuils, agent, CSV, défauts ;
+  `ord_ui.js` Playwright : bloc, case par salarié, anti-double, « tous » masque les cases).
+
+### Badges de la pointeuse gérés depuis l'application (v1.116.0)
+
+Demande : ajouter, supprimer ou changer un badge directement depuis l'app. Cadrage validé (questions puis maquette) : **sans biométrie**
+(un salarié sur la pointeuse = nom + n° de badge + code facultatif ; `enroll_user` / `save_user_template` exclus), **administrateurs seulement**,
+**confirmation avant chaque envoi**. Première **écriture** sur la pointeuse (l'agent était en lecture seule) : voir « Non testé sur la vraie pointeuse ».
+
+- **Page Présence → ⏱ TimeMoto → « 🪪 Badges de la pointeuse »** (`renderTmBadgesHtml`, section repliée par défaut, `tmBadgesOpen`) : tableau des salariés de la
+  pointeuse (UserID, nom, badge, code « défini » — jamais le code —, salarié Planning associé via `userMap['zk:<UserID>']`, état), boutons Ajouter / Modifier /
+  Supprimer…, file « Modifications en attente et historique » (= le journal). Pop-up `renderTmBadgeModal` (`tmBadgeForm`, champs mémorisés à la frappe sans
+  `render()`, doublon de badge signalé tout de suite) : ajout (nom, badge, code, salarié Planning), modification (nom, badge, code ou « Effacer le code »),
+  suppression (« Retirer le badge seulement » ou « Préparer la suppression »). Sondage toutes les 4 s tant qu'une demande est `confirmed`/`sent` (`tmBadgeSchedulePoll`).
+- **File de commandes côté serveur** (`timemotoSync.js`, section « Badges de la pointeuse », meta `badgeCmds`, 100 dernières) — états : `wait` (préparée, à confirmer ;
+  oubliée après 1 h → `expired`) → `confirmed` (confirmée ; si l'agent ne la prend pas en 10 min → `error`, rien n'a été écrit) → `sent` (remise à l'agent ; sans résultat
+  en 5 min → `error` « vérifiez dans la liste ») → `done`/`error`. `cancelled` possible avant l'envoi. **Agent tiré, pas poussé** (même principe que `recover`) :
+  `runDeviceEvents` ajoute `badge` (la plus ancienne `confirmed`, qui passe `sent`) à la réponse de chaque contact (battement de cœur et lecture) ; l'agent renvoie `badgeResult`.
+- **Routes** (`server.js`, `requireAdmin` + `requirePresence` + suivi TimeMoto actif) : `GET /api/presence/timemoto/badges`, `POST` avec `action: prepare | confirm | cancel`.
+  Le salarié Planning choisi à l'ajout (`planningUserId`) est associé par `applyBadgeAssociation` **une fois l'écriture vérifiée** (`userMap['zk:<UserID>']`, un `UPDATE app_state`
+  synchrone comme les jobs serveur) ; `badgeDone` n'est jamais renvoyé à l'agent.
+- **Vérifications à la préparation** (`prepareBadge`) : liste de la pointeuse déjà lue par l'agent et de moins de 2 h ; nom 1–24 **octets** UTF-8 (un accent compte 2) ; badge chiffres
+  seulement, 10 max, ≤ 4 294 967 295, **0 = aucun** ; code 1–8 chiffres ; **n° de badge déjà attribué refusé** (pointeuse ET demandes en attente) ; une seule demande active par
+  salarié ; « aucun changement » refusé ; **administrateur de la pointeuse (`privilege` ≠ 0) non supprimable** (risque de perdre le menu de l'appareil) mais modifiable (droits conservés).
+- **UserID d'un nouveau salarié = max(connus) + 1** (`nextDeviceUserId`), « connus » = pointeuse + `timemoto_punch_refs` (`zk:N`) + `userMap` + liste d'association : **un salarié
+  supprimé garde ses pointages sous son ancien n° ; le réutiliser rattacherait cet historique au nouveau salarié** (testé : n° 14 supprimé → 15). Emplacement = premier libre.
+- **L'agent revérifie tout sur la pointeuse avant d'écrire** (`perform_badge`, `tools/tm616_sync.py` — la liste de Planning peut dater de quelques minutes) : badge pris entre-temps,
+  emplacement réutilisé, identifiant qui ne correspond plus → refus sans rien écrire. `set_user(uid, name, privilege, password, group_id, user_id, card)` ; en modification le code
+  existant est **conservé** (relu sur la pointeuse) sauf nouveau code / effacement, privilège et groupe conservés ; `delete_user(uid)`. **Relecture systématique** (`get_users`) :
+  écriture non retrouvée → `error` « écriture non confirmée à la relecture ». Idempotent (ajout rejoué = succès, suppression d'un absent = succès). Jusqu'à 5 demandes enchaînées par
+  contact. Nom tronqué à 24 octets.
+- **Le code (PIN) transite en clair vers l'agent** (la pointeuse le stocke ainsi) mais n'est conservé que le temps de l'envoi : retiré de la meta dès le résultat, l'annulation ou
+  l'expiration (`dropPin`), jamais renvoyé au navigateur (`publicBadgeCmd` ne garde que `pinChange: 'set'|'clear'`), jamais journalisé ; l'agent n'envoie à Planning que
+  `hasPin` (`user_payload`), jamais le mot de passe lu. La liste `devUsers` (slot, UserID, nom, badge, hasPin, privilege) est tenue à jour à chaque lecture (`noteDevUsers`).
+- **Supprimer ne supprime aucun pointage** déjà dans Planning (la pointeuse les affiche « INCONNU », comme le n° 11) ; l'association reste dans la liste.
+- **Journal** = la file : qui a demandé, qui a confirmé, quand, avant → après (`summary`), sans le code ; une ligne de journal serveur (`console.log`) par résultat.
+- **Mise à jour** : `bash deploy.sh` — l'agent `zk-sync` doit être **reconstruit** (sinon il n'envoie ni `slot` ni `hasPin` : « liste pas encore lue »). Aucun nouveau fichier serveur (Dockerfile inchangé).
+- **Non testé sur la vraie pointeuse** (inaccessible depuis le cloud) : `set_user`/`delete_user` de pyzk 0.9 sont écrits d'après sa documentation ; la relecture détecte toute écriture
+  sans effet. À essayer d'abord avec un salarié factice (« TEST »). Point à surveiller : `set_user` sur un salarié **existant** ne doit pas effacer ses empreintes (comportement du firmware
+  non garanti) — sans objet pour un salarié créé par l'appli, qui n'en a pas.
+- Tests (scratchpad) : `badge_test.js` (41 assertions sur un vrai SQLite : refus, UserID, PIN jamais exposé ni conservé, livraison unique, résultat, expirations),
+  `agent_badge_test.py` (23 assertions avec un faux module `zk` : ajout, modification, suppression, refus sans écriture, relecture, idempotence, enchaînement),
+  `badge_ui.js` (Playwright sur serveur réel : liste, doublon à la frappe, préparation, confirmation, livraison à l'agent, résultat, association appliquée, 390 px sans débordement).
+
+### Pause à confirmer / Pause longue (v1.117.0)
+
+Cas réel (Cyril, 07/10) : une pause pointée que personne ne referme (retour non badgé) laissait la personne « En pause » alors qu'une tâche était déjà
+ouverte à son nom. Demande validée sur maquette : **proposer** le retour, jamais le créer seul. Tolérance 15 min, compteur d'en-tête, confirmation **une
+personne à la fois** (pas de « Tout confirmer »).
+
+- **Calcul à la lecture, rien n'est stocké ni pointé automatiquement.** `presencePauseHint(uid, sum, exp, now, st)` (jour courant seulement, jamais pour un salarié
+  au forfait, seulement si le statut du jour est « pause ») renvoie : `{kind:'confirm', time, taskLabel, pauseStart}` si une séance de tâche de CETTE personne
+  (`presenceSessionOwner`) s'est ouverte **strictement après** le début de la pause et avant maintenant (la plus ancienne retenue) ; sinon `{kind:'long', pauseMin,
+  planned, pauseStart}` si la pause dépasse la pause prévue + tolérance ; sinon `null`. Pause prévue = créneau de l'horaire qui contient/précède le début de la pause
+  (`presencePlannedPauseMin`), sinon 15 min (`PAUSE_HORS_CRENEAU_PREVUE_MIN`).
+- **Réglage** `config.pauseLongueTolMin` (15, 0–240 ; `migrateState` en `=== undefined`, `updateConfig` explicite) : Paramètres → Alertes & seuils → « Pauses pointées »
+  (`SETTINGS_HELP.pauseLongue`).
+- **Page Présence** : pastille « Pause à confirmer » (+ ligne « Tâche X ouverte à HH:MM — retour probable ») ou « Pause longue » (« 2 h 41 pour 15 min prévues »), frise
+  (`pr-seg-sug` vert pointillé = retour probable, `pr-seg-longp` hachure rouge), tuiles « À confirmer » / « Pause longue » (« En pause » exclut les pauses à confirmer),
+  boutons **« ✔ Retour à HH:MM »** et « Autre heure… » (`presence-return-open`). L'anomalie « tâche en cours sans présence pointée » est supprimée quand un indice existe
+  (même constat, pas deux alertes).
+- **Confirmation** (`openPresenceReturn` / `renderPresenceReturnModal` / `submitPresenceReturn`, `presenceReturnDraft` transitoire) : heure modifiable, motif (défaut « Oubli de
+  badge »), aperçu « Sera ajouté : Fin de pause à … » ; envoi par `POST /api/presence/correction/batch` (op `add`, `pause_end`, `source:'manuel'`, commentaire « Retour de pause
+  confirmé à HH:MM (tâche … ouverte à cette heure) ») — donc **traçable et annulable** depuis le journal du jour, jamais une modification. Pas de route serveur nouvelle.
+- **Compteur d'en-tête** (`presencePausesToConfirm`, badge « ⏸ N pause(s) à confirmer » → page Présence), affiché même si l'alerte de pointage est désactivée.
+- **Salarié** (« Mon pointage ») : bandeau « Vous semblez être revenu de pause à HH:MM » avec « Demander ce pointage (HH:MM) » (`presenceSelfReturnRequest`, route
+  `/api/presence/correction`, statut `a_valider`, validée par un superviseur ; un superviseur/admin qui le fait pour lui-même est validé d'office) et « Autre heure… » ;
+  masqué si une demande `pause_end` est déjà en attente (note « demande en attente »).
+- Test (scratchpad `pause_ui.js`, `pause_ui2.js`, Playwright sur serveur réel, pause 10:05 + tâche ouverte 10:20) : forfait = aucun indice, pastille/compteur/frise,
+  modale → `pause_end 10:20` avec commentaire, pause longue sans tâche, bandeau salarié + demande envoyée, 390 px sans débordement.
+  `period_test` 17/17 ; `presence_test`, `fiche_pres_test`, `fiche_test` ont chacun 1 échec **déjà présent avant** (données de l'export du 06/10 / date du jour).
+
+### Salariés de la pointeuse regroupés par nom (v1.118.0)
+
+Constat (capture) : dans Présence → ⏱ TimeMoto → « Association des salariés », chaque salarié apparaissait deux fois, et « Sbastien » / « Sébastien » comme deux
+personnes. Cause : `timemoto_meta.users` mélange deux sources — les identifiants **TimeMoto Cloud** (uuid) et ceux de la **pointeuse** (`zk:N`, nom sans accent : le
+firmware supprime « é ») — et une même personne figure sous les deux. L'ancienne suggestion par le nom se bloquait d'ailleurs (« ambiguïté » : deux entrées pour le même salarié).
+
+- **Regroupement d'affichage uniquement, rien n'est fusionné dans les données** : `userMap`, `ordreIds` et `timemoto_punch_refs` gardent CHAQUE identifiant (supprimer ou
+  renommer un id rattacherait un historique au mauvais salarié). `timemotoGroupUsers(allTm, userMap)` rapproche les entrées par deux clés (`timemotoNameKeys` : nom sans
+  accent, et nom « ASCII seul » où les lettres accentuées sont supprimées comme le fait la pointeuse) — « Sébastien » = « Sbastien » = « SEBASTIEN ». Deux homonymes déjà
+  associés à des salariés Planning **différents** ne sont jamais regroupés. Les entrées « (salarié TimeMoto xxxx…) » (id sans nom) ne sont jamais regroupées.
+- Une ligne par personne : nom retenu = celui avec accents, sinon le plus long ; mention « · TimeMoto Cloud + pointeuse n° 10 » ; le choix du salarié Planning
+  (`setTimemotoUserMapMany`) et la case « par ordre » (`setTimemotoOrdreMany`) s'appliquent à **tous** les identifiants de la ligne (`data-tm-ids`, séparés par `|`).
+- **Suggestions par le nom** (`timemotoSuggestUid`, `applyTimemotoSuggestions`) calculées sur les groupes (noms concaténés) : elles fonctionnent enfin pour un salarié présent
+  sous deux identifiants, y compris sans accent côté pointeuse.
+- Test (scratchpad `merge_test.js`, 13 assertions ; `merge_ui.js` Playwright : 5 entrées → 3 lignes, suggestions appliquées aux 2 identifiants, « par ordre » sur les 2, 390 px sans débordement).
+
+### Trier les pointages avant de les importer (v1.119.0)
+
+Demande : importer tous les pointages de la pointeuse et choisir ceux à garder ou non. Maquette validée avant codage (artefact « Tri des pointages avant import »),
+puis « Valide » : bouton à côté d'« Importer » (la lecture automatique de l'agent n'est pas triée), passage écarté mémorisé, tout coché sauf les doubles.
+
+- **Deux entrées** (page Présence → ⏱ TimeMoto, administrateur) : « 🔀 Trier avant d'importer » à côté d'Importer pour le **fichier CSV** (période = derniers jours, ou depuis la date du
+  champ « Reprendre l'historique depuis le »), et « 🔀 Trier avant d'appliquer » sur l'aperçu d'une **récupération de période**. Pas de tri pour l'import TimeMoto Cloud (autres identifiants).
+- **Serveur** (`timemotoSync.js`, route `POST /api/presence/timemoto/triage`, `requireAdmin`, actions `start | interpret | apply | cancel`) :
+  `triageBegin/triageStart` rangent les événements en réserve (meta `triage`, 1 h) et renvoient une carte par (salarié associé, jour) : passages bruts (touche lue, sens, case cochée), résultat
+  calculé, passages déjà écartés (`prevExcluded`), ajouts déjà faits. Les journées de salariés non associés sont comptées à part, jamais listées ni importées.
+  **`deviceGroupInterpret`** (extrait de `syncDeviceRows`) est le MÊME code pour l'import et pour l'écran : `triageInterpret` recalcule le résultat de chaque journée avec les cases
+  courantes (une requête par action, pas par case) — le navigateur n'interprète jamais lui-même les passages (pas de seconde copie de la logique arrivée/pause/départ).
+  `triageApply` valide tout AVANT d'écrire (journée dans la période triée, salarié associé, ajout sur le bon jour et pas dans le futur, passages inconnus de la réserve ignorés), mémorise les
+  décisions puis lance `syncDeviceRows` sur la période de la réserve : un seul chemin d'écriture, idempotent, annulations tracées. Une récupération triée passe à l'état `applied`.
+- **Deux mémoires** (meta, purgées au-delà de 400 jours), appliquées à **toutes** les lectures de la pointeuse par `syncDeviceRows` (agent, CSV, récupération) :
+  `excluded` (clé `uid|ts`) — passage filtré avant interprétation, jamais réimporté ; la journée reste réconciliée, donc un pointage déjà importé qui n'a plus de passage derrière lui est
+  **annulé** (ligne `cancel`, rien n'est supprimé) ; `added` — passage manquant ajouté à la main, injecté DANS la séquence de la journée : en lecture « par ordre » il décale la parité comme un
+  vrai passage, en lecture « selon la touche » son sens se déduit de l'état de présence juste avant (`assignAddedKinds` : présent → sortie, absent → entrée). Il est enregistré comme pointage de
+  source `timemoto` avec le commentaire « Passage ajouté à la main lors du tri des pointages (oubli de badge) » (il doit rester rattaché à la journée pour être réconcilié si on le retire).
+- **Rétablir un passage écarté** : rouvrir le tri sur la même période — il apparaît décoché « écarté avant » ; le recocher le rétablit (pas de liste dédiée dans le journal de la journée :
+  ces passages ne sont pas des pointages).
+- **Écran** (`renderTmTriageModal`, `tmTriage` transitoire) : compteurs (lus / retenus / écartés / journées à vérifier), filtres « À vérifier » et salarié, « Double si moins de N min »
+  (marqueur et bouton « Écarter les doubles probables » ; réglage local au tri), « Tout retenir », une carte par journée (40 d'abord, « Afficher plus ») avec cases, note par passage (touche
+  différente du sens lu, double, non utilisé), frise et résultat (arrivée, départ, présence, pauses), « ＋ Ajouter un pointage manquant » (heure modifiable). **Par défaut tout est coché sauf les
+  doubles** (moins de N min après le précédent, N = réglage anti-double, 3 par défaut) et les passages écartés lors d'un tri précédent. Pour un salarié lu « par ordre de passage », un double
+  gardé coché est tout de même ignoré par le moteur (règle `antiDoubleMin`) : la ligne l'indique (« double ignoré ») plutôt que de promettre l'inverse. Fermeture par ✕/Annuler/Échap avec
+  confirmation si des décisions ont été prises ; un clic à côté ne ferme pas (le travail serait perdu).
+- Aucun nouveau fichier serveur (Dockerfile inchangé).
+- Tests (scratchpad `triage_test.js`, 30 assertions sur un vrai SQLite : aperçu sans écriture, double décoché d'office, journée impaire puis complétée par un ajout, application = ce qu'affichait l'écran,
+  idempotence et décisions conservées aux lectures suivantes, rétablissement, refus (hors période, autre jour, non associé), réserve expirée, journée entièrement écartée = annulations tracées, lecture selon la
+  touche ; `tri_ui.js` et `tri_rec.js` Playwright sur serveur réel : CSV et récupération de période, recalcul à chaque case, filtres, 390 px sans débordement). `seq_test` 14, `recover_test` 37, `missing_test` 13,
+  `badge_test` 41 inchangés.
 
 ## Onglet « Pointages »
 
@@ -1744,6 +2465,30 @@ aucun effet visible. Il faut donc un second outil qui édite `sessions[]` **elle
   `sessions[]` (jamais un clone) : `submitCorrectSessions()` reconstruit `o.sessions` entièrement à
   partir du draft plutôt que de raccorder par indice à l'ancien tableau, pour rester correct même
   après une suppression (qui décale les indices suivants).
+- **« ➕ Ajouter une session manquante » (v1.94.0).** Retour : un salarié (Romain, pièce R045883634) a oublié de pointer
+  un travail. Jusque-là la pop-up « Corriger les sessions » ne savait qu'éditer/supprimer des sessions DÉJÀ
+  enregistrées : aucun moyen de créer une période jamais démarrée dans l'appli. `addCorrectSessionRow()` ajoute une
+  ligne `{ orig:null, added:true, open:false }` au brouillon (début = heure d'ouverture de la session en cours, sinon
+  maintenant, moins 1 h ; fin = cette heure ; opérateur = assigné, sinon identité active), badge « nouvelle ».
+  `submitCorrectSessions` : début et **fin obligatoires** pour une ligne ajoutée (jamais une session ouverte créée à la
+  main), opérateur obligatoire, fin pas dans le futur ; **avertit** (`confirm`, sans bloquer) si elle chevauche une autre
+  session de la même personne (les sessions s'additionnent, voir « Travail à plusieurs »). À l'enregistrement,
+  `o.sessions` est trié par début (« qui réalise » = dernière session, les trous de pause se calculent par début) et
+  `debutReel` recule au début de la première session si celle-ci est antérieure (l'ancrage du planning, `manualStart`,
+  n'est pas touché). Les heures hors horaire/déjeuner ne sont pas comptées (`countedHoursBetween`) : une session
+  ajoutée de 13h40 à 15h39 ne compte pas la pause de midi. Supprimer une ligne ajoutée ne demande pas de confirmation.
+  Toujours limité aux pièces `en_cours`/`en_pause` sans lot fusionné (voir `isSessionsCorrectable`) ; pour une pièce
+  `termine`, « ✎ Corriger » (début/fin/durée) reste l'outil. Vérifié (Playwright, export réel) : ligne ajoutée
+  13:40→15:39 pour R045883634 (Tour), tri, `debutReel` reculé, session ouverte intacte, aucune erreur.
+- **Opérateur d'une session ouverte modifiable (v1.93.0).** Retour : un salarié a pointé sur le compte d'un
+  collègue (oubli de changement d'identité) et il fallait d'abord mettre la tâche en pause pour corriger. Dans la
+  pop-up « Corriger les sessions », la ligne de la session ouverte affiche désormais « ouverte depuis … » et un
+  **sélecteur d'opérateur** ; ses horaires restent intacts. `updateCorrectSessionField` n'accepte pour une session
+  `open` que le champ `operatorUserId` ; `submitCorrectSessions` écrit l'opérateur sur la **même référence**
+  (`s.orig`, jamais un clone : le décompte en direct la lit) — le temps déjà écoulé est crédité à la nouvelle
+  personne par `computeProductionTimeByUser`. L'opérateur ASSIGNÉ de la pièce (`o.operatorUserId`) n'est pas touché.
+  Toujours supprimable/fusionnable : non (inchangé). Pièce fusionnée : toujours exclue (voir plus haut).
+  Vérifié (Playwright) : changement enregistré, horaires et référence identiques, aucune erreur.
 - **Session actuellement ouverte (`fin: null`) : jamais éditable, jamais supprimable.**
   `updateCorrectSessionField`/`removeCorrectSessionRow` refusent tout net (silencieusement pour
   l'édition — le champ est simplement absent du formulaire pour cette ligne ; avec une alerte
@@ -1849,6 +2594,112 @@ référence. Un second mode d'affichage complète (ne remplace pas) la liste.
 - Le compteur d'en-tête (« N pointages affichés » / « N références affichées ») et le message
   d'état vide s'adaptent au mode actif, `countNote` calculé une seule fois plutôt que dupliqué aux
   deux endroits qui l'utilisent.
+
+- **Lot fusionné ventilé entre ses références (v1.104.0).** Constat réel (C026-0727, lot de 2 pièces à 3,5 h, 7 h au total) :
+  `computeAllPointages` émet UNE ligne par lot (celle du membre représentant) avec le temps du LOT entier, et la vue « Par
+  référence » groupe par nom de pièce — les 7 h tombaient donc sur 5789170-A, 5789171-A n'avait rien. Les totaux par salarié/poste/
+  commande étaient justes (lot compté une fois), seule la ventilation par référence était fausse.
+  - La ligne porte `membres` (`null` hors lot) : par membre `piece`, `theoH` (T.U. × quantité / 60 PROPRE au membre — jamais
+    `dureeOverrideH`, somme du lot) et `rebutQty` propre. `rebutQty`/`rebutDetails` de la ligne = somme sur tout le lot (avant,
+    seuls les rebuts du représentant comptaient dans la liste, l'historique et le camembert).
+  - `computePointagesByReference` ventile prévu, réel, pause et coût réel du lot **en une seule étape** :
+    `part_i = total_lot × theoH_i / Σ theoH` (temps théoriques tous nuls : parts égales). Le total du lot est exactement conservé
+    (testé : somme des références = somme des lignes). Pas de « diviser par le nombre de pièces puis prorata » : deux étapes ne
+    sommeraient pas au total dès que les temps théoriques diffèrent (2 h et 5 h → 2/7 et 5/7, pas 3,5 h chacune). Les rebuts, déclarés
+    par pièce, sont attribués tels quels. Un pointage compte pour 1 sur chaque référence membre (une seule fois si deux membres
+    portent la même référence). Pièce non fusionnée : inchangé (part de 100 %).
+  - Pastille ⚖ à côté du prévu/réel d'une référence qui inclut une part de lot (`lotShare`), infobulle explicative. La recherche de
+    la vue Liste retrouve aussi un lot par la référence de ses autres membres (le clic sur une référence mène donc à sa ligne).
+  - **Le temps réel du lot reste celui saisi/mesuré** : un lot clos avec le temps prévu accepté tel quel (7 h non mesurées) ventile
+    ces 7 h ; le corriger passe par ✎ Corriger (propagé au lot) — voir v1.103.0 pour les clôtures futures.
+  - Test (scratchpad `lot_ref_test.js`, 13 assertions) : 3,5 h/3,5 h, prorata 2 h/5 h, coût, rebuts, total conservé, temps nuls,
+    même référence deux fois.
+
+### Détail des temps passés depuis le clic droit du planning (v1.105.0)
+
+Demande : depuis le planning visuel, obtenir en un clic droit le détail des temps passés sur une tâche.
+**Aucune nouvelle pop-up** : l'entrée « ⏱ Détail des temps passés » (`ctx-time-detail`, `renderContextMenu`) ouvre la
+pop-up « Détail des horaires » déjà utilisée par Temps de production (`showTempsProdSessions`, séances, pauses, archive
+`session_history` chargée à la demande, prévu vs réalisé) — une seule source. Proposée sur `en_cours`/`en_pause`/`termine`,
+jamais sur `a_faire` (aucun temps à détailler). `renderTempsProdSessionModal()` fait désormais aussi partie de la composition
+de la page Planning (`render()`), pas seulement de Temps de production.
+- **Résumé ajouté en tête de la pop-up** (profite aussi à la page Temps de production) : « Temps compté X sur Y prévus » —
+  `dureeReelleH` figé pour une pièce terminée, sinon `opElapsedHours` en direct ; ventilation par personne quand plusieurs ont
+  travaillé (`dureeReelleParOperateur`, sinon `computeSessionsHoursByOperator`) ; mention « lot fusionné : temps du lot entier ».
+  Rappel affiché : les durées du tableau sont des durées d'horloge, le temps compté ne retient que les heures d'ouverture du
+  poste (et les exceptions déclarées) — d'où un écart possible entre la somme des lignes et le temps compté.
+- Test (scratchpad `timedetail_test.js`, 7 assertions sur l'export du 06/10) : entrée de menu par statut, résumé, tableau, lot.
+
+### Bouton « ⏱ Détail » dans Pointages et chronologie Début / Pause / Reprise / Terminé (v1.108.0)
+
+Demande : un bouton détail directement dans la vue Pointages, et le type de chaque pointage (début, pause, reprise, terminé).
+Pas de nouvelle pop-up : le bouton (`data-action="show-temps-prod-sessions"`, une ligne = un bouton, tous statuts sauf rien à
+détailler) ouvre la pop-up « Détail des horaires » déjà utilisée par Temps de production et le clic droit du planning
+(`showTempsProdSessions`) ; `renderTempsProdSessionModal()` est donc aussi composée dans la page Pointages (`render()`).
+- **`buildPointageEvents(o, sessions)`** — purement dérivé de `sessions[]` ou de l'historique archivé, rien n'est stocké :
+  ▶ **Début** (première séance), ⏸ **Pause** (fin de séance quand personne d'autre n'est dessus), ▶ **Reprise** (séance qui suit
+  une pause), ➕ **Rejoint** / ⏹ **Quitte** (travail à plusieurs : séance qui chevauche une autre — la fin d'une séance n'est PAS une
+  pause tant qu'un collègue est encore dessus), ✔ **Terminé** (dernière fin d'une tâche `termine` sans séance ouverte).
+  Une séance encore ouverte n'a pas d'événement de fin. Une pause déjeuner/hors horaires automatique n'est pas distinguable d'une
+  pause manuelle une fois la séance refermée : elle s'affiche « Pause ». Sans séance (tâche close avant l'archivage) : repli sur
+  `debutReel`/`finReel`, seulement Début/Terminé, marqués « ≈ ».
+- `renderPointageEventsHtml` : section « Chronologie des pointages » sous le tableau des séances (jour, heure, type coloré,
+  opérateur — celui de la séance, repli sur l'assigné), avec le décompte pauses/reprises. Masquée pendant le chargement de
+  l'historique.
+- Test (scratchpad `ev_test.js`, 11 assertions) : simple/en pause/séance ouverte/à plusieurs/repli, pop-up sur l'export du 06/10,
+  bouton sur chaque ligne de Pointages.
+
+### Réouverture d'une tâche : temps antérieur conservé et historique retrouvé (v1.109.0)
+
+Constat réel (C026-0666, chaudronnerie, 25,68 h, terminée le 01/10 puis remise « À faire » le 06/10 parce qu'elle n'était pas
+finie) : `applySingleStatusChange` (branche `a_faire`) vidait `debutReel`/`finReel`/`sessions[]`/`dureeReelleH`/
+`dureeReelleParOperateur` — le « Terminé » disparaissait, la ligne quittait la page Pointages (qui ignore les tâches `a_faire`), le
+détail des temps n'était plus proposé sur une tâche « À faire », et surtout les 25,68 h ne comptaient plus nulle part (tâche, coût,
+temps de production de septembre). Les séances restaient bien archivées dans `session_history`, mais la pop-up ne les chargeait que si
+`sessions[]` était vide localement : dès la première nouvelle séance, elles n'étaient plus affichées. Demande : implémenter les deux
+correctifs proposés.
+
+- **1. Temps antérieur conservé.** Nouveaux champs de pièce (`migrateState`) : `tempsAnterieurH` (0), `tempsAnterieurParOp`
+  (`{ [uid]: h } | null`), `reouvertures[]` (`{ le, statut, debut, fin, h, sessions[], recupere? }`, une entrée par réouverture, avec les
+  séances de la passe qui se termine : la trace ne dépend donc pas de l'archive serveur). À la réouverture, depuis `termine` :
+  `tempsAnterieurH = dureeReelleH` (qui inclut déjà un éventuel antérieur précédent — jamais de double comptage) ; depuis
+  `en_cours`/`en_pause` : séances + antérieur existant. Sous 0,001 h rien n'est conservé. **Une tâche portant une `declaration`
+  garde l'ancien comportement** (temps déclaratif non conservé : « ne survit pas à la réouverture »).
+  - `pieceTempsPasseH(o, st)` = `dureeReelleH` si terminée (il inclut l'antérieur), sinon `opElapsedHours` + antérieur. Utilisé par
+    Pointages (`computeAllPointages`, qui liste maintenant aussi une tâche `a_faire` ayant un temps antérieur, badge « ↺ Rouverte (À
+    faire) », tri `triDate`), le coût (`pieceCoutReel`), la note « écoulé » du tableau des tâches et la pop-up. `dureePasseeH` et
+    `backfillDureeReelle` en tiennent compte, `hasNoRecordedTime` aussi (une tâche rouverte avec du temps antérieur se clôture
+    directement, sans pop-up de temps déclaré).
+  - **À la clôture** : `dureeReelleH = séances + antérieur`, `dureeReelleParOperateur` = fusion de la répartition des séances et de
+    `anterieurParOp(o)` (répartition figée, sinon opérateur assigné) — la somme par opérateur égale toujours le total.
+  - **`opElapsedHours` n'a volontairement PAS changé** : le moteur de planification (reste à faire = durée − `opElapsedHours`, lignes 4156/
+    4225/4307) ignore le temps antérieur. Une tâche rouverte puis relancée est donc replanifiée sur sa durée entière, pas sur
+    « durée − déjà passé » (qui, ici, 20 h − 25,7 h = 0, l'aurait fait finir « maintenant » alors qu'elle n'est pas finie). À reconsidérer si on
+    veut un « reste à faire » réel.
+  - **Temps de production / poste** (`computeProductionTimeByUser`/`ByMachine`) : `anterieurHoursInPeriod` ajoute la part antérieure
+    tant que le total n'est pas porté par `dureeReelleH` (tâche non terminée, ou terminée avec séances encore locales) — répartie jour par
+    jour au prorata des séances d'AVANT (archive chargée par `ensureArchivedSessions`, sinon `reouvertures[].sessions`, via
+    `archivedPieceHoursInPeriod` appelée avec un clone portant `tempsAnterieur*`), sinon en bloc à la date de la dernière passe. Une
+    tâche reclôturée sans séance locale retombe sur le chemin habituel (`dureeReelleH` réparti sur TOUTES les séances archivées, anciennes
+    et nouvelles).
+- **2. Historique retrouvé.** Pop-up « Détail des horaires » (`renderTempsProdSessionModal`) : séances = archive serveur + passes
+  conservées dans `reouvertures[]` + séances actuelles, **dédoublonnées** (`sessionKey` = début|fin|opérateur) ; l'archive est chargée
+  pour toute tâche non terminée ou rouverte (plus seulement quand `sessions[]` est vide). Ligne « ↺ Rouvert le … — X h déjà passées
+  conservées » **à la place** du trou de pause (`renderSessionRowsHtml`, paramètre `markers`) ; résumé « Temps compté … (dont X h passées
+  avant réouverture) ». Le menu contextuel propose le détail sur **toute** tâche, « À faire » comprise (« ⏱ Historique des temps passés
+  (avant réouverture) »). `buildPointageEvents` : fin de passe clôturée = « ✔ Terminé », puis « ↺ Rouvert (remis À faire) », puis « Reprise ».
+- **Réouvertures faites AVANT la v1.109.0** (temps antérieur jamais conservé, séances seulement dans l'archive) : la pop-up propose, aux
+  superviseurs et si l'archive contient des séances absentes de l'état, « ↺ Reprendre ces X h comme temps antérieur »
+  (`recoverTempsAnterieur`) — recalcule le temps avec les règles de clôture (`computeRecoverableFromHistory` : heures d'ouverture + exceptions),
+  `confirm()`, un seul `commit()`, appliqué aussi aux autres membres d'un lot fusionné, **idempotent** (plus proposé une fois
+  `tempsAnterieurH` posé). Entrée `reouvertures` avec `recupere:true` et `le:null` (date inconnue, marqueur « date non enregistrée »).
+- **Piège de l'outillage rencontré** : un script de modification qui calculait une sous-chaîne `s[s.index(a):s.index(b)]` avec `b` situé AVANT `a`
+  obtenait une chaîne vide, et `str.replace('', x)` l'a insérée entre chaque caractère (fichier de 1,2 Go). Toujours vérifier `j > i` et que
+  l'ancre est non vide avant un `replace` de bloc ; `git checkout` a permis de repartir proprement.
+- Tests (scratchpad `reopen_test.js`, 36 assertions sur l'export du 06/10 : migration, réouverture depuis terminé/en cours, déclaration,
+  0 h, Pointages, temps de production avec/sans archive, clôture = antérieur + séances, somme par opérateur, 2e réouverture sans double
+  comptage, pop-up, marqueurs, chronologie, reprise manuelle et idempotence) ; `timedetail_test.js` mis à jour (détail aussi sur « À
+  faire ») ; rendu vérifié (Playwright, avant/après reprise).
 
 ## Pauses de production mises en évidence
 
@@ -2466,6 +3317,8 @@ existante (`backup.js`), mais pour du contenu plutôt qu'un export complet des d
     suffisant pour un simple compteur de rapport (on ne veut qu'un signal "il y a une pause suspecte
     en ce moment", pas le détail complet affiché par la page Risques de retard), et évite de
     dupliquer une fonction plus élaborée pour ce seul besoin. Même seuil de bruit qu'ailleurs (1h).
+  - `tachesDisponiblesNonDemarrees(state, now, seuilJours)` (v1.100.0) — voir « Tâches disponibles mais pas démarrées » : même
+    sélection que le client, sans moteur ; section ajoutée au rapport tant que `config.dispoAlerteJours` n'est pas 0.
   - `buildReportText(state, now, since, frequenceLabel)` — texte simple (pas de HTML, comme les
     autres e-mails de l'application), une section par métrique ci-dessus, chaque liste tronquée aux
     15 premiers éléments (« … et N autre(s) ») pour ne jamais produire un e-mail interminable sur un
@@ -3736,6 +4589,47 @@ libérer) doit se propager à tout le groupe — voir `propagateFusionGroupField
   « 📌 Figée » — pour une pièce fusionnée, il regarde `fusionPinned`, jamais la simple
   présence de `dureeOverrideH` (toujours posé sur un groupe, figé ou non).
 
+### Regroupement entre postes à l'import personnalisé (v1.106.0)
+
+Demande : fusionner à l'import des tâches de postes **différents** (ex. Ajustage + Chaudronnerie) en un seul lot. Quatrième
+mécanisme produisant un `fusionGroupId`, après les trois ci-dessus ; **import personnalisé uniquement** (pas de pendant dans
+« Nouvelle commande », refusé par l'utilisateur).
+
+- **Pourquoi tous les membres changent de poste.** Un lot non figé est planifié comme UN SEUL candidat sur UN SEUL poste
+  (`groupBuckets` de `computeSchedule`) : laisser des membres sur Ajustage et d'autres sur Chaudronnerie rendrait le temps, le coût
+  et le taux d'occupation par poste incohérents avec la réservation réelle. Les membres sont donc ramenés sur un poste **hôte** =
+  celui qui totalise le **plus de temps de production** (somme `tempsUnitaire × quantité`) parmi les lignes du lot (règle voulue
+  par l'utilisateur, pas un choix manuel ; égalité = premier rencontré). Si `etape` était vide, elle reçoit le nom du poste
+  d'origine (traçabilité) ; opérateurs et `sousTraitance` ne sont pas touchés.
+- `cs.crossGroups` (`[{ id, machines:[machineId], scope:'commande'|'piece'|'tout' }]`, transitoire, **enregistré dans le profil
+  d'import** comme `groupByValue` ; `applyImportProfile` retombe sur `[]` pour un profil antérieur). Portée par défaut « un lot par
+  commande » (`'commande'` = par groupe d'aperçu, donc par campagne ; `'piece'` = par nom de pièce dans une commande ; `'tout'` =
+  tout l'import). UI : bloc « Regroupements entre postes » de l'étape Postes (cases par poste retenu — hors postes de
+  sous-traitance —, radios de portée, « ＋ Ajouter », « 🗑 Retirer »).
+- `computeCrossGroupBuckets(groups, crossGroups)` : calcul **pur** sur les lignes de l'aperçu (poste COURANT de chaque ligne : les
+  corrections de poste faites à l'aperçu sont donc prises en compte). Une ligne n'appartient qu'à un regroupement ; sous-traitée/hors
+  planning exclue ; un lot exige ≥ 2 lignes **et** ≥ 2 postes distincts (deux lignes d'Ajustage seules ne fusionnent pas).
+  `applyCrossGroupsToState(targetState, groups, crossGroups)` l'applique sur un état cible : appelée dans `applyFn` de
+  `confirmCustomImport` (rejouable) après la fusion par étiquette et AVANT `capturePrevisionAuDemarrage`, et dans
+  `simulateImportStarts` (« Début/Fin au mieux » reflètent donc le lot). Si une ligne était déjà dans un lot (case « Regrouper »), tout
+  ce lot est absorbé ; durée du lot = somme des durées PROPRES (jamais `dureeOverrideH`, déjà cumulée : doublerait). Idempotent au rejeu.
+- Aperçu : bandeau « 🔗 N lot(s) entre postes » (lignes, temps par poste, hôte) et pastille « 🔗 lot → Hôte » sous le poste de chaque
+  ligne ; avertissement ambre quand le lot mêle plusieurs **phases** — à l'intérieur d'un lot l'ordre entre phases n'est plus imposé
+  (dépendances internes retirées), d'où le conseil de regrouper des lignes de même phase.
+- Test (scratchpad `cross_test.js`, 26 assertions sur l'export du 06/10 ; `cross_render.js`, 4) : portées, hôte = plus grand temps,
+  < 2 postes, sous-traité exclu, absorption d'un lot existant, rejeu stable, planification sur l'hôte avec début commun, simulation, profil.
+
+### Étape « Postes » de l'import personnalisé refaite en trois cartes (v1.122.0)
+
+Retour : la page (association des postes, regroupements entre postes, opérateurs par défaut) était « brouillonne » — trois sujets à la suite, de longs paragraphes d'aide en tête, tous les postes listés. Maquette validée (artefact « Import personnalisé »). **Présentation seulement : aucune règle, aucun champ de `customImportState`, aucune action existante ne change.**
+
+- Trois cartes `.imp-card` : « Postes du fichier » (une ligne par valeur : valeur → poste → pastille d'état → options), « Regroupements entre postes », « Opérateur par défaut ». Les longues explications passent derrière un « ? » (`<details class="imp-help">`, ouvert/fermé mémorisé par `openMiniDropdowns` comme les autres menus : un `render()` ne le referme pas).
+- **Pastille d'état** : « Associé » (poste choisi), « Sous-traité » (pas de poste mais case Sous-traité : ces lignes sont importées sans poste), « Ignoré » (ni l'un ni l'autre : lignes non importées). Case « Fusionner » (ex-« Regrouper », `groupByValue`) grisée sans poste ; « Sous-traité » reste cochable sans poste (la règle existante). `toggle-import-sous-traitance-value` fait désormais un `render()` (la pastille en dépend).
+- **Les cases restent de vraies `<input type="checkbox"/"radio">`** habillées en puces/segments (`label.imp-chip`, `.imp-segopt`, états par `:has(input:checked)`) : mêmes `data-action`, mêmes gestionnaires `change` qu'avant. Poste choisi = « Ignorer cette valeur » (valeur vide) au lieu de « — à associer — ».
+- Regroupements : seuls les postes **associés** (hors sous-traitance) sont proposés ; avertissement ambre seulement quand ≥ 2 postes sont cochés ; portée en 3 segments. Opérateurs par défaut : postes utilisés d'abord, les autres derrière « Afficher les autres postes (N) » (`cs.showOtherOps`, action `toggle-import-other-ops`, transitoire).
+- Barre d'étapes dans l'en-tête de la pop-up (Fichier ✓ · Colonnes · Postes · Aperçu, `.imp-steps`, masquée sous 760 px) et pied collant avec le bilan (« 4 valeurs · 2 associées · 1 ignorée · 1 regroupement ») à côté de « Continuer ».
+- Test (scratchpad `imp_ui.js`, Playwright) : 3 cartes, 4 lignes, pastille « Sous-traité » après cochage, valeur dissociée = « Ignoré » + Fusionner grisé, bilan, aide ouverte/fermée, autres postes, portée du lot, aucune erreur.
+
 ## Recherche/isolement de commande — rien ne doit masquer un résultat trouvé
 
 La barre `#commande-search-input` (au-dessus de "Tâches en cours") filtre à la fois « Tâches en
@@ -4113,6 +5007,112 @@ seulement celles à risque. Pop-up retenue (pas de page dédiée), **sans impres
   contextuel `ctx-parcours`, bouton des cartes de la page Risques). Vérifié (Playwright) : bouton absent des
   cartes, présent dans la barre ; pièce tapée → 1 frise + barre de filtre ; numéro de commande → 3 frises ;
   « zzzz » et saisie vide → messages attendus, aucune erreur.
+
+### Parcours en plein écran et analyse de production (v1.120.0)
+
+Demande : rendre la pop-up Parcours « plus complète pour l'analyse de la production ». Constat sur C026-0728 : le Jet d'eau était fini le 17/09 et l'Usinage ne
+démarrait que 11 à 18 jours plus tard — l'information la plus utile n'apparaissait nulle part (la pop-up ne montrait que statut, dates et durée prévue). Maquette
+validée (artefact « Parcours enrichi »), pop-up **plein écran** (`.modal-overlay.settings-fullscreen` + `.modal-box.pcx-box` ; le défilement reste porté par `.modal-box`,
+donc `restoreModalScroll` conserve la position au changement de mode). **Rien n'est stocké, aucune route serveur** : tout se lit sur les pièces et le planning calculé.
+
+- **Calculs purs** (`parcoursAnalyse(chains, now)` → `{pieces, tot, reading}`, testables) : `parcoursStepStats` (prévu, compté, écart, pauses, opérateur réel, rebuts, coût,
+  retard de démarrage), `parcoursWait` (attente entre deux étapes d'une même pièce), `parcoursChainModel` (délai, attente cumulée, part travaillée).
+  Les tuiles et la lecture automatique portent sur les pièces AFFICHÉES (filtre de pièce pris en compte) ; l'export Excel, lui, prend toute la commande.
+- **Attente** : `reel` (fin réelle de l'étape précédente → début réel), `encours` (précédente finie, celle-ci pas démarrée : « en attente depuis N j », continue de croître),
+  `prevu` (dates du planning, en italique, jamais comptée dans les moyennes), `parallele` (même phase ou chevauchement : lots en parallèle, pas une attente). Rouge dès 5 j,
+  ambre dès 1 j. Jours calendaires (`calendarDurationLabel`), pas des heures ouvrées.
+- **Lot fusionné** : chaque membre porte le temps du lot ENTIER (`dureeOverrideH`, `dureeReelleH`, séances identiques) — il n'en reçoit ici que sa part, au prorata de son
+  temps théorique propre (`parcoursLotShare`, même règle que Pointages « Par référence » v1.104.0), pastille « ⚖ part du lot ». Les sommes retombent ainsi sur le total du lot,
+  sans dédoublonnage. Le temps théorique est cherché dans TOUTES les commandes (un lot peut en traverser plusieurs).
+- **Donnée absente = « — » ou rien, jamais 0** : pauses (`pauseN/pauseH` null quand `sessions[]` est archivée), temps d'une tâche clôturée sans temps mesuré (« temps non
+  mesuré »), sous-traitance (temps non compté). L'écart n'est calculé que pour une étape TERMINÉE (une étape en cours affiche « N % du prévu » : son prévu couvre toute la quantité).
+  « Qui » n'affiche l'opérateur réel (`dureeReelleParOperateur`, sinon séances) que s'il diffère de l'assigné. Les pauses sont en horloge murale (nuits comprises), comme Pointages.
+- **Part travaillée** = temps compté ÷ heures d'ouverture du poste écoulées entre le premier début et la dernière fin (ou maintenant si la pièce n'est pas finie), plafonnée à 100 %.
+- **Deux modes** (`parcoursViewMode`, préférence de navigateur `planning-atelier-parcours-mode`) : pastilles détaillées (une carte par pièce, étapes séparées par un trait d'attente) et
+  frise à l'échelle des dates (barre réalisée / en cours rayée / prévue hachurée, pointillés = attente, week-ends grisés, trait « maintenant »). Tri transitoire
+  (`parcoursModal.sort` : fichier, plus d'attente, délai, dépassement). « ⏱ Détail des horaires » ouvre la pop-up existante PAR-DESSUS (Échap et clic sur le fond ne referment
+  que celle-ci ; `renderTempsProdSessionModal()` est désormais aussi composée dans la page Risques). Export `exportParcoursExcel` : feuille « Parcours » (une ligne par étape) + « Synthèse ».
+- Test (scratchpad `parc_test.js`, 36 assertions : attentes réelle/en cours/prévue, sévérité, écart, rebut, opérateur réel, pauses null, lot réparti, totaux sans doublon, coût, lecture
+  automatique, tri, rendu des deux modes, export avec faux XLSX, vraie commande C026-0728 ; `parc_ui.js` Playwright sur serveur réel : plein écran, tuiles, scroll, mode mémorisé, tri,
+  détail par-dessus, Échap, recherche, 390 px sans débordement). `delivery_test` garde son échec déjà présent avant.
+
+- **Correctifs v1.120.1.** (1) Bouton « 🧭 Parcours » sans saisie ni commande isolée : la pop-up plein écran n'affichait qu'une ligne de texte (page vide). `renderParcoursModal` liste désormais les commandes ACTIVES (échéance la plus proche en tête, avancement, badge « Échéance dépassée »/« Retard estimé »/« Dans les temps » via `commandeDelayStatus`), un clic = `pickParcours`. Pendant une saisie, seule la liste de résultats du haut est affichée. (2) Vue d'ensemble, légende du pointage de l'équipe : « Hors horaire / à venir » était `#e4e7e4` sur fond `#f1f3f1`, quasi invisible — pastille et barres en `#b9c6d6` (bleu-gris, bordure sur la pastille). (3) Fiche salarié : le texte brut sous « Frise » est remplacé par une légende à pastilles colorées (mêmes classes `.sw` que la légende de la synthèse, plus `.sw.horaire` et `.sw.now`) — réflexe : une légende doit montrer la couleur qu'elle explique, pas la décrire.
+
+- **Échelle de temps commune du « Pointage de l'équipe » (v1.120.2).** Chaque ligne calculait son propre axe (du début de SON horaire à la fin de SON horaire) : 9h tombait à une abscisse différente d'un salarié à l'autre (Sébastien 7h→17h30, Simon 8h→17h15…), impossible de comparer deux personnes d'un coup d'œil. `renderTeamPointageSection` calcule désormais UN axe pour tout le bloc (du plus tôt au plus tard de tous les horaires et séances du jour, arrondi à l'heure ; 7h-18h sans aucun horaire) et le partage entre les lignes — les graduations (une sur deux au-delà de 12 h) tombent pile les unes sous les autres, la zone « hors horaire » (bleu-gris) montrant les heures où la personne n'est pas attendue.
+
+### Frise des retards et dérives de démarrage (v1.111.0)
+
+Demande : remplacer les tableaux « retards constatés » / « dérive des démarrages à venir » par une frise (début prévu → début réel, nombre de
+jours de retard) et brancher une recherche de pièce et/ou de commande. Maquette validée (frise 30 jours / semaine) puis codée **à la place** des quatre
+tableaux : mêmes données (`computeRetardDemarrageDetail`, `computeDeriveDemarrageAVenir`), même seuil 0,5 j, lot fusionné compté une fois.
+`computeRetardDemarrageParPoste` et les résumés par poste restent calculés (tuiles du haut de la page Risques) mais ne sont plus affichés en tableau.
+
+- **`renderRetardFriseHtml(constates, derives, now, searchQuery)`** (pur, testable) : une ligne par tâche, cercle vide = début prévu (figé à la création),
+  point plein = début réel (tâche démarrée), **cercle en pointillé + barre en pointillé = début projeté** d'une tâche pas encore démarrée (dérive).
+  Barre ambre sous 3 j, rouge à partir de 3 j, libellé « +N j » au-dessus. Groupée par poste (couleur `machine.couleur`), triée du plus grand écart au plus petit.
+  Quatre indicateurs (démarrées en retard, moyenne, maximum, cumul) + « en dérive » — **calculés sur la période affichée**, plus sur tout l'historique
+  comme l'ancien résumé par poste. Puces de poste cliquables (masquer un poste). Clic sur une ligne = détail (dates exactes, pièce, lien « isoler la commande »).
+  Une ligne dont le début prévu ou le réel sort de la fenêtre porte ◀ / ▶ (dates exactes en infobulle).
+- **Période** (`rdFrise`, transitoire, jamais persisté) : « 30 jours » (aujourd'hui − 26 j → + 5 j, pour laisser voir les dérives) ou « Semaine » lundi-dimanche,
+  navigation ‹ › (28 j / 7 j), « Aujourd'hui ». **Pendant une recherche, la fenêtre s'adapte à toutes les lignes trouvées** (plafonnée à 120 jours) et les boutons de
+  période sont désactivés — rien ne doit masquer un résultat trouvé.
+- **Recherche** : celle de la page Risques (`#risques-search-input`, commande, pièce, étape, poste, n° de ligne) filtre déjà `retardsDemarrageDetail`/`deriveDetail`
+  avant la frise ; pas de second champ de recherche (deux champs côte à côte seraient ambigus). Une note rappelle le filtre actif.
+- **Mise en page** : la section passe **sous** les deux colonnes de la page, en pleine largeur (200 px de noms + frise ne tiennent pas dans une demi-colonne).
+- **Bouton « Afficher les dérives » (v1.113.1).** Case à cocher dans la barre de la frise (`rdFrise.derives`, **cochée par défaut**, préférence de navigateur `RD_DERIVES_KEY`
+  comme la vue groupée du Kanban). Décochée : `renderRetardFriseHtml` ne reçoit plus les dérives (lignes, puces de poste et période n'en tiennent plus compte), l'indicateur
+  « En dérive » et l'entrée « Début projeté » de la légende disparaissent (un « 0 en dérive » aurait été trompeur) et le libellé annonce « (N masquées) » — N = celles qui
+  seraient visibles dans la période affichée. Sur l'export du 06/10 : 50 lignes → 19 (retards constatés seuls) ; Mazak, Priminer et Tour disparaissent alors, d'où l'affichage par défaut.
+  Action `rd-frise-derives` dans le dispatcher des **changements** (case à cocher), pas des clics. Test (scratchpad `rd_toggle_ui.js`, Playwright) : 50 → 19 → mémorisé après rechargement → 50.
+- Classes `.rf-*` (jetons du thème), actions `rd-frise-mode|nav|today|poste|row`. Test réel (Playwright sur l'export du 06/10) : 50 lignes (19 retards + 31 dérives) en 30 jours,
+  semaine courante 41, semaine précédente 35, puce de poste, détail, recherche « SRMG » (3 lignes), pièce « PJO » (1 ligne), « zzzz » (message), plus aucun `table.rd-table`.
+
+### Onglet « 🕓 Retards de démarrage » (v1.114.0)
+
+Demande : sortir la frise de la page Risques et lui donner son propre onglet. **Mêmes données, mêmes seuils, même frise** (`renderRetardFriseHtml`,
+`computeRetardDemarrageDetail`, `computeDeriveDemarrageAVenir`, case « Afficher les dérives »…) — seul son emplacement change.
+
+- Clé de menu `retards` (`PAGE_MENU_KEYS`, en fin de liste ; `defaultMenuLayout`/`DEFAULT_MENU_THEMES` la rangent dans le thème « 🏭 Atelier » juste après
+  Risques ; une disposition déjà enregistrée la reçoit via `normalizeMenuLayout` — thème « atelier » s'il existe encore, sinon en fin — sans migration).
+  Visible pour tous les rôles, comme Risques (aucune restriction dans `isPageMenuKeyVisible`). Page `currentPage==='retards'`, `goto-retards`, option « 🕓 Retards
+  de démarrage » dans « Page d'accueil par défaut ». Pas de raccourci sur le bandeau mobile (comme les autres pages d'analyse).
+- `renderRetardsPage()` : barre de recherche **propre** (`#retards-search-input`, `retardsSearchQuery`, `retardsSearchMatch` — commande, pièce, étape, poste, n° de
+  ligne) + panneau avec la frise. Pendant une recherche la fenêtre s'adapte aux lignes trouvées (comportement de la frise, inchangé). Sans aucun retard ni dérive :
+  message explicite. **La recherche de la page Risques ne filtre plus la frise** (elle n'y est plus) ; un bouton « 🕓 Retards de démarrage » (`goto-retards`) est ajouté
+  à sa barre de recherche pour retrouver l'onglet.
+- Retiré de `renderRisquesPage` : le bloc `retardsDemarrageHtml` et ses variables (`derive`, `deriveDetail`…). `computeRetardDemarrageParPoste` reste calculé pour les
+  tuiles de synthèse du haut de la page Risques. `panelCollapsed.retardsDemarrage` n'est plus lu (clé laissée, inoffensive).
+- Test (scratchpad `recap_ui.js`, Playwright sur l'export du 06/10) : entrée de menu, 50 lignes, recherche « SRMG » = 3 lignes avec focus conservé, plus aucune frise sur
+  Risques, bouton Risques → Retards, 390 px sans débordement.
+
+### Pop-up « Terminer » : temps passé face au temps prévu (v1.114.0)
+
+Demande : au clic sur « Terminer » dans le planning visuel, une pop-up qui utilise le système de frise pour montrer le temps passé et le temps prévu. Maquette validée avant
+codage (artefact « Pop-up Terminer »).
+
+- **Déclenchement** : `setOpStatut(cid, oid, 'termine')` — clic droit « ✔ Terminer » (`ctx-finish`, Gantt/Kanban/Liste) et sélecteur de statut du tableau des tâches. Pour une tâche
+  `en_cours`/`en_pause` **avec du temps pointé** uniquement : l'ordre des gardes de `setOpStatut` est `a_faire` → pop-up « temps déclaré » ; temps nul → pop-up « temps
+  déclaré » (`hasNoRecordedTime`) ; **sinon → récapitulatif** (`openTerminerRecap`, `terminerRecapDraft = { cid, oid }`, transitoire). La clôture n'a lieu qu'à la confirmation :
+  `confirmTerminerRecap` rappelle `setOpStatut(…, 'termine', { recapOk:true })` (4e paramètre `opts`), donc **toute la logique de clôture existante est réutilisée telle quelle**
+  (un seul `commit()`, lot fusionné traité en bloc, archivage des séances, `plannedEndsBefore`/`previsionAvantCloture`). Annuler / ✕ / Échap / clic sur le fond : rien n'est modifié. Si la
+  tâche a changé de statut entre-temps : message, rien refait. Les points d'entrée qui ne passent PAS par `setOpStatut` (« Terminer en lot », pointages) ne sont pas concernés.
+- **Réglage** `config.terminerRecapActif` (`true` par défaut, `migrateState` en `=== undefined` : un `false` choisi survit ; `updateConfig` booléen explicite ; Paramètres →
+  Planification → « Terminer une tâche », `SETTINGS_HELP.terminerRecap`). Décoché : « Terminer » clôture directement, comme avant.
+- **`computeTerminerRecap(o, st, now)`** (pur, testable) : prévu = `dureePrevueH(o)` (pour un lot, la somme du lot, portée par `dureeOverrideH`) ; passé = `pieceTempsPasseH`
+  (séances + temps antérieur d'une réouverture) ; écart et %. Séances = `sessions[]` (une séance ouverte court jusqu'à maintenant), découpées **par jour** ; heures comptées =
+  `countedHoursBetween` (règles actuelles : heures ouvrées + exceptions déclarées — la pause n'est pas comptée). **Le prévu est déroulé à partir du démarrage réel** sur les
+  créneaux d'ouverture du poste (`terminerPlanSegments`, `dayIntervals` + `workingHoursBetween`) jusqu'à épuisement de la durée prévue : c'est « le temps qu'on s'était donné », pas
+  le début planifié à l'origine. **Part au-delà du prévu** (rouge) : l'écart est affecté en remontant depuis les séances qui finissent le plus tard (`over`/`overFrom`, coupe par
+  dichotomie sur les heures comptées) — la somme des parts rouges égale l'écart (testé). Pauses en journée = trous entre séances convertis en heures d'ouverture perdues (> 3 min), pas
+  des nuits. Lot : `lot` = nombre de pièces, temps du lot compté une seule fois.
+- **`renderTerminerRecapModal`** : badge d'écart (rouge dépassement / vert en avance / « pile dans le prévu »), 4 tuiles (prévu, passé, écart, poste), jauge passé/prévu (trait = prévu),
+  frise `.tr-*` (une colonne par jour, heures en abscisse, pauses hachurées, ligne « Prévu » en pointillés, **une ligne par personne** avec une couleur, séance ouverte rayée ▶, « maint. »),
+  légende, notes (pauses, temps antérieur à une réouverture, lot, séance ouverte à fermer, jours plus anciens non dessinés). Jours sans contenu et week-ends écartés ; au plus 14 jours
+  dessinés (les totaux incluent tout). **Plage horaire** : horaire du poste, élargie par ce qui est réellement compté entre 4 h et 22 h — une séance oubliée ouverte la nuit est écrêtée,
+  jamais dessinée sur 24 h. Durées en heures/minutes (`terminerH`), jamais en jours (`durationLabel` divise par 8,75 h). Noms via `pointageUserName`.
+- Test (scratchpad `recap_test.js`, 25 assertions : migration, prévu/passé/écart, 2 personnes, jours, somme des parts rouges = écart, segments du prévu = 4 h, lot compté une fois,
+  ouverture sans clôture, annulation, sans temps → pop-up déclaré, à faire → déclaré, option décochée → clôture directe, confirmation = un seul `commit()` et `dureeReelleH` figé,
+  tâche déjà terminée entre-temps ; `recap_ui.js` Playwright : clic droit réel, Échap, 3 cas, 390 px sans débordement). `declare_run_test.js` mis à jour (récap puis confirmation).
 
 ### Pauses de production à risque
 
