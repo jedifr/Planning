@@ -1675,6 +1675,42 @@
     .imp-steps{display:none;}
   }
 
+  /* v1.123.0 — étape « Colonnes » de l'import personnalisé, champ par champ */
+  .imc-top{display:flex; gap:12px; align-items:flex-end; justify-content:space-between; flex-wrap:wrap; margin-bottom:12px;}
+  .imc-prof{flex:1 1 420px; min-width:0;}
+  .imc-prof .commande-top-fields{margin:0;}
+  .imc-grid{display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); gap:14px; align-items:start;}
+  .imc-left{display:flex; flex-direction:column; gap:12px; min-width:0;}
+  .imc-right{min-width:0; position:sticky; top:0; border:1px solid var(--line); border-radius:12px; padding:10px; background:var(--panel);}
+  .imc-row{display:grid; grid-template-columns:minmax(110px,150px) minmax(0,1fr) minmax(0,120px) 34px; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line);}
+  .imc-row:last-child{border-bottom:none;}
+  .imc-row.todo .imc-lab b{color:var(--amber);}
+  .imc-lab{display:flex; flex-direction:column; gap:1px; min-width:0;}
+  .imc-lab span{font-size:11px; color:var(--text-dim);}
+  .imc-ctl{display:flex; flex-direction:column; gap:4px; min-width:0;}
+  .imc-ctl input[type=checkbox], .imc-fold-b input[type=checkbox]{width:auto; flex:0 0 auto;}
+  .imc-ctl label{display:flex; align-items:center; gap:6px;}
+  .imc-sample{font-size:11.5px; font-family:'IBM Plex Mono',monospace; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;}
+  .imc-st{text-align:right;}
+  .imc-count{display:inline-block; font-size:11px; font-weight:600; padding:1px 8px; border-radius:10px; background:var(--panel-2); color:var(--text-dim); vertical-align:middle;}
+  .imc-count.full{background:var(--accent-dim); color:var(--accent);}
+  .imc-fold{border:1px solid var(--line); border-radius:12px; background:var(--panel);}
+  .imc-fold>summary{cursor:pointer; padding:10px 14px; font-weight:600; list-style:none;}
+  .imc-fold>summary::-webkit-details-marker{display:none;}
+  .imc-fold>summary::before{content:'▸ '; color:var(--text-dim);}
+  .imc-fold[open]>summary::before{content:'▾ ';}
+  .imc-fold-b{padding:2px 14px 12px;}
+  .imc-prev-h{display:flex; justify-content:space-between; gap:8px; align-items:baseline; margin-bottom:8px; flex-wrap:wrap;}
+  .imc-prev-scroll{overflow:auto; max-height:420px;}
+  table.imc-prev th, table.imc-prev td{white-space:nowrap; font-size:11.5px; padding:4px 8px; max-width:200px; overflow:hidden; text-overflow:ellipsis;}
+  table.imc-prev .mapped{background:var(--accent-dim);}
+  .imc-tag{font-size:10px; font-weight:600; color:var(--accent); text-transform:uppercase; letter-spacing:.04em;}
+  @media screen and (max-width:900px){
+    .imc-grid{grid-template-columns:1fr;}
+    .imc-right{position:static;}
+    .imc-row{grid-template-columns:minmax(0,1fr) 34px; grid-template-areas:"lab st" "ctl ctl" "smp smp";}
+    .imc-row .imc-lab{grid-area:lab;} .imc-row .imc-st{grid-area:st;} .imc-row .imc-ctl{grid-area:ctl;} .imc-row .imc-sample{grid-area:smp;}
+  }
   .context-menu{
     position:fixed; z-index:1100; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
     box-shadow:0 8px 24px rgba(0,0,0,0.25); min-width:200px; overflow:hidden;
@@ -2114,7 +2150,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.122.0';
+const APP_VERSION = '1.123.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -8606,6 +8642,36 @@ function applyImportProfile(profileId){
   customImportState.profileMapSnapshot = JSON.stringify(customImportState.map); // référence pour détecter un changement non enregistré
   render();
 }
+// Reconnaissance automatique des colonnes par mots-clés dans les titres (v1.123.0). Ne touche jamais
+// un champ déjà associé ; chaque colonne n'est utilisée qu'une fois.
+function autoDetectImportColumns(){
+  const cs = customImportState; if(!cs) return 0;
+  const rules = [
+    ['reference', /(r[eé]f(erence|\.)?.*(commande|affaire|of)|^of$|n[°o]?\s*(commande|affaire|of)|code\s*of|commande|affaire)/i],
+    ['poste', /(poste|machine|ressource|atelier|section)/i],
+    ['piece', /(pi[eè]ce|d[eé]signation|article|r[eé]f.*pi[eè]ce|plan)/i],
+    ['quantite', /(quantit|qt[eé]|qty|nombre|nb\s*pi)/i],
+    ['dureeColonne', /(temps\s*unitaire|t\.?\s*u\.?|dur[eé]e|temps)/i],
+    ['refClient', /(client)/i],
+    ['dateBesoin', /(besoin|livraison|[eé]ch[eé]ance|d[eé]lai)/i],
+    ['urgence', /(urgen|priorit)/i],
+    ['etape', /(gamme|[eé]tape|op[eé]ration|libell)/i],
+    ['phase', /(phase|rang|ordre)/i],
+    ['operateur', /(op[eé]rateur|salari|employ)/i],
+    ['matiere', /(mati[eè]re|mat\.?$)/i],
+    ['epaisseur', /([eé]paisseur|[eé]p\.?$)/i],
+    ['dateDebutPossible', /(d[eé]but\s*possible|disponib)/i],
+  ];
+  const used = new Set(Object.values(cs.map).filter(v => typeof v === 'string' && v));
+  let n = 0;
+  rules.forEach(([field, re]) => {
+    if(cs.map[field]) return;
+    const h = cs.headers.find(hh => !used.has(hh) && re.test(hh));
+    if(h){ cs.map[field] = h; used.add(h); n++; }
+  });
+  render();
+  return n;
+}
 function updateCustomImportMapField(field, value){
   if(!customImportState) return;
   customImportState.map[field] = value;
@@ -10613,6 +10679,137 @@ function submitDeclareDone(){
 //    séances conservées et archivées, répartition par opérateur réelle, temps pointé inchangé (une correction passe ensuite par
 //    Pointages → ✎ Corriger).
 // Un lot fusionné compte pour UNE ligne (temps du lot entier, tous ses membres terminés) ; un seul commit() pour toute l'action.
+// ---- Fusion de lignes de postes différents sur une commande déjà importée (v1.123.0) ----
+// Même règle que le regroupement entre postes de l'import (applyCrossGroupsToState) : un lot est
+// planifié sur UN poste hôte = celui qui totalise le plus de temps de production parmi les lignes
+// choisies ; durée du lot = somme des durées PROPRES (jamais dureeOverrideH, déjà cumulée).
+let crossLotDraft = null; // { cid, sel:[oid] } — transitoire
+function crossLotEligible(o){
+  return o.statut === 'a_faire' && !o.sousTraitance && !o.horsPlanning && !o.fusionGroupId && !!o.machineId;
+}
+function crossLotCanOffer(c){
+  const ms = new Set(c.pieces.filter(crossLotEligible).map(o => o.machineId));
+  return canSupervise() && ms.size >= 2;
+}
+function openCrossLot(cid){
+  if(!canSupervise()) return;
+  const c = state.commandes.find(cc => cc.id === cid); if(!c) return;
+  if(!c.pieces.some(crossLotEligible)){ showToast('Aucune ligne « À faire » disponible pour un lot dans cette commande.'); return; }
+  crossLotDraft = { cid, sel: [] };
+  render();
+}
+function closeCrossLot(){ crossLotDraft = null; render(); }
+function toggleCrossLotLine(oid, checked){
+  const d = crossLotDraft; if(!d) return;
+  const set = new Set(d.sel);
+  if(checked) set.add(oid); else set.delete(oid);
+  d.sel = Array.from(set);
+  render();
+}
+function crossLotPlan(c, sel){
+  const pieces = c.pieces.filter(o => sel.indexOf(o.id) >= 0 && crossLotEligible(o));
+  const hoursByMachine = {};
+  pieces.forEach(o => { hoursByMachine[o.machineId] = (hoursByMachine[o.machineId]||0) + crossGroupPieceHours(o); });
+  const machineIds = Object.keys(hoursByMachine);
+  let host = machineIds[0] || null;
+  machineIds.forEach(mid => { if(hoursByMachine[mid] > hoursByMachine[host] + 1e-9) host = mid; });
+  const total = machineIds.reduce((a, mid) => a + hoursByMachine[mid], 0);
+  const phases = Array.from(new Set(pieces.map(o => Number(o.phase)||1))).sort((x,y)=>x-y);
+  const names = new Set(pieces.map(o => normPosteKey(o.piece)));
+  return { pieces, hoursByMachine, machineIds, host, total, phases, multiPieces: names.size > 1 };
+}
+function submitCrossLot(){
+  const d = crossLotDraft; if(!d || !canSupervise()) return;
+  const c = state.commandes.find(cc => cc.id === d.cid); if(!c) return;
+  const plan = crossLotPlan(c, d.sel);
+  if(plan.pieces.length < 2 || plan.machineIds.length < 2){ alert('Choisissez au moins 2 lignes sur 2 postes différents.'); return; }
+  const host = state.machines.find(m => m.id === plan.host);
+  const warn = [];
+  if(plan.phases.length > 1) warn.push('Les lignes ont des phases différentes : à l\'intérieur du lot, l\'ordre entre phases ne sera plus imposé.');
+  if(plan.multiPieces) warn.push('Les lignes concernent plusieurs pièces différentes.');
+  if(!confirm(`Fusionner ${plan.pieces.length} lignes en un seul lot sur « ${host ? host.nom : ''} » (${bulkDoneHoursStr(plan.total)} h au total) ?` + (warn.length ? '\n\n⚠ ' + warn.join('\n⚠ ') : ''))) return;
+  const groupId = uid('fusion');
+  plan.pieces.forEach(o => {
+    if(o.machineId !== plan.host){
+      const orig = state.machines.find(m => m.id === o.machineId);
+      if(orig && !(o.etape||'').trim()) o.etape = orig.nom; // garde la trace du poste d'origine
+      o.machineId = plan.host;
+    }
+    o.fusionGroupId = groupId;
+    o.manualStart = null;
+    o.fusionPinned = false;
+    o.dureeOverrideH = plan.total;
+  });
+  crossLotDraft = null;
+  commit();
+  showToast(`${plan.pieces.length} lignes fusionnées en un lot sur ${host ? host.nom : 'le poste hôte'}.`);
+}
+function renderCrossLotModal(){
+  const d = crossLotDraft; if(!d) return '';
+  const c = state.commandes.find(cc => cc.id === d.cid); if(!c) return '';
+  const plan = crossLotPlan(c, d.sel);
+  const mName = id => { const m = state.machines.find(x => x.id === id); return m ? m.nom : 'Sans poste'; };
+  const mColor = id => { const m = state.machines.find(x => x.id === id); return (m && m.couleur) || '#868c92'; };
+  // lignes groupées par pièce, ordre du tableau
+  const byPiece = [];
+  c.pieces.forEach(o => {
+    const key = normPosteKey(o.piece) || '—';
+    let g = byPiece.find(x => x.key === key);
+    if(!g){ g = { key, nom: o.piece || '(sans nom)', list: [] }; byPiece.push(g); }
+    g.list.push(o);
+  });
+  const lotsSeen = new Set();
+  const piecesHtml = byPiece.map(g => `
+    <div class="bd-poste">
+      <div class="bd-poste-h"><div class="bd-poste-t">${escapeHtml(g.nom)} <span class="footer-note" style="margin:0;">${g.list.length} ligne(s)</span></div></div>
+      <div class="bd-scroll"><table class="ops-table bd-table">
+        <thead><tr><th></th><th>Étape</th><th>Poste</th><th>Phase</th><th class="bd-n">Durée (h)</th><th>État</th></tr></thead>
+        <tbody>${g.list.slice().sort((a,b)=>(Number(a.phase)||1)-(Number(b.phase)||1)).map(o => {
+          const elig = crossLotEligible(o);
+          const sel = d.sel.indexOf(o.id) >= 0;
+          const mid = o.machineId;
+          let state_ = '';
+          if(o.fusionGroupId){
+            const first = !lotsSeen.has(o.fusionGroupId); lotsSeen.add(o.fusionGroupId);
+            state_ = `<span class="bd-tag">🔗 Lot · sur ${escapeHtml(mName(mid))}</span>` + (first ? ` <button class="ghost small" data-action="cross-lot-dissociate" data-gid="${escapeHtml(o.fusionGroupId)}">Dissocier</button>` : '');
+          } else if(!elig){
+            state_ = `<span class="footer-note" style="margin:0;">${o.statut !== 'a_faire' ? escapeHtml(opStatutLabel(o.statut)) + ' — non fusionnable' : (o.sousTraitance ? 'sous-traitée' : (o.horsPlanning ? 'hors planning' : 'sans poste'))}</span>`;
+          } else if(sel && plan.host && mid !== plan.host){
+            state_ = `<span class="bd-tag">→ ira sur ${escapeHtml(mName(plan.host))}</span>`;
+          }
+          return `<tr class="${sel ? 'bd-sel' : ''}">
+            <td><input type="checkbox" ${sel ? 'checked' : ''} ${elig ? '' : 'disabled'} data-action="cross-lot-line" data-oid="${o.id}"></td>
+            <td><b>${escapeHtml(o.etape || mName(mid))}</b>${o.numeroLigne ? ` <span class="footer-note" style="margin:0;">(n°${escapeHtml(o.numeroLigne)})</span>` : ''}</td>
+            <td><span style="display:inline-flex;align-items:center;gap:6px;"><i style="width:9px;height:9px;border-radius:50%;background:${escapeHtml(mColor(mid))};display:inline-block;"></i>${escapeHtml(mName(mid))}</span></td>
+            <td>${Number(o.phase)||1}</td>
+            <td class="bd-n">${bulkDoneHoursStr(dureePrevueH(o) || 0)}</td>
+            <td>${state_}</td></tr>`;
+        }).join('')}</tbody></table></div>
+    </div>`).join('');
+  const nSel = plan.pieces.length;
+  const ok = nSel >= 2 && plan.machineIds.length >= 2;
+  let bar;
+  if(!nSel) bar = '<span class="footer-note" style="margin:0;">Cochez au moins 2 lignes de postes différents.</span>';
+  else {
+    const parts = plan.machineIds.map(mid => `${escapeHtml(mName(mid))} ${bulkDoneHoursStr(plan.hoursByMachine[mid])} h`).join(' + ');
+    bar = `<div><b>${nSel} ligne(s)</b> · ${parts} = <b>${bulkDoneHoursStr(plan.total)} h</b>` +
+      (plan.machineIds.length >= 2 ? ` → lot sur <b>${escapeHtml(mName(plan.host))}</b> <span class="footer-note" style="margin:0;">(le poste qui totalise le plus de temps)</span>` : ' — il faut au moins 2 postes différents') + '</div>' +
+      (plan.phases.length > 1 ? '<div class="footer-note" style="margin:0;color:var(--amber);">⚠ Phases différentes : l\'ordre entre phases ne sera plus imposé dans le lot.</div>' : '') +
+      (plan.multiPieces ? '<div class="footer-note" style="margin:0;color:var(--amber);">⚠ Plusieurs pièces différentes dans le lot.</div>' : '');
+  }
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box modal-box-wide bulk-done-box" role="dialog" aria-modal="true">
+      <div class="modal-head"><h2>🔗 Fusionner des lignes de postes différents — ${escapeHtml(c.nom)}</h2><button class="ghost icon-btn" data-action="close-cross-lot" title="Fermer">✕</button></div>
+      <p class="footer-note" style="margin:0 0 10px;">Les lignes cochées deviennent un seul lot, planifié sur le poste qui a le plus de temps de production. Seules les lignes « À faire » (ni sous-traitées, ni déjà en lot) sont proposées.</p>
+      ${piecesHtml}
+      <div class="bd-totals" style="position:sticky;bottom:0;background:var(--panel);padding:10px 0;display:flex;gap:14px;align-items:center;flex-wrap:wrap;justify-content:space-between;border-top:1px solid var(--line);">
+        <div style="display:flex;flex-direction:column;gap:3px;min-width:0;">${bar}</div>
+        <div style="display:flex;gap:8px;"><button class="ghost" data-action="close-cross-lot">Annuler</button><button data-action="submit-cross-lot" ${ok ? '' : 'disabled'}>🔗 Fusionner en un lot</button></div>
+      </div>
+    </div>
+  </div>`;
+}
 let bulkDoneDraft = null; // { cid, fin, commentaire, rows:[{ oid, sel, reel, uid }] }
 function bulkDoneHoursStr(h){ return String(Math.round(h * 100) / 100).replace('.', ','); }
 function bulkDoneParseH(v){ const n = Number(String(v == null ? '' : v).trim().replace(',', '.')); return isNaN(n) ? NaN : n; }
@@ -15280,37 +15477,56 @@ function renderCustomImportModal(){
     </div>`;
   let body = '';
   if(cs.step === 'mapping'){
-    body = `
-      <div class="modal-section-title" style="margin-top:0;">Profil de correspondance</div>
-      <div class="commande-top-fields" style="grid-template-columns:2fr auto 1fr;">
-        <div><label class="field">Utiliser un profil déjà enregistré</label>
-          <select data-action="custom-import-profile-select">
-            <option value="">— Nouveau profil —</option>
-            ${(state.importProfiles||[]).map(p=>`<option value="${p.id}" ${cs.profileId===p.id?'selected':''}>${escapeHtml(p.nom)}</option>`).join('')}
-          </select>
-        </div>
-        ${cs.profileId ? `<div><label class="field">&nbsp;</label><button class="danger-ghost small" data-action="delete-current-import-profile" title="Supprimer ce profil enregistré">✕ Supprimer ce profil</button></div>` : '<div></div>'}
-        <div><label class="field">Nom de ce profil</label><input value="${escapeHtml(cs.profileName)}" placeholder="ex : GPAO Système X" data-action="custom-import-profile-name"></div>
-      </div>
-      <div class="modal-section-title">Correspondance des colonnes</div>
-      <div class="commande-top-fields" style="grid-template-columns:1fr 1fr 1fr;">
-        ${fieldSelect('reference','Référence commande',true, `<label style="font-size:11px; font-weight:400; display:flex; align-items:center; gap:4px; margin-top:4px;"><input type="checkbox" data-action="custom-import-split-slash" ${cs.map.referenceSplitSlash?'checked':''}> Découper sur le dernier "/"</label>`)}
-        ${fieldSelect('reference2','Compléter la référence avec…',false, `<div style="display:flex; align-items:center; gap:6px; margin-top:4px;"><span style="font-size:11px; color:var(--text-faint);">séparé par</span><input value="${escapeHtml(cs.map.reference2Sep !== undefined ? cs.map.reference2Sep : ' ')}" data-action="custom-import-ref2-sep" style="width:60px; text-align:center;" title="Caractère(s) inséré(s) entre les deux colonnes"></div>`)}
-        ${fieldSelect('refClient','Réf. commande client',false)}
-        ${fieldSelect('dateBesoin','Date de besoin',false)}
-        ${fieldSelect('urgence','Urgence',false)}
-        ${fieldSelect('poste','Poste',true)}
-        ${fieldSelect('piece','Pièce',true)}
-        ${fieldSelect('etape','Étape',false)}
-        ${fieldSelect('quantite','Quantité',true)}
-        <div><label class="field">Temps / durée *</label>
-          <select data-action="custom-import-duree-mode">
+    // v1.123.0 : étape « Colonnes » refaite champ par champ (voir CLAUDE.md). Présentation seulement :
+    // mêmes `data-action`, mêmes champs de `cs.map`, mêmes règles de validation (`proceedFromMapping`).
+    const sample = col => { const r0 = cs.rows && cs.rows[0]; const v = (col && r0) ? r0[col] : ''; return (v === undefined || v === null) ? '' : String(v); };
+    const colSel = (field, extraOpt) => `<select data-action="custom-import-map-field" data-field="${field}" aria-label="Colonne du fichier">
+        <option value="">— choisir une colonne —</option>
+        ${cs.headers.map(h=>`<option value="${escapeHtml(h)}" ${cs.map[field]===h?'selected':''}>${escapeHtml(h)}</option>`).join('')}
+      </select>`;
+    const optSel = field => `<select data-action="custom-import-map-field" data-field="${field}" aria-label="Colonne du fichier">
+        <option value="">— aucune —</option>
+        ${cs.headers.map(h=>`<option value="${escapeHtml(h)}" ${cs.map[field]===h?'selected':''}>${escapeHtml(h)}</option>`).join('')}
+      </select>`;
+    const sampleHtml = field => { const sv = sample(cs.map[field]); return cs.map[field] ? `<div class="imc-sample" title="Valeur de la 1ère ligne du fichier">${sv ? escapeHtml(sv.length>34 ? sv.slice(0,34)+'…' : sv) : '<i>(vide sur la 1ère ligne)</i>'}</div>` : '<div class="imc-sample"></div>'; };
+    const REQ = [
+      { f:'reference', label:'Référence commande', hint:'Le numéro d\'affaire / de commande', extra:`<label style="font-size:11px; font-weight:400; display:flex; align-items:center; gap:4px; margin-top:4px;"><input type="checkbox" data-action="custom-import-split-slash" ${cs.map.referenceSplitSlash?'checked':''}> Découper sur le dernier "/"</label>` },
+      { f:'poste', label:'Poste', hint:'L\'étape ou la machine' },
+      { f:'piece', label:'Pièce', hint:'La référence de la pièce' },
+      { f:'quantite', label:'Quantité', hint:'Nombre de pièces' },
+    ];
+    const reqRow = r => `
+      <div class="imc-row ${cs.map[r.f] ? 'ok' : 'todo'}">
+        <div class="imc-lab"><b>${r.label}</b><span>${r.hint}</span></div>
+        <div class="imc-ctl">${colSel(r.f)}${r.extra||''}</div>
+        ${sampleHtml(r.f)}
+        <div class="imc-st">${cs.map[r.f] ? '<span class="imp-pill ok">✓</span>' : '<span class="imp-pill off">!</span>'}</div>
+      </div>`;
+    const dureeOk = !!cs.map.dureeColonne;
+    const dureeRow = `
+      <div class="imc-row ${dureeOk ? 'ok' : 'todo'}">
+        <div class="imc-lab"><b>${cs.map.dureeMode==='total' ? 'Durée totale' : 'Temps unitaire'}</b><span>${cs.map.dureeMode==='total' ? 'Déjà calculée, en heures' : 'Par pièce, en minutes'}</span></div>
+        <div class="imc-ctl">
+          <select data-action="custom-import-duree-mode" aria-label="Type de durée">
             <option value="unitaire" ${cs.map.dureeMode==='unitaire'?'selected':''}>Temps unitaire (par pièce, en minutes)</option>
             <option value="total" ${cs.map.dureeMode==='total'?'selected':''}>Durée totale déjà calculée (en heures)</option>
           </select>
+          ${colSel('dureeColonne')}
         </div>
-        ${fieldSelect('dureeColonne', cs.map.dureeMode==='total' ? 'Colonne durée totale (h)' : 'Colonne temps unitaire (min)', true)}
-        ${fieldSelect('phase','Phase',false, `
+        ${sampleHtml('dureeColonne')}
+        <div class="imc-st">${dureeOk ? '<span class="imp-pill ok">✓</span>' : '<span class="imp-pill off">!</span>'}</div>
+      </div>`;
+    const missing = [];
+    REQ.forEach(r => { if(!cs.map[r.f]) missing.push(r.label); });
+    if(!dureeOk) missing.push(cs.map.dureeMode==='total' ? 'Durée totale' : 'Temps unitaire');
+    const nReq = 5 - missing.length;
+    const OPT = [
+      { f:'refClient', label:'Réf. commande client' },
+      { f:'reference2', label:'Compléter la référence avec…', extra:`<div style="display:flex; align-items:center; gap:6px; margin-top:4px;"><span style="font-size:11px; color:var(--text-faint);">séparé par</span><input value="${escapeHtml(cs.map.reference2Sep !== undefined ? cs.map.reference2Sep : ' ')}" data-action="custom-import-ref2-sep" style="width:60px; text-align:center;" title="Caractère(s) inséré(s) entre les deux colonnes"></div>` },
+      { f:'dateBesoin', label:'Date de besoin' },
+      { f:'urgence', label:'Urgence' },
+      { f:'etape', label:'Étape' },
+      { f:'phase', label:'Phase', extra:`
           <label class="field" style="display:flex; align-items:center; gap:6px; font-weight:400; margin-top:6px;">
             <input type="checkbox" style="width:auto;" ${cs.map.phase?'disabled':''} ${(cs.map.phaseAuto && !cs.map.phase)?'checked':''} data-action="toggle-custom-import-phase-auto">
             Numéroter automatiquement selon l'ordre des lignes
@@ -15319,15 +15535,62 @@ function renderCustomImportModal(){
             <input type="checkbox" style="width:auto;" ${(cs.map.phase || !cs.map.phaseAuto)?'disabled':''} ${cs.map.phaseParNumeroLigne?'checked':''} data-action="toggle-custom-import-phase-numero-ligne">
             …en suivant le numéro de ligne quand il existe
           </label>
-          <div class="footer-note" style="text-align:left; margin-top:4px;">${cs.map.phase ? 'Désactivé : la colonne Phase associée prime.' : 'Sans colonne Phase : pour une même pièce, la phase passe à 2, 3… à chaque changement d\'étape d\'une ligne à la suivante (deux lignes de la même étape restent en parallèle). Avec « numéro de ligne » (suffixe après le dernier « / » de la référence), l\'ordre suit ce numéro plutôt que celui du fichier. Corrigeable ligne par ligne dans l\'aperçu.'}</div>`)}
-        ${fieldSelect('operateur','Opérateur',false)}
-        ${fieldSelect('matiere','Matière',false)}
-        ${fieldSelect('epaisseur','Épaisseur',false)}
-        ${fieldSelect('dateDebutPossible','Date de début possible',false)}
+          <div class="footer-note" style="text-align:left; margin-top:4px;">${cs.map.phase ? 'Désactivé : la colonne Phase associée prime.' : 'Sans colonne Phase : pour une même pièce, la phase passe à 2, 3… à chaque changement d\'étape d\'une ligne à la suivante (deux lignes de la même étape restent en parallèle). Avec « numéro de ligne » (suffixe après le dernier « / » de la référence), l\'ordre suit ce numéro plutôt que celui du fichier. Corrigeable ligne par ligne dans l\'aperçu.'}</div>` },
+      { f:'operateur', label:'Opérateur' },
+      { f:'matiere', label:'Matière' },
+      { f:'epaisseur', label:'Épaisseur' },
+      { f:'dateDebutPossible', label:'Date de début possible' },
+    ];
+    const nOpt = OPT.filter(o => cs.map[o.f]).length;
+    const optRow = o => `
+      <div class="imc-row opt ${cs.map[o.f] ? 'ok' : ''}">
+        <div class="imc-lab"><b>${o.label}</b></div>
+        <div class="imc-ctl">${optSel(o.f)}${o.extra||''}</div>
+        ${sampleHtml(o.f)}
+        <div class="imc-st">${cs.map[o.f] ? '<span class="imp-pill ok">✓</span>' : ''}</div>
+      </div>`;
+    const fold = (key, title, count, inner, open) => `<details class="imc-fold" data-dd-key="${key}" ${(openMiniDropdowns[key] !== undefined ? openMiniDropdowns[key] : open)?'open':''} ontoggle="openMiniDropdowns[this.dataset.ddKey]=this.open"><summary>${title}${count ? ` <span class="imc-count">${count}</span>` : ''}</summary><div class="imc-fold-b">${inner}</div></details>`;
+    // Rôle de chaque colonne mappée, pour l'aperçu du fichier à droite.
+    const roleByCol = {};
+    REQ.concat([{f:'dureeColonne', label: cs.map.dureeMode==='total' ? 'Durée totale' : 'Temps unitaire'}]).forEach(r => { if(cs.map[r.f]) roleByCol[cs.map[r.f]] = r.label; });
+    OPT.forEach(o => { if(cs.map[o.f] && !roleByCol[cs.map[o.f]]) roleByCol[cs.map[o.f]] = o.label; });
+    const previewRows = (cs.rows||[]).slice(0,4);
+    const filePrev = `
+      <div class="imc-prev-h"><b>Aperçu du fichier</b><span class="footer-note" style="margin:0;">${(cs.rows||[]).length} ligne(s) · 4 premières affichées</span></div>
+      <div class="imc-prev-scroll"><table class="ops-table imc-prev">
+        <thead><tr>${cs.headers.map(h => `<th class="${roleByCol[h]?'mapped':''}">${escapeHtml(h)}${roleByCol[h] ? `<br><span class="imc-tag">${escapeHtml(roleByCol[h])}</span>` : ''}</th>`).join('')}</tr></thead>
+        <tbody>${previewRows.map(r => `<tr>${cs.headers.map(h => `<td class="${roleByCol[h]?'mapped':''}">${escapeHtml(String(r[h]===undefined||r[h]===null?'':r[h]))}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table></div>`;
+    const refExample = (cs.map.reference && cs.rows[0]) ? (() => {
+        const brut = String(cs.rows[0][cs.map.reference]||'');
+        let base = brut;
+        if(cs.map.referenceSplitSlash && base.lastIndexOf('/') > 0) base = base.slice(0, base.lastIndexOf('/'));
+        const suffixe = cs.map.reference2 ? String(cs.rows[0][cs.map.reference2]||'').trim() : '';
+        const finale = suffixe ? base + (cs.map.reference2Sep !== undefined ? cs.map.reference2Sep : ' ') + suffixe : base;
+        return `<div class="footer-note" style="text-align:left;">Exemple sur la 1ère ligne : "${escapeHtml(brut)}"${cs.map.reference2 && suffixe ? ` + "${escapeHtml(suffixe)}"` : ''} → référence retenue : <strong>"${escapeHtml(finale)}"</strong></div>`;
+      })() : '';
+    body = `
+      <div class="imc-top">
+        <div class="imc-prof"><div class="commande-top-fields" style="grid-template-columns:2fr auto 1fr;">
+        <div><label class="field">Utiliser un profil déjà enregistré</label>
+          <select data-action="custom-import-profile-select">
+            <option value="">— Nouveau profil —</option>
+            ${(state.importProfiles||[]).map(p=>`<option value="${p.id}" ${cs.profileId===p.id?'selected':''}>${escapeHtml(p.nom)}</option>`).join('')}
+          </select>
+        </div>
+        ${cs.profileId ? `<div><label class="field">&nbsp;</label><button class="danger-ghost small" data-action="delete-current-import-profile" title="Supprimer ce profil enregistré">✕ Supprimer ce profil</button></div>` : '<div></div>'}
+        <div><label class="field">Nom de ce profil</label><input value="${escapeHtml(cs.profileName)}" placeholder="ex : GPAO Système X" data-action="custom-import-profile-name"></div>
+      </div></div>
+        <button class="small" data-action="custom-import-autodetect" title="Associe automatiquement les colonnes dont le titre ressemble à un champ attendu (sans toucher à celles déjà choisies)">✨ Reconnaître les colonnes</button>
       </div>
-      <div class="footer-note" style="text-align:left;">Matière et épaisseur alimentent la détection de regroupements possibles sur les postes fusionnables (Paramètres → Postes) — laissez sur "— aucune —" si votre fichier ne les distingue pas. Date de début possible : optionnelle, pour une pièce qui ne peut pas démarrer avant l'arrivée d'une matière — modifiable ligne par ligne dans l'aperçu qui suit, même sans colonne dédiée dans le fichier.</div>
-      <div class="modal-section-title">Valeurs par défaut (si absentes du fichier)</div>
-      <div class="commande-top-fields" style="grid-template-columns:1fr 1fr;">
+      <div class="imc-grid">
+        <div class="imc-left">
+          <section class="imp-card">
+            <div class="imp-card-h"><div><h3>Champs obligatoires <span class="imc-count ${nReq===5?'full':''}">${nReq} / 5</span></h3><p>Associez chacun à une colonne de votre fichier.</p></div></div>
+            <div class="imp-card-b">${REQ.map(reqRow).join('')}${dureeRow}${refExample}</div>
+          </section>
+          ${fold('imc-opt', 'Colonnes facultatives', nOpt ? nOpt + ' associée' + (nOpt>1?'s':'') : '', OPT.map(optRow).join('') + '<div class="footer-note" style="text-align:left;">Matière et épaisseur alimentent la détection de regroupements possibles sur les postes fusionnables (Paramètres → Postes). Date de début possible : la tâche ne démarrera pas avant (matière attendue…).</div>', false)}
+          ${fold('imc-def', 'Valeurs par défaut (si absentes du fichier)', '', `<div class="commande-top-fields" style="grid-template-columns:1fr 1fr;">
         <div><label class="field">Poste par défaut</label>
           <select data-action="custom-import-default-poste">
             <option value="">— aucun (ignorer si non reconnu) —</option>
@@ -15347,18 +15610,16 @@ function renderCustomImportModal(){
           </label>
           <div class="footer-note" style="text-align:left; margin-top:4px;">Utilisée pour toute ligne sans colonne "Urgence" associée ci-dessus (ou dont la cellule est vide) — décochez pour toujours repartir sur "Normale" par défaut. Dans tous les cas, l'urgence de chaque commande reste modifiable une dernière fois à l'aperçu qui suit, juste avant de confirmer l'import.</div>
         </div>
+      </div>`, false)}
+        </div>
+        <div class="imc-right">${filePrev}</div>
       </div>
-      ${cs.map.reference && cs.rows[0] ? (() => {
-        const brut = String(cs.rows[0][cs.map.reference]||'');
-        let base = brut;
-        if(cs.map.referenceSplitSlash && base.lastIndexOf('/') > 0) base = base.slice(0, base.lastIndexOf('/'));
-        const suffixe = cs.map.reference2 ? String(cs.rows[0][cs.map.reference2]||'').trim() : '';
-        const finale = suffixe ? base + (cs.map.reference2Sep !== undefined ? cs.map.reference2Sep : ' ') + suffixe : base;
-        return `<div class="footer-note" style="text-align:left;">Exemple sur la 1ère ligne : "${escapeHtml(brut)}"${cs.map.reference2 && suffixe ? ` + "${escapeHtml(suffixe)}"` : ''} → référence retenue : <strong>"${escapeHtml(finale)}"</strong></div>`;
-      })() : ''}
-      <div class="form-actions" style="margin-top:16px;">
-        <button class="ghost" data-action="cancel-custom-import">Annuler</button>
-        <button class="primary" data-action="custom-import-next-from-mapping">Continuer →</button>
+      <div class="imp-foot">
+        <div class="imp-sum">${missing.length ? `<span style="color:var(--amber);">Il manque : <b>${escapeHtml(missing.join(', '))}</b></span>` : '<span><b>✓</b> Tous les champs obligatoires sont associés</span>'}</div>
+        <div class="imp-acts">
+          <button class="ghost" data-action="cancel-custom-import">Annuler</button>
+          <button class="primary" data-action="custom-import-next-from-mapping" ${missing.length ? 'disabled title="Associez d\'abord les champs obligatoires"' : ''}>Continuer →</button>
+        </div>
       </div>`;
   } else if(cs.step === 'postes'){
     // v1.122.0 : étape refaite en trois cartes (voir CLAUDE.md « Étape Postes de l'import personnalisé »).
@@ -16115,6 +16376,7 @@ function renderContextMenu(){
   // Une tâche jamais démarrée n'a encore aucun temps passé à détailler.
   items.push({action:'ctx-time-detail', label: o.statut==='a_faire' ? '⏱ Historique des temps passés (avant réouverture)' : '⏱ Détail des temps passés'});
   items.push({action:'ctx-parcours', label:'🧭 Parcours de la commande'});
+  { const cc_ = state.commandes.find(x=>x.id===contextMenu.cid); if(cc_ && crossLotCanOffer(cc_)) items.push({action:'ctx-cross-lot', label:'🔗 Fusionner des lignes de postes différents (cette commande)'}); }
   if(canSupervise() && o.statut !== 'termine') items.push({action:'ctx-bulk-done', label:'✔ Terminer des tâches en lot (cette commande)'});
   const label = [c.nom, o.piece, o.etape].filter(Boolean).join(' · ');
   const nbShown = primary.length + (contextMenu.more ? items.length : 1);
@@ -18194,6 +18456,7 @@ function renderCommandeCard(c, idx, total){
     ${doneBlock}
     <div class="commande-footer">
       <button class="small add-op-btn" data-action="add-op" data-cid="${c.id}">+ Ajouter une ligne pièce / étape</button>
+      ${crossLotCanOffer(c) ? `<button class="small" data-action="open-cross-lot" data-cid="${c.id}" title="Fusionner en un seul lot des lignes de postes différents (ex. ajustage + chaudronnerie)">🔗 Fusionner des postes</button>` : ''}
       ${canSupervise() && c.pieces.some(o => o.statut !== 'termine') ? `<button class="small" data-action="open-bulk-done" data-cid="${c.id}" title="Terminer plusieurs tâches de cette commande d'un coup, par poste (oubli de pointage)">✔ Terminer en lot</button>` : ''}
       <button class="danger-ghost small delete-cmd" data-action="delete-commande" data-id="${c.id}">Supprimer la commande</button>
     </div>
@@ -21454,6 +21717,7 @@ function render(){
     renderDeclareDoneModal(),
     renderTerminerRecapModal(),
     renderBulkDoneModal(),
+    renderCrossLotModal(),
     renderParcoursModal(),
     renderTempsProdSessionModal(),
     renderContextMenu(),
@@ -21626,7 +21890,7 @@ document.addEventListener('click', (e) => {
     if(presenceReturnDraft){ presenceReturnDraft = null; render(); return; }
     if(parcoursModal && tempsProdSessionModal){ tempsProdSessionModal = null; render(); return; } // le détail des horaires ouvert PAR-DESSUS le parcours ne referme que lui
     presenceCorrection = null; presencePunchDraft = null;
-    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; liberePosteDraft = null; workCtxDraft = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; terminerRecapDraft = null; bulkDoneDraft = null; parcoursModal = null; closeSettingsModal(); return;
+    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; liberePosteDraft = null; workCtxDraft = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; terminerRecapDraft = null; bulkDoneDraft = null; crossLotDraft = null; parcoursModal = null; closeSettingsModal(); return;
   }
   if(contextMenu && !e.target.closest('.context-menu')){
     contextMenu = null; render();
@@ -21691,6 +21955,7 @@ function dispatchClickAction(action, el){
       render();
     } break;
     case 'custom-import-next-from-mapping': proceedFromMapping(); break;
+    case 'custom-import-autodetect': { const n = autoDetectImportColumns(); showToast(n ? `${n} colonne(s) reconnue(s) — vérifiez les associations.` : 'Aucune nouvelle colonne reconnue.'); break; }
     case 'custom-import-back-to-mapping': backToMappingStep(); break;
     case 'custom-import-next-from-postes': proceedFromPostes(); break;
     case 'confirm-custom-import': confirmCustomImport(); break;
@@ -21835,6 +22100,11 @@ function dispatchClickAction(action, el){
     case 'ctx-declare-done': contextMenu = null; openDeclareDone(el.dataset.cid, el.dataset.oid); break;
     case 'ctx-bulk-done': contextMenu = null; openBulkDone(el.dataset.cid); break;
     case 'open-bulk-done': openBulkDone(el.dataset.cid); break;
+    case 'ctx-cross-lot': contextMenu = null; openCrossLot(el.dataset.cid); break;
+    case 'open-cross-lot': openCrossLot(el.dataset.cid); break;
+    case 'close-cross-lot': closeCrossLot(); break;
+    case 'submit-cross-lot': submitCrossLot(); break;
+    case 'cross-lot-dissociate': dissociateFusionGroup(el.dataset.gid); break;
     case 'close-bulk-done': closeBulkDone(); break;
     case 'submit-bulk-done': submitBulkDone(null); break;
     case 'bulk-done-poste': submitBulkDone(el.dataset.poste); break;
@@ -22193,6 +22463,7 @@ function dispatchChangeAction(el, action){
     case 'correct-pointage-field': updateCorrectPointageField(el.dataset.field, el.value); break;
     case 'declare-done-field': updateDeclareDoneField(el.dataset.field, el.value); break;
     case 'rd-frise-derives': rdFrise.derives = !!el.checked; try{ localStorage.setItem(RD_DERIVES_KEY, rdFrise.derives ? '1' : '0'); }catch(e){ /* valable pour la session */ } render(); break;
+    case 'cross-lot-line': toggleCrossLotLine(el.dataset.oid, el.checked); break;
     case 'bulk-done-field': updateBulkDoneField(Number(el.dataset.idx), el.dataset.field, el.type === 'checkbox' ? el.checked : el.value); break;
     case 'bulk-done-commande': bulkDoneSetCommande(el.value); break;
     case 'bulk-done-op-all': bulkDoneSetOperatorAll(el.value); break;
@@ -22726,6 +22997,7 @@ document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && quickPointageDraft){ closeQuickPointage(); }
   if(e.key === 'Escape' && declareDoneDraft){ closeDeclareDone(); }
   if(e.key === 'Escape' && bulkDoneDraft){ closeBulkDone(); }
+  if(e.key === 'Escape' && crossLotDraft){ closeCrossLot(); }
   if(e.key === 'Escape' && correctOperatorDraft){ closeCorrectOperator(); }
   if(e.key === 'Escape' && continuedDrag){ cancelContinuedDrag(); }
 });

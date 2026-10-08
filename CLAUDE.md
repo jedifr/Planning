@@ -655,6 +655,25 @@ simplifiées restent dans « ⋯ Plus »**. Pas de réglage par personne : le mo
   « en week-end », annulation sans effet, « Oui » = en cours + exception + fenêtre comptée, menu Plus, clic droit principal puis Plus,
   mardi 10h sans question, mobile sans débordement, aucune erreur.
 
+### Étape « Colonnes » de l'import personnalisé, champ par champ (v1.123.0)
+
+Demande : améliorer l'import à partir de la première étape. Maquette validée (variante A). **Présentation seulement** : mêmes `data-action` (`custom-import-map-field`, `custom-import-duree-mode`, `custom-import-split-slash`, `custom-import-ref2-sep`, cases de phase, défauts), mêmes champs de `cs.map`, même validation (`proceedFromMapping`).
+
+- Carte « Champs obligatoires n / 5 » (Référence, Poste, Pièce, Quantité, Temps unitaire ou Durée totale) : une ligne par champ = colonne + **valeur de la 1ère ligne du fichier** + pastille ✓/!. « Continuer » est **désactivé** tant qu'un obligatoire manque ; le pied dit « Il manque : … ».
+- Colonnes facultatives (10) et valeurs par défaut dans deux `<details class="imc-fold">` repliés (`openMiniDropdowns`, clés `imc-opt`/`imc-def`) ; sous-options conservées (découpage sur « / », séparateur de la référence complétée, numérotation automatique des phases).
+- À droite : aperçu des 4 premières lignes du fichier, colonnes associées surlignées avec leur rôle.
+- **« ✨ Reconnaître les colonnes »** (`autoDetectImportColumns`) : associe par mots-clés dans les titres, **sans jamais toucher un champ déjà choisi**, une colonne n'est prise qu'une fois ; un toast donne le nombre trouvé (toujours à vérifier).
+- Test (scratchpad `col_ui.js`, Playwright) : bouton désactivé, détection (8 colonnes), 5/5, passage à l'étape Postes, aucune erreur.
+
+### Fusion de lignes de postes différents sur une commande déjà importée (v1.123.0)
+
+Demande : « fusionner de l'ajustage et de la chaudronnerie » **après** l'import. Même règle que le regroupement à l'import (v1.106.0) : un lot est planifié sur UN poste hôte = celui qui totalise le plus de temps (Σ T.U. × quantité) parmi les lignes choisies ; durée du lot = somme des durées PROPRES (jamais `dureeOverrideH`) ; `etape` vide = nom du poste d'origine ; dépendances de phase internes plus imposées.
+
+- Entrées (`canSupervise()`, commande avec ≥ 2 postes parmi ses lignes éligibles — `crossLotCanOffer`) : bouton « 🔗 Fusionner des postes » du pied de carte commande et entrée « ⋯ Plus » du menu contextuel (`ctx-cross-lot`).
+- `crossLotEligible(o)` : `a_faire`, ni sous-traitée, ni hors planning, ni déjà en lot, avec un poste. Les autres lignes sont affichées mais cases désactivées (motif indiqué) ; une ligne déjà en lot montre « 🔗 Lot · sur {poste} » + « Dissocier » (`dissociateFusionGroup`, qui laisse chaque ligne sur le poste hôte).
+- Pop-up `renderCrossLotModal` (`crossLotDraft = { cid, sel[] }`, transitoire, composée dans `render()`, remise à `null` par le clic sur le fond et Échap) : lignes groupées par pièce, barre collante avant/après (« Ajustage 2 h + Chaudronnerie 5 h = 7 h → lot sur Chaudronnerie »), avertissements (phases différentes, plusieurs pièces), « Fusionner » désactivé sans ≥ 2 postes ; confirmation puis **un seul `commit()`** (`submitCrossLot`).
+- Vérifié (Playwright, export du 06/10, C026-0744) : bouton désactivé, activé après 2 lignes de postes différents, les 2 lignes sur le même poste avec un même `fusionGroupId`, durée = somme, aucune erreur.
+
 ## Historique des prévisions avant clôture (`prevision_history`)
 
 Une fois une pièce marquée `termine`, `computeSchedule` ancre définitivement `start`/`end` sur ses
