@@ -328,6 +328,11 @@
   .kc-pers{display:inline-flex; align-items:center; gap:4px;}
   .kc-av{display:inline-grid; place-items:center; width:18px; height:18px; border-radius:50%; color:#fff; font-size:9px; font-weight:600; font-style:normal;}
   .kc-dur{font-variant-numeric:tabular-nums;}
+  .kc-actions{display:flex; gap:6px; margin-top:6px;}
+  .kc-actions button{padding:6px 10px; font-size:12.5px; font-weight:600; border-radius:6px; flex:0 0 auto;}
+  .kc-actions .kc-go{flex:1 1 auto; background:var(--accent); color:#fff; border-color:var(--accent);}
+  .kc-actions .kc-more{background:transparent; color:var(--text-dim);}
+  .kanban-compact .kc-actions{display:none;}
   .kc-r4{display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; font-size:11.5px;}
   .kc-when{font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--text-dim);}
   .kc-due{font-size:10.5px; font-weight:500; color:var(--text-dim); white-space:nowrap;}
@@ -1621,6 +1626,8 @@
     padding:9px 12px; font-size:13px; cursor:pointer; color:var(--text);
   }
   .context-menu-item:hover{background:var(--panel-2);}
+  .context-menu-sep{border-top:1px solid var(--line-soft); margin:2px 0;}
+  .context-menu-more{color:var(--text-dim);}
 
   /* Petits menus déroulants (<details>) du planning — "Filtres & tri", "Postes affichés"... */
   details.dd-menu{position:relative; display:inline-block;}
@@ -2045,7 +2052,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.120.2';
+const APP_VERSION = '1.121.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -6715,15 +6722,28 @@ function workHoursExceptionEndFor(op, now, st){
 // groupe fusionné le cas échéant : `applyAutoPauseResume` (serveur) évalue chaque pièce
 // indépendamment via sa propre `sessions[]`, même quand tout le groupe a démarré en même temps —
 // sans propagation, un membre du groupe resterait mis en pause.
+// Pose l'exception SANS enregistrer (v1.121.0) : partagée par le menu « Plus » (qui enregistre juste
+// après) et par la question posée au démarrage (setOpStatut, qui enregistre UNE seule fois pour
+// l'exception ET le démarrage — deux commit() de suite perdraient le second, voir les pièges).
+function applyWorkException(o, kind, nowD){
+  const lunch = kind === 'lunch';
+  const endDate = lunch ? lunchExceptionEndFor(o, nowD, state) : workHoursExceptionEndFor(o, nowD, state);
+  const until = toInputValue(endDate);
+  if(lunch){
+    o.lunchExceptionUntil = until;
+    propagateFusionGroupFields(o, { lunchExceptionUntil: until });
+  } else {
+    o.workHoursExceptionUntil = until;
+    propagateFusionGroupFields(o, { workHoursExceptionUntil: until });
+  }
+  recordExceptionWindow(o, toInputValue(nowD), until, lunch ? 'pause' : 'horsHoraires');
+  return endDate;
+}
 function setWorkHoursException(cid, oid){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
   const o = c.pieces.find(o=>o.id===oid); if(!o) return;
   const nowD = new Date();
-  const endDate = workHoursExceptionEndFor(o, nowD, state);
-  const until = toInputValue(endDate);
-  o.workHoursExceptionUntil = until;
-  propagateFusionGroupFields(o, { workHoursExceptionUntil: until });
-  recordExceptionWindow(o, toInputValue(nowD), until, 'horsHoraires');
+  const endDate = applyWorkException(o, 'horsHoraires', nowD);
   commit();
   showToast(`🕐 Exception activée : cette tâche ne sera pas remise en pause automatiquement jusqu'à ${formatDT(endDate)} — le temps travaillé d'ici là sera compté.`);
 }
@@ -6754,11 +6774,7 @@ function setLunchException(cid, oid){
   const c = state.commandes.find(c=>c.id===cid); if(!c) return;
   const o = c.pieces.find(o=>o.id===oid); if(!o) return;
   const nowD = new Date();
-  const endDate = lunchExceptionEndFor(o, nowD, state);
-  const until = toInputValue(endDate);
-  o.lunchExceptionUntil = until;
-  propagateFusionGroupFields(o, { lunchExceptionUntil: until });
-  recordExceptionWindow(o, toInputValue(nowD), until, 'pause');
+  const endDate = applyWorkException(o, 'lunch', nowD);
   commit();
   showToast(`🍽 Exception activée : cette tâche ne sera pas mise en pause pour la pause déjeuner jusqu'à ${formatDT(endDate)} — le temps travaillé pendant la pause sera compté.`);
 }
@@ -7593,6 +7609,15 @@ function setOpStatut(cid, oid, newStatut, opts){
   // À faire → Terminée (clic droit, sélecteur du tableau) : tâche jamais démarrée — déclaration du
   // temps avec dates, personne et validation plutôt que l'ancien prompt() « minutes ».
   if(newStatut === 'termine' && prev === 'a_faire'){ openDeclareDone(cid, oid); return; }
+  // Démarrage / reprise hors horaires ou pendant la pause : une seule question (voir startContextNow).
+  if(newStatut === 'en_cours' && (prev === 'a_faire' || prev === 'en_pause') && !(opts && opts.workCtx)){
+    const ctxNow = startContextNow(o, new Date());
+    if(ctxNow){
+      workCtxDraft = { cid, oid, kind: ctxNow.kind, reason: ctxNow.reason, end: ctxNow.end, label: [c.nom, o.piece, o.etape].filter(Boolean).join(' · ') };
+      render();
+      return;
+    }
+  }
   // En cours / en pause SANS aucun temps enregistré (séances de 0 min : démarrée puis aussitôt arrêtée) :
   // même pop-up de temps déclaré, au lieu de l'ancien prompt() prérempli avec le temps PRÉVU — un simple
   // « OK » y inscrivait le prévu comme « réellement passé » (cas réel C026-0727 : 7 h). Voir CLAUDE.md.
@@ -7667,6 +7692,10 @@ function setOpStatut(cid, oid, newStatut, opts){
   // pour ce champ (seul l'ancien mécanisme, retiré, en avait besoin ici).
 
   const nowStr = toInputValue(new Date());
+  if(newStatut === 'en_cours' && opts && opts.workCtx){
+    const endEx = applyWorkException(o, opts.workCtx, new Date());
+    showToast(`${opts.workCtx==='lunch' ? '🍽' : '🕐'} Exception activée : ton temps est compté jusqu'à ${formatDT(endEx)}.`);
+  }
   let maxAdvanceH = 0;
   group.forEach(({cc, oo}) => {
     const diffH = applySingleStatusChange(cc, oo, newStatut, nowStr, plannedEndsBefore[oo.id], previsionsAvant[oo.id]);
@@ -7712,6 +7741,61 @@ function setOpStatut(cid, oid, newStatut, opts){
   if(newStatut === 'termine'){
     archiveOldSessions(state).then(changed => { if(changed) queueSilentSave(); });
   }
+}
+// ---- Question « Tu travailles maintenant ? » au démarrage hors horaires (v1.121.0) ----
+// Remplace les deux entrées cachées du clic droit pour le cas courant : démarrer/reprendre une tâche
+// hors des horaires (avant l'ouverture, soir, week-end, poste indisponible) ou pendant la pause. Le
+// serveur la remettrait sinon en pause dans la minute. Même règle que pauseKindForRunningTask
+// (autoPauseResume.js), lue sur l'horloge. Une personne POINTÉE présente n'est PAS exclue : elle
+// décale peut-être sa pause, la question lui est posée comme aux autres.
+function startContextNow(o, now){
+  if(o.sousTraitance || o.horsPlanning) return null;
+  const cfg = configForPiece(o, state);
+  const dow = now.getDay();
+  const workDay = !(dow===0 || dow===6 || isDateBlocked(now, cfg));
+  const active = u => !!u && now < new Date(u);
+  if(workDay){
+    if(isInPauseWindow(o, now, state)){
+      if(state.config.autoPauseDejeuner === false || active(o.lunchExceptionUntil)) return null;
+      return { kind:'lunch', reason:'en pause déjeuner', end: lunchExceptionEndFor(o, now, state) };
+    }
+    const segs = dayIntervals(now, cfg);
+    if(segs.some(([a,b]) => now >= a && now < b)) return null;
+  }
+  if(state.config.autoPauseHorsHoraires === false || active(o.workHoursExceptionUntil)) return null;
+  let reason;
+  if(!workDay) reason = (dow===0 || dow===6) ? 'en week-end' : 'un jour où le poste est indisponible';
+  else { const segs = dayIntervals(now, cfg); reason = now < segs[0][0] ? "avant l'ouverture" : 'après la fermeture'; }
+  return { kind:'horsHoraires', reason, end: workHoursExceptionEndFor(o, now, state) };
+}
+let workCtxDraft = null;
+function answerWorkCtx(yes){
+  const d = workCtxDraft; workCtxDraft = null;
+  if(yes && d) setOpStatut(d.cid, d.oid, 'en_cours', { workCtx: d.kind });
+  else render();
+}
+function renderWorkCtxModal(){
+  if(!workCtxDraft) return '';
+  const d = workCtxDraft;
+  const hh = formatDT(new Date()).split(' ').pop();
+  return `
+  <div class="modal-overlay">
+    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:440px;">
+      <div class="modal-head">
+        <h2>${d.kind==='lunch' ? '🍽' : '🕐'} Il est ${escapeHtml(hh)}, ${escapeHtml(d.reason)}</h2>
+        <button class="ghost icon-btn" data-action="workctx-no" title="Annuler">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="footer-note" style="text-align:left; margin:0 0 6px;">${escapeHtml(d.label)}</div>
+        <div style="margin:8px 0 6px; font-weight:600; font-size:16px;">Tu travailles maintenant ?</div>
+        <div class="footer-note" style="text-align:left; padding:0 0 8px;">Ton temps sera compté jusqu'à ${escapeHtml(formatDT(d.end))}. Sans cela, la tâche serait remise en pause automatiquement.</div>
+        <div class="form-actions" style="justify-content:flex-end; margin-top:8px; gap:8px;">
+          <button data-action="workctx-no">Annuler</button>
+          <button class="primary" data-action="workctx-yes">Oui, je travaille</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
 }
 function closeRetardDemarragePopup(){ retardDemarragePopupInfo = null; render(); }
 // ---- Poste libéré pendant une pause (v1.101.0, voir isPosteLibere) ----
@@ -15907,45 +15991,47 @@ function renderContextMenu(){
   const c = state.commandes.find(c=>c.id===contextMenu.cid);
   const o = c && c.pieces.find(o=>o.id===contextMenu.oid);
   if(!o) return '';
-  const items = [];
+  // Mode simple (v1.121.0) : les gestes de tous les jours d'abord, tout le reste derrière « ⋯ Plus ».
+  const primary = [], items = [];
   if(o.statut==='a_faire'){
-    items.push({action:'ctx-start', label:'▶ Démarrer'});
+    primary.push({action:'ctx-start', label:'▶ Démarrer'});
     items.push({action:'ctx-declare-done', label:'✔ Déclarer terminée (oubli de démarrage)'});
     const overridden = isPositionPinned(o);
     items.push(overridden
       ? {action:'ctx-unpin', label:'↺ Libérer (rendre volante)'}
       : {action:'ctx-pin', label:'📌 Figer à cet horaire'});
     if(isTempsModified(o)) items.push({action:'reset-temps-unitaire', label:'⏱ Revenir au temps théorique'});
-    items.push({action:'ctx-work-exception', label:'🕐 Je travaille maintenant (hors horaires)'});
-    items.push({action:'ctx-lunch-exception', label:'🍽 Je travaille pendant la pause'});
   }
   if(o.statut==='en_cours'){
-    items.push({action:'ctx-pause', label:'⏸ Mettre en pause'});
-    items.push({action:'ctx-finish', label:'✔ Terminer'});
+    primary.push({action:'ctx-pause', label:'⏸ Mettre en pause'});
+    primary.push({action:'ctx-finish', label:'✔ Terminer'});
     items.push({action:'ctx-join', label:'➕ Travailler aussi sur cette tâche'});
-    items.push({action:'ctx-work-exception', label:'🕐 Je travaille maintenant (hors horaires)'});
-    items.push({action:'ctx-lunch-exception', label:'🍽 Je travaille pendant la pause'});
   }
   if(o.statut==='en_pause'){
-    items.push({action:'ctx-resume', label:'▶ Reprendre'});
+    primary.push({action:'ctx-resume', label:'▶ Reprendre'});
+    primary.push({action:'ctx-finish', label:'✔ Terminer'});
     if(o.machineId && !o.sousTraitance && !o.horsPlanning){
       items.push(o.posteLibere
         ? {action:'ctx-libere-poste', label:'🔒 Réserver de nouveau le poste'}
         : {action:'ctx-libere-poste', label:'🔓 Libérer le poste pendant la pause'});
     }
-    items.push({action:'ctx-finish', label:'✔ Terminer'});
+  }
+  if(o.statut !== 'termine'){
     items.push({action:'ctx-work-exception', label:'🕐 Je travaille maintenant (hors horaires)'});
     items.push({action:'ctx-lunch-exception', label:'🍽 Je travaille pendant la pause'});
   }
-  if(o.statut==='termine') items.push({action:'ctx-reopen', label:'↺ Rouvrir (À faire)'});
+  if(o.statut==='termine') primary.push({action:'ctx-reopen', label:'↺ Rouvrir (À faire)'});
   // Une tâche jamais démarrée n'a encore aucun temps passé à détailler.
   items.push({action:'ctx-time-detail', label: o.statut==='a_faire' ? '⏱ Historique des temps passés (avant réouverture)' : '⏱ Détail des temps passés'});
   items.push({action:'ctx-parcours', label:'🧭 Parcours de la commande'});
   if(canSupervise() && o.statut !== 'termine') items.push({action:'ctx-bulk-done', label:'✔ Terminer des tâches en lot (cette commande)'});
   const label = [c.nom, o.piece, o.etape].filter(Boolean).join(' · ');
+  const nbShown = primary.length + (contextMenu.more ? items.length : 1);
   const left = Math.min(contextMenu.x, window.innerWidth - 220);
-  const top = Math.min(contextMenu.y, window.innerHeight - (items.length*38+50));
-  const menuItems = items.map(it=>`<button class="context-menu-item" data-action="${it.action}" data-cid="${contextMenu.cid}" data-oid="${contextMenu.oid}">${it.label}</button>`).join('');
+  const top = Math.max(4, Math.min(contextMenu.y, window.innerHeight - (nbShown*38+50)));
+  const btn = it => `<button class="context-menu-item" data-action="${it.action}" data-cid="${contextMenu.cid}" data-oid="${contextMenu.oid}">${it.label}</button>`;
+  const menuItems = primary.map(btn).join('')
+    + (contextMenu.more ? `<div class="context-menu-sep"></div>` + items.map(btn).join('') : `<button class="context-menu-item context-menu-more" data-action="ctx-more">⋯ Plus</button>`);
   return `<div class="context-menu" style="left:${left}px; top:${top}px;">
     <div class="context-menu-title">${escapeHtml(label)}</div>
     ${menuItems}
@@ -17557,6 +17643,13 @@ function renderKanbanView(schedule){
       const r4K = (col.key==='termine')
         ? `<div class="kc-r4"><span class="kc-done">✓ ${escapeHtml(whenK)}</span>${doneLineK}</div>`
         : `<div class="kc-r4"><span class="kc-when">${escapeHtml(whenK)}</span>${dueK}</div>`;
+      // Mode simple (v1.121.0) : le geste principal est un bouton visible sur la carte, tout le reste dans « ⋯ Plus ».
+      const kcBtn = (op, cls, txt) => `<button class="${cls}" data-action="kc-do" data-op="${op}" data-cid="${o.cid}" data-oid="${o.id}">${txt}</button>`;
+      const actionsK = col.key==='termine' ? '' : `<div class="kc-actions">${
+        col.key==='a_faire' ? kcBtn('start','kc-go','▶ Démarrer')
+        : col.key==='en_pause' ? kcBtn('resume','kc-go','▶ Reprendre')
+        : kcBtn('pause','','⏸ Pause') + kcBtn('finish','kc-go','✔ Terminer')
+      }<button class="kc-more" data-action="kc-more" data-cid="${o.cid}" data-oid="${o.id}" title="Autres actions">⋯ Plus</button></div>`;
       const html = `<div class="kanban-card ${hlClsK}" data-action="card-isolate" data-cid="${o.cid}" data-oid="${o.id}" data-fusion-group="${o._fusionMembers ? o.fusionGroupId : ''}" style="border-left:3px solid ${urgBorder};" title="${escapeHtml(titleAttrK)}">
         <div class="kc-r1"><span class="kc-cmd">${escapeHtml(cmdTxtK)}</span><span class="kc-cli" title="${escapeHtml(clientTxtK)}">${escapeHtml(nomResteK)}${refCliK ? `${nomResteK ? ' ' : ''}<span class="kc-ref">${escapeHtml(refCliK)}</span>` : ''}</span>${zoneChipK}</div>
         <div class="kc-r2">${escapeHtml(titreK)}${subK ? ` <span>· ${escapeHtml(subK)}</span>` : ''}</div>
@@ -17565,6 +17658,7 @@ function renderKanbanView(schedule){
         ${r4K}
         ${col.key==='a_faire' ? kanbanWaitPillHtml(o._wait) : ''}
         ${extrasK ? `<div class="kc-extras">${extrasK}</div>` : ''}
+        ${actionsK}
       </div>`;
       return { html, dayKey: dayKeyK, start: o.start };
     });
@@ -21263,6 +21357,7 @@ function render(){
     renderNewCommandeZoneNoticeModal(),
     renderRetardDemarragePopupModal(),
     renderLiberePosteModal(),
+    renderWorkCtxModal(),
     renderCorrectOperatorModal(),
     renderQuickPointageModal(),
     renderDeclareDoneModal(),
@@ -21440,7 +21535,7 @@ document.addEventListener('click', (e) => {
     if(presenceReturnDraft){ presenceReturnDraft = null; render(); return; }
     if(parcoursModal && tempsProdSessionModal){ tempsProdSessionModal = null; render(); return; } // le détail des horaires ouvert PAR-DESSUS le parcours ne referme que lui
     presenceCorrection = null; presencePunchDraft = null;
-    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; liberePosteDraft = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; terminerRecapDraft = null; bulkDoneDraft = null; parcoursModal = null; closeSettingsModal(); return;
+    excelImportResult = null; pendingLeaveRequestDraft = null; customImportState = null; fusionDetailModalGroupId = null; tempsProdSessionModal = null; newCommandeZoneNotice = null; retardDemarragePopupInfo = null; liberePosteDraft = null; workCtxDraft = null; rebutDraft = null; historiqueDetailInfo = null; declareDoneDraft = null; terminerRecapDraft = null; bulkDoneDraft = null; parcoursModal = null; closeSettingsModal(); return;
   }
   if(contextMenu && !e.target.closest('.context-menu')){
     contextMenu = null; render();
@@ -21858,6 +21953,11 @@ function dispatchClickAction(action, el){
     case 'ctx-reopen': contextMenu = null; setOpStatut(el.dataset.cid, el.dataset.oid, 'a_faire'); break;
     case 'ctx-work-exception': contextMenu = null; setWorkHoursException(el.dataset.cid, el.dataset.oid); break;
     case 'ctx-libere-poste': { contextMenu = null; const cc_ = state.commandes.find(c=>c.id===el.dataset.cid); const oo_ = cc_ && cc_.pieces.find(o=>o.id===el.dataset.oid); if(oo_) setPosteLibere(el.dataset.cid, el.dataset.oid, !oo_.posteLibere); break; }
+    case 'workctx-yes': answerWorkCtx(true); break;
+    case 'workctx-no': answerWorkCtx(false); break;
+    case 'ctx-more': if(contextMenu){ contextMenu.more = true; render(); } break;
+    case 'kc-do': { const mp = { start:'en_cours', resume:'en_cours', pause:'en_pause', finish:'termine' }; setOpStatut(el.dataset.cid, el.dataset.oid, mp[el.dataset.op]); break; }
+    case 'kc-more': { const r = el.getBoundingClientRect(); contextMenu = { x: r.left, y: r.bottom, cid: el.dataset.cid, oid: el.dataset.oid, more: true }; render(); break; }
     case 'libere-poste-yes': answerLiberePostePrompt(true); break;
     case 'libere-poste-no': answerLiberePostePrompt(false); break;
     case 'ctx-lunch-exception': contextMenu = null; setLunchException(el.dataset.cid, el.dataset.oid); break;
@@ -22525,6 +22625,7 @@ document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && newCommandeZoneNotice){ newCommandeZoneNotice = null; render(); }
   if(e.key === 'Escape' && retardDemarragePopupInfo){ closeRetardDemarragePopup(); }
   if(e.key === 'Escape' && liberePosteDraft){ closeLiberePostePrompt(); }
+  if(e.key === 'Escape' && workCtxDraft){ answerWorkCtx(false); }
   if(e.key === 'Escape' && terminerRecapDraft){ closeTerminerRecap(); }
   if(e.key === 'Escape' && rebutDraft){ closeRebutDraft(); }
   if(e.key === 'Escape' && historiqueDetailInfo){ closeHistoriqueDetail(); }

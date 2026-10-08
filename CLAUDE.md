@@ -626,6 +626,35 @@ séance de Sébastien le 21/09 de 05h57 à 07h56 comptée 0,93 h ; une soirée 1
   restent filtrées — les corriger passe par la page Pointages.
 - Côté serveur (`autoPauseResume.js`) rien ne change : il ne compte pas d'heures.
 
+### Lancement de tâche simplifié : boutons sur la carte, « ⋯ Plus » et question hors horaires (v1.121.0)
+
+Retour réel : des salariés (qui viennent plus tôt ou travaillent pendant la pause, et que le serveur remet alors en pause) se
+sentent perdus face à trop de choix au lancement d'une tâche — le clic droit, seul accès aux gestes courants, mêlait une dizaine
+d'entrées dont les deux exceptions « 🕐 / 🍽 », introuvables. Maquette validée (artefact « Lancement de tâche simplifié »), décisions
+de l'utilisateur : **mode simple pour tous** (admin et superviseurs inclus, avec le bouton Plus), **une personne pointée présente reste
+soumise à la pause automatique** (elle décale peut-être sa pause : la question lui est posée comme aux autres), **toutes les options non
+simplifiées restent dans « ⋯ Plus »**. Pas de réglage par personne : le mode est le fonctionnement normal.
+
+- **Carte Kanban** (`.kc-actions`, masquée en mode Compact) : À faire « ▶ Démarrer », En pause « ▶ Reprendre », En cours « ⏸ Pause » +
+  « ✔ Terminer », plus « ⋯ Plus » (Terminée : rien). `kc-do` appelle `setOpStatut` ; `kc-more` ouvre le menu contextuel déjà déplié à
+  l'emplacement du bouton. Sur téléphone (pas de clic droit) c'est désormais le seul accès à ces gestes.
+- **Menu contextuel** (`renderContextMenu`) : geste(s) principal(aux) d'abord (démarrer / pause + terminer / reprendre + terminer /
+  rouvrir), puis « ⋯ Plus » (`ctx-more`, `contextMenu.more`) qui déplie TOUT le reste (figer, déclarer terminée, travailler aussi dessus,
+  libérer le poste, les deux exceptions, détail des temps, parcours, terminer en lot…). Aucune entrée supprimée.
+- **Question « Tu travailles maintenant ? »** : `setOpStatut(…,'en_cours')` depuis `a_faire` ou `en_pause`, si `startContextNow(o, now)`
+  (même règle que `pauseKindForRunningTask` du serveur : pause déjeuner un jour ouvré → `lunch` ; hors segment de travail, week-end ou
+  poste indisponible → `horsHoraires`) renvoie un contexte, ouvre `workCtxDraft` (pop-up `renderWorkCtxModal`) et **ne change rien**
+  avant la réponse. Elle est posée AVANT les confirmations « phase inférieure / poste occupé » (sinon redemandées au rappel). « Oui »
+  rappelle `setOpStatut(…, { workCtx: kind })` qui pose l'exception par `applyWorkException` (mutation sans commit, extraite de
+  `setWorkHoursException`/`setLunchException`, qui l'utilisent aussi) puis démarre : **un seul `commit()`**. Annuler/✕/Échap : rien.
+  Pas de question si l'option `autoPauseDejeuner`/`autoPauseHorsHoraires` correspondante est décochée, ni si une exception est déjà
+  active, ni pour une tâche sous-traitée/hors planning. L'heure vient de l'horloge du navigateur, rien à saisir.
+- Non traité : la reprise via la pop-up de retour de pause déjeuner (`resumeFromPauseReminder`) ne pose pas la question (heure de
+  retour théorique, donc en horaires) ; la liste/Gantt n'ont pas de boutons de carte (le clic droit y reste, avec « ⋯ Plus »).
+- Test (scratchpad `simple_ui.js`, Playwright, horloge simulée samedi 06:30 puis mardi 10:00) : 37 cartes avec boutons, question
+  « en week-end », annulation sans effet, « Oui » = en cours + exception + fenêtre comptée, menu Plus, clic droit principal puis Plus,
+  mardi 10h sans question, mobile sans débordement, aucune erreur.
+
 ## Historique des prévisions avant clôture (`prevision_history`)
 
 Une fois une pièce marquée `termine`, `computeSchedule` ancre définitivement `start`/`end` sur ses
