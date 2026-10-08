@@ -674,6 +674,16 @@ Demande : « fusionner de l'ajustage et de la chaudronnerie » **après** l'impo
 - Pop-up `renderCrossLotModal` (`crossLotDraft = { cid, sel[] }`, transitoire, composée dans `render()`, remise à `null` par le clic sur le fond et Échap) : lignes groupées par pièce, barre collante avant/après (« Ajustage 2 h + Chaudronnerie 5 h = 7 h → lot sur Chaudronnerie »), avertissements (phases différentes, plusieurs pièces), « Fusionner » désactivé sans ≥ 2 postes ; confirmation puis **un seul `commit()`** (`submitCrossLot`).
 - Vérifié (Playwright, export du 06/10, C026-0744) : bouton désactivé, activé après 2 lignes de postes différents, les 2 lignes sur le même poste avec un même `fusionGroupId`, durée = somme, aucune erreur.
 
+### Aperçu de l'import personnalisé refait (v1.124.0)
+
+Demande : améliorer l'aperçu (tableau à 9 colonnes toujours visibles, alertes dispersées, lignes ignorées tout en bas). Maquette validée (artefact « Aperçu import personnalisé »). **Présentation seulement** : mêmes données (`cs.preview`), mêmes actions `update-import-preview-*` / `remove-import-preview-piece`, même simulation (`simulateImportStarts`), même confirmation.
+
+- **Bilan collant** (`.pv-bilan`) : commandes (nouvelles/fusions), lignes, retirées, ignorées, lots, « en retard probable » + « Recommencer » et « Confirmer l'import » toujours visibles.
+- **Une carte repliable par commande** (`.pv-card`) : nom, étiquette nouvelle/fusion, urgence (sélecteur conservé, « urgence conservée » pour une fusion), échelle échéance/livraison au plus tôt commune à toutes les cartes (aujourd'hui → dernière date + 3 j), pastilles (Dans les temps / Retard probable / lots / phases mêlées). `info[ref].check` = retard (livraison > `effectiveDueDate`), lot à phases mêlées ou ligne sans début projeté : ces cartes sont **dépliées d'office**. État transitoire dans `cs` : `pvOpen` (par commande), `pvDefaultOpen` (recalculé à chaque rendu, sert au basculement), `pvAllOpen`, `pvOnlyCheck` (filtre « À vérifier »), `pvRowOpen`, `pvFixOpen`.
+- **Tableau allégé** : étape, poste, durée, début → fin ; « ⋯ » (`pv-row-more`) ouvre phase, opérateur et départ possible ; pastille « 🔗 lot → hôte » conservée. Alertes (retard, lot et ses temps par poste, phases mêlées) en bandeaux en tête de carte.
+- **Carte « À corriger » en tête** : lignes ignorées et doublons avec motif et valeurs brutes (ligne, pièce/étape, poste, opérateur, qté × T.U.) + bouton « ← Revoir la correspondance ». **Pas d'actions par ligne** (« Associer ce poste », « Importer quand même ») : elles changeraient le comportement de l'import (reconstruction des groupes), hors périmètre ; la correction passe par le retour à la correspondance.
+- Test (scratchpad `pv_ui.js`, Playwright) : bilan, 2 cartes dont 1 dépliée, filtre, tout déplier, « ⋯ », carte À corriger, confirmation = commandes créées, aucune erreur.
+
 ## Historique des prévisions avant clôture (`prevision_history`)
 
 Une fois une pièce marquée `termine`, `computeSchedule` ancre définitivement `start`/`end` sur ses

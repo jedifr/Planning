@@ -1711,6 +1711,64 @@
     .imc-row{grid-template-columns:minmax(0,1fr) 34px; grid-template-areas:"lab st" "ctl ctl" "smp smp";}
     .imc-row .imc-lab{grid-area:lab;} .imc-row .imc-st{grid-area:st;} .imc-row .imc-ctl{grid-area:ctl;} .imc-row .imc-sample{grid-area:smp;}
   }
+  /* v1.124.0 — aperçu de l'import personnalisé */
+  .pv-bilan{position:sticky; top:-18px; z-index:3; margin:-18px -18px 0; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:11px 18px; background:var(--panel); border-bottom:1px solid var(--line);}
+  .pv-kpis{display:flex; gap:6px 16px; flex-wrap:wrap; min-width:0;}
+  .pv-kpis span{color:var(--text-dim); white-space:nowrap;} .pv-kpis b{color:var(--text); font-variant-numeric:tabular-nums;}
+  .pv-kpis .warn b{color:var(--amber);} .pv-kpis .bad b{color:var(--red);}
+  .pv-acts2{display:flex; gap:8px; align-items:center;}
+  .pv-bar{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:12px 0;}
+  .pv-chip[aria-pressed="true"]{background:var(--accent-dim); border-color:var(--accent); color:var(--accent); font-weight:600;}
+  .pv-chip i{font-style:normal; font-size:11.5px; margin-left:6px; opacity:.75;}
+  .pv-list{display:flex; flex-direction:column; gap:10px;}
+  .pv-card{background:var(--panel); border:1px solid var(--line); border-radius:12px; margin-bottom:0;}
+  .pv-card.attn{border-color:color-mix(in srgb, var(--amber) 45%, var(--line));}
+  .pv-card.fix{border-color:color-mix(in srgb, var(--red) 45%, var(--line)); margin-bottom:12px;}
+  .pv-head{display:grid; grid-template-columns:22px minmax(0,1.6fr) auto minmax(200px,1.3fr) auto; gap:12px; align-items:center; padding:11px 14px; cursor:pointer;}
+  .pv-fixhead{display:flex; flex-wrap:wrap; gap:10px; align-items:center;}
+  .pv-head:hover{background:var(--panel-2); border-radius:12px;}
+  .pv-chev{color:var(--text-dim); transition:transform .15s; display:inline-block;}
+  .pv-card[data-open="true"] .pv-chev{transform:rotate(90deg);}
+  .pv-name{min-width:0;} .pv-name b{font-family:'IBM Plex Mono',monospace; font-weight:500;}
+  .pv-name>div{color:var(--text-dim); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .pv-tag{display:inline-block; font-size:11px; padding:1px 8px; border-radius:99px; background:var(--panel-2); color:var(--text-dim); margin-left:6px;}
+  .pv-tag.fus{background:var(--accent-dim); color:var(--accent);}
+  .pv-badges{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;}
+  .pv-sc{position:relative; height:30px; min-width:0;}
+  .pv-ax{position:absolute; left:0; right:0; top:15px; height:4px; border-radius:3px; background:var(--panel-2); border:1px solid var(--line);}
+  .pv-span{position:absolute; top:15px; height:4px; border-radius:3px;}
+  .pv-mk{position:absolute; top:9px; width:2px; height:16px; background:var(--text); transform:translateX(-1px);}
+  .pv-mk span{position:absolute; bottom:17px; left:50%; transform:translateX(-50%); font-size:10.5px; color:var(--text-dim); white-space:nowrap;}
+  .pv-dot{position:absolute; top:11px; width:12px; height:12px; border-radius:50%; transform:translateX(-6px); border:2px solid var(--panel);}
+  .pv-dot.ok{background:var(--green);} .pv-dot.late{background:var(--red);}
+  .pv-dot span{position:absolute; top:14px; left:50%; transform:translateX(-50%); font-size:10.5px; white-space:nowrap; font-weight:600;}
+  .pv-dot.ok span{color:var(--green);} .pv-dot.late span{color:var(--red);}
+  .pv-body{border-top:1px solid var(--line); padding:4px 14px 14px;}
+  .pv-scroll{overflow-x:auto;}
+  .pv-alert{display:flex; gap:8px; align-items:flex-start; padding:8px 12px; border-radius:8px; font-size:12.5px; margin-top:10px;}
+  .pv-alert.warn{background:var(--amber-dim); color:var(--amber);} .pv-alert.info{background:var(--accent-dim); color:var(--accent);}
+  table.pv-table{width:100%; border-collapse:collapse; margin-top:8px; min-width:620px;}
+  .pv-table th{text-align:left; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--text-dim); font-weight:500; padding:6px 8px; border-bottom:1px solid var(--line);}
+  .pv-table td{padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:middle;}
+  .pv-n{text-align:right; font-variant-numeric:tabular-nums;}
+  tr.pv-pg td{background:var(--panel-2); font-weight:600; font-size:12px; color:var(--text-dim);}
+  tr.pv-sub td{background:var(--panel-2);}
+  .pv-sublab{display:flex; gap:18px; flex-wrap:wrap; align-items:center; font-size:12px; color:var(--text-dim);}
+  .pv-sublab label{display:flex; gap:6px; align-items:center;} .pv-sublab input,.pv-sublab select{width:auto;}
+  .pv-dates{white-space:nowrap; font-variant-numeric:tabular-nums;} .pv-dates.late{color:var(--red); font-weight:600;}
+  .pv-acts{white-space:nowrap; text-align:right;}
+  .pv-more[aria-expanded="true"]{background:var(--accent-dim); border-color:var(--accent); color:var(--accent);}
+  .pv-lotchip{font-size:11px; color:var(--accent); background:var(--accent-dim); border-radius:6px; padding:1px 7px; margin-left:6px; white-space:nowrap;}
+  .pv-fixrow{display:grid; grid-template-columns:80px minmax(0,1.3fr) minmax(0,1.6fr) auto; gap:12px; align-items:center; padding:9px 14px; border-top:1px solid var(--line);}
+  .pv-fixrow code{font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--text-dim);}
+  .pv-fixrow b{font-weight:600;} .pv-fixrow div div{font-size:12px; color:var(--text-dim);}
+  .pv-legend{display:flex; gap:16px; flex-wrap:wrap; color:var(--text-dim); font-size:12px; margin:12px 0 6px;}
+  .pv-legend i{display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px;}
+  @media screen and (max-width:860px){
+    .pv-head{grid-template-columns:22px minmax(0,1fr) auto; grid-template-areas:"c n b" ". s s" ". u u";}
+    .pv-head .pv-chev{grid-area:c;} .pv-head .pv-name{grid-area:n;} .pv-head .pv-badges{grid-area:b;} .pv-head .pv-sc{grid-area:s;} .pv-head .pv-urg{grid-area:u;}
+    .pv-fixrow{grid-template-columns:1fr; gap:6px;}
+  }
   .context-menu{
     position:fixed; z-index:1100; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
     box-shadow:0 8px 24px rgba(0,0,0,0.25); min-width:200px; overflow:hidden;
@@ -2150,7 +2208,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.123.0';
+const APP_VERSION = '1.124.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -15718,96 +15776,147 @@ function renderCustomImportModal(){
         </div>
       </div>`;
   } else if(cs.step === 'preview'){
+    // v1.124.0 : aperçu refait (voir CLAUDE.md « Aperçu de l'import personnalisé ») — bilan collant, carte « À corriger »,
+    // une carte repliable par commande. Présentation seulement : mêmes champs, mêmes actions `update-import-preview-*`.
     const p = cs.preview;
-    // Date de début "au mieux" pour chaque pièce, recalculée à CHAQUE rendu (donc à chaque correction
-    // de poste/opérateur dans ce même aperçu, qui changerait la file d'attente) — jamais mise en cache
-    // ici : voir simulateImportStarts, purement calculée sur une copie jetable de l'état, sans jamais
-    // toucher au vrai planning avant "Confirmer l'import".
     const projectedStarts = simulateImportStarts(p.groups);
+    const projectedEnds = projectedStarts.__ends || {};
     const crossBuckets = computeCrossGroupBuckets(p.groups, cs.crossGroups);
     const crossByPiece = {};
     crossBuckets.forEach(b => b.ids.forEach(id => { crossByPiece[id] = b; }));
     const machineNomById = id => (state.machines.find(m=>m.id===id)||{}).nom || '?';
-    const refRows = Object.keys(p.groups).filter(r=>p.groups[r].pieces.length>0).map(ref => {
+    const shortD = d => String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0');
+    const dueDateOf = dateStr => { if(!dateStr) return null; const d = new Date(dateStr + 'T00:00'); return isNaN(d) ? null : d; };
+    const refs = Object.keys(p.groups).filter(r => p.groups[r].pieces.length > 0);
+    const info = {};
+    refs.forEach(ref => {
       const g = p.groups[ref];
-      const projectedEnds = projectedStarts.__ends || {};
-      const refFin = (projectedStarts.__finByRef || {})[ref] || null;
-      const refStarts = g.pieces.map(pc => projectedStarts[pc.id]).filter(Boolean);
-      const refEarliest = refStarts.length ? new Date(Math.min(...refStarts.map(d=>d.getTime()))) : null;
-      // Affichage uniquement (g.pieces garde l'ordre du fichier) : lignes regroupées par pièce, dans l'ordre
-      // de première apparition au fichier, puis par phase croissante, puis ordre du fichier — l'ordre
-      // affiché reflète donc les phases, y compris après une correction dans cet aperçu.
+      const fin = (projectedStarts.__finByRef || {})[ref] || null;
+      const dueStr = g.existing ? g.existing.dateBesoin : g.dateBesoin;
+      const due = dueDateOf(dueStr);
+      const late = !!(fin && dueStr && fin > effectiveDueDate(dueStr));
+      const myIds = new Set(g.pieces.map(pc => pc.id));
+      const lots = crossBuckets.filter(b => b.ids.some(id => myIds.has(id)));
+      const mixed = lots.some(b => b.phases.length > 1);
+      const noStart = g.pieces.some(pc => !projectedStarts[pc.id] && !pc.sousTraitance && !pc.horsPlanning);
+      info[ref] = { g, fin, due, dueStr, late, lots, mixed, noStart, check: late || mixed || noStart };
+    });
+    cs.pvDefaultOpen = {}; refs.forEach(r => { cs.pvDefaultOpen[r] = info[r].check; });
+    const nbCheck = refs.filter(r => info[r].check).length;
+    const nbLate = refs.filter(r => info[r].late).length;
+    const nIgnored = (p.errorDetails||[]).length + (p.duplicateDetails||[]).length;
+    // Échelle commune de livraison : aujourd'hui → dernière date utile + 3 jours.
+    const t0 = new Date(); t0.setHours(0,0,0,0);
+    let tMax = new Date(t0.getTime() + 14*86400000);
+    refs.forEach(r => { [info[r].fin, info[r].due].forEach(d => { if(d && d > tMax) tMax = d; }); });
+    tMax = new Date(tMax.getTime() + 3*86400000);
+    const posPct = d => Math.max(0, Math.min(100, (d - t0) / (tMax - t0) * 100));
+    const scaleHtml = (i) => {
+      if(!i.fin && !i.due) return '<div class="pv-sc"></div>';
+      let h = '<div class="pv-sc"><div class="pv-ax"></div>';
+      if(i.fin && i.due){
+        const a = posPct(i.fin), bb = posPct(i.due);
+        h += i.late ? `<div class="pv-span" style="left:${bb}%; width:${a-bb}%; background:var(--red);"></div>`
+                    : `<div class="pv-span" style="left:${a}%; width:${bb-a}%; background:var(--green); opacity:.45;"></div>`;
+      }
+      if(i.due) h += `<div class="pv-mk" style="left:${posPct(i.due)}%;"><span>éch. ${shortD(i.due)}</span></div>`;
+      if(i.fin) h += `<div class="pv-dot ${i.late?'late':'ok'}" style="left:${posPct(i.fin)}%;"><span>${shortD(i.fin)}</span></div>`;
+      return h + '</div>';
+    };
+    const onlyCheck = !!cs.pvOnlyCheck;
+    const openOf = ref => cs.pvAllOpen ? true : (cs.pvOpen && cs.pvOpen[ref] !== undefined ? cs.pvOpen[ref] : info[ref].check);
+    const cards = refs.filter(r => !onlyCheck || info[r].check).map(ref => {
+      const i = info[ref], g = i.g, open = openOf(ref);
       const pieceFirstIdx = {};
-      g.pieces.forEach((pc, i) => { const k = String(pc.piece||'').trim().toLowerCase(); if(pieceFirstIdx[k] === undefined) pieceFirstIdx[k] = i; });
-      const displayPieces = g.pieces.map((pc, i) => ({ pc, i })).sort((a, b) =>
-        (pieceFirstIdx[String(a.pc.piece||'').trim().toLowerCase()] - pieceFirstIdx[String(b.pc.piece||'').trim().toLowerCase()])
-        || ((Number(a.pc.phase)||1) - (Number(b.pc.phase)||1)) || (a.i - b.i)).map(x => x.pc);
-      const pieceRows = displayPieces.map(pc => {
-        const debutPrevu = projectedStarts[pc.id];
-        return `
-        <tr>
-          <td style="padding-left:20px;">${escapeHtml([pc.piece,pc.etape].filter(Boolean).join(' / ')||'—')}</td>
-          <td><select data-action="update-import-preview-poste" data-oid="${pc.id}">${machineOptions(pc.machineId)}</select>${crossByPiece[pc.id] ? `<div class="footer-note" style="margin:2px 0 0; text-align:left; color:var(--accent);" title="Cette ligne est regroupée avec les autres lignes du lot et sera planifiée avec elles sur le poste « ${escapeHtml(machineNomById(crossByPiece[pc.id].hostMachineId))} »">🔗 lot${crossByPiece[pc.id].hostMachineId !== pc.machineId ? ' → ' + escapeHtml(machineNomById(crossByPiece[pc.id].hostMachineId)) : ''}</div>` : ''}</td>
-          <td><select data-action="update-import-preview-operateur" data-oid="${pc.id}">${operatorOptions(pc.operatorUserId)}</select></td>
-          <td>${durationLabel((pc.tempsUnitaire*pc.quantite)/60)}</td>
-          <td><input type="number" min="1" step="1" class="phase-input" style="width:60px;" value="${pc.phase||1}" data-action="update-import-preview-phase" data-oid="${pc.id}" title="Une phase supérieure attend la fin de la phase précédente de la même pièce"></td>
-          <td><input type="date" value="${pc.dateDebutPossible||''}" data-action="update-import-preview-date-debut-possible" data-oid="${pc.id}" title="Optionnel — la tâche ne pourra jamais démarrer avant, ex. en attente d'une matière"></td>
-          <td>${debutPrevu ? formatDT(debutPrevu) : '—'}</td>
-          <td>${projectedEnds[pc.id] ? formatDT(projectedEnds[pc.id]) : '—'}</td>
-          <td><button class="ghost small danger-ghost" data-action="remove-import-preview-piece" data-oid="${pc.id}" title="Ne pas importer cette opération">🗑</button></td>
-        </tr>`;
-      }).join('');
-      const refHeadSuffix = (refEarliest ? ` <span class="footer-note" style="margin:0;">— début au mieux : ${formatDT(refEarliest)}</span>` : '')
-        + (refFin ? ` <span class="import-delivery">📦 livraison au plus tôt : <strong>${escapeHtml(formatDT(refFin))}</strong>${g.existing ? ' (commande entière)' : ''} ${deliveryVerdictHtml(refFin, g.existing ? g.existing.dateBesoin : g.dateBesoin)}</span>` : '');
-      // Même style que le sélecteur d'urgence de la carte commande du planning (`.urgency-select`,
-      // pastille colorée pleine) plutôt qu'un `<select>` nu — repéré comme peu visible, perdu dans
-      // une ligne d'en-tête déjà chargée (nom, "nouvelle commande"/"fusion", début au mieux).
+      g.pieces.forEach((pc, k) => { const key = String(pc.piece||'').trim().toLowerCase(); if(pieceFirstIdx[key] === undefined) pieceFirstIdx[key] = k; });
+      const displayPieces = g.pieces.map((pc, k) => ({ pc, k })).sort((x, y) =>
+        (pieceFirstIdx[String(x.pc.piece||'').trim().toLowerCase()] - pieceFirstIdx[String(y.pc.piece||'').trim().toLowerCase()])
+        || ((Number(x.pc.phase)||1) - (Number(y.pc.phase)||1)) || (x.k - y.k)).map(x => x.pc);
+      let lastPiece = null;
+      const rows = open ? displayPieces.map(pc => {
+        const key = String(pc.piece||'').trim().toLowerCase();
+        let head = '';
+        if(key !== lastPiece){ lastPiece = key; head = `<tr class="pv-pg"><td colspan="5">${escapeHtml(pc.piece || '(sans nom)')}</td></tr>`; }
+        const debut = projectedStarts[pc.id], fin = projectedEnds[pc.id];
+        const lot = crossByPiece[pc.id];
+        const more = !!(cs.pvRowOpen && cs.pvRowOpen[pc.id]);
+        return head + `<tr>
+          <td><b>${escapeHtml(pc.etape || machineNomById(pc.machineId))}</b>${pc.numeroLigne ? ` <span class="footer-note" style="margin:0;">(n°${escapeHtml(pc.numeroLigne)})</span>` : ''}${lot ? `<span class="pv-lotchip" title="Cette ligne est regroupée avec les autres lignes du lot et sera planifiée avec elles sur le poste « ${escapeHtml(machineNomById(lot.hostMachineId))} »">🔗 lot${lot.hostMachineId !== pc.machineId ? ' → ' + escapeHtml(machineNomById(lot.hostMachineId)) : ''}</span>` : ''}</td>
+          <td><select data-action="update-import-preview-poste" data-oid="${pc.id}" aria-label="Poste">${machineOptions(pc.machineId)}</select></td>
+          <td class="pv-n">${durationLabel((pc.tempsUnitaire*pc.quantite)/60)}</td>
+          <td class="pv-dates${i.late ? ' late' : ''}">${debut ? formatDT(debut) : '—'} → ${fin ? formatDT(fin) : '—'}</td>
+          <td class="pv-acts"><button class="small pv-more" data-action="pv-row-more" data-oid="${pc.id}" aria-expanded="${more}" title="Opérateur, phase, départ possible">⋯</button> <button class="ghost small danger-ghost" data-action="remove-import-preview-piece" data-oid="${pc.id}" title="Ne pas importer cette opération">🗑</button></td>
+        </tr>` + (more ? `<tr class="pv-sub"><td colspan="5"><div class="pv-sublab">
+          <label>Phase <input type="number" min="1" step="1" class="phase-input" style="width:64px;" value="${pc.phase||1}" data-action="update-import-preview-phase" data-oid="${pc.id}" title="Une phase supérieure attend la fin de la phase précédente de la même pièce"></label>
+          <label>Opérateur <select data-action="update-import-preview-operateur" data-oid="${pc.id}">${operatorOptions(pc.operatorUserId)}</select></label>
+          <label>Départ possible <input type="date" value="${pc.dateDebutPossible||''}" data-action="update-import-preview-date-debut-possible" data-oid="${pc.id}" title="Optionnel — la tâche ne pourra jamais démarrer avant, ex. en attente d'une matière"></label>
+        </div></td></tr>` : '');
+      }).join('') : '';
+      const alerts = [];
+      if(i.late) alerts.push(['warn', `La livraison au plus tôt (${i.fin ? shortD(i.fin) : '—'}) dépasse l'échéance du ${escapeHtml(formatDateFr(i.dueStr))}.`]);
+      i.lots.forEach(b => alerts.push(['info', `🔗 Lot entre postes : ${Object.keys(b.hoursByMachine).map(mid => escapeHtml(machineNomById(mid)) + ' ' + escapeHtml(durationLabel(b.hoursByMachine[mid]))).join(' + ')} = ${escapeHtml(durationLabel(b.totalH))} → planifié sur <strong>${escapeHtml(machineNomById(b.hostMachineId))}</strong> (le poste qui totalise le plus de temps).`]));
+      if(i.mixed) alerts.push(['warn', `Le lot mêle plusieurs phases : l'ordre entre elles n'y sera plus imposé.`]);
+      if(i.noStart) alerts.push(['warn', `Au moins une ligne n'a pas de début projeté (poste sans capacité ?).`]);
       const urgSelUCol = urgencyColorFor(g.urgence || 'normale');
       const urgSelStyle = urgSelUCol ? `background:${hexToRgba(urgSelUCol,0.16)};color:${urgSelUCol};border-color:${urgSelUCol};` : '';
-      const urgenceSelect = `<span style="display:inline-flex; align-items:center; gap:6px; margin-left:14px;">
-        <strong style="font-size:11px; text-transform:uppercase; letter-spacing:0.03em;">Urgence :</strong>
-        <select class="urgency-select" style="${urgSelStyle}" data-action="update-import-preview-urgence" data-ref="${escapeHtml(ref)}">
+      const urgenceSelect = g.existing ? '<span class="footer-note" style="margin:0;" title="La commande existante garde son urgence">urgence conservée</span>' : `<select class="urgency-select" style="${urgSelStyle}" data-action="update-import-preview-urgence" data-ref="${escapeHtml(ref)}" aria-label="Urgence">
           <option value="normale" ${(g.urgence||'normale')==='normale'?'selected':''}>Normale</option>
           <option value="importante" ${g.urgence==='importante'?'selected':''}>Importante</option>
-          <option value="urgente" ${g.urgence==='urgente'?'selected':''}>Urgente</option>
-        </select>
-      </span>`;
-      return `<tr><td colspan="9" style="background:var(--panel-2); font-weight:600;">${escapeHtml(ref)} — ${g.existing?'fusion dans commande existante':'nouvelle commande'}${refHeadSuffix}${g.existing?'':urgenceSelect}</td></tr>${pieceRows}`;
+          <option value="urgente" ${g.urgence==='urgente'?'selected':''}>Urgente</option></select>`;
+      const badges = (!i.fin ? '' : (i.late ? '<span class="imp-pill off">⏰ Retard probable</span>' : '<span class="imp-pill ok">✓ Dans les temps</span>'))
+        + (i.lots.length ? `<span class="imp-pill st">🔗 ${i.lots.length} lot${i.lots.length>1?'s':''}</span>` : '') + (i.mixed ? '<span class="imp-pill off" style="background:var(--amber-dim);color:var(--amber);">Phases mêlées</span>' : '');
+      return `<section class="pv-card${i.check ? ' attn' : ''}" data-open="${open}">
+        <div class="pv-head" data-action="pv-toggle" data-ref="${escapeHtml(ref)}" role="button" tabindex="0" aria-expanded="${open}">
+          <span class="pv-chev">▸</span>
+          <div class="pv-name"><b>${escapeHtml(ref)}</b><span class="pv-tag${g.existing?' fus':''}">${g.existing ? 'fusion dans une commande existante' : 'nouvelle commande'}</span><div>${g.pieces.length} ligne${g.pieces.length>1?'s':''}${i.dueStr ? ' · échéance ' + escapeHtml(formatDateFr(i.dueStr)) : ''}${i.fin ? ` · livraison au plus tôt ${escapeHtml(formatDT(i.fin))}${g.existing ? ' (commande entière)' : ''}` : ''}</div></div>
+          <div class="pv-urg" data-noclick="1">${urgenceSelect}</div>
+          ${scaleHtml(i)}
+          <div class="pv-badges">${badges}</div>
+        </div>
+        ${open ? `<div class="pv-body">${alerts.map(a => `<div class="pv-alert ${a[0]}"><span>${a[0]==='warn'?'⚠':'ℹ'}</span><span>${a[1]}</span></div>`).join('')}
+          <div class="pv-scroll"><table class="pv-table"><thead><tr><th>Étape</th><th>Poste</th><th class="pv-n">Durée</th><th>Début → fin au mieux</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>` : ''}
+      </section>`;
     }).join('');
-    body = `
-      <div class="modal-section-title" style="margin-top:0;">Aperçu avant import</div>
-      <div class="leave-confirm-banner">
-        <strong>${p.nbNouvelles}</strong> nouvelle(s) commande(s), <strong>${p.nbFusions}</strong> fusion(s) dans une commande existante, <strong>${p.nbPieces}</strong> pièce(s) au total.${p.nbRetirees ? ` <span style="color:var(--amber);">${p.nbRetirees} opération(s) retirée(s) de l'import.</span>` : ''}
-      </div>
-      <div class="footer-note" style="text-align:left; margin-bottom:6px;">Poste, opérateur, phase et date de début possible peuvent être corrigés ici avant de valider, ligne par ligne, et une opération inutile se retire avec 🗑 (elle n'est alors pas importée) — les colonnes "Début au mieux"/"Fin au mieux" et la livraison au plus tôt de chaque commande se recalculent aussitôt en fonction. L'urgence, elle, se corrige une fois par commande (sélecteur à côté de son nom, ci-dessous) — pas de fusion dans une commande existante, dont l'urgence n'est jamais modifiée par l'import. C'est une simulation sur l'état actuel du planning, pas un engagement figé : la position réelle une fois importée dépendra de ce qui aura changé entre-temps (autres commandes, priorités).</div>
-      ${crossBuckets.length ? `<div class="leave-confirm-banner" style="margin-bottom:8px;"><strong>🔗 ${crossBuckets.length} lot(s) entre postes</strong> seront créés — chaque lot est planifié comme une seule tâche sur le poste qui totalise le plus de temps :<ul style="margin:4px 0 0 18px; padding:0;">${crossBuckets.map(b => `<li>${escapeHtml(b.scope==='tout' ? 'Tout l\'import' : b.ref + (b.piece ? ' · ' + b.piece : ''))} — ${b.ids.length} lignes, ${escapeHtml(durationLabel(b.totalH))} (${Object.keys(b.hoursByMachine).map(mid => escapeHtml(machineNomById(mid)) + ' ' + escapeHtml(durationLabel(b.hoursByMachine[mid]))).join(' + ')}) → poste <strong>${escapeHtml(machineNomById(b.hostMachineId))}</strong>${b.phases.length > 1 ? ` <span style="color:var(--amber);">⚠ phases ${b.phases.join(', ')} mêlées : l'ordre entre elles n'est plus imposé</span>` : ''}</li>`).join('')}</ul></div>` : ''}
-      ${refRows ? `<table class="ops-table"><thead><tr><th>Pièce / Étape</th><th>Poste</th><th>Opérateur</th><th>Durée</th><th title="Une phase supérieure attend la fin de la phase précédente de la même pièce">Phase</th><th>Départ possible</th><th>Début au mieux</th><th>Fin au mieux</th><th title="Retirer une opération de l'import">Retirer</th></tr></thead><tbody>${refRows}</tbody></table>` : ''}
-      ${(() => {
-        // Détail complet (valeurs du fichier), pas juste un résumé texte par ligne — pour retrouver
-        // à quoi correspondait une ligne ignorée sans devoir rouvrir l'Excel.
-        const ignoredRowHtml = (d) => `
-          <tr>
-            <td>${d.lineNo}</td>
-            <td>${escapeHtml(d.ref || '—')}</td>
-            <td>${escapeHtml([d.piece,d.etape].filter(Boolean).join(' / ')||'—')}${d.numeroLigne?` (n°${escapeHtml(d.numeroLigne)})`:''}</td>
-            <td>${escapeHtml(d.poste || '—')}</td>
-            <td>${escapeHtml(d.operateur || '—')}</td>
-            <td>${escapeHtml([d.quantiteBrut, d.tempsUnitaireBrut].filter(v=>v!==undefined && v!==null && v!=='').join(' × ')||'—')}</td>
-            <td>${escapeHtml(d.motif)}</td>
-          </tr>`;
-        const ignoredTable = (details, colorVar) => `
-          <table class="ops-table">
-            <thead><tr><th>Ligne</th><th>Référence</th><th>Pièce / Étape</th><th>Poste (fichier)</th><th>Opérateur (fichier)</th><th>Qté × T.U.</th><th style="color:${colorVar};">Motif</th></tr></thead>
-            <tbody>${details.map(ignoredRowHtml).join('')}</tbody>
-          </table>`;
-        return `
-          ${p.errorDetails.length ? `<div class="modal-section-title" style="color:var(--red);">${p.errorDetails.length} ligne(s) ignorée(s)</div>${ignoredTable(p.errorDetails, 'var(--red)')}` : ''}
-          ${p.duplicateDetails.length ? `<div class="modal-section-title" style="color:var(--amber);">${p.duplicateDetails.length} doublon(s) ignoré(s)</div>${ignoredTable(p.duplicateDetails, 'var(--amber)')}` : ''}`;
-      })()}
-      <div class="form-actions" style="margin-top:16px;">
-        <button class="ghost" data-action="custom-import-back-to-mapping">← Recommencer la correspondance</button>
-        <button class="primary" data-action="confirm-custom-import" ${p.nbPieces===0?'disabled title="Aucune opération à importer"':''}>✓ Confirmer l'import</button>
+    const ignoredRowHtml = (d, kind) => `
+      <div class="pv-fixrow">
+        <code>ligne ${escapeHtml(String(d.lineNo))}</code>
+        <div><b>${escapeHtml([d.piece,d.etape].filter(Boolean).join(' / ') || '—')}${d.numeroLigne ? ` (n°${escapeHtml(d.numeroLigne)})` : ''}</b><div>${escapeHtml(d.ref || '—')}</div></div>
+        <div><b>${escapeHtml(d.motif)}</b><div>${escapeHtml(['poste : ' + (d.poste || '—'), d.operateur ? 'opérateur : ' + d.operateur : '', [d.quantiteBrut, d.tempsUnitaireBrut].filter(v=>v!==undefined && v!==null && v!=='').join(' × ')].filter(Boolean).join(' · '))}</div></div>
+        <span class="imp-pill ${kind==='dup' ? 'st' : 'off'}">${kind==='dup' ? 'Doublon' : 'Ignorée'}</span>
       </div>`;
+    const fixCard = nIgnored ? `<section class="pv-card fix" data-open="${cs.pvFixOpen !== false}">
+        <div class="pv-head pv-fixhead" data-action="pv-toggle-fix" role="button" tabindex="0" aria-expanded="${cs.pvFixOpen !== false}">
+          <span class="pv-chev">▸</span><div><b>À corriger avant l'import</b> <span class="imp-pill off">${nIgnored} ligne${nIgnored>1?'s':''} ignorée${nIgnored>1?'s':''}</span></div>
+          <span class="footer-note" style="margin:0 0 0 auto;">Ces lignes ne seront pas importées. Corrigez la correspondance pour les récupérer.</span>
+          <button class="small" data-action="custom-import-back-to-mapping" data-noclick="1">← Revoir la correspondance</button>
+        </div>
+        ${cs.pvFixOpen !== false ? `<div>${(p.errorDetails||[]).map(d => ignoredRowHtml(d,'err')).join('')}${(p.duplicateDetails||[]).map(d => ignoredRowHtml(d,'dup')).join('')}</div>` : ''}
+      </section>` : '';
+    body = `
+      <div class="pv-bilan">
+        <div class="pv-kpis">
+          <span><b>${refs.length}</b> commande${refs.length>1?'s':''} (<b>${p.nbNouvelles}</b> nouvelle${p.nbNouvelles>1?'s':''}, <b>${p.nbFusions}</b> fusion${p.nbFusions>1?'s':''})</span>
+          <span><b>${p.nbPieces}</b> ligne${p.nbPieces>1?'s':''}</span>
+          ${p.nbRetirees ? `<span class="warn"><b>${p.nbRetirees}</b> retirée${p.nbRetirees>1?'s':''}</span>` : ''}
+          <span class="${nIgnored?'bad':''}"><b>${nIgnored}</b> ignorée${nIgnored>1?'s':''}</span>
+          <span><b>${crossBuckets.length}</b> lot${crossBuckets.length>1?'s':''}</span>
+          <span class="${nbLate?'warn':''}"><b>${nbLate}</b> en retard probable</span>
+        </div>
+        <div class="pv-acts2">
+          <button class="ghost" data-action="custom-import-back-to-mapping">← Recommencer</button>
+          <button class="primary" data-action="confirm-custom-import" ${p.nbPieces===0?'disabled title="Aucune opération à importer"':''}>✓ Confirmer l'import</button>
+        </div>
+      </div>
+      <div class="pv-bar" role="group" aria-label="Filtres">
+        <button class="imp-add pv-chip" data-action="pv-filter" data-mode="all" aria-pressed="${!onlyCheck}">Toutes <i>${refs.length}</i></button>
+        <button class="imp-add pv-chip" data-action="pv-filter" data-mode="check" aria-pressed="${onlyCheck}">À vérifier <i>${nbCheck}</i></button>
+        <span style="flex:1"></span>
+        <button class="imp-add pv-chip" data-action="pv-expand-all" aria-pressed="${!!cs.pvAllOpen}">${cs.pvAllOpen ? 'Tout replier' : 'Tout déplier'}</button>
+      </div>
+      ${fixCard}
+      <div class="pv-list">${cards || '<div class="footer-note" style="text-align:left;">Aucune commande à vérifier.</div>'}</div>
+      <div class="pv-legend"><span><i style="background:var(--text);"></i>Échéance demandée</span><span><i style="background:var(--green);"></i>Livraison au plus tôt, dans les temps</span><span><i style="background:var(--red);"></i>Livraison au plus tôt, après l'échéance</span></div>
+      <div class="footer-note" style="text-align:left;">Dates simulées sur le planning actuel : elles peuvent bouger d'ici la confirmation. Poste, opérateur, phase et départ possible se corrigent ligne par ligne ; 🗑 retire une opération de l'import. « Début/fin au mieux » et la livraison se recalculent à chaque correction.</div>`;
   }
   return `
   <div class="modal-overlay">
@@ -21955,6 +22064,11 @@ function dispatchClickAction(action, el){
       render();
     } break;
     case 'custom-import-next-from-mapping': proceedFromMapping(); break;
+    case 'pv-toggle': { const cs_ = customImportState; if(cs_){ const ref = el.dataset.ref; const def = cs_.pvDefaultOpen || {}; cs_.pvOpen = cs_.pvOpen || {}; if(cs_.pvAllOpen){ Object.keys(def).forEach(r => { cs_.pvOpen[r] = true; }); cs_.pvAllOpen = false; } const cur = cs_.pvOpen[ref] !== undefined ? cs_.pvOpen[ref] : !!def[ref]; cs_.pvOpen[ref] = !cur; render(); } break; }
+    case 'pv-toggle-fix': { const cs_ = customImportState; if(cs_){ cs_.pvFixOpen = cs_.pvFixOpen === false; render(); } break; }
+    case 'pv-filter': { const cs_ = customImportState; if(cs_){ cs_.pvOnlyCheck = el.dataset.mode === 'check'; render(); } break; }
+    case 'pv-expand-all': { const cs_ = customImportState; if(cs_){ cs_.pvAllOpen = !cs_.pvAllOpen; if(!cs_.pvAllOpen) cs_.pvOpen = {}; render(); } break; }
+    case 'pv-row-more': { const cs_ = customImportState; if(cs_){ cs_.pvRowOpen = cs_.pvRowOpen || {}; cs_.pvRowOpen[el.dataset.oid] = !cs_.pvRowOpen[el.dataset.oid]; render(); } break; }
     case 'custom-import-autodetect': { const n = autoDetectImportColumns(); showToast(n ? `${n} colonne(s) reconnue(s) — vérifiez les associations.` : 'Aucune nouvelle colonne reconnue.'); break; }
     case 'custom-import-back-to-mapping': backToMappingStep(); break;
     case 'custom-import-next-from-postes': proceedFromPostes(); break;
@@ -22998,6 +23112,7 @@ document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape' && declareDoneDraft){ closeDeclareDone(); }
   if(e.key === 'Escape' && bulkDoneDraft){ closeBulkDone(); }
   if(e.key === 'Escape' && crossLotDraft){ closeCrossLot(); }
+  if((e.key === 'Enter' || e.key === ' ') && e.target && e.target.classList && e.target.classList.contains('pv-head')){ e.preventDefault(); e.target.click(); }
   if(e.key === 'Escape' && correctOperatorDraft){ closeCorrectOperator(); }
   if(e.key === 'Escape' && continuedDrag){ cancelContinuedDrag(); }
 });
