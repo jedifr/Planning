@@ -1613,6 +1613,68 @@
   .page-menu-actions{display:flex; align-items:center; gap:6px; flex:none;}
   .page-menu-actions button.pinned{background:var(--accent-dim); border-color:var(--accent); color:var(--accent); font-weight:600;}
 
+  /* Import personnalisé — étape Postes (v1.122.0) */
+  .imp-steps{display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:12px; color:var(--text-dim); margin-left:auto; margin-right:10px;}
+  .imp-steps span{padding:2px 10px; border-radius:99px; background:var(--panel-2);}
+  .imp-steps .on{background:var(--accent); color:#fff; font-weight:600;}
+  .imp-steps .done{background:var(--accent-dim); color:var(--accent);}
+  .imp-card{border:1px solid var(--line); border-radius:10px; background:var(--panel); margin-bottom:16px;}
+  .imp-card-h{display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:14px 16px 10px;}
+  .imp-card-h h3{margin:0; font-size:14px; font-weight:600; text-transform:none; letter-spacing:0;}
+  .imp-card-h p{margin:2px 0 0; color:var(--text-dim); font-size:12.5px;}
+  .imp-card-b{padding:0 16px 16px;}
+  .imp-help{position:relative; flex:none;}
+  .imp-help summary{list-style:none; cursor:pointer; width:20px; height:20px; border-radius:50%; background:var(--accent-dim); color:var(--accent); text-align:center; font-size:12px; font-weight:600; line-height:20px;}
+  .imp-help summary::-webkit-details-marker{display:none;}
+  .imp-help[open]{flex-basis:100%; order:3;}
+  .imp-help[open] summary{margin-left:auto;}
+  .imp-note{margin-top:8px; padding:10px 12px; background:var(--panel-2); border-radius:8px; color:var(--text-dim); font-size:12.5px;}
+  .imp-card-h:has(.imp-help[open]){flex-wrap:wrap;}
+  .imp-row{display:grid; grid-template-columns:minmax(110px,1.1fr) 20px minmax(170px,1.5fr) 100px minmax(170px,1.2fr); gap:12px; align-items:center; padding:9px 0; border-top:1px solid var(--line);}
+  .imp-row.imp-hd{border-top:0; padding:0 0 6px; color:var(--text-dim); font-size:11px; letter-spacing:.06em; text-transform:uppercase;}
+  .imp-val{font-family:'IBM Plex Mono',monospace; font-size:12.5px; font-weight:500;}
+  .imp-row.ignored .imp-val{color:var(--text-dim);}
+  .imp-arrow{color:var(--text-dim); text-align:center;}
+  .imp-pill{display:inline-flex; align-items:center; gap:6px; padding:2px 10px; border-radius:99px; font-size:12px; font-weight:600;}
+  .imp-pill::before{content:""; width:7px; height:7px; border-radius:50%; background:currentColor;}
+  .imp-pill.ok{background:rgba(35,121,74,.14); color:#23794a;}
+  .imp-pill.st{background:var(--accent-dim); color:var(--accent);}
+  .imp-pill.off{background:var(--panel-2); color:var(--text-dim);}
+  .imp-opts{display:flex; gap:6px; flex-wrap:wrap;}
+  .imp-chip{position:relative; display:inline-flex; align-items:center; gap:6px; padding:4px 11px; border:1px solid var(--line); border-radius:99px; background:var(--panel); font-size:12.5px; font-weight:400; cursor:pointer; margin:0;}
+  .imp-chip input{position:absolute; opacity:0; width:1px; height:1px; pointer-events:none;}
+  .imp-chip:has(input:checked){background:var(--accent-dim); border-color:var(--accent); color:var(--accent); font-weight:600;}
+  .imp-chip:has(input:checked)::before{content:"✓";}
+  .imp-chip:has(input:focus-visible), .imp-segopt:has(input:focus-visible){outline:2px solid var(--accent); outline-offset:2px;}
+  .imp-chip.disabled, .imp-chip:has(input:disabled){opacity:.4; cursor:not-allowed;}
+  .imp-grp{border:1px solid var(--line); border-radius:10px; background:var(--panel-2); padding:12px 14px; display:flex; flex-direction:column; gap:12px; margin-bottom:10px;}
+  .imp-grp-h{display:flex; justify-content:space-between; align-items:center; gap:8px;}
+  .imp-lab{font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--text-dim); margin-bottom:6px;}
+  .imp-seg{display:inline-flex; flex-wrap:wrap; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--panel);}
+  .imp-segopt{position:relative; padding:6px 12px; font-size:12.5px; font-weight:400; cursor:pointer; border-right:1px solid var(--line); margin:0;}
+  .imp-segopt:last-child{border-right:0;}
+  .imp-segopt input{position:absolute; opacity:0; width:1px; height:1px; pointer-events:none;}
+  .imp-segopt:has(input:checked){background:var(--accent); color:#fff; font-weight:600;}
+  .imp-warn{background:rgba(161,95,0,.14); color:var(--amber); border-radius:8px; padding:8px 12px; font-size:12.5px;}
+  .imp-empty{color:var(--text-dim); font-size:12.5px; padding:4px 0 8px;}
+  .imp-add{border:1px dashed var(--accent); background:none; color:var(--accent); border-radius:8px; padding:7px 14px; font-weight:500;}
+  .imp-add:disabled{opacity:.45; cursor:not-allowed;}
+  .imp-ops{display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:4px 16px;}
+  .imp-op{display:grid; grid-template-columns:1fr 140px; gap:10px; align-items:center; padding:6px 0; border-bottom:1px solid var(--line);}
+  .imp-op span{font-weight:500;}
+  .imp-link{background:none; border:0; color:var(--accent); padding:8px 2px 0; font-size:12.5px;}
+  .imp-foot{position:sticky; bottom:-16px; margin:0 -16px -16px; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 16px; background:var(--panel); border-top:1px solid var(--line);}
+  .imp-sum{display:flex; gap:14px; flex-wrap:wrap; color:var(--text-dim); font-size:12.5px;}
+  .imp-sum b{color:var(--text);}
+  .imp-acts{display:flex; gap:10px; align-items:center;}
+  @media screen and (max-width:760px){
+    .imp-row{grid-template-columns:1fr 1fr; gap:8px 12px;}
+    .imp-row.imp-hd, .imp-arrow{display:none;}
+    .imp-row select{grid-column:1/3;}
+    .imp-row .imp-opts{grid-column:1/3;}
+    .imp-steps{display:none;}
+  }
+
   .context-menu{
     position:fixed; z-index:1100; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
     box-shadow:0 8px 24px rgba(0,0,0,0.25); min-width:200px; overflow:hidden;
@@ -2052,7 +2114,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.121.0';
+const APP_VERSION = '1.122.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -15299,73 +15361,100 @@ function renderCustomImportModal(){
         <button class="primary" data-action="custom-import-next-from-mapping">Continuer →</button>
       </div>`;
   } else if(cs.step === 'postes'){
-    const rows = cs.posteValues.map(v => `
-      <tr>
-        <td>${escapeHtml(cs.posteValueLabels[v] || v)}</td>
-        <td><select data-action="custom-import-poste-map" data-value="${escapeHtml(v)}">
-          <option value="">— à associer —</option>
+    // v1.122.0 : étape refaite en trois cartes (voir CLAUDE.md « Étape Postes de l'import personnalisé »).
+    // Aucune action ni règle ne change : les cases restent de vraies <input type="checkbox"/"radio">
+    // (habillées en puces par `label.imp-chip`), donc les mêmes gestionnaires `change` s'appliquent.
+    const impHelp = (key, txt) => `<details class="imp-help" data-dd-key="${key}" ${openMiniDropdowns[key]?'open':''} ontoggle="openMiniDropdowns[this.dataset.ddKey]=this.open"><summary title="Aide" aria-label="Aide">?</summary><div class="imp-note">${txt}</div></details>`;
+    const rows = cs.posteValues.map(v => {
+      const mapped = !!cs.posteMapping[v];
+      const st = !!cs.sousTraitanceByValue[v];
+      const pill = mapped ? '<span class="imp-pill ok">Associé</span>' : (st ? '<span class="imp-pill st">Sous-traité</span>' : '<span class="imp-pill off">Ignoré</span>');
+      return `
+      <div class="imp-row${(!mapped && !st) ? ' ignored' : ''}">
+        <div class="imp-val">${escapeHtml(cs.posteValueLabels[v] || v)}</div>
+        <div class="imp-arrow" aria-hidden="true">→</div>
+        <select data-action="custom-import-poste-map" data-value="${escapeHtml(v)}" aria-label="Poste pour ${escapeHtml(cs.posteValueLabels[v] || v)}">
+          <option value="">Ignorer cette valeur</option>
           ${state.machines.map(m=>`<option value="${m.id}" ${cs.posteMapping[v]===m.id?'selected':''}>${escapeHtml(m.nom)}</option>`).join('')}
-        </select></td>
-        <td style="text-align:center;"><input type="checkbox" data-action="toggle-import-group-value" data-value="${escapeHtml(v)}" ${cs.groupByValue[v]?'checked':''} title="Regrouper en un seul passage toutes les pièces utilisant cette valeur du fichier, sans tenir compte d'une matière/épaisseur (pratique si votre logiciel source ne fournit pas cette info)."></td>
-        <td style="text-align:center;"><input type="checkbox" data-action="toggle-import-sous-traitance-value" data-value="${escapeHtml(v)}" ${cs.sousTraitanceByValue[v]?'checked':''} title="Ces lignes sont sous-traitées : importées sans poste ni temps obligatoire, jamais planifiées sur un poste."></td>
-      </tr>`).join('');
+        </select>
+        <div>${pill}</div>
+        <div class="imp-opts">
+          <label class="imp-chip ${mapped?'':'disabled'}" title="Fusionner en un seul passage toutes les pièces utilisant cette valeur du fichier, sans tenir compte d'une matière/épaisseur (pratique si votre logiciel source ne fournit pas cette info)."><input type="checkbox" data-action="toggle-import-group-value" data-value="${escapeHtml(v)}" ${cs.groupByValue[v]?'checked':''} ${mapped?'':'disabled'}>Fusionner</label>
+          <label class="imp-chip" title="Ces lignes sont sous-traitées : importées sans poste ni temps obligatoire, jamais planifiées sur un poste."><input type="checkbox" data-action="toggle-import-sous-traitance-value" data-value="${escapeHtml(v)}" ${st?'checked':''}>Sous-traité</label>
+        </div>
+      </div>`;
+    }).join('');
+    const nbMapped = cs.posteValues.filter(v => cs.posteMapping[v]).length;
+    const nbSt = cs.posteValues.filter(v => !cs.posteMapping[v] && cs.sousTraitanceByValue[v]).length;
+    const nbIgnored = cs.posteValues.length - nbMapped - nbSt;
     // Postes réellement retenus à ce stade (une fois les associations faites) — un seul opérateur
     // par défaut à régler par poste, même si plusieurs valeurs du fichier y renvoient toutes les deux.
     const usedMachineIds = Array.from(new Set(Object.values(cs.posteMapping).filter(Boolean)));
-    const operatorDefaultRows = usedMachineIds.map(mid => {
-      const m = state.machines.find(mm=>mm.id===mid);
-      if(!m) return '';
-      return `<tr>
-        <td>${escapeHtml(m.nom)}</td>
-        <td><select data-action="custom-import-default-operator-for-machine" data-machine="${mid}">
-          <option value="">— aucun —</option>
-          ${usersList.map(u=>`<option value="${u.id}" ${cs.map.defaultOperatorByMachine[mid]===String(u.id)?'selected':''}>${escapeHtml(u.username)}</option>`).join('')}
-        </select></td>
-      </tr>`;
-    }).join('');
-    body = `
-      <div class="modal-section-title" style="margin-top:0;">Association des postes</div>
-      <div class="footer-note" style="text-align:left; margin-bottom:10px;">Associez chaque valeur à un poste existant chez vous — les correspondances exactes ont été pré-remplies. Une valeur laissée sur "— à associer —" n'est pas obligatoire : les lignes qui l'utilisent seront simplement ignorées à l'import (ex. des étapes qui ne concernent pas un poste physique, comme "Conception" ou "Devis"), sauf si vous les marquez "Sous-traité" ci-dessous. La case "Regrouper" fusionne automatiquement, en un seul passage, toutes les pièces utilisant cette valeur — utile si votre logiciel source ne fournit pas de matière/épaisseur pour le faire plus finement.</div>
-      <table class="ops-table">
-        <thead><tr><th>Valeur dans le fichier</th><th>Poste chez vous</th><th>Regrouper</th><th>Sous-traité</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      ${(() => {
-        // Regroupements entre postes (v1.106.0) : un lot fusionné se planifie sur UN poste — l'hôte est
-        // le poste qui totalise le plus de temps de production parmi les lignes du lot (calculé à l'aperçu).
-        const candidateMachines = usedMachineIds.map(mid => state.machines.find(mm=>mm.id===mid)).filter(m => m && !machineNameLooksLikeSousTraitance(m.nom));
-        const cgs = cs.crossGroups || [];
-        const cards = cgs.map((cg, i) => `
-          <div class="cross-group-card" style="border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:8px; background:var(--panel);">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
-              <strong>Regroupement ${i+1}</strong>
-              <button class="ghost small danger-ghost" data-action="remove-import-cross-group" data-id="${cg.id}" title="Supprimer ce regroupement">🗑 Retirer</button>
-            </div>
-            <div style="display:flex; flex-wrap:wrap; gap:6px 14px; margin:8px 0;">
-              ${candidateMachines.map(m => `<label style="display:inline-flex; align-items:center; gap:5px; font-weight:400;"><input type="checkbox" style="width:auto;" data-action="toggle-import-cross-group-machine" data-id="${cg.id}" data-machine="${m.id}" ${cg.machines.includes(m.id)?'checked':''}> ${escapeHtml(m.nom)}</label>`).join('') || '<span class="footer-note">Associez d\'abord des postes ci-dessus.</span>'}
-            </div>
-            <div style="display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center;">
-              <span class="footer-note" style="margin:0;">Un lot par :</span>
-              ${[['commande','commande (recommandé)'],['piece','pièce (dans une commande)'],['tout','tout l\'import']].map(([v,l]) => `<label style="display:inline-flex; align-items:center; gap:5px; font-weight:400;"><input type="radio" style="width:auto;" name="cross-scope-${cg.id}" data-action="set-import-cross-group-scope" data-id="${cg.id}" data-scope="${v}" ${cg.scope===v?'checked':''}> ${l}</label>`).join('')}
-            </div>
-            ${cg.machines.length < 2 ? '<div class="footer-note" style="color:var(--amber); text-align:left; margin-top:6px;">Cochez au moins deux postes pour que ce regroupement ait un effet.</div>' : ''}
-          </div>`).join('');
+    const opRow = m => `
+      <div class="imp-op"><span>${escapeHtml(m.nom)}</span>
+        <select data-action="custom-import-default-operator-for-machine" data-machine="${m.id}" aria-label="Opérateur par défaut pour ${escapeHtml(m.nom)}">
+          <option value="">Aucun</option>
+          ${usersList.map(u=>`<option value="${u.id}" ${cs.map.defaultOperatorByMachine[m.id]===String(u.id)?'selected':''}>${escapeHtml(u.username)}</option>`).join('')}
+        </select></div>`;
+    const usedOpRows = usedMachineIds.map(mid => state.machines.find(mm=>mm.id===mid)).filter(Boolean).map(opRow).join('');
+    const otherMachines = state.machines.filter(m => !usedMachineIds.includes(m.id));
+    const otherOpRows = cs.showOtherOps ? otherMachines.map(opRow).join('') : '';
+    const crossHtml = (() => {
+      // Regroupements entre postes (v1.106.0) : un lot fusionné se planifie sur UN poste — l'hôte est
+      // le poste qui totalise le plus de temps de production parmi les lignes du lot (calculé à l'aperçu).
+      const candidateMachines = usedMachineIds.map(mid => state.machines.find(mm=>mm.id===mid)).filter(m => m && !machineNameLooksLikeSousTraitance(m.nom));
+      const cgs = cs.crossGroups || [];
+      const cards = cgs.map((cg, i) => {
+        const nSel = candidateMachines.filter(m => cg.machines.includes(m.id)).length;
         return `
-      <div class="modal-section-title">Regroupements entre postes</div>
-      <div class="footer-note" style="text-align:left; margin-bottom:10px;">Fusionne en un seul lot des lignes de postes différents (ex. Ajustage + Chaudronnerie). Un lot est planifié comme une seule tâche sur un seul poste : toutes les lignes du lot sont donc ramenées sur le <strong>poste qui totalise le plus de temps de production</strong> dans ce lot (calculé à l'aperçu ; le poste d'origine est conservé dans l'étape si elle était vide). L'ordre entre phases n'est plus imposé à l'intérieur d'un lot — pensez à regrouper des lignes de même phase. La case « Regrouper » ci-dessus, elle, ne fusionne que des lignes d'une même valeur.</div>
-      ${cards}
-      <button class="small" data-action="add-import-cross-group" ${candidateMachines.length < 2 ? 'disabled title="Associez au moins deux postes pour pouvoir les regrouper"' : ''}>＋ Ajouter un regroupement</button>`;
-      })()}
+        <div class="imp-grp">
+          <div class="imp-grp-h"><b>Regroupement ${i+1}</b>
+            <button class="ghost small danger-ghost" data-action="remove-import-cross-group" data-id="${cg.id}" title="Supprimer ce regroupement">🗑 Retirer</button></div>
+          <div><div class="imp-lab">Postes à fusionner</div><div class="imp-opts">
+            ${candidateMachines.map(m => `<label class="imp-chip"><input type="checkbox" data-action="toggle-import-cross-group-machine" data-id="${cg.id}" data-machine="${m.id}" ${cg.machines.includes(m.id)?'checked':''}>${escapeHtml(m.nom)}</label>`).join('') || '<span class="footer-note">Associez d\'abord des postes ci-dessus.</span>'}
+          </div></div>
+          <div><div class="imp-lab">Un lot par</div><div class="imp-seg" role="group" aria-label="Portée du lot">
+            ${[['commande','Commande (recommandé)'],['piece','Pièce'],['tout','Tout l\'import']].map(([v,l]) => `<label class="imp-segopt"><input type="radio" name="cross-scope-${cg.id}" data-action="set-import-cross-group-scope" data-id="${cg.id}" data-scope="${v}" ${cg.scope===v?'checked':''}>${l}</label>`).join('')}
+          </div></div>
+          ${nSel < 2 ? '<div class="imp-empty">Cochez au moins deux postes pour former un lot.</div>' : `<div class="imp-warn">⚠ Les lignes de ces ${nSel} postes seront ramenées sur un seul poste. Pensez à regrouper des lignes de même phase.</div>`}
+        </div>`;
+      }).join('');
+      return `
+      <section class="imp-card">
+        <div class="imp-card-h"><div><h3>Regroupements entre postes</h3><p>Facultatif. Fusionne des lignes de postes différents en une seule tâche planifiée sur un seul poste.</p></div>
+          ${impHelp('imp-help-cross', 'Le lot est planifié comme une seule tâche : toutes ses lignes passent sur le <strong>poste qui totalise le plus de temps de production</strong> (calculé à l\'aperçu ; le poste d\'origine est conservé dans l\'étape si elle était vide). L\'ordre entre phases n\'est plus imposé à l\'intérieur d\'un lot — regroupez de préférence des lignes de même phase. « Fusionner » (tableau ci-dessus) ne regroupe que des lignes d\'une même valeur.')}</div>
+        <div class="imp-card-b">
+          ${cards || '<div class="imp-empty">Aucun regroupement : chaque ligne reste sur son poste.</div>'}
+          <button class="imp-add" data-action="add-import-cross-group" ${candidateMachines.length < 2 ? 'disabled title="Associez au moins deux postes pour pouvoir les regrouper"' : ''}>＋ Ajouter un regroupement</button>
+        </div>
+      </section>`;
+    })();
+    const nLots = (cs.crossGroups||[]).filter(cg => cg.machines.length >= 2).length;
+    body = `
+      <section class="imp-card">
+        <div class="imp-card-h"><div><h3>Postes du fichier</h3><p>Associez chaque valeur du fichier à l'un de vos postes. Les valeurs non associées sont ignorées.</p></div>
+          ${impHelp('imp-help-postes', 'Les correspondances exactes ont été pré-remplies. Une valeur laissée sur « Ignorer » n\'est pas bloquante : ses lignes ne sont simplement pas importées (étapes qui ne concernent pas un poste physique, comme « Conception » ou « Devis »), sauf si vous la marquez « Sous-traité ». <strong>Fusionner</strong> regroupe en un seul passage toutes les pièces utilisant cette valeur — utile si votre logiciel source ne fournit pas de matière/épaisseur.')}</div>
+        <div class="imp-card-b">
+          <div class="imp-row imp-hd"><div>Valeur du fichier</div><div></div><div>Poste chez vous</div><div>État</div><div>Options</div></div>
+          ${rows}
+        </div>
+      </section>
+      ${crossHtml}
       ${usedMachineIds.length ? `
-      <div class="modal-section-title">Opérateur par défaut, poste par poste</div>
-      <div class="footer-note" style="text-align:left; margin-bottom:10px;">Utilisé pour toute ligne où le fichier ne précise pas d'opérateur — un opérateur déjà indiqué dans le fichier n'est jamais remplacé.</div>
-      <table class="ops-table">
-        <thead><tr><th>Poste</th><th>Opérateur par défaut</th></tr></thead>
-        <tbody>${operatorDefaultRows}</tbody>
-      </table>` : ''}
-      <div class="form-actions" style="margin-top:16px;">
-        <button class="ghost" data-action="custom-import-back-to-mapping">← Retour</button>
-        <button class="primary" data-action="custom-import-next-from-postes">Continuer →</button>
+      <section class="imp-card">
+        <div class="imp-card-h"><div><h3>Opérateur par défaut</h3><p>Utilisé quand le fichier ne précise pas d'opérateur. Un opérateur indiqué dans le fichier n'est jamais remplacé.</p></div></div>
+        <div class="imp-card-b">
+          <div class="imp-ops">${usedOpRows}</div>
+          ${otherMachines.length ? `<button class="imp-link" data-action="toggle-import-other-ops" aria-expanded="${!!cs.showOtherOps}">${cs.showOtherOps ? 'Masquer' : 'Afficher'} les autres postes (${otherMachines.length})</button>` : ''}
+          ${cs.showOtherOps ? `<div class="imp-ops">${otherOpRows}</div>` : ''}
+        </div>
+      </section>` : ''}
+      <div class="imp-foot">
+        <div class="imp-sum"><span><b>${cs.posteValues.length}</b> valeur${cs.posteValues.length>1?'s':''}</span><span><b>${nbMapped}</b> associée${nbMapped>1?'s':''}</span>${nbSt ? `<span><b>${nbSt}</b> sous-traitée${nbSt>1?'s':''}</span>` : ''}<span><b>${nbIgnored}</b> ignorée${nbIgnored>1?'s':''}</span><span><b>${nLots}</b> regroupement${nLots>1?'s':''}</span></div>
+        <div class="imp-acts">
+          <button class="ghost" data-action="custom-import-back-to-mapping">← Retour</button>
+          <button class="primary" data-action="custom-import-next-from-postes">Continuer →</button>
+        </div>
       </div>`;
   } else if(cs.step === 'preview'){
     const p = cs.preview;
@@ -15464,6 +15553,8 @@ function renderCustomImportModal(){
     <div class="modal-box modal-box-wide" role="dialog" aria-modal="true">
       <div class="modal-head">
         <h2>Import personnalisé</h2>
+        ${(() => { const order = ['mapping','postes','preview']; const labs = ['Colonnes','Postes','Aperçu']; const cur = order.indexOf(cs.step);
+          return `<div class="imp-steps" aria-label="Étapes de l'import"><span class="done">✓ Fichier</span>${labs.map((l,k) => `<span class="${k<cur?'done':(k===cur?'on':'')}">${k<cur?'✓ ':(k+2)+' · '}${l}</span>`).join('')}</div>`; })()}
         <button class="ghost icon-btn" data-action="cancel-custom-import" title="Fermer">✕</button>
       </div>
       <div class="modal-body">${body}</div>
@@ -21588,6 +21679,7 @@ function dispatchClickAction(action, el){
     case 'trigger-excel-import': triggerExcelImport(); break;
     case 'start-custom-import': startCustomImport(); break;
     case 'cancel-custom-import': cancelCustomImport(); break;
+    case 'toggle-import-other-ops': if(customImportState){ customImportState.showOtherOps = !customImportState.showOtherOps; render(); } break;
     case 'add-import-cross-group': if(customImportState){
       if(!customImportState.crossGroups) customImportState.crossGroups = [];
       const used = Array.from(new Set(Object.values(customImportState.posteMapping).filter(Boolean))).filter(mid => { const m = state.machines.find(mm=>mm.id===mid); return m && !machineNameLooksLikeSousTraitance(m.nom); });
@@ -22138,7 +22230,7 @@ function dispatchChangeAction(el, action){
       if(cg && ['commande','piece','tout'].includes(el.dataset.scope)){ cg.scope = el.dataset.scope; render(); }
     } break;
     case 'toggle-import-group-value': if(customImportState) customImportState.groupByValue[el.dataset.value] = el.checked; break;
-    case 'toggle-import-sous-traitance-value': if(customImportState) customImportState.sousTraitanceByValue[el.dataset.value] = el.checked; break;
+    case 'toggle-import-sous-traitance-value': if(customImportState){ customImportState.sousTraitanceByValue[el.dataset.value] = el.checked; render(); } break; // render : l'état (Associé/Sous-traité/Ignoré) en dépend
     case 'update-fusion-group-start': updateFusionGroupStart(el.dataset.group, el.value); break;
     case 'update-fusion-group-duree': updateFusionGroupDuree(el.dataset.group, el.value); break;
     case 'rename-import-profile': renameImportProfile(el.dataset.id, el.value); break;

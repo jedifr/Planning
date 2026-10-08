@@ -4590,6 +4590,17 @@ mécanisme produisant un `fusionGroupId`, après les trois ci-dessus ; **import 
 - Test (scratchpad `cross_test.js`, 26 assertions sur l'export du 06/10 ; `cross_render.js`, 4) : portées, hôte = plus grand temps,
   < 2 postes, sous-traité exclu, absorption d'un lot existant, rejeu stable, planification sur l'hôte avec début commun, simulation, profil.
 
+### Étape « Postes » de l'import personnalisé refaite en trois cartes (v1.122.0)
+
+Retour : la page (association des postes, regroupements entre postes, opérateurs par défaut) était « brouillonne » — trois sujets à la suite, de longs paragraphes d'aide en tête, tous les postes listés. Maquette validée (artefact « Import personnalisé »). **Présentation seulement : aucune règle, aucun champ de `customImportState`, aucune action existante ne change.**
+
+- Trois cartes `.imp-card` : « Postes du fichier » (une ligne par valeur : valeur → poste → pastille d'état → options), « Regroupements entre postes », « Opérateur par défaut ». Les longues explications passent derrière un « ? » (`<details class="imp-help">`, ouvert/fermé mémorisé par `openMiniDropdowns` comme les autres menus : un `render()` ne le referme pas).
+- **Pastille d'état** : « Associé » (poste choisi), « Sous-traité » (pas de poste mais case Sous-traité : ces lignes sont importées sans poste), « Ignoré » (ni l'un ni l'autre : lignes non importées). Case « Fusionner » (ex-« Regrouper », `groupByValue`) grisée sans poste ; « Sous-traité » reste cochable sans poste (la règle existante). `toggle-import-sous-traitance-value` fait désormais un `render()` (la pastille en dépend).
+- **Les cases restent de vraies `<input type="checkbox"/"radio">`** habillées en puces/segments (`label.imp-chip`, `.imp-segopt`, états par `:has(input:checked)`) : mêmes `data-action`, mêmes gestionnaires `change` qu'avant. Poste choisi = « Ignorer cette valeur » (valeur vide) au lieu de « — à associer — ».
+- Regroupements : seuls les postes **associés** (hors sous-traitance) sont proposés ; avertissement ambre seulement quand ≥ 2 postes sont cochés ; portée en 3 segments. Opérateurs par défaut : postes utilisés d'abord, les autres derrière « Afficher les autres postes (N) » (`cs.showOtherOps`, action `toggle-import-other-ops`, transitoire).
+- Barre d'étapes dans l'en-tête de la pop-up (Fichier ✓ · Colonnes · Postes · Aperçu, `.imp-steps`, masquée sous 760 px) et pied collant avec le bilan (« 4 valeurs · 2 associées · 1 ignorée · 1 regroupement ») à côté de « Continuer ».
+- Test (scratchpad `imp_ui.js`, Playwright) : 3 cartes, 4 lignes, pastille « Sous-traité » après cochage, valeur dissociée = « Ignoré » + Fusionner grisé, bilan, aide ouverte/fermée, autres postes, portée du lot, aucune erreur.
+
 ## Recherche/isolement de commande — rien ne doit masquer un résultat trouvé
 
 La barre `#commande-search-input` (au-dessus de "Tâches en cours") filtre à la fois « Tâches en
