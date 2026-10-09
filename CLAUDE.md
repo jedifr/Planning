@@ -692,6 +692,18 @@ Retour (capture) : les nouvelles étapes Colonnes / Postes / Aperçu étaient tr
 
 Cas réel (C026-0781) : Ajustage ×2 + Chaudronnerie ×2 déjà fusionnées entre elles (lot) → `crossLotEligible` excluait les lignes en lot, donc un seul poste éligible et le bouton « Fusionner des postes » n'apparaissait pas. Désormais une ligne en lot est éligible si tous les membres de son lot sont « À faire » et dans la même commande ; la cocher coche **tout le lot** (`crossLotMates`), qui est absorbé dans le nouveau lot (nouvel `fusionGroupId`, durée = somme des durées propres).
 
+### Fusion après import : lot partiellement terminé (v1.124.3)
+
+Cas réel (C026-0781, bouton toujours absent en 1.124.2) : le lot des lignes de Chaudronnerie contenait aussi des membres déjà terminés (lot « Laser + Chaudronnerie »). `crossLotEligible` exigeait que TOUS les membres soient « À faire », donc seul l'Ajustage restait éligible (1 poste → pas de bouton). Désormais `crossLotEligible` = `crossLotBaseOk` (la ligne elle-même) ; `crossLotMates` ne renvoie que les membres « À faire » du lot dans la même commande — les autres (terminés, sous-traités, autre commande) restent dans l'ancien lot, intacts.
+
+### Import personnalisé : largeur et alignement vertical (v1.124.4)
+
+Retour (captures Colonnes et Postes) : page trop étroite sur grand écran et options mal alignées. Corps limité à `min(2000px,96vw)`, colonnes gauche/droite de l'étape Colonnes à parts égales, lignes de champs en `align-items:start` avec libellé, valeur d'exemple et pastille à hauteur fixe (34 px, centrés sur la liste déroulante) — une ligne à deux listes (Durée totale) ne décale plus son libellé ; lignes de postes et d'opérateurs par défaut à hauteur minimale commune. Présentation seulement.
+
+### Étape « Colonnes » réorganisée et pop-up de fin d'import élargie (v1.124.5)
+
+Maquette validée : l'**aperçu du fichier passe en haut, sur toute la largeur** (toutes les colonnes visibles, plus de défilement horizontal) ; dessous, deux colonnes — champs obligatoires (+ pas de changement de règle) à gauche, « Colonnes facultatives » à droite, **dépliées par défaut**, leurs menus eux-mêmes sur 2 colonnes (`.imc-opt2`, libellé / liste / valeur d'exemple empilés ; la ligne « Phase », avec ses cases et sa note, occupe toute la largeur : `.imc-wide`). « Valeurs par défaut » reste repliée sous la colonne de droite. Présentation seulement : mêmes `data-action`, même validation. Pop-up « Import Excel terminé » : `width:min(900px,96vw)` pour que « 0 Ligne(s) ignorée(s) » ne passe plus à la ligne. Vérifié (Playwright, 1900 px) ; le débordement de page à 390 px vient de la page derrière la pop-up (déjà noté), pas de cette étape.
+
 ## Historique des prévisions avant clôture (`prevision_history`)
 
 Une fois une pièce marquée `termine`, `computeSchedule` ancre définitivement `start`/`end` sur ses
