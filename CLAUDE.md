@@ -696,6 +696,10 @@ Cas réel (C026-0781) : Ajustage ×2 + Chaudronnerie ×2 déjà fusionnées entr
 
 Cas réel (C026-0781, bouton toujours absent en 1.124.2) : le lot des lignes de Chaudronnerie contenait aussi des membres déjà terminés (lot « Laser + Chaudronnerie »). `crossLotEligible` exigeait que TOUS les membres soient « À faire », donc seul l'Ajustage restait éligible (1 poste → pas de bouton). Désormais `crossLotEligible` = `crossLotBaseOk` (la ligne elle-même) ; `crossLotMates` ne renvoie que les membres « À faire » du lot dans la même commande — les autres (terminés, sous-traités, autre commande) restent dans l'ancien lot, intacts.
 
+### Import personnalisé : largeur et alignement vertical (v1.124.4)
+
+Retour (captures Colonnes et Postes) : page trop étroite sur grand écran et options mal alignées. Corps limité à `min(2000px,96vw)`, colonnes gauche/droite de l'étape Colonnes à parts égales, lignes de champs en `align-items:start` avec libellé, valeur d'exemple et pastille à hauteur fixe (34 px, centrés sur la liste déroulante) — une ligne à deux listes (Durée totale) ne décale plus son libellé ; lignes de postes et d'opérateurs par défaut à hauteur minimale commune. Présentation seulement.
+
 ## Historique des prévisions avant clôture (`prevision_history`)
 
 Une fois une pièce marquée `termine`, `computeSchedule` ancre définitivement `start`/`end` sur ses
