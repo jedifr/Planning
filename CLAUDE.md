@@ -692,6 +692,10 @@ Retour (capture) : les nouvelles étapes Colonnes / Postes / Aperçu étaient tr
 
 Cas réel (C026-0781) : Ajustage ×2 + Chaudronnerie ×2 déjà fusionnées entre elles (lot) → `crossLotEligible` excluait les lignes en lot, donc un seul poste éligible et le bouton « Fusionner des postes » n'apparaissait pas. Désormais une ligne en lot est éligible si tous les membres de son lot sont « À faire » et dans la même commande ; la cocher coche **tout le lot** (`crossLotMates`), qui est absorbé dans le nouveau lot (nouvel `fusionGroupId`, durée = somme des durées propres).
 
+### Fusion après import : lot partiellement terminé (v1.124.3)
+
+Cas réel (C026-0781, bouton toujours absent en 1.124.2) : le lot des lignes de Chaudronnerie contenait aussi des membres déjà terminés (lot « Laser + Chaudronnerie »). `crossLotEligible` exigeait que TOUS les membres soient « À faire », donc seul l'Ajustage restait éligible (1 poste → pas de bouton). Désormais `crossLotEligible` = `crossLotBaseOk` (la ligne elle-même) ; `crossLotMates` ne renvoie que les membres « À faire » du lot dans la même commande — les autres (terminés, sous-traités, autre commande) restent dans l'ancien lot, intacts.
+
 ## Historique des prévisions avant clôture (`prevision_history`)
 
 Une fois une pièce marquée `termine`, `computeSchedule` ancre définitivement `start`/`end` sur ses

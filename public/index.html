@@ -2212,7 +2212,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.124.2';
+const APP_VERSION = '1.124.3';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -10749,19 +10749,16 @@ let crossLotDraft = null; // { cid, sel:[oid] } — transitoire
 function crossLotBaseOk(o){
   return o.statut === 'a_faire' && !o.sousTraitance && !o.horsPlanning && !!o.machineId;
 }
-// Une ligne déjà en lot reste sélectionnable (v1.124.2) : tout son lot suit, à condition que tous ses membres
-// soient eux aussi « À faire » et dans la même commande (sinon on ne sait pas les déplacer proprement).
+// Une ligne déjà en lot reste sélectionnable (v1.124.2) : ses coéquipiers « À faire » de la même commande la suivent.
+// v1.124.3 : les membres du lot qui ne sont plus « À faire » (déjà terminés, ex. un lot Laser + Chaudronnerie dont le laser est fini),
+// sous-traités ou dans une autre commande ne bloquent plus : ils restent simplement dans l'ancien lot.
 function crossLotMates(o){
   if(!o.fusionGroupId) return [o];
   const c = state.commandes.find(cc => cc.pieces.indexOf(o) >= 0);
-  return c ? c.pieces.filter(p => p.fusionGroupId === o.fusionGroupId) : [o];
+  return c ? c.pieces.filter(p => p.fusionGroupId === o.fusionGroupId && crossLotBaseOk(p)) : [o];
 }
 function crossLotEligible(o){
-  if(!crossLotBaseOk(o)) return false;
-  if(!o.fusionGroupId) return true;
-  const c = state.commandes.find(cc => cc.pieces.indexOf(o) >= 0);
-  if(!c) return false;
-  return crossLotMates(o).every(crossLotBaseOk) && state.commandes.every(cc => cc === c || !cc.pieces.some(p => p.fusionGroupId === o.fusionGroupId));
+  return crossLotBaseOk(o);
 }
 function crossLotCanOffer(c){
   const ms = new Set(c.pieces.filter(crossLotEligible).map(o => o.machineId));
@@ -10880,7 +10877,7 @@ function renderCrossLotModal(){
   <div class="modal-overlay">
     <div class="modal-box modal-box-wide bulk-done-box" role="dialog" aria-modal="true">
       <div class="modal-head"><h2>🔗 Fusionner des lignes de postes différents — ${escapeHtml(c.nom)}</h2><button class="ghost icon-btn" data-action="close-cross-lot" title="Fermer">✕</button></div>
-      <p class="footer-note" style="margin:0 0 10px;">Les lignes cochées deviennent un seul lot, planifié sur le poste qui a le plus de temps de production. Seules les lignes « À faire » (ni sous-traitées) sont proposées ; cocher une ligne déjà en lot sélectionne tout ce lot, qui est alors absorbé dans le nouveau.</p>
+      <p class="footer-note" style="margin:0 0 10px;">Les lignes cochées deviennent un seul lot, planifié sur le poste qui a le plus de temps de production. Seules les lignes « À faire » (ni sous-traitées) sont proposées ; cocher une ligne déjà en lot sélectionne tout ce lot, dont les lignes « À faire » sont alors absorbées dans le nouveau.</p>
       ${piecesHtml}
       <div class="bd-totals" style="position:sticky;bottom:0;background:var(--panel);padding:10px 0;display:flex;gap:14px;align-items:center;flex-wrap:wrap;justify-content:space-between;border-top:1px solid var(--line);">
         <div style="display:flex;flex-direction:column;gap:3px;min-width:0;">${bar}</div>
