@@ -1484,6 +1484,10 @@
     display:flex; flex-direction:column; overflow:hidden;
   }
   .settings-fullscreen-box .modal-head{flex-shrink:0;}
+  /* Import personnalisé en plein écran (v1.124.1) : c'est .modal-box qui défile (comme avant), pas un volet interne,
+     donc les barres collantes .imp-foot/.pv-bilan gardent leurs décalages. */
+  .modal-box.imp-fullscreen-box{display:block; overflow-y:auto; overflow-x:hidden;}
+  .imp-fullscreen-box .modal-body{max-width:1700px; margin:0 auto;}
   .settings-fullscreen-box .settings-modal-body{flex:1; height:auto; min-height:0;}
   /* Pop-up de rappel de retour de pause déjeuner (voir CLAUDE.md, « Pop-up de retour de pause
      déjeuner ») — plus large qu'un modal-box par défaut pour que le nom de la commande/pièce et le
@@ -2208,7 +2212,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.124.0';
+const APP_VERSION = '1.124.2';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -10742,8 +10746,22 @@ function submitDeclareDone(){
 // planifié sur UN poste hôte = celui qui totalise le plus de temps de production parmi les lignes
 // choisies ; durée du lot = somme des durées PROPRES (jamais dureeOverrideH, déjà cumulée).
 let crossLotDraft = null; // { cid, sel:[oid] } — transitoire
+function crossLotBaseOk(o){
+  return o.statut === 'a_faire' && !o.sousTraitance && !o.horsPlanning && !!o.machineId;
+}
+// Une ligne déjà en lot reste sélectionnable (v1.124.2) : tout son lot suit, à condition que tous ses membres
+// soient eux aussi « À faire » et dans la même commande (sinon on ne sait pas les déplacer proprement).
+function crossLotMates(o){
+  if(!o.fusionGroupId) return [o];
+  const c = state.commandes.find(cc => cc.pieces.indexOf(o) >= 0);
+  return c ? c.pieces.filter(p => p.fusionGroupId === o.fusionGroupId) : [o];
+}
 function crossLotEligible(o){
-  return o.statut === 'a_faire' && !o.sousTraitance && !o.horsPlanning && !o.fusionGroupId && !!o.machineId;
+  if(!crossLotBaseOk(o)) return false;
+  if(!o.fusionGroupId) return true;
+  const c = state.commandes.find(cc => cc.pieces.indexOf(o) >= 0);
+  if(!c) return false;
+  return crossLotMates(o).every(crossLotBaseOk) && state.commandes.every(cc => cc === c || !cc.pieces.some(p => p.fusionGroupId === o.fusionGroupId));
 }
 function crossLotCanOffer(c){
   const ms = new Set(c.pieces.filter(crossLotEligible).map(o => o.machineId));
@@ -10760,7 +10778,10 @@ function closeCrossLot(){ crossLotDraft = null; render(); }
 function toggleCrossLotLine(oid, checked){
   const d = crossLotDraft; if(!d) return;
   const set = new Set(d.sel);
-  if(checked) set.add(oid); else set.delete(oid);
+  const c = state.commandes.find(cc => cc.id === d.cid);
+  const o0 = c && c.pieces.find(p => p.id === oid);
+  const ids = o0 ? crossLotMates(o0).map(p => p.id) : [oid];
+  ids.forEach(id => { if(checked) set.add(id); else set.delete(id); });
   d.sel = Array.from(set);
   render();
 }
@@ -10829,7 +10850,7 @@ function renderCrossLotModal(){
           let state_ = '';
           if(o.fusionGroupId){
             const first = !lotsSeen.has(o.fusionGroupId); lotsSeen.add(o.fusionGroupId);
-            state_ = `<span class="bd-tag">🔗 Lot · sur ${escapeHtml(mName(mid))}</span>` + (first ? ` <button class="ghost small" data-action="cross-lot-dissociate" data-gid="${escapeHtml(o.fusionGroupId)}">Dissocier</button>` : '');
+            state_ = `<span class="bd-tag">🔗 Lot · sur ${escapeHtml(mName(mid))}</span>` + (elig ? ' <span class="footer-note" style="margin:0;">(le lot entier est sélectionné)</span>' : '') + (first ? ` <button class="ghost small" data-action="cross-lot-dissociate" data-gid="${escapeHtml(o.fusionGroupId)}">Dissocier</button>` : '');
           } else if(!elig){
             state_ = `<span class="footer-note" style="margin:0;">${o.statut !== 'a_faire' ? escapeHtml(opStatutLabel(o.statut)) + ' — non fusionnable' : (o.sousTraitance ? 'sous-traitée' : (o.horsPlanning ? 'hors planning' : 'sans poste'))}</span>`;
           } else if(sel && plan.host && mid !== plan.host){
@@ -10859,7 +10880,7 @@ function renderCrossLotModal(){
   <div class="modal-overlay">
     <div class="modal-box modal-box-wide bulk-done-box" role="dialog" aria-modal="true">
       <div class="modal-head"><h2>🔗 Fusionner des lignes de postes différents — ${escapeHtml(c.nom)}</h2><button class="ghost icon-btn" data-action="close-cross-lot" title="Fermer">✕</button></div>
-      <p class="footer-note" style="margin:0 0 10px;">Les lignes cochées deviennent un seul lot, planifié sur le poste qui a le plus de temps de production. Seules les lignes « À faire » (ni sous-traitées, ni déjà en lot) sont proposées.</p>
+      <p class="footer-note" style="margin:0 0 10px;">Les lignes cochées deviennent un seul lot, planifié sur le poste qui a le plus de temps de production. Seules les lignes « À faire » (ni sous-traitées) sont proposées ; cocher une ligne déjà en lot sélectionne tout ce lot, qui est alors absorbé dans le nouveau.</p>
       ${piecesHtml}
       <div class="bd-totals" style="position:sticky;bottom:0;background:var(--panel);padding:10px 0;display:flex;gap:14px;align-items:center;flex-wrap:wrap;justify-content:space-between;border-top:1px solid var(--line);">
         <div style="display:flex;flex-direction:column;gap:3px;min-width:0;">${bar}</div>
@@ -15919,8 +15940,8 @@ function renderCustomImportModal(){
       <div class="footer-note" style="text-align:left;">Dates simulées sur le planning actuel : elles peuvent bouger d'ici la confirmation. Poste, opérateur, phase et départ possible se corrigent ligne par ligne ; 🗑 retire une opération de l'import. « Début/fin au mieux » et la livraison se recalculent à chaque correction.</div>`;
   }
   return `
-  <div class="modal-overlay">
-    <div class="modal-box modal-box-wide" role="dialog" aria-modal="true">
+  <div class="modal-overlay settings-fullscreen">
+    <div class="modal-box settings-fullscreen-box imp-fullscreen-box" role="dialog" aria-modal="true">
       <div class="modal-head">
         <h2>Import personnalisé</h2>
         ${(() => { const order = ['mapping','postes','preview']; const labs = ['Colonnes','Postes','Aperçu']; const cur = order.indexOf(cs.step);

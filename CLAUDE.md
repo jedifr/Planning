@@ -684,6 +684,14 @@ Demande : améliorer l'aperçu (tableau à 9 colonnes toujours visibles, alertes
 - **Carte « À corriger » en tête** : lignes ignorées et doublons avec motif et valeurs brutes (ligne, pièce/étape, poste, opérateur, qté × T.U.) + bouton « ← Revoir la correspondance ». **Pas d'actions par ligne** (« Associer ce poste », « Importer quand même ») : elles changeraient le comportement de l'import (reconstruction des groupes), hors périmètre ; la correction passe par le retour à la correspondance.
 - Test (scratchpad `pv_ui.js`, Playwright) : bilan, 2 cartes dont 1 dépliée, filtre, tout déplier, « ⋯ », carte À corriger, confirmation = commandes créées, aucune erreur.
 
+### Import personnalisé en plein écran (v1.124.1)
+
+Retour (capture) : les nouvelles étapes Colonnes / Postes / Aperçu étaient tronquées et demandaient des ascenseurs dans une pop-up `modal-box-wide` (1180 px). `renderCustomImportModal` réutilise désormais le patron plein écran des Paramètres (`.modal-overlay.settings-fullscreen` + `.modal-box.settings-fullscreen-box`, classe ajoutée `imp-fullscreen-box`), mais **`.modal-box` y reste le conteneur qui défile** (`display:block; overflow-y:auto`) — contrairement aux Paramètres (volet interne) : les barres collantes `.imp-foot`/`.pv-bilan` (décalage `-18px`) et `restoreModalScroll` restent valables sans changement. Corps limité à 1700 px et centré sur très grand écran. Bouton « Fusionner des postes » (pied de carte commande, après coup) : voir v1.123.0.
+
+### Fusion après import : lignes déjà en lot sélectionnables (v1.124.2)
+
+Cas réel (C026-0781) : Ajustage ×2 + Chaudronnerie ×2 déjà fusionnées entre elles (lot) → `crossLotEligible` excluait les lignes en lot, donc un seul poste éligible et le bouton « Fusionner des postes » n'apparaissait pas. Désormais une ligne en lot est éligible si tous les membres de son lot sont « À faire » et dans la même commande ; la cocher coche **tout le lot** (`crossLotMates`), qui est absorbé dans le nouveau lot (nouvel `fusionGroupId`, durée = somme des durées propres).
+
 ## Historique des prévisions avant clôture (`prevision_history`)
 
 Une fois une pièce marquée `termine`, `computeSchedule` ancre définitivement `start`/`end` sur ses
