@@ -1484,6 +1484,10 @@
     display:flex; flex-direction:column; overflow:hidden;
   }
   .settings-fullscreen-box .modal-head{flex-shrink:0;}
+  /* Import personnalisé en plein écran (v1.124.1) : c'est .modal-box qui défile (comme avant), pas un volet interne,
+     donc les barres collantes .imp-foot/.pv-bilan gardent leurs décalages. */
+  .modal-box.imp-fullscreen-box{display:block; overflow-y:auto; overflow-x:hidden;}
+  .imp-fullscreen-box .modal-body{max-width:1700px; margin:0 auto;}
   .settings-fullscreen-box .settings-modal-body{flex:1; height:auto; min-height:0;}
   /* Pop-up de rappel de retour de pause déjeuner (voir CLAUDE.md, « Pop-up de retour de pause
      déjeuner ») — plus large qu'un modal-box par défaut pour que le nom de la commande/pièce et le
@@ -2208,7 +2212,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.124.0';
+const APP_VERSION = '1.124.1';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -15919,8 +15923,8 @@ function renderCustomImportModal(){
       <div class="footer-note" style="text-align:left;">Dates simulées sur le planning actuel : elles peuvent bouger d'ici la confirmation. Poste, opérateur, phase et départ possible se corrigent ligne par ligne ; 🗑 retire une opération de l'import. « Début/fin au mieux » et la livraison se recalculent à chaque correction.</div>`;
   }
   return `
-  <div class="modal-overlay">
-    <div class="modal-box modal-box-wide" role="dialog" aria-modal="true">
+  <div class="modal-overlay settings-fullscreen">
+    <div class="modal-box settings-fullscreen-box imp-fullscreen-box" role="dialog" aria-modal="true">
       <div class="modal-head">
         <h2>Import personnalisé</h2>
         ${(() => { const order = ['mapping','postes','preview']; const labs = ['Colonnes','Postes','Aperçu']; const cur = order.indexOf(cs.step);
