@@ -2375,6 +2375,20 @@ puis « Valide » : bouton à côté d'« Importer » (la lecture automatique de
   touche ; `tri_ui.js` et `tri_rec.js` Playwright sur serveur réel : CSV et récupération de période, recalcul à chaque case, filtres, 390 px sans débordement). `seq_test` 14, `recover_test` 37, `missing_test` 13,
   `badge_test` 41 inchangés.
 
+### Salarié lu sous deux identifiants : association propagée à tous (v1.124.6)
+
+Cas réel (Mathys, 12/10) : il badgeait (passages visibles sur la pointeuse), mais la page Présence le disait « Non arrivé ». La ligne « Association des salariés »
+affichait pourtant « Mathys » et « par ordre » cochés. Cause : la ligne regroupe l'identifiant TimeMoto Cloud et l'identifiant de la pointeuse (`zk:13`) ; l'affichage prend le
+**premier** identifiant associé (`cur`) et coche « par ordre » si **un seul** des identifiants l'est. Si `zk:13` est apparu dans la liste après l'association (nouveau salarié,
+liste de la pointeuse lue plus tard), seul l'identifiant Cloud était associé : tous ses passages `zk:13` étaient comptés « sans salarié associé » (`res.unmapped`) et jamais importés,
+sans aucun signe à l'écran. Le moteur serveur est correct (test `mathys_test.js` : `in 07:41, pause 10:04→10:12, pause 12:16` avec les vrais passages, touches 2/3 comprises).
+
+- `timemotoHealGroups(tmUsers)` (appelée par `loadTimemotoStatus`, administrateur seulement) : pour chaque groupe de plusieurs identifiants dont les associations connues désignent UN
+  seul salarié Planning, associe les identifiants restés sans association au même salarié et propage « par ordre ». Ne touche jamais un identifiant déjà associé (jamais d'écrasement d'un
+  choix), un seul `commit()` seulement si quelque chose change, idempotent. À l'ouverture de la page Présence, la correction se fait donc seule ; les 3 derniers jours sont relus à la
+  lecture suivante de l'agent (ou « Récupérer une période » pour plus ancien).
+- Réflexe : une ligne qui regroupe plusieurs identifiants ne doit pas masquer un état mixte — tout état dérivé d'« au moins un » identifiant doit être propagé aux autres.
+
 ## Onglet « Pointages »
 
 Retour utilisateur réel : jusqu'ici, voir/corriger un pointage demandait de retrouver la bonne

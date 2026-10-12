@@ -2218,7 +2218,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.124.5';
+const APP_VERSION = '1.124.6';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -20583,10 +20583,33 @@ async function loadTimemotoStatus(){
     const res = await fetch('/api/presence/timemoto/status', { credentials: 'include' });
     const json = await res.json().catch(() => ({}));
     timemotoStatusCache = res.ok ? { status: 'ok', data: json } : { status: 'error', error: json.error || 'Chargement impossible.' };
+    if(res.ok) timemotoHealGroups(json.users || []);
   }catch(e){
     timemotoStatusCache = { status: 'error', error: 'Serveur injoignable.' };
   }
   presenceRenderIfIdle();
+}
+// Un salarié lu sous plusieurs identifiants (TimeMoto Cloud + pointeuse n° N) s'affiche sur UNE ligne, dont le choix « s'applique à tous ».
+// Mais si l'identifiant de la pointeuse est apparu APRÈS l'association (nouveau salarié, liste de la pointeuse lue plus tard), il
+// restait sans salarié Planning (ses passages comptés « sans salarié associé », jamais importés → « Non arrivé » alors qu'il badge)
+// ou sans « par ordre », alors que la ligne affichait l'association complète. On propage donc l'association (et « par ordre ») à tous les
+// identifiants du groupe dès qu'ils sont connus — uniquement vers des identifiants SANS association, jamais en écrasant un choix existant.
+function timemotoHealGroups(tmUsers){
+  if(!isAdmin() || !tmUsers.length || !state.config.presence || !state.config.presence.timemoto) return false;
+  const t = state.config.presence.timemoto;
+  const map = { ...(t.userMap || {}) };
+  const ordre = new Set(Array.isArray(t.ordreIds) ? t.ordreIds : []);
+  let changed = false;
+  timemotoGroupUsers(tmUsers, map).forEach(g => {
+    if(g.ids.length < 2) return;
+    const uids = Array.from(new Set(g.ids.map(id => map[id]).filter(Boolean).map(String)));
+    if(uids.length === 1) g.ids.forEach(id => { if(!map[id]){ map[id] = uids[0]; changed = true; } });
+    if(uids.length === 1 && g.ids.some(id => ordre.has(id))) g.ids.forEach(id => { if(!ordre.has(id)){ ordre.add(id); changed = true; } });
+  });
+  if(!changed) return false;
+  t.userMap = map; t.ordreIds = [...ordre];
+  commit();
+  return true;
 }
 function updateTimemotoConfig(field, value){
   if(!state.config.presence) state.config.presence = {};
