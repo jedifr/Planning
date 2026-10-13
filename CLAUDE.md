@@ -6329,3 +6329,7 @@ texte, personnalisable, en plus d'elle — jamais à sa place.
 - `migrateState` initialise `config.copyright` à `''` (pas à la mention par défaut) sur une config
   fraîche — puisque la mention en dur s'affiche de toute façon, il n'y a plus de raison de
   pré-remplir ce champ avec elle. Ne touche jamais une valeur déjà configurée.
+
+### `deploy.sh` portable Synology / Ugreen (v1.124.7)
+
+Nouveau NAS Ugreen (UGOS, `192.168.1.70`). Le script se place déjà dans son propre dossier (`cd "$(dirname "$0")"`) : le chemin Synology n'était que dans un commentaire. Ajouts : choix automatique de la commande Docker (sans `sudo` si `docker info` répond, sinon `sudo` ; `docker compose` v2 sinon `docker-compose`), et création de `Cfg_admin.yml`/`Cfg_backup.yml` s'ils manquent (sinon Docker crée des **dossiers** du même nom ; si c'en est déjà un, le script s'arrête avec la marche à suivre). Aucun changement pour le Synology.
