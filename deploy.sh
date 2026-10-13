@@ -2,8 +2,13 @@
 # Met à jour et redémarre Planning Atelier sur le NAS.
 #
 # Utilisation :
-#   cd /volume1/TRAVAIL/PLANNING_ATELIER/planning-atelier-serveur
+#   cd <dossier du projet>   (Synology : /volume1/TRAVAIL/PLANNING_ATELIER/planning-atelier-serveur,
+#                              Ugreen : /volume1/docker/planning-atelier/planning-atelier-serveur)
 #   bash deploy.sh
+#
+# Fonctionne sur Synology comme sur Ugreen (UGOS) : le script se place tout seul dans son propre
+# dossier, et choisit lui-même la bonne commande Docker (avec ou sans sudo, "docker compose" ou
+# "docker-compose").
 #
 # Le script s'arrête au premier problème (set -e) plutôt que de continuer dans un état incertain.
 set -e
@@ -50,15 +55,45 @@ if [ ! -f TM616.env ]; then
   touch TM616.env
 fi
 
+# Cfg_admin.yml / Cfg_backup.yml sont montés par docker-compose.yml : absents, Docker crée à leur
+# place des DOSSIERS du même nom et le conteneur ne démarre plus correctement.
+for f in Cfg_admin.yml Cfg_backup.yml; do
+  if [ -d "$f" ]; then
+    echo "/!\\ $f est un dossier (créé par Docker faute de fichier). Supprimez-le puis relancez : rmdir $f"
+    exit 1
+  fi
+  if [ ! -f "$f" ]; then
+    if [ "$f" = "Cfg_backup.yml" ] && [ -f Cfg_backup.yml.example ]; then
+      echo "$f absent : copie du modèle Cfg_backup.yml.example (à compléter pour les sauvegardes e-mail)."
+      cp Cfg_backup.yml.example "$f"
+    else
+      echo "$f absent : création d'un fichier vide."
+      touch "$f"
+    fi
+  fi
+done
+
+# Commande Docker : sans sudo si l'utilisateur a le droit d'accéder à Docker (cas courant sur
+# Ugreen), avec sudo sinon (cas Synology) ; "docker compose" (v2) ou "docker-compose" (ancien).
+if docker info >/dev/null 2>&1; then DOCKER="docker"; else DOCKER="sudo docker"; fi
+if $DOCKER compose version >/dev/null 2>&1; then
+  DC="$DOCKER compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+  if [ "$DOCKER" = "docker" ]; then DC="docker-compose"; else DC="sudo docker-compose"; fi
+else
+  echo "Docker Compose introuvable : installez/activez Docker dans l'interface du NAS."
+  exit 1
+fi
+
 echo
 echo "Reconstruction de l'image Docker..."
-if ! sudo docker compose build; then
+if ! $DC build; then
   echo "Échec de la construction — nouvelle tentative sans cache..."
-  sudo docker compose build --no-cache
+  $DC build --no-cache
 fi
 
 echo "Redémarrage du conteneur..."
-sudo docker compose up -d
+$DC up -d
 
 echo
 echo "=== Terminé ! Pensez à Ctrl+Maj+R dans le navigateur pour vider le cache. ==="
