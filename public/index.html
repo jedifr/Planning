@@ -72,6 +72,7 @@
     background:rgba(178,58,48,0.1); border:1px solid var(--red); color:var(--red); border-radius:2px;
     padding:8px 10px; font-size:12.5px; margin-bottom:14px;
   }
+  .restore-hint{ margin-top:16px; padding-top:12px; border-top:1px dashed var(--line); text-align:center; font-size:12px; color:var(--text-dim); }
   .login-info{
     background:var(--panel-2); border:1px solid var(--line); color:var(--text-dim); border-radius:2px;
     padding:8px 10px; font-size:12.5px; margin-bottom:14px;
@@ -2218,7 +2219,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.124.7';
+const APP_VERSION = '1.125.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -2388,6 +2389,9 @@ const SETTINGS_HELP = {
   archiveAuto: "Archive à chaque démarrage les commandes entièrement terminées depuis plus longtemps que le délai ci-dessous. Les commandes archivées sortent du calcul du planning (plus rapide) mais restent consultables, désarchivables et incluses dans l'export.",
   archiveJours: "Délai après lequel une commande entièrement terminée est archivée. Le bouton « Archiver maintenant » applique ce délai tout de suite, même si l'archivage automatique est désactivé.",
   exportJson: "Télécharge un fichier .json contenant tout le planning (hors historiques volumineux). À conserver comme sauvegarde manuelle ou pour migrer d'un serveur à l'autre.",
+  backupFull: "Télécharge un fichier .json contenant TOUT : planning, historiques, pointages, comptes utilisateurs (mots de passe chiffrés) et licence. Sert à migrer vers un autre NAS ou à repartir après un incident. Votre mot de passe administrateur est demandé. Fichier sensible : à conserver en lieu sûr.",
+  restoreFull: "Remplace TOUT le contenu de cette installation par celui d'un fichier de sauvegarde (planning, historiques, pointages, comptes). Accepte la sauvegarde complète comme un ancien export .json (planning seul, comptes conservés). Mot de passe administrateur demandé ; vous êtes déconnecté ensuite.",
+  licenseReveal: "Affiche la clé de licence installée, après ressaisie de votre mot de passe. Une clé n'est liée à aucune machine : quiconque la possède peut l'installer ailleurs — ne la partagez pas.",
   importJson: "Remplace TOUT le planning par le contenu d'un fichier .json exporté auparavant. Action destructive : une confirmation est demandée.",
   resetAll: "Efface toutes les commandes et remet les postes à leurs réglages par défaut. IRRÉVERSIBLE — faites d'abord un export .json.",
   densite: "Compact réduit les espacements pour voir plus d'informations d'un coup à l'écran. Confortable est plus aéré.",
@@ -16947,7 +16951,7 @@ function renderSettingsModal(){
       </div>`).join('')}
       <div class="footer-note" style="text-align:left; padding-top:8px;">La correspondance des colonnes elle-même (quelle colonne du fichier va dans quel champ) se modifie au prochain import personnalisé, en choisissant ce profil.</div>` },
     donnees: { title: 'Données & archivage', body: `
-      <div class="modal-section-title" style="margin-top:0;">Sauvegarde manuelle complète</div>
+      <div class="modal-section-title" style="margin-top:0;">Export / import du planning seul</div>
       <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
         <button class="small" data-action="export-data" title="Télécharger un fichier .json — à déposer dans un dossier synchronisé avec votre NAS">Exporter (.json)</button>
         <span class="help-inline">${helpTip('exportJson')}</span>
@@ -16955,7 +16959,16 @@ function renderSettingsModal(){
         <span class="help-inline">${helpTip('importJson')}</span>
         <input type="file" id="import-file-input" accept="application/json" style="display:none;" onchange="handleImportFile(event)">
       </div>
-      <div class="footer-note" style="text-align:left;">Sauvegarde/restauration manuelle complète du planning. Pour une sauvegarde quotidienne automatique, voir « E-mails ».</div>
+      <div class="footer-note" style="text-align:left;">Export/import du <b>planning seul</b> (sans les comptes utilisateurs). Pour une sauvegarde quotidienne automatique, voir « E-mails ».</div>
+      <div class="modal-section-title" style="margin-top:22px;">Sauvegarde complète (migration, nouveau NAS, reprise après incident)</div>
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+        <button class="small" data-action="download-full-backup" title="Planning, historiques, pointages, comptes utilisateurs et licence">⬇ Télécharger la sauvegarde complète</button>
+        <span class="help-inline">${helpTip('backupFull')}</span>
+        <button class="small danger-ghost" style="border:1px solid var(--red);" data-action="trigger-full-restore" title="Remplace TOUT par le contenu d'un fichier de sauvegarde">⬆ Tout restaurer depuis un fichier…</button>
+        <span class="help-inline">${helpTip('restoreFull')}</span>
+        <input type="file" id="full-restore-input" accept=".json,application/json" style="display:none;" onchange="handleFullRestoreFile(event)">
+      </div>
+      <div class="footer-note" style="text-align:left;">Contient <b>tout</b> : planning, historiques, pointages, comptes (mots de passe chiffrés) et licence. Mot de passe administrateur demandé. Sur une nouvelle installation vierge, ce même fichier s'importe depuis l'écran de connexion.</div>
       <div class="modal-section-title" style="margin-top:22px;">Archivage des commandes terminées</div>
       <label class="statut-chip" style="margin-bottom:10px;">
         <input type="checkbox" ${cfg.archiveAutoActive?'checked':''} data-action="update-config" data-field="archiveAutoActive">
@@ -16976,6 +16989,12 @@ function renderSettingsModal(){
         <div><label class="field">Délai de synchronisation entre postes (secondes) ${helpTip('syncInterval')}</label><input type="number" min="2" max="120" step="1" value="${cfg.syncIntervalSec||4}" data-action="update-config" data-field="syncIntervalSec"></div>
       </div>
       <div class="footer-note" style="text-align:left; padding-bottom:10px;">Fréquence à laquelle chaque poste vérifie si un collègue a modifié le planning. Prend effet immédiatement, sans recharger la page.</div>
+      <div class="modal-section-title" style="margin-top:26px;">🔑 Licence</div>
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <button class="small" data-action="reveal-license" title="Mot de passe administrateur demandé">Afficher la clé de licence…</button>
+        <span class="help-inline">${helpTip('licenseReveal')}</span>
+      </div>
+      <div class="footer-note" style="text-align:left; padding-bottom:10px;">Utile pour installer l'application sur un autre serveur. La clé n'est liée à aucune machine : ne la communiquez à personne.</div>
       <div class="modal-section-title" style="margin-top:26px; color:var(--red);">⚠ Zone dangereuse</div>
       <div class="footer-note" style="text-align:left; padding-bottom:10px;">Efface toutes les commandes et remet les postes à leurs réglages par défaut. Cette action est irréversible — une confirmation vous sera demandée. ${helpTip('resetAll')}</div>
       <button class="danger-ghost small" style="border:1px solid var(--red); padding:7px 14px;" data-action="reset-all">Réinitialiser tout le planning</button>` },
@@ -22090,6 +22109,9 @@ function dispatchClickAction(action, el){
     case 'remove-machine-indispo': removeMachineIndispo(el.dataset.id, el.dataset.indispoId); break;
     case 'reset-all': resetAll(); break;
     case 'export-data': exportData(); break;
+    case 'download-full-backup': downloadFullBackup(); break;
+    case 'trigger-full-restore': triggerFullRestore(); break;
+    case 'reveal-license': revealLicenseKey(); break;
     case 'test-backup': testBackupNow(); break;
     case 'test-email-report': testEmailReportNow(); break;
     case 'trigger-import': triggerImport(); break;
@@ -23186,11 +23208,14 @@ let newVersionAvailable = null; // numéro de version détecté côté serveur, 
 // Identité visuelle récupérée avant connexion (route publique) — mémorisée pour que l'écran de
 // connexion puisse l'afficher sans attendre, y compris après une déconnexion.
 let loginBranding = { appTitle: null, logoDataUrl: null, copyright: '' };
+let setupFresh = false;   // installation vierge : l'écran de connexion propose d'importer une sauvegarde
+let loginInfoMsg = '';    // message positif (ex. « sauvegarde restaurée »), affiché une seule fois sur l'écran de connexion
 async function loadLoginBranding(){
   try{
     const res = await fetch('/api/branding');
     if(!res.ok) return;
     loginBranding = await res.json();
+    try{ const sr = await fetch('/api/setup/status'); if(sr.ok) setupFresh = !!(await sr.json()).fresh; }catch(e){ /* l'import reste simplement non proposé */ }
     // Si l'écran de connexion (précisément — pas l'écran de reset de mot de passe, qui partage la
     // même classe .login-screen) est déjà affiché, on le redessine avec le logo une fois reçu.
     if(document.getElementById('login-form')) renderLoginScreen(document.querySelector('.login-error')?.textContent || '');
@@ -23203,6 +23228,7 @@ function renderLoginScreen(errorMsg){
   const defaultMention = defaultCopyrightMention();
   const customCopyright = (cfg.copyright || loginBranding.copyright || '').trim();
   const showCustomCopyright = customCopyright && customCopyright !== defaultMention;
+  const infoShown = loginInfoMsg; // affiché cette fois seulement
   document.getElementById('app').innerHTML = `
   <div class="login-screen">
     <div class="login-box">
@@ -23210,6 +23236,7 @@ function renderLoginScreen(errorMsg){
       <h1 class="login-title">${escapeHtml(title)}</h1>
       <div class="login-sub">Connexion requise</div>
       ${errorMsg ? `<div class="login-error">${escapeHtml(errorMsg)}</div>` : ''}
+      ${loginInfoMsg ? `<div class="login-info">${escapeHtml(loginInfoMsg)}</div>` : ''}
       <form id="login-form">
         <label class="field">Identifiant</label>
         <input type="text" id="login-username" autocomplete="username" required autofocus>
@@ -23218,6 +23245,7 @@ function renderLoginScreen(errorMsg){
         <button type="submit" class="primary" style="width:100%; margin-top:16px; padding:10px;">Se connecter</button>
       </form>
       <button class="ghost small" style="width:100%; margin-top:10px;" data-action="show-forgot-password">Mot de passe oublié ?</button>
+      ${setupFresh ? `<div class="restore-hint">🆕 Première installation ?<br><button class="small" style="margin-top:6px;" data-action="show-restore-screen">📥 Importer une sauvegarde</button></div>` : ''}
       <div class="login-copyright">${escapeHtml(defaultMention)}</div>
       ${showCustomCopyright ? `<div class="login-copyright">${escapeHtml(customCopyright)}</div>` : ''}
       <div class="login-copyright">v${APP_VERSION}</div>
@@ -23247,6 +23275,140 @@ function renderLoginScreen(errorMsg){
   });
   const forgotBtn = document.querySelector('[data-action="show-forgot-password"]');
   if(forgotBtn) forgotBtn.addEventListener('click', () => renderForgotPasswordScreen());
+  const restoreBtn = document.querySelector('[data-action="show-restore-screen"]');
+  if(restoreBtn) restoreBtn.addEventListener('click', () => renderRestoreScreen());
+  if(infoShown) loginInfoMsg = '';
+}
+
+// ---------- Sauvegarde complète, restauration, clé de licence ----------
+// Reconnaît le type de fichier côté navigateur (le serveur revalide tout) : 'full' = sauvegarde complète
+// (comptes + licence + historiques), 'legacy' = export .json ou sauvegarde e-mail (planning seulement).
+function backupKindOf(parsed){
+  if(parsed && parsed.format === 'planning-atelier-full') return 'full';
+  if(parsed && Array.isArray(parsed.machines) && Array.isArray(parsed.commandes)) return 'legacy';
+  return null;
+}
+function backupSummaryText(parsed, kind){
+  if(kind === 'full'){
+    const d = parsed.exportedAt ? new Date(parsed.exportedAt).toLocaleString('fr-FR') : 'date inconnue';
+    const nbU = Array.isArray(parsed.users) ? parsed.users.length : 0;
+    const nbC = parsed.state && Array.isArray(parsed.state.commandes) ? parsed.state.commandes.length : 0;
+    return `Sauvegarde complète du ${d} : ${nbU} compte(s), ${nbC} commande(s)${parsed.license ? ', licence incluse' : ', sans licence'}.`;
+  }
+  return `Ancien export (planning seul) : ${parsed.commandes.length} commande(s). Les comptes utilisateurs et la licence ne sont pas dans ce fichier.`;
+}
+function renderRestoreScreen(msg){
+  const cfg = (state && state.config) ? state.config : {};
+  const title = cfg.appTitle || loginBranding.appTitle || 'Planning Atelier';
+  document.getElementById('app').innerHTML = `
+  <div class="login-screen">
+    <div class="login-box">
+      <h1 class="login-title">${escapeHtml(title)}</h1>
+      <div class="login-sub">Importer une sauvegarde</div>
+      <div class="footer-note" style="text-align:left; margin-bottom:10px;">Reprenez ici votre planning depuis une <b>sauvegarde complète</b> (Paramètres → Données de l'ancienne installation) : planning, historiques, pointages, comptes utilisateurs et licence. Cette possibilité n'existe que sur une installation vierge.</div>
+      ${msg ? `<div class="login-error">${escapeHtml(msg)}</div>` : ''}
+      <input type="file" id="restore-file-input" accept=".json,application/json">
+      <div id="restore-summary" class="login-info" style="display:none; text-align:left; margin-top:10px;"></div>
+      <button id="restore-go" class="primary" style="width:100%; margin-top:14px; padding:10px;" disabled>Restaurer cette sauvegarde</button>
+      <button class="ghost small" style="width:100%; margin-top:10px;" id="restore-back">← Retour à la connexion</button>
+    </div>
+  </div>`;
+  let loaded = null;
+  const summaryEl = document.getElementById('restore-summary');
+  const goBtn = document.getElementById('restore-go');
+  document.getElementById('restore-back').addEventListener('click', () => renderLoginScreen());
+  document.getElementById('restore-file-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    loaded = null; goBtn.disabled = true; summaryEl.style.display = 'none';
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try{
+        const parsed = JSON.parse(ev.target.result);
+        const kind = backupKindOf(parsed);
+        if(!kind){ renderRestoreScreen("Fichier invalide : ce n'est ni une sauvegarde complète ni un export de planning."); return; }
+        loaded = { parsed, kind };
+        summaryEl.textContent = backupSummaryText(parsed, kind);
+        summaryEl.style.display = 'block';
+        goBtn.disabled = false;
+      }catch(err){ renderRestoreScreen('Impossible de lire ce fichier JSON.'); }
+    };
+    reader.readAsText(file);
+  });
+  goBtn.addEventListener('click', async () => {
+    if(!loaded) return;
+    goBtn.disabled = true; goBtn.textContent = 'Restauration…';
+    try{
+      const res = await fetch('/api/setup/restore', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backup: loaded.parsed })
+      });
+      const json = await res.json().catch(() => ({}));
+      if(!res.ok){ renderRestoreScreen(json.error || 'La restauration a échoué.'); return; }
+      setupFresh = false;
+      loginInfoMsg = json.kind === 'full'
+        ? `Sauvegarde restaurée : ${json.nbUsers} compte(s). Connectez-vous avec vos identifiants habituels.`
+        : "Planning restauré. Connectez-vous avec le compte créé à l'installation (les comptes et la licence ne figuraient pas dans ce fichier).";
+      renderLoginScreen();
+    }catch(err){ renderRestoreScreen('Impossible de contacter le serveur.'); }
+  });
+}
+// Les trois actions suivantes (Paramètres) exigent le mot de passe de l'administrateur connecté : le
+// serveur le revérifie (même verrou anti-force brute que la connexion), jamais seulement le navigateur.
+async function postAdmin(url, body){
+  const res = await fetch(url, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const json = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, json };
+}
+async function downloadFullBackup(){
+  const pw = prompt("Sauvegarde complète — ressaisissez votre mot de passe administrateur.\n\nLe fichier contient les comptes (mots de passe chiffrés) et la clé de licence : conservez-le en lieu sûr.");
+  if(pw === null) return;
+  try{
+    const r = await postAdmin('/api/backup/full', { password: pw });
+    if(!r.ok){ alert(r.json.error || 'La sauvegarde a échoué.'); return; }
+    const blob = new Blob([JSON.stringify(r.json)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); const d = new Date();
+    a.href = url; a.download = `planning-atelier-COMPLET-${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('Sauvegarde complète téléchargée.');
+  }catch(e){ alert('Serveur injoignable.'); }
+}
+function triggerFullRestore(){ document.getElementById('full-restore-input').click(); }
+function handleFullRestoreFile(e){
+  const file = e.target.files[0];
+  e.target.value = '';
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    let parsed, kind;
+    try{ parsed = JSON.parse(ev.target.result); kind = backupKindOf(parsed); }catch(err){ alert('Impossible de lire ce fichier JSON.'); return; }
+    if(!kind){ alert("Fichier invalide : ce n'est ni une sauvegarde complète ni un export de planning."); return; }
+    const what = kind === 'full'
+      ? "Cela REMPLACE tout : planning, historiques, pointages ET comptes utilisateurs (les comptes actuels seront supprimés, y compris le vôtre s'il n'est pas dans la sauvegarde)."
+      : "Cela remplace le planning (les comptes utilisateurs et la licence actuels sont conservés).";
+    if(!confirm(`${backupSummaryText(parsed, kind)}\n\n${what}\n\nVous serez déconnecté. Cette action est irréversible. Continuer ?`)) return;
+    const pw = prompt('Confirmez avec votre mot de passe administrateur :');
+    if(pw === null) return;
+    try{
+      const r = await postAdmin('/api/backup/restore', { password: pw, backup: parsed });
+      if(!r.ok){ alert(r.json.error || 'La restauration a échoué.'); return; }
+      alert('Restauration terminée. La page va se recharger : reconnectez-vous.');
+      location.reload();
+    }catch(err){ alert('Serveur injoignable.'); }
+  };
+  reader.readAsText(file);
+}
+async function revealLicenseKey(){
+  const pw = prompt("Ressaisissez votre mot de passe administrateur pour afficher la clé de licence :");
+  if(pw === null) return;
+  try{
+    const r = await postAdmin('/api/license/reveal', { password: pw });
+    if(!r.ok){ alert(r.json.error || 'Impossible d\'afficher la clé.'); return; }
+    const exp = r.json.expiresAt ? new Date(r.json.expiresAt).toLocaleDateString('fr-FR') : '—';
+    prompt(`Licence${r.json.client ? ' de « ' + r.json.client + ' »' : ''} — valable jusqu'au ${exp}.\n\nClé (Ctrl+C pour copier) — ne la communiquez à personne :`, r.json.key);
+  }catch(e){ alert('Serveur injoignable.'); }
 }
 
 // Affiché à la place de l'appli normale dès que le serveur refuse une requête faute de licence

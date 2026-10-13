@@ -26,6 +26,7 @@ const autoPauseResume = require('./autoPauseResume');
 const reportEmail = require('./reportEmail');
 const presence = require('./presence');
 const timemoto = require('./timemotoSync');
+const fullBackup = require('./fullBackup');
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'planning.db');
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -98,7 +99,12 @@ timemoto.initTimemotoTables(db);
 const app = express();
 app.set('trust proxy', 1); // nécessaire pour que les cookies "secure" fonctionnent derrière un reverse proxy (Synology, etc.)
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: '5mb' }));
+// Les routes de sauvegarde/restauration complètes portent tout l'historique (pointages, séances) : corps
+// bien plus gros que les 5 Mo des autres routes. Chemins listés en dur, jamais déduits de la requête.
+const BIG_BODY_PATHS = new Set(['/api/setup/restore', '/api/backup/restore']);
+const jsonSmall = express.json({ limit: '5mb' });
+const jsonBig = express.json({ limit: '300mb' });
+app.use((req, res, next) => (BIG_BODY_PATHS.has(req.path) ? jsonBig : jsonSmall)(req, res, next));
 
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 if(!process.env.SESSION_SECRET){
@@ -118,12 +124,19 @@ app.use(session({
   }
 }));
 
+// Après une restauration complète, les numéros de comptes ne désignent plus les mêmes personnes : toute
+// session ouverte AVANT (même numéro, autre personne, voire autre rôle) doit être invalidée. On compare
+// donc l'« époque » mémorisée à la connexion à l'époque courante (en mémoire, comme les sessions).
+let sessionEpoch = 1;
+function sessionIsCurrent(req){
+  return !!(req.session && req.session.userId && req.session.epoch === sessionEpoch);
+}
 function requireAuth(req, res, next){
-  if(req.session && req.session.userId) return next();
+  if(sessionIsCurrent(req)) return next();
   res.status(401).json({ error: 'Authentification requise.' });
 }
 function requireAdmin(req, res, next){
-  if(!req.session || !req.session.userId) return res.status(401).json({ error: 'Authentification requise.' });
+  if(!sessionIsCurrent(req)) return res.status(401).json({ error: 'Authentification requise.' });
   const user = db.prepare('SELECT role FROM users WHERE id = ?').get(req.session.userId);
   if(!user || user.role !== 'admin') return res.status(403).json({ error: 'Réservé aux comptes Administrateur.' });
   next();
@@ -150,13 +163,14 @@ app.post('/api/login', (req, res) => {
   auth.registerSuccess(ip, username);
   req.session.userId = user.id;
   req.session.username = user.username;
+  req.session.epoch = sessionEpoch;
   res.json({ ok: true, username: user.username, userId: user.id, role: user.role });
 });
 app.post('/api/logout', (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 });
 app.get('/api/session', (req, res) => {
-  if(req.session && req.session.userId){
+  if(sessionIsCurrent(req)){
     const user = db.prepare('SELECT role FROM users WHERE id = ?').get(req.session.userId);
     return res.json({ authenticated: true, username: req.session.username, userId: req.session.userId, role: user ? user.role : 'employe' });
   }
@@ -241,6 +255,84 @@ app.put('/api/license', requireAdmin, (req, res) => {
   if(result.expired) return res.status(400).json({ error: `Cette licence a déjà expiré le ${new Date(result.payload.expiresAt).toLocaleDateString('fr-FR')}.` });
   license.setStoredLicenseString(db, key.trim());
   res.json({ ok: true, status: license.getLicenseStatus(db) });
+});
+
+// ---------------- Sauvegarde complète, restauration, clé de licence (voir fullBackup.js) ----------------
+// Revalide le mot de passe du compte connecté avant toute action sensible (même verrou anti-force brute
+// que la connexion). Renvoie true si c'est bon ; sinon répond lui-même et renvoie false.
+function confirmAdminPassword(req, res){
+  const ip = req.ip || 'unknown';
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
+  if(!user){ res.status(401).json({ error: 'Session invalide.' }); return false; }
+  if(auth.isLocked(ip, user.username)){ res.status(429).json({ error: 'Trop de tentatives — réessayez dans quelques minutes.' }); return false; }
+  if(!auth.verifyPassword(user, String((req.body || {}).password || ''))){
+    auth.registerFailure(ip, user.username);
+    res.status(403).json({ error: 'Mot de passe incorrect.' });
+    return false;
+  }
+  auth.registerSuccess(ip, user.username);
+  return true;
+}
+
+// Public : l'écran de connexion demande s'il doit proposer « importer une sauvegarde ».
+app.get('/api/setup/status', (req, res) => {
+  res.json({ fresh: fullBackup.isFreshInstall(db) });
+});
+// Public MAIS uniquement sur une installation vierge (aucun enregistrement depuis la création de la base).
+// Le contrôle est fait AVANT de lire le corps (voir le garde ci-dessous) puis une seconde fois ici.
+app.use('/api/setup/restore', (req, res, next) => {
+  if(!fullBackup.isFreshInstall(db)) return res.status(403).json({ error: "Import impossible : cette installation contient déjà des données. Connectez-vous puis utilisez Paramètres → Données." });
+  next();
+});
+app.post('/api/setup/restore', (req, res) => {
+  if(!fullBackup.isFreshInstall(db)) return res.status(403).json({ error: 'Import impossible : cette installation contient déjà des données.' });
+  try{
+    const result = fullBackup.restoreBackup(db, (req.body || {}).backup);
+    if(!result.ok) return res.status(400).json({ error: result.error });
+    sessionEpoch++;
+    console.log(`Sauvegarde restaurée au premier lancement (${result.kind}, ${result.nbUsers} compte(s), ${result.nbCommandes} commande(s)).`);
+    res.json(result);
+  }catch(e){
+    console.error('Restauration au premier lancement échouée :', e);
+    res.status(500).json({ error: 'La restauration a échoué : ' + e.message });
+  }
+});
+// Administrateur connecté : télécharger la sauvegarde complète (mot de passe ressaisi : le fichier contient
+// les hachages des mots de passe et la clé de licence).
+app.post('/api/backup/full', requireAdmin, (req, res) => {
+  if(!confirmAdminPassword(req, res)) return;
+  try{
+    const pkg = fullBackup.buildFullBackup(db, APP_VERSION);
+    console.log(`Sauvegarde complète téléchargée par ${req.session.username}.`);
+    res.json(pkg);
+  }catch(e){
+    console.error('Sauvegarde complète échouée :', e);
+    res.status(500).json({ error: 'La sauvegarde a échoué : ' + e.message });
+  }
+});
+// Administrateur connecté : tout restaurer depuis un fichier (remplace TOUT, comptes compris).
+app.post('/api/backup/restore', requireAdmin, (req, res) => {
+  if(!confirmAdminPassword(req, res)) return;
+  try{
+    const result = fullBackup.restoreBackup(db, (req.body || {}).backup);
+    if(!result.ok) return res.status(400).json({ error: result.error });
+    sessionEpoch++;
+    console.log(`Restauration complète par ${req.session.username} (${result.kind}, ${result.nbUsers} compte(s)).`);
+    req.session.destroy(() => res.json(result));
+  }catch(e){
+    console.error('Restauration complète échouée :', e);
+    res.status(500).json({ error: 'La restauration a échoué : ' + e.message });
+  }
+});
+// Révéler la clé de licence installée : réservé à l'administrateur qui ressaisit son mot de passe. Une clé
+// n'est liée à aucune machine — qui la possède peut l'installer ailleurs — d'où cette protection.
+app.post('/api/license/reveal', requireAdmin, (req, res) => {
+  if(!confirmAdminPassword(req, res)) return;
+  const key = license.getStoredLicenseString(db);
+  if(!key) return res.status(404).json({ error: 'Aucune licence installée.' });
+  const v = license.verifyLicenseString(key);
+  console.log(`Clé de licence affichée à ${req.session.username}.`);
+  res.json({ key, client: v.ok ? v.payload.client || '' : '', expiresAt: v.ok ? v.payload.expiresAt : null });
 });
 
 // ---------------- Gestion des comptes (authentifié) ----------------
