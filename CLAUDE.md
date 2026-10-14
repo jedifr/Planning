@@ -2929,6 +2929,16 @@ volontairement la même zone (regroupement manuel de petites affaires dans un m�
   - `assignStorageZone`/`setCommandeZone` n'ont pas besoin d'être modifiés : ils lisent déjà
     `occupiedStorageZones`/`commandesInZone`, qui portent maintenant la nouvelle règle.
 
+### Motif de désactivation d'un casier (v1.126.0)
+
+Demande : pouvoir afficher la raison pour laquelle une case est désactivée (la case hachurée « 🚫 Désactivée » ne disait rien du pourquoi : casier cassé, réservé, en travaux…). Changement volontairement petit (un champ texte), donc sans maquette préalable.
+
+- `config.inactiveStorageZoneReasons` (`{ "A9": "Étagère cassée" }`, `migrateState` → `{}`) : motif **facultatif**, une entrée par casier désactivé, 120 caractères max. `inactiveStorageZones` (liste de codes) reste inchangée : un casier désactivé sans motif (cas des désactivations antérieures) continue de fonctionner, la case affiche alors « motif ? ».
+- `toggleStorageZoneActive` : à la **désactivation**, un `prompt()` demande le motif (vide accepté, **Annuler renonce à la désactivation**) ; à la **réactivation**, le motif est effacé (il n'a de sens que tant que le casier est indisponible). Un seul `commit()`.
+- `editStorageZoneReason(zone)` (`data-action="edit-zone-reason"`) : le petit ✎ en haut à droite d'une case désactivée ajoute/modifie/efface le motif **sans réactiver** le casier. C'est un `<span>` dans le `<button>` de la case : `closest('[data-action]')` s'arrête sur lui, le clic ne déclenche donc pas la réactivation.
+- Affichage : motif sous « 🚫 Désactivée » (3 lignes max, nom complet en infobulle), dans l'option grisée du menu « 📍 Zone » d'une commande (« A9 — désactivée (Étagère cassée) ») et dans le message de refus de `setCommandeZone`. Helper unique : `zoneInactiveReason(st, zone)`.
+- Test (scratchpad `zr_ui.js`, Playwright sur serveur réel, 11 vérifications) : invite, motif dans la case et l'infobulle, Annuler sans effet, désactivation sans motif, ✎ sans réactivation, persistance après rechargement, réactivation qui efface le motif, aucune erreur JS.
+
 ### Cases figées, recherche et filtres de la page « Zones de stockage »
 
 Retour utilisateur réel, capture à l'appui : cases de tailles irrégulières (la hauteur suivait la
