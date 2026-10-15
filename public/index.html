@@ -2226,7 +2226,7 @@
 // Numéro de version affiché dans l'appli (écran de connexion + pied de page du planning). Aucun
 // suivi de version n'existait avant — à incrémenter manuellement (SemVer) à chaque évolution
 // livrée, voir CLAUDE.md.
-const APP_VERSION = '1.127.0';
+const APP_VERSION = '1.128.0';
 const MACHINE_COLORS = ['#4c8fbd', '#c98f2e', '#7fb08a', '#a884c7', '#d68c6a'];
 // Icône de poste (machines[].icone, voir migrateState/CLAUDE.md) — liste FERMÉE et curatée plutôt
 // qu'un champ texte libre/un émoji tapé à la main : évite les doublons visuels (deux variantes du
@@ -2361,6 +2361,7 @@ function loadSettingsUIPrefs(){
 // Infobulles des Paramètres (v1.86.0) : un seul dictionnaire, relu par `helpTip(clé)`. Chaque texte dit
 // ce que fait le réglage, où on le voit, la valeur par défaut et un exemple quand c'est utile.
 const SETTINGS_HELP = {
+  userDepassement: "Minutes de dépassement acceptées par le planning, pour CETTE personne, quand une tâche déborde de quelques minutes en fin de journée : au lieu de la repousser derrière tout le reste, le moteur la place dans le trou et l'opérateur finit en débordant un peu (ex. 35 min dans un trou de 34 min avec 5 min toléré). Ne concerne que la fin de journée (jamais une pause), les tâches non figées, assignées à cette personne. 0 = désactivé (valeur par défaut).",
   startTime: "Heure à laquelle la journée de travail commence pour tout l'atelier : les tâches sont placées à partir de cette heure. Peut être remplacée pour un poste précis (Postes → « Horaires spécifiques ») ou pour une personne (Utilisateurs → « Horaires de poste »).",
   monThuHours: "Nombre d'heures réellement travaillées du lundi au jeudi (pause déjeuner déjà déduite si elle est activée). Détermine l'heure de fin de journée et la capacité d'un poste. Exemple : 8,75 h.",
   friHours: "Heures travaillées le vendredi, souvent plus courtes. Mettez la même valeur que lun.–jeu. si l'atelier ne raccourcit pas le vendredi, ou 0 s'il est fermé.",
@@ -3248,6 +3249,7 @@ function migrateState(st){
   if(!st.userPageMenuOrder) st.userPageMenuOrder = {}; // { [userId]: PAGE_MENU_KEYS réordonnée } — ordre du menu "Plus ▾" de l'en-tête, propre à la personne (voir CLAUDE.md « Navigation »)
   if(!st.userMenuLayout) st.userMenuLayout = {}; // { [userId]: { items:[ {type:'page',key} | {type:'theme',id,nom,icone,pages} ] } } — disposition du menu de pages de l'en-tête (thèmes déroulants + pages directes), propre à la personne (voir CLAUDE.md « Navigation »). Absence = migration de l'ancien ordre/des anciennes épingles, sinon défaut.
   if(!st.userPinnedMenuPages) st.userPinnedMenuPages = {}; // { [userId]: string[] } — sous-ensemble de PAGE_MENU_KEYS épinglé en accès direct à côté de Planning, au lieu de rester dans "Plus ▾" (voir CLAUDE.md « Navigation ») — absence d'entrée pour une personne = épingles par défaut (getUserPinnedMenuPages, DEFAULT_PINNED_PAGE_KEYS = Congés), jamais "rien d'épinglé"
+  if(!st.userDepassementMin || typeof st.userDepassementMin !== 'object' || Array.isArray(st.userDepassementMin)) st.userDepassementMin = {}; // { [userId]: minutes } — dépassement toléré en fin de journée pour combler un trou (voir addWorkingDurationEx) ; absent/0 = aucun
   if(!st.userLunch) st.userLunch = {}; // { [userId]: {pauseActive, pauses:[{id,debut,fin}], horaireActif, heureDebut, heureFin} } — horaires propres à la personne (pause(s) et/ou début-fin de poste), affectent réellement le calcul
   Object.keys(st.userLunch).forEach(uid_ => {
     const lunch = st.userLunch[uid_];
@@ -3846,6 +3848,41 @@ function addWorkingDuration(start, hours, cfg){
   }
   return cursor;
 }
+// Variante d'addWorkingDuration avec un petit dépassement toléré en fin de JOURNÉE (dernier segment
+// de travail du jour, jamais avant une pause) : si, arrivé à la fermeture, il ne reste que `tolH`
+// heures ou moins à faire, la tâche est considérée comme finie à la fermeture — l'opérateur finit ces
+// quelques minutes en débordant, au lieu de reporter la fin au lendemain matin. Sans cela une tâche de
+// 35 min ne rentrait pas dans un trou de 34 min en fin de journée (cas réel Mazak, lundi 19/10) et
+// repartait derrière tout le reste. Renvoie { end, overH } (overH = heures effectivement débordées).
+// tolH <= 0 : strictement identique à addWorkingDuration.
+function addWorkingDurationEx(start, hours, cfg, tolH){
+  let cursor = nextWorkingInstant(start, cfg);
+  let remaining = hours;
+  let overH = 0;
+  let guard = 0;
+  while(remaining > 1e-9 && guard++ < 5000){
+    cursor = nextWorkingInstant(cursor, cfg);
+    const segs = dayIntervals(cursor, cfg);
+    const seg = segs.find(([s,e]) => cursor >= s && cursor < e);
+    if(!seg){ cursor = nextDayStart(cursor); continue; }
+    const [segStart, segEnd] = seg;
+    const availMs = segEnd.getTime() - cursor.getTime();
+    const neededMs = remaining*3600000;
+    if(neededMs <= availMs){ cursor = new Date(cursor.getTime()+neededMs); remaining = 0; }
+    else if(tolH > 0 && seg === segs[segs.length-1] && (remaining - availMs/3600000) <= tolH + 1e-9){
+      overH = remaining - availMs/3600000;
+      cursor = new Date(segEnd.getTime()); remaining = 0;
+    }
+    else { remaining -= availMs/3600000; cursor = new Date(segEnd.getTime()); }
+  }
+  return { end: cursor, overH };
+}
+// Dépassement toléré (en heures) pour la personne qui réalise la tâche : state.userDepassementMin
+// (minutes, par opérateur ASSIGNÉ — c'est son horaire qui sert déjà à planifier), 0 par défaut.
+function depassementTolH(op, st){
+  const m = Number(((st.userDepassementMin||{})[op && op.operatorUserId]) || 0);
+  return m > 0 ? m/60 : 0;
+}
 // Symétrique d'addWorkingDuration : recule dans le calendrier de travail depuis une échéance donnée.
 function subtractWorkingDuration(end, hours, cfg){
   let cursor = new Date(end.getTime());
@@ -4172,7 +4209,7 @@ function ganttBarsHtml(o, pos, meta, label, tooltipExtra, hlCls, tempsModCls, mi
     return `<div class="gantt-bar ${meta.cls} ${hlCls} ${tempsModCls} ${o._fusionMembers?'fusion-bar':''} ${isReel?'gantt-bar-reel':''} ${leftPct > 55 ? 'tooltip-right' : ''}" style="left:${leftPct}%;width:${widthPct}%;background:${meta.color};border-left:4px solid ${meta.urgBorder}"
       data-cid="${o.cid}" data-oid="${o.id}" data-start="${o.start.toISOString()}" data-fusion-group="${o._fusionMembers ? o.fusionGroupId : ''}">
       <div class="gantt-bar-inner">${dpD?`<span class="dp-pin" title="${escapeHtml(departPossibleTip(dpD))}">📌</span>`:''}${idx===lastIdx ? `<span>${escapeHtml(label)}</span>` : ''}</div>
-      ${ganttBarTooltipHtml({ ...o, start: seg.start, end: seg.end }, label + meta.note + segNote + (isTempsModified(o) ? ' — ⏱ temps modifié manuellement' : '') + (departPossibleActif(o) ? ' — 📌 départ possible figé au ' + departPossibleLabel(departPossibleActif(o)) : '') + tooltipExtra)}
+      ${ganttBarTooltipHtml({ ...o, start: seg.start, end: seg.end }, label + meta.note + segNote + (isTempsModified(o) ? ' — ⏱ temps modifié manuellement' : '') + (o.depassementMin>0 ? ' — ⏱ dépasse la fin de journée de ' + o.depassementMin + ' min (dépassement toléré)' : '') + (departPossibleActif(o) ? ' — 📌 départ possible figé au ' + departPossibleLabel(departPossibleActif(o)) : '') + tooltipExtra)}
       ${isReel ? '' : `<div class="resize-handle" data-cid="${o.cid}" data-oid="${o.id}"></div>`}
     </div>`;
   }).join('');
@@ -4860,14 +4897,14 @@ function computeSchedule(st){
 // Recherche, en avançant, le premier créneau réellement libre dans le calendrier du poste (à
 // partir d'un plancher donné) — contrairement à un simple curseur "libre à partir de...", ceci
 // détecte correctement un trou même si une tâche figée occupe un poste plus tard, loin devant.
-function findNextFreeSlot(floor, dureeH, intervals, cfg){
+function findNextFreeSlot(floor, dureeH, intervals, cfg, tolH){
   let start = nextWorkingInstant(floor, cfg);
-  let end = addWorkingDuration(start, dureeH, cfg);
+  let end = addWorkingDurationEx(start, dureeH, cfg, tolH||0).end;
   let conflict = findOverlap(start, end, intervals);
   let guard = 0;
   while(conflict && guard++ < 200){
     start = nextWorkingInstant(conflict.end, cfg);
-    end = addWorkingDuration(start, dureeH, cfg);
+    end = addWorkingDurationEx(start, dureeH, cfg, tolH||0).end;
     conflict = findOverlap(start, end, intervals);
   }
   return start;
@@ -4929,7 +4966,7 @@ function findNextFreeSlot(floor, dureeH, intervals, cfg){
             }
           });
           const alignedFloor = nextWorkingInstant(floor, item.cfg); // le plancher, simplement calé sur le calendrier (week-end/pause), sans tenir compte des autres tâches
-          const earliestStart = findNextFreeSlot(floor, item.dureeH, machineIntervals[m.id], item.cfg);
+          const earliestStart = findNextFreeSlot(floor, item.dureeH, machineIntervals[m.id], item.cfg, depassementTolH(item.op, st));
           candidates.push({ idx, item, floor, alignedFloor, earliestStart });
         });
         if(candidates.length === 0) return;
@@ -4953,7 +4990,9 @@ function findNextFreeSlot(floor, dureeH, intervals, cfg){
         const item = remaining[bestIdx];
         const { cfg, dureeH } = item;
         const start = chosen.earliestStart;
-        const end = addWorkingDuration(start, dureeH, cfg);
+        const exRes = addWorkingDurationEx(start, dureeH, cfg, depassementTolH(item.op, st));
+        const end = exRes.end;
+        const depassementMin = exRes.overH > 1e-9 ? Math.round(exRes.overH*60*10)/10 : 0;
         // Un candidat groupé (fusion non figée) écrit le même horaire sur TOUS ses membres — c'est
         // le seul cas où plusieurs pièces se voient attribuer le même horaire de la phase 3, exactement
         // comme le ferait un figeage manuel du lot entier.
@@ -4962,9 +5001,9 @@ function findNextFreeSlot(floor, dureeH, intervals, cfg){
           computedEnd[mm.op.id] = end;
           if(mm.released){
             // poste libéré : début réel conservé, fin = fin du créneau replanifié ; libereStart = début de ce créneau
-            opsById[mm.op.id] = { ...mm.op, start: mm.anchorStart, end, dureeH: mm.fullH, posteLibereEff: true, libereStart: start };
+            opsById[mm.op.id] = { ...mm.op, start: mm.anchorStart, end, dureeH: mm.fullH, posteLibereEff: true, libereStart: start, depassementMin };
           } else {
-            opsById[mm.op.id] = { ...mm.op, start, end, dureeH: mm.dureeH };
+            opsById[mm.op.id] = { ...mm.op, start, end, dureeH: mm.dureeH, depassementMin };
           }
         });
         const cur = machineFree[m.id];
@@ -5436,6 +5475,12 @@ function updateUserHoraireField(userId, field, value){
   const lunch = state.userLunch[userId]; if(!lunch) return;
   if(!value) return;
   lunch[field] = value;
+  commit();
+}
+function updateUserDepassement(userId, value){
+  const n = Math.max(0, Math.min(60, Math.round(Number(String(value).replace(',','.')) || 0)));
+  if(!state.userDepassementMin) state.userDepassementMin = {};
+  if(n > 0) state.userDepassementMin[userId] = n; else delete state.userDepassementMin[userId];
   commit();
 }
 function removeUserPause(userId, pauseId){
@@ -16879,6 +16924,11 @@ function renderSettingsModal(){
             </select>
             ${linkedMachineIds.length ? `<button class="ghost small deps-clear-btn" data-action="clear-user-machines" data-user-id="${uid_}">✕ Aucun poste lié</button>` : ''}
 
+            <div class="modal-section-title" style="font-size:10px; margin-top:12px;">Dépassement toléré en fin de journée ${helpTip('userDepassement')}</div>
+            <div class="user-pause-row">
+              <input type="number" min="0" max="60" step="1" value="${(state.userDepassementMin||{})[uid_]||0}" data-action="user-depassement" data-user-id="${uid_}" title="Minutes" style="max-width:90px;"> <span class="footer-note" style="margin:0;">min (0 = aucun)</span>
+            </div>
+
             <div class="modal-section-title" style="font-size:10px; margin-top:12px;">Pause(s) de cette personne</div>
             <label class="statut-chip" style="margin-bottom:8px;">
               <input type="checkbox" ${lunch.pauseActive?'checked':''} data-action="toggle-user-lunch" data-user-id="${uid_}">
@@ -22667,6 +22717,7 @@ function dispatchChangeAction(el, action){
     case 'fiche-user': if(ficheSalarie && el.value && canSupervise()){ ficheSalarie.uid = String(el.value); lastFicheUid = ficheSalarie.uid; render(); } break;
     case 'temps-prod-range-fin': tempsProdRangeFin = el.value; render(); break;
     case 'user-pause-field': updateUserPauseField(el.dataset.userId, el.dataset.pauseId, el.dataset.field, el.value); break;
+    case 'user-depassement': updateUserDepassement(el.dataset.userId, el.value); break;
     case 'user-horaire-field': updateUserHoraireField(el.dataset.userId, el.dataset.field, el.value); break;
     case 'machine-horaire': updateMachineHoraire(el.dataset.id, el.dataset.field, el.type==='checkbox' ? el.checked : el.value); break;
     case 'machine-transfert': updateMachineTransfert(el.dataset.id, el.dataset.field, el.value); break;
