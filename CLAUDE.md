@@ -2939,6 +2939,14 @@ Demande : pouvoir afficher la raison pour laquelle une case est désactivée (la
 - Affichage : motif sous « 🚫 Désactivée » (3 lignes max, nom complet en infobulle), dans l'option grisée du menu « 📍 Zone » d'une commande (« A9 — désactivée (Étagère cassée) ») et dans le message de refus de `setCommandeZone`. Helper unique : `zoneInactiveReason(st, zone)`.
 - Test (scratchpad `zr_ui.js`, Playwright sur serveur réel, 11 vérifications) : invite, motif dans la case et l'infobulle, Annuler sans effet, désactivation sans motif, ✎ sans réactivation, persistance après rechargement, réactivation qui efface le motif, aucune erreur JS.
 
+### Repère « départ possible figé » (v1.127.0)
+
+Cas réel (trou du lundi sur la Mazak) : une tâche attendait sa `dateDebutPossible` (plancher matière) sans que rien ne le montre sur le planning, d'où l'impression d'un trou inexpliqué. **Présentation seulement, aucun calcul moteur.**
+
+- `departPossibleActif(o)` : date du plancher tant qu'elle n'est pas passée (une date révolue n'a plus d'effet), sinon `null` ; ignore tâche terminée, sous-traitée, hors planning ; pour un lot fusionné (`_fusionMembers`) prend le plancher le plus tardif. `departPossibleBadgeHtml`/`departPossibleTip` factorisent le rendu.
+- Gantt (Jour/Semaine, `ganttBarsHtml`) : pastille 📌 en tête de barre (`.dp-pin`) + mention dans l'infobulle de la barre ; Kanban : badge « 📌 Départ possible le JJ/MM/AAAA » (`extrasK`) ; tableau des tâches : même badge sous le champ « départ possible » de la colonne Phase.
+- Test (scratchpad `dp_t.js`, export du 15/10) : 5789170-A et 5789171-A (20/10) et PLAS (23/10) repérées, terminée et date passée = `null`.
+
 ### Cases figées, recherche et filtres de la page « Zones de stockage »
 
 Retour utilisateur réel, capture à l'appui : cases de tailles irrégulières (la hauteur suivait la
