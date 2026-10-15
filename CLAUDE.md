@@ -2947,6 +2947,16 @@ Cas réel (trou du lundi sur la Mazak) : une tâche attendait sa `dateDebutPossi
 - Gantt (Jour/Semaine, `ganttBarsHtml`) : pastille 📌 en tête de barre (`.dp-pin`) + mention dans l'infobulle de la barre ; Kanban : badge « 📌 Départ possible le JJ/MM/AAAA » (`extrasK`) ; tableau des tâches : même badge sous le champ « départ possible » de la colonne Phase.
 - Test (scratchpad `dp_t.js`, export du 15/10) : 5789170-A et 5789171-A (20/10) et PLAS (23/10) repérées, terminée et date passée = `null`.
 
+### Dépassement toléré en fin de journée, par utilisateur (v1.128.0)
+
+Cas réel (Mazak, lundi 19/10 — export du 15/10) : ISY563-2020 (35 min) ne tenait pas dans le trou de fin de journée de lundi (16h56 → 17h20, soit 23,6 min : la dernière plage de l'horaire de Sébastien, 7h-17h20 avec ses pauses 10h00/15h30, pas « 17h30 » comme on pourrait le croire) et repartait jeudi derrière tout le reste. Un trou ne reçoit qu'une tâche qui y tient **en entier** — le moteur ne coupe pas une tâche sur deux jours pour boucher un trou. Demande : accepter un petit dépassement, **réglable par personne**.
+
+- `state.userDepassementMin` (`{ [userId]: minutes }`, `migrateState` → `{}`, 0–60, entrée absente = 0 = comportement strictement inchangé) : saisi dans Paramètres → Utilisateurs, carte de la personne, « Dépassement toléré en fin de journée » (`updateUserDepassement`, `SETTINGS_HELP.userDepassement`). Clé = opérateur **assigné** de la tâche (`depassementTolH(op, st)`), le même dont l'horaire sert déjà à planifier.
+- **`addWorkingDurationEx(start, hours, cfg, tolH)`** → `{ end, overH }` : comme `addWorkingDuration`, mais en arrivant à la fermeture de la **dernière plage du jour** (jamais avant une pause : le déjeuner et les pauses courtes ne sont pas concernés), s'il reste `tolH` heures ou moins à faire, la tâche finit à la fermeture et `overH` mémorise le débordement (l'opérateur finit en débordant au lieu de reporter au lendemain). `tolH ≤ 0` = identique à l'ancien calcul. `findNextFreeSlot(…, tolH)` et la fin posée en phase 3 de `computeSchedule` l'utilisent ; `addWorkingDuration` reste utilisée partout ailleurs (phases 1-2, transferts, tâches figées/démarrées) : **seules les tâches volantes de la phase 3 profitent de la tolérance**.
+- L'opération planifiée porte `depassementMin` (minutes débordées, 0 sinon) ; l'infobulle de la barre du Gantt l'indique (« ⏱ dépasse la fin de journée de N min »). La barre s'arrête à la fermeture : la durée prévue reste la durée entière.
+- **Effet de bord assumé** : une tâche plus prioritaire (ici une tâche en pause au poste libéré, temps restant ~1 h 30) peut elle aussi profiter du trou et passer devant une moins prioritaire qui, elle, y tenait déjà — le trou est pris par la priorité, pas par la taille.
+- Test (scratchpad `dep_t.js`/`dep_t3.js`, export du 15/10, Sébastien) : 0 min = planning identique à avant ; 12 min → ISY563-2020 lundi 16h56→17h20 (dépassement 11,4 min), 5789170-A avance de jeudi 16h43 à 16h08 ; 10 min = sans effet (il faut 11,4) ; 15 min → la tâche en pause passe dans le trou (13,4 min) et ISY557 recule.
+
 ### Cases figées, recherche et filtres de la page « Zones de stockage »
 
 Retour utilisateur réel, capture à l'appui : cases de tailles irrégulières (la hauteur suivait la
